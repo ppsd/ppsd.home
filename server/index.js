@@ -1032,14 +1032,20 @@ api.get('/attendance/summary', requireSalary, (req, res) => {
   const monthEnd = isoDate(new Date(yy, mm, 0))
   const emps = db.prepare("SELECT * FROM employees WHERE COALESCE(status,'') != 'ลาออก' ORDER BY name").all()
   const rows = emps.map((e) => {
-    const att = db.prepare("SELECT status FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(e.code, monthStart, monthEnd)
+    const att = db.prepare("SELECT date,status FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(e.code, monthStart, monthEnd)
+    const punchDates = new Set(att.map((a) => a.date))
     const late = att.filter((a) => a.status === 'สาย').length
-    const present = att.length - late
+    // ปรับปรุงเวลาที่ "อนุมัติแล้ว" = มาทำงานวันนั้น (ลืมตอกบัตร แต่มาจริง) → นับเป็นมา ไม่นับขาด
+    const adjDates = db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(e.name, monthStart, monthEnd).map((a) => a.date)
+    let adjExtra = 0
+    for (const d of adjDates) if (!punchDates.has(d)) adjExtra++ // วันที่มีปรับปรุงเวลา แต่ไม่มีบัตรตอก (กันนับซ้ำ)
+    const present = (att.length - late) + adjExtra
+    const came = att.length + adjExtra
     // CEO/ผู้จัดการ ไม่ต้องลงเวลา · รายวันจ่ายตามวันทำงานที่กรอก → ไม่นับขาด
     const noAttendance = NO_ATTENDANCE_ROLES.includes(e.role) || e.pay_type === 'รายวัน'
     const absent = noAttendance ? 0 : absentDaysInMonth(e, period)
     const leave = db.prepare("SELECT COALESCE(SUM(days),0) d FROM leaves WHERE emp_code=? AND status='อนุมัติ' AND start_date>=? AND start_date<=?").get(e.code, monthStart, monthEnd).d
-    return { code: e.code, name: e.name, role: e.role || '', present, late, absent, leave, came: att.length, no_attendance: noAttendance }
+    return { code: e.code, name: e.name, role: e.role || '', present, late, absent, leave, came, adj: adjExtra, no_attendance: noAttendance }
   })
   res.json({ period, periodLabel: periodLabelTH(period), monthStart, monthEnd, rows })
 })

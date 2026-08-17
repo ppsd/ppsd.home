@@ -37,7 +37,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   // สรุปลงเวลารายเดือน
   const nowYM = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
   const [attMonth, setAttMonth] = useState(nowYM())
-  const [attSum, setAttSum] = useState<{ periodLabel: string; rows: { code: string; name: string; role: string; present: number; late: number; absent: number; leave: number; came: number; no_attendance?: boolean }[] } | null>(null)
+  const [attSum, setAttSum] = useState<{ periodLabel: string; rows: { code: string; name: string; role: string; present: number; late: number; absent: number; leave: number; came: number; adj?: number; no_attendance?: boolean }[] } | null>(null)
   useEffect(() => {
     if (tab === 'attsummary') apiClient.get<typeof attSum>('/attendance/summary?period=' + attMonth).then(setAttSum).catch(() => setAttSum(null))
   }, [tab, attMonth])
@@ -687,7 +687,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <tr key={r.code} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                     <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name}</td>
                     <td style={{ ...td, color: '#5C6770' }}>{r.role || '—'}</td>
-                    <td className="num" style={{ ...td, textAlign: 'center', fontWeight: 600, color: '#2E7D55' }}>{r.came}</td>
+                    <td className="num" style={{ ...td, textAlign: 'center', fontWeight: 600, color: '#2E7D55' }}>{r.came}{r.adj ? <span style={{ display: 'block', fontSize: 9.5, fontWeight: 500, color: '#94A0A8' }}>(ปรับปรุง {r.adj})</span> : null}</td>
                     <td className="num" style={{ ...td, textAlign: 'center', fontWeight: 600, color: r.late ? '#B7791F' : '#94A0A8' }}>{r.late}</td>
                     <td className="num" style={{ ...td, textAlign: 'center', fontWeight: 600, color: r.absent ? '#C24036' : '#94A0A8' }}>{r.no_attendance ? <span style={{ fontSize: 10, fontWeight: 600, color: '#2E7D55' }}>ไม่ต้องลงเวลา</span> : r.absent}</td>
                     <td className="num" style={{ ...td, textAlign: 'center', color: r.leave ? '#30506A' : '#94A0A8' }}>{r.leave}</td>
