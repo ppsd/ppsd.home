@@ -32,6 +32,13 @@ function thDateFromISO(iso) {
   if (Number.isNaN(d.getTime())) return todayTH()
   return `${d.getDate()} ${TH_MONTHS[d.getMonth()]} ${String((d.getFullYear() + 543) % 100).padStart(2, '0')}`
 }
+// เวลาปัจจุบันแบบละเอียด (ท้องถิ่นไทย) "YYYY-MM-DD HH:MM:SS" — ใช้จับเวลางานด่วน
+function nowTS() {
+  const d = new Date(); const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+function tsToMs(ts) { const d = ts ? new Date(String(ts).replace(' ', 'T')) : null; return d && !Number.isNaN(d.getTime()) ? d.getTime() : null }
+function minutesSince(ts) { const ms = tsToMs(ts); return ms == null ? null : Math.max(0, (Date.now() - ms) / 60000) }
 
 // ---- payroll calculators (Thai social security + progressive PIT) ----
 function monthlyBaseOf(base, payType) {
@@ -581,7 +588,7 @@ api.post('/expenses', canWrite, (req, res) => {
 
 // ---------- HR ----------
 // list excludes the PIN; includes signature + computed sso/tax for display
-const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days'
+const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code'
 api.get('/employees', (req, res) => {
   const rows = db.prepare(`SELECT ${EMP_COLS} FROM employees ORDER BY id`).all()
   const showSalary = canSeeSalary(req.user)
@@ -620,8 +627,8 @@ api.post('/employees', canWrite, (req, res) => {
   const sig = typeof b.signature === 'string' && b.signature.startsWith('data:image/') ? b.signature : null
   const info = db
     .prepare(`INSERT INTO employees (code,name,role,dept,start,status,base,ot,sso,tax,pay_type,
-              sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days)
-              VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+              sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code)
+              VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(code, b.name, b.role || '', b.dept || b.role || '', b.start || todayTH(), b.status || 'ทดลองงาน',
       base, sso, tax, payType,
       Number(b.sick_quota) || 30, Number(b.sick_used) || 0,
@@ -630,7 +637,7 @@ api.post('/employees', canWrite, (req, res) => {
       b.bank_name || '', b.bank_acct || '', b.tax_id || '',
       b.retention != null && b.retention !== '' ? Number(b.retention) : 500, Number(b.student_loan) || 0,
       b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : 0,
-      Number(b.work_days) || 0)
+      Number(b.work_days) || 0, b.backup_code || '')
   audit(req, 'เพิ่มพนักงาน', b.name)
   const out = db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(info.lastInsertRowid)
   res.status(201).json({ ...out, pin: pinPlain }) // return the PIN once so it can be shown to the user
@@ -651,9 +658,10 @@ api.put('/employees/:id', canWrite, (req, res) => {
   const studentLoan = b.student_loan != null && b.student_loan !== '' ? Number(b.student_loan) : e.student_loan
   const retentionOpening = b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : e.retention_opening
   const workDays = b.work_days != null && b.work_days !== '' ? Number(b.work_days) : e.work_days
-  db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=? WHERE id=?')
+  const backupCode = b.backup_code != null ? b.backup_code : e.backup_code
+  db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=? WHERE id=?')
     .run(b.name ?? e.name, b.role ?? e.role, b.dept ?? e.dept, b.status ?? e.status, payType, base, sso, tax, spouse, children,
-      b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, e.id)
+      b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, e.id)
   audit(req, 'แก้ไขพนักงาน', b.name ?? e.name)
   res.json(db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(e.id))
 })
@@ -2230,13 +2238,18 @@ api.post('/work-orders', canWrite, (req, res) => {
   if (!b.project && !b.scope) return res.status(400).json({ error: 'กรุณากรอกชื่องาน/ขอบเขตงาน' })
   const seq = db.prepare('SELECT COUNT(*) c FROM work_orders').get().c + 1
   const no = `WO-${docYear()}-${String(seq).padStart(3, '0')}`
+  const urgent = b.urgent ? 1 : 0
+  const priority = urgent ? 'ด่วน' : (b.priority || 'ปกติ')
+  const deadlineMin = urgent ? (Number(b.deadline_min) || Number(getSetting('urgent_deadline_min', '5')) || 5) : 0
   const info = db.prepare(`INSERT INTO work_orders
-    (no,priority,issued_date,due_date,due_time,line_group,reviewer,executor,executor_code,project,house_code,scope,dod,budget,status,ack,by,created)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`)
-    .run(no, b.priority || 'ปกติ', todayTH(), b.due_date || '', b.due_time || '', b.line_group || '',
+    (no,priority,issued_date,due_date,due_time,line_group,reviewer,executor,executor_code,project,house_code,scope,dod,budget,status,ack,by,created,
+     urgent,created_ts,deadline_min,esc_level,esc_code,esc_name,esc_ts,esc_log,source,seen)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?, ?,?,?,0,?,?,?,?,?,0)`)
+    .run(no, priority, todayTH(), b.due_date || '', b.due_time || '', b.line_group || '',
       b.reviewer || req.user.name, b.executor || '', b.executor_code || '', b.project || '', b.house_code || '',
-      b.scope || '', JSON.stringify(b.dod || {}), b.budget || '', 'สั่งงาน', req.user.name, todayTH())
-  audit(req, 'สร้างใบสั่งงาน', `${no} → ${b.executor || '-'}`)
+      b.scope || '', JSON.stringify(b.dod || {}), b.budget || '', 'สั่งงาน', req.user.name, todayTH(),
+      urgent, nowTS(), deadlineMin, b.executor_code || '', b.executor || '', nowTS(), '[]', b.source || '')
+  audit(req, urgent ? 'สั่งงานด่วน' : 'สร้างใบสั่งงาน', `${no} → ${b.executor || '-'}`)
   res.status(201).json(woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(info.lastInsertRowid)))
 })
 api.put('/work-orders/:id', canWrite, (req, res) => {
@@ -2254,15 +2267,114 @@ api.put('/work-orders/:id', canWrite, (req, res) => {
   audit(req, 'อัปเดตใบสั่งงาน', `${d.no} → ${f('status')}`)
   res.json(woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(d.id)))
 })
-// ผู้รับผิดชอบกดรับทราบ
+// ผู้รับผิดชอบ (หรือคนสำรองที่ถูกไล่ระดับมา) กดรับทราบ
 api.post('/work-orders/:id/ack', (req, res) => {
   const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
   if (!d) return res.status(404).json({ error: 'ไม่พบใบสั่งงาน' })
-  if (d.executor && d.executor !== req.user.name && !isManager(req.user)) return res.status(403).json({ error: 'เฉพาะผู้รับผิดชอบเท่านั้นที่กดรับทราบได้' })
-  db.prepare("UPDATE work_orders SET ack=1, ack_by=?, ack_date=?, status=CASE WHEN status='สั่งงาน' THEN 'รับทราบ' ELSE status END WHERE id=?")
-    .run(req.user.name, todayTH(), d.id)
+  // รับทราบได้: ผู้รับหลัก, คนที่ถูกไล่ระดับมาตอนนี้, หรือผู้จัดการ
+  const allowed = !d.executor || d.executor === req.user.name || d.esc_name === req.user.name || isManager(req.user)
+  if (!allowed) return res.status(403).json({ error: 'เฉพาะผู้รับผิดชอบเท่านั้นที่กดรับทราบได้' })
+  db.prepare("UPDATE work_orders SET ack=1, ack_by=?, ack_date=?, ack_ts=?, seen=1, seen_ts=COALESCE(NULLIF(seen_ts,''),?), status=CASE WHEN status='สั่งงาน' THEN 'รับทราบ' ELSE status END WHERE id=?")
+    .run(req.user.name, todayTH(), nowTS(), nowTS(), d.id)
   audit(req, 'รับทราบใบสั่งงาน', d.no)
   res.json(woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(d.id)))
+})
+// ผู้รับ "เปิดดู" ใบสั่งงาน → บันทึกว่าเห็นแล้วเมื่อไหร่ (read receipt)
+api.post('/work-orders/:id/seen', (req, res) => {
+  const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบใบสั่งงาน' })
+  if (!d.seen) db.prepare('UPDATE work_orders SET seen=1, seen_ts=? WHERE id=?').run(nowTS(), d.id)
+  res.json({ ok: true })
+})
+// ไล่หา "คนสำรอง" ตามสายที่ตั้งไว้ล่วงหน้า: ผู้รับ → คนสำรองของผู้รับ → ... → ตัวจบสาย (ตั้งค่า)
+function backupChain(startCode) {
+  const chain = []
+  const seen = new Set()
+  let code = startCode
+  let i = 0
+  while (code && !seen.has(code) && chain.length < 6) {
+    seen.add(code)
+    const e = db.prepare('SELECT code,name,backup_code FROM employees WHERE code=?').get(code)
+    if (!e) break
+    if (i > 0) chain.push({ code: e.code, name: e.name }) // ข้ามคนแรก (ผู้รับหลัก) — เก็บเฉพาะคนสำรองถัดไป
+    code = e.backup_code
+    i++
+  }
+  // ตัวจบสาย (ผู้จัดการ/CEO) กันงานด่วนตกหล่น
+  const finalCode = getSetting('urgent_fallback_code', '')
+  if (finalCode && !seen.has(finalCode)) {
+    const f = db.prepare('SELECT code,name FROM employees WHERE code=?').get(finalCode)
+    if (f) chain.push({ code: f.code, name: f.name })
+  }
+  return chain
+}
+// เครื่องยนต์ไล่ระดับงานด่วน: ทุก ๆ ช่วง ถ้ายังไม่รับทราบ → ไล่ไปคนสำรองถัดไป; ครบกำหนด → เกินเวลา
+function escalateUrgent() {
+  try {
+    const stepMin = Number(getSetting('urgent_step_min', '2')) || 2
+    const opens = db.prepare("SELECT * FROM work_orders WHERE urgent=1 AND ack=0 AND status NOT IN ('เกินเวลา','ยกเลิก')").all()
+    for (const w of opens) {
+      const elapsed = minutesSince(w.created_ts)
+      if (elapsed == null) continue
+      const deadline = w.deadline_min || 5
+      // ครบกำหนด → เกินเวลา + โยนไปตัวจบสาย + เตือน CEO
+      if (elapsed >= deadline) {
+        if (w.status !== 'เกินเวลา') {
+          const chain = backupChain(w.executor_code)
+          const last = chain[chain.length - 1]
+          const log = safeJson(w.esc_log)
+          log.push({ at: nowTS(), to: last ? last.name : (w.esc_name || w.executor), reason: 'เกินกำหนด' })
+          db.prepare("UPDATE work_orders SET status='เกินเวลา', esc_code=?, esc_name=?, esc_ts=?, esc_log=? WHERE id=?")
+            .run(last ? last.code : w.esc_code, last ? last.name : w.esc_name, nowTS(), JSON.stringify(log), w.id)
+        }
+        continue
+      }
+      // ถึงเวลาไล่ขั้นถัดไปหรือยัง (นับจากครั้งไล่ล่าสุด)
+      const level = w.esc_level || 0
+      const sinceEsc = minutesSince(w.esc_ts) ?? elapsed
+      if (sinceEsc >= stepMin) {
+        const chain = backupChain(w.executor_code)
+        const next = chain[level] // level 0 → คนสำรองคนแรก, ...
+        if (next) {
+          const log = safeJson(w.esc_log)
+          log.push({ at: nowTS(), to: next.name, reason: 'ยังไม่รับทราบ' })
+          db.prepare('UPDATE work_orders SET esc_level=?, esc_code=?, esc_name=?, esc_ts=?, esc_log=? WHERE id=?')
+            .run(level + 1, next.code, next.name, nowTS(), JSON.stringify(log), w.id)
+        }
+      }
+    }
+  } catch (e) { console.error('escalateUrgent failed:', e.message) }
+}
+function safeJson(s) { try { return JSON.parse(s || '[]') } catch { return [] } }
+setInterval(escalateUrgent, 20 * 1000) // ตรวจทุก 20 วินาที
+// ฟีดสถานะงานด่วนสำหรับ CEO — เวลา ส่ง/เห็น/รับทราบ + สายไล่ระดับ + นับถอยหลัง
+api.get('/work-orders/ceo-feed', requireAuth, (req, res) => {
+  const rows = db.prepare("SELECT * FROM work_orders WHERE urgent=1 ORDER BY id DESC LIMIT 50").all().map((w) => {
+    const seenMin = w.seen_ts ? minutesSince(w.created_ts) : null
+    return {
+      ...woRow(w),
+      seen_after_min: w.seen_ts ? round1((tsToMs(w.seen_ts) - tsToMs(w.created_ts)) / 60000) : null,
+      ack_after_min: w.ack_ts ? round1((tsToMs(w.ack_ts) - tsToMs(w.created_ts)) / 60000) : null,
+      elapsed_min: round1(minutesSince(w.created_ts) ?? 0),
+      remaining_min: round1(Math.max(0, (w.deadline_min || 5) - (minutesSince(w.created_ts) ?? 0))),
+      esc_log: safeJson(w.esc_log),
+    }
+  })
+  res.json({ now: nowTS(), rows })
+})
+function round1(n) { return Math.round(n * 10) / 10 }
+// ตั้งค่างานด่วน: กำหนดรับ (นาที), ช่วงไล่ระดับ (นาที), ตัวจบสาย (รหัสพนักงาน)
+api.get('/settings/urgent', requireAuth, (_req, res) => res.json({
+  step_min: Number(getSetting('urgent_step_min', '2')) || 2,
+  deadline_min: Number(getSetting('urgent_deadline_min', '5')) || 5,
+  fallback_code: getSetting('urgent_fallback_code', ''),
+}))
+api.put('/settings/urgent', adminOnly, (req, res) => {
+  const b = req.body || {}
+  if (b.step_min != null) setSetting('urgent_step_min', String(Number(b.step_min) || 2))
+  if (b.deadline_min != null) setSetting('urgent_deadline_min', String(Number(b.deadline_min) || 5))
+  if (b.fallback_code != null) setSetting('urgent_fallback_code', String(b.fallback_code))
+  res.json({ ok: true })
 })
 api.delete('/work-orders/:id', canWrite, (req, res) => { db.prepare('DELETE FROM work_orders WHERE id=?').run(req.params.id); res.json({ ok: true }) })
 // สถิติใบสั่งงานของผู้รับงาน (สำหรับผูก KPI / หักคะแนนเมื่อเกินกำหนด)
@@ -2409,15 +2521,28 @@ api.get('/notifications', (req, res) => {
   const out = []
   const todayISO = new Date().toISOString().slice(0, 10)
   const woDone = (s) => s === 'เสร็จ' || s === 'ตรวจผ่าน'
-  // ใบสั่งงานที่สั่งให้ฉัน แต่ยังไม่กดรับทราบ → เด้งเตือนให้รับทราบ
-  for (const r of db.prepare("SELECT * FROM work_orders WHERE ack=0 AND executor=?").all(req.user.name)) {
-    out.push({ kind: 'wo', icon: 'warn', title: `ใบสั่งงานใหม่ ${r.no} — กดรับทราบ`, sub: `${r.project || r.scope || ''} · สั่งโดย ${r.reviewer}${r.due_date ? ' · ครบ ' + r.due_date : ''}`, page: 'workorders' })
+  // ใบสั่งงานที่สั่งให้ฉัน (หรือถูกไล่ระดับมาถึงฉัน) แต่ยังไม่กดรับทราบ → เด้งเตือนให้รับทราบ
+  for (const r of db.prepare("SELECT * FROM work_orders WHERE ack=0 AND status NOT IN ('ยกเลิก') AND (executor=? OR esc_name=?)").all(req.user.name, req.user.name)) {
+    if (r.urgent) {
+      const remain = Math.max(0, (r.deadline_min || 5) - (minutesSince(r.created_ts) ?? 0))
+      const overdue = r.status === 'เกินเวลา'
+      out.push({ kind: 'wo-urgent', icon: 'danger', title: `🔴 งานด่วน ${r.no} — รับทราบด่วน!`, sub: `${r.project || r.scope || ''} · ${overdue ? 'เกินกำหนดแล้ว' : 'เหลือ ' + round1(remain) + ' นาที'} · สั่งโดย ${r.reviewer}`, page: 'workorders' })
+    } else {
+      out.push({ kind: 'wo', icon: 'warn', title: `ใบสั่งงานใหม่ ${r.no} — กดรับทราบ`, sub: `${r.project || r.scope || ''} · สั่งโดย ${r.reviewer}${r.due_date ? ' · ครบ ' + r.due_date : ''}`, page: 'workorders' })
+    }
   }
   // ผู้สั่งงาน (reviewer) — เตือนความคืบหน้าของใบที่ตัวเองสั่ง
   for (const r of db.prepare("SELECT * FROM work_orders WHERE reviewer=?").all(req.user.name)) {
+    // งานด่วนยังไม่รับ — เตือนผู้สั่ง (CEO) พร้อมสถานะไล่ระดับ
+    if (r.urgent && !r.ack) {
+      if (r.status === 'เกินเวลา')
+        out.push({ kind: 'wo-urgent-miss', icon: 'danger', title: `⛔ งานด่วน ${r.no} เกินกำหนด ยังไม่มีใครรับ`, sub: `${r.project || r.scope || ''} · ตอนนี้อยู่ที่ ${r.esc_name || r.executor || '-'}`, page: 'workorders' })
+      else if ((r.esc_level || 0) > 0)
+        out.push({ kind: 'wo-urgent-esc', icon: 'warn', title: `⚠️ งานด่วน ${r.no} ยังไม่รับ — ไล่ไปที่ ${r.esc_name || '-'}`, sub: `${r.project || r.scope || ''} · ${r.seen_ts ? 'เห็นแล้ว' : 'ยังไม่มีใครเปิด'}`, page: 'workorders' })
+    }
     // ผู้รับงานกด "รับทราบ" แล้ว (กำลังจะเริ่มงาน)
     if (r.ack && r.status === 'รับทราบ')
-      out.push({ kind: 'wo-ack', icon: 'info', title: `${r.executor || 'ผู้รับงาน'} รับทราบใบสั่งงาน ${r.no} แล้ว`, sub: `${r.project || r.scope || ''}${r.ack_date ? ' · ' + r.ack_date : ''}`, page: 'workorders' })
+      out.push({ kind: 'wo-ack', icon: 'info', title: `${r.ack_by || r.executor || 'ผู้รับงาน'} รับทราบใบสั่งงาน ${r.no} แล้ว`, sub: `${r.project || r.scope || ''}${r.ack_date ? ' · ' + r.ack_date : ''}`, page: 'workorders' })
     // ผู้รับงานทำเสร็จ ส่งงานแล้ว → ผู้สั่งต้องตรวจรับ
     if (r.status === 'เสร็จ')
       out.push({ kind: 'wo-submit', icon: 'warn', title: `ใบสั่งงาน ${r.no} ส่งงานแล้ว — รอตรวจรับ`, sub: `${r.executor || ''} · ${r.project || r.scope || ''}`, page: 'workorders' })

@@ -138,6 +138,7 @@ for (const n of ['CEO', 'แม่บ้าน']) db.prepare('INSERT OR IGNORE I
 // add a column to an existing table if it's missing (lightweight migration)
 function ensureColumn(table, column, type) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (cols.length === 0) return // ตารางยังไม่ถูกสร้าง (ฐานข้อมูลใหม่เอี่ยม) → ข้ามไปก่อน กันบูตครั้งแรกพัง
   if (!cols.some((c) => c.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
   }
@@ -211,6 +212,8 @@ for (const c of ['carport_customer', 'carport_contractor', 'road_customer', 'roa
 db.prepare('UPDATE houses SET house_customer = area_sqm*price_customer WHERE (house_customer IS NULL OR house_customer=0) AND COALESCE(area_sqm,0)>0 AND COALESCE(price_customer,0)>0').run()
 db.prepare('UPDATE houses SET house_contractor = area_sqm*price_contractor WHERE (house_contractor IS NULL OR house_contractor=0) AND COALESCE(area_sqm,0)>0 AND COALESCE(price_contractor,0)>0').run()
 db.prepare("UPDATE installments SET side='customer' WHERE side IS NULL OR side=''").run()
+// ===== CEO สั่งงานด้วยเสียง: คนสำรอง (work_orders columns ย้ายไปหลัง CREATE TABLE work_orders) =====
+ensureColumn('employees', 'backup_code', 'TEXT') // คนสำรอง (รหัสพนักงาน) — งานด่วนถ้าคนหลักไม่รับ ไล่ไปหาคนนี้
 // หัวข้อใหญ่ (หมวดงวดงาน) ที่ผู้ใช้เพิ่มเองต่อบ้าน — นอกเหนือจาก 3 หมวดมาตรฐาน (ตัวบ้าน/โรงจอดรถ/ถนน-รั้ว)
 db.exec(`CREATE TABLE IF NOT EXISTS house_categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,6 +270,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS work_orders (
   score INTEGER, commendation TEXT, lessons TEXT,
   status TEXT, ack INTEGER, ack_by TEXT, ack_date TEXT, by TEXT, created TEXT
 )`)
+// คอลัมน์งานด่วน + สั่งงานด้วยเสียง (ต่อจาก CREATE TABLE work_orders เพื่อให้ฐานข้อมูลใหม่ก็มีครบ)
+for (const [c, t] of [
+  ['urgent', 'INTEGER'],        // 1 = งานด่วน (ต้องรับภายในกำหนด)
+  ['created_ts', 'TEXT'],       // เวลาสั่งงานแบบละเอียด (YYYY-MM-DD HH:MM:SS) สำหรับนับถอยหลัง
+  ['deadline_min', 'INTEGER'],  // ต้องรับภายในกี่นาที (งานด่วน ค่าเริ่ม 5)
+  ['seen', 'INTEGER'], ['seen_ts', 'TEXT'],   // ผู้รับ "เปิดดู" แล้วเมื่อไหร่
+  ['ack_ts', 'TEXT'],           // เวลากดรับทราบแบบละเอียด
+  ['esc_level', 'INTEGER'],     // ไล่ระดับถึงขั้นที่เท่าไหร่ (0 = คนหลัก)
+  ['esc_code', 'TEXT'], ['esc_name', 'TEXT'], ['esc_ts', 'TEXT'], // ตอนนี้อยู่ที่ใคร
+  ['esc_log', 'TEXT'],          // ประวัติการไล่ระดับ (JSON)
+  ['source', 'TEXT'],           // 'voice' ถ้ามาจากสั่งงานด้วยเสียงของ CEO
+]) ensureColumn('work_orders', c, t)
 
 // ===== ประเมินผลรายเดือน (PMS / KPI) =====
 db.exec(`CREATE TABLE IF NOT EXISTS pms_reviews (
@@ -297,7 +312,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS cashflows (
 db.exec(`CREATE TABLE IF NOT EXISTS ledger (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   date TEXT, house_code TEXT, kind TEXT, category TEXT, item TEXT,
-  amount INTEGER, budget INTEGER, method TEXT, party TEXT, note TEXT, by TEXT, created TEXT
+  amount INTEGER, budget INTEGER, method TEXT, party TEXT, note TEXT, by TEXT, created TEXT, date_iso TEXT
 )`)
 
 // ===== เฟส 3: QC Checklist / รายงานหน้างาน / ตรวจรับงวด =====
