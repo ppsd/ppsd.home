@@ -80,6 +80,7 @@ export const nav: NavDef[] = [
   { id: 'qc', label: 'ตรวจงาน QC', icon: 'M9 11l3 3 8-8 M20 12v7H4V5h11' },
   { id: 'sitereport', label: 'รายงานหน้างาน', icon: 'M4 5h16v14H4z M8 9h8 M8 13h8 M8 17h5' },
   { id: 'qcsummary', label: 'สรุป QC (ผู้บริหาร)', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18', gate: 'pms' },
+  { id: 'ceovoice', label: 'สั่งงานด้วยเสียง (CEO)', icon: 'M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z M5 11a7 7 0 0014 0 M12 18v3 M8 21h8', gate: 'pms' },
   { id: 'safety', label: 'ความปลอดภัย', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z M9 12l2 2 4-4' },
   { id: 'handover', label: 'ส่งมอบ / รับรองงาน', icon: 'M4 7h16v11H4z M4 7l8 6 8-6 M8 21h8' },
   { id: 'docreg', label: 'ทะเบียนเอกสาร', icon: 'M4 4h9l4 4v12H4z M13 4v4h4 M8 13h6 M8 16h6', gate: 'finance' },
@@ -99,7 +100,7 @@ export const nav: NavDef[] = [
 // จัดเมนูเป็นแผนก — dashboard อยู่บนสุด (เดี่ยว) ที่เหลือย่อยตามแผนก กดเปิด/ปิดได้
 export interface NavGroup { id: string; label: string; icon: string; items: string[] }
 export const navGroups: NavGroup[] = [
-  { id: 'construct', label: 'ก่อสร้าง', icon: 'M3 21h18 M5 21V7l7-4 7 4v14 M9 21v-6h6v6', items: ['houses', 'gantt', 'issues', 'workorders', 'qc', 'qcsummary', 'sitedocs', 'sitereport', 'safety', 'handover'] },
+  { id: 'construct', label: 'ก่อสร้าง', icon: 'M3 21h18 M5 21V7l7-4 7 4v14 M9 21v-6h6v6', items: ['ceovoice', 'houses', 'gantt', 'issues', 'workorders', 'qc', 'qcsummary', 'sitedocs', 'sitereport', 'safety', 'handover'] },
   { id: 'procure', label: 'จัดซื้อ', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01', items: ['procurement'] },
   { id: 'finance', label: 'บัญชี / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', items: ['installments', 'customers', 'sales', 'expenses', 'costing', 'express', 'docreg', 'audit'] },
   { id: 'people', label: 'บุคคล (HR)', icon: 'M16 19c0-2.8-2.2-5-5-5s-5 2.2-5 5 M11 11a3 3 0 100-6 3 3 0 000 6 M18 13.2a3 3 0 10-2.4-5.4', items: ['time', 'hr', 'pms'] },
@@ -114,6 +115,7 @@ export const titles: Record<string, [string, string]> = {
   gantt: ['หน้างาน', 'แผนงาน / ไทม์ไลน์'],
   issues: ['หน้างาน', 'ปัญหาหน้างาน'],
   workorders: ['หน้างาน', 'ใบสั่งงาน + ควบคุมคุณภาพ (WO/QC)'],
+  ceovoice: ['ก่อสร้าง', 'สั่งงานด้วยเสียง (CEO)'],
   sitedocs: ['หน้างาน', 'เอกสารหน้างาน (RFI/RFA/NCR/VO)'],
   qc: ['หน้างาน', 'ตรวจงาน QC (Checklist)'],
   sitereport: ['หน้างาน', 'รายงานหน้างาน (Daily / Weekly)'],

@@ -142,7 +142,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   })()
 
   // ----- employee form -----
-  const blankEmp = { name: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0' }
+  const blankEmp = { name: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '' }
   const [addingEmp, setAddingEmp] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [emp, setEmp] = useState(blankEmp)
@@ -165,14 +165,14 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   }
   const startEdit = (e: typeof employees[number]) => {
     setEditId(e.id)
-    setEmp({ ...blankEmp, name: e.name, role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0) })
+    setEmp({ ...blankEmp, name: e.name, role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0), backup_code: (e as { backup_code?: string }).backup_code || '' })
     setEmpSig(''); setAddingEmp(true); setEmpErr('')
   }
   const submitEmp = async () => {
     setEmpErr('')
     if (emp.pin && !/^\d{4}$/.test(emp.pin)) { setEmpErr('PIN ต้องเป็นตัวเลข 4 หลัก (หรือเว้นว่างให้ระบบสุ่มให้)'); return }
     try {
-      const body = { ...emp, base: unMoney(emp.base), children: Number(emp.children) || 0, sick_used: Number(emp.sick_used), personal_used: Number(emp.personal_used), vacation_used: Number(emp.vacation_used), retention: unMoney(emp.retention), student_loan: unMoney(emp.student_loan), retention_opening: unMoney(emp.retention_opening), work_days: Number(emp.work_days) || 0, signature: empSig || undefined }
+      const body = { ...emp, base: unMoney(emp.base), children: Number(emp.children) || 0, sick_used: Number(emp.sick_used), personal_used: Number(emp.personal_used), vacation_used: Number(emp.vacation_used), retention: unMoney(emp.retention), student_loan: unMoney(emp.student_loan), retention_opening: unMoney(emp.retention_opening), work_days: Number(emp.work_days) || 0, backup_code: emp.backup_code || '', signature: empSig || undefined }
       if (editId) {
         await app.updateEmployee(editId, body)
         setEmpPinShown('แก้ไขข้อมูลพนักงานเรียบร้อย (ภาษี/ประกันสังคมคำนวณใหม่ให้แล้ว)')
@@ -275,6 +275,10 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <input style={field} type="date" value={emp.start} onChange={(e) => setEmp({ ...emp, start: e.target.value })} />
                   <select style={field} value={emp.status} onChange={(e) => setEmp({ ...emp, status: e.target.value })}>{['ทดลองงาน', 'ทำงาน', 'ลาออก'].map((s) => <option key={s}>{s}</option>)}</select>
                   <input style={field} placeholder="PIN ลงเวลา 4 หลัก (เว้นว่าง=สุ่ม)" maxLength={4} value={emp.pin} onChange={(e) => setEmp({ ...emp, pin: e.target.value.replace(/\D/g, '') })} />
+                  <select style={field} value={emp.backup_code} onChange={(e) => setEmp({ ...emp, backup_code: e.target.value })} title="งานด่วน: ถ้าคนนี้ไม่รับใน 5 นาที ระบบไล่ไปหาคนสำรอง">
+                    <option value="">คนสำรอง (งานด่วน) — ไม่ระบุ</option>
+                    {employees.filter((x) => x.status !== 'ลาออก' && x.name !== emp.name).map((x) => <option key={x.code} value={x.code}>สำรอง: {x.name}</option>)}
+                  </select>
                   <label className="hov-f3f5f7" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', cursor: 'pointer' }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M5 21h14" /></svg>
                     {empSig ? 'เปลี่ยนลายเซ็น' : 'อัปโหลดลายเซ็น'}

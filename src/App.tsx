@@ -30,6 +30,7 @@ import ExpressExport from './components/ExpressExport'
 import QcSummary from './components/QcSummary'
 import CostFinance from './components/CostFinance'
 import Pms from './components/Pms'
+import CeoVoice from './components/CeoVoice'
 import Login from './Login'
 import { useApp } from './store'
 import { titles, type ModalDef } from './data'
@@ -40,7 +41,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -50,6 +51,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
+  ceovoice: 'ceovoice',
 }
 
 export default function App() {
@@ -300,6 +302,7 @@ export default function App() {
           {page === 'qcsummary' && <QcSummary onOpenKpi={() => go('pms')} />}
           {page === 'costing' && <CostFinance />}
           {page === 'pms' && <Pms />}
+          {page === 'ceovoice' && <CeoVoice />}
         </main>
       </div>
 

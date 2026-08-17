@@ -105,6 +105,7 @@ export interface ApiEmployee {
   student_loan?: number
   retention_opening?: number
   daily_rate?: number
+  backup_code?: string
 }
 export interface ApiPayroll extends ApiEmployee {
   base: number

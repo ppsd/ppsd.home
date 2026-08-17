@@ -45,6 +45,12 @@ export default function WorkOrders() {
 
   const load = () => api.get<WorkOrder[]>('/work-orders').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
+  // งานด่วนที่สั่งถึงฉัน (หรือไล่ระดับมาถึงฉัน) และยังไม่เคยเปิด → บันทึกว่า "เห็นแล้ว" (read receipt ให้ CEO)
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mine = (rows as any[]).filter((r) => r.urgent && !r.seen && !r.ack && (r.executor === user?.name || r.esc_name === user?.name))
+    mine.forEach((r) => api.post('/work-orders/' + r.id + '/seen', {}).catch(() => {}))
+  }, [rows, user?.name])
 
   const newWo = (): void => setEdit({ id: 0, priority: 'ปกติ', executor: '', project: '', house_code: '', due_date: '', due_time: '', line_group: '', scope: '', dod: {}, budget: '', qc: QC_DEFAULT.map((q) => ({ ...q })), status: 'สั่งงาน' })
   const openEdit = (r: WorkOrder) => setEdit({ ...r, qc: r.qc?.length ? r.qc : QC_DEFAULT.map((q) => ({ ...q })), dod: r.dod || {} })
