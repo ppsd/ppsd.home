@@ -1049,6 +1049,41 @@ api.get('/attendance/summary', requireSalary, (req, res) => {
   })
   res.json({ period, periodLabel: periodLabelTH(period), monthStart, monthEnd, rows })
 })
+// รายละเอียดลงเวลา "รายวัน" ของพนักงานคนเดียว — เห็นว่าวันไหน มา/สาย/ปรับปรุง/ลา/ขาด/หยุด (ไว้เช็กว่าวันไหนหาย)
+api.get('/attendance/detail', requireSalary, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  const e = db.prepare('SELECT * FROM employees WHERE code=?').get(req.query.emp_code)
+  if (!e) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  const [yy, mm] = period.split('-').map(Number)
+  const monthStart = isoDate(new Date(yy, mm - 1, 1))
+  const monthEnd = isoDate(new Date(yy, mm, 0))
+  const today = todayISO()
+  const upTo = monthEnd < today ? monthEnd : today // ไม่แสดงวันในอนาคต
+  const noAttendance = NO_ATTENDANCE_ROLES.includes(e.role) || e.pay_type === 'รายวัน'
+  // ข้อมูลประกอบ
+  const att = {}
+  for (const a of db.prepare("SELECT date,check_in,check_out,status FROM attendance WHERE emp_code=? AND date>=? AND date<=?").all(e.code, monthStart, monthEnd)) att[a.date] = a
+  const adj = new Set(db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(e.name, monthStart, monthEnd).map((x) => x.date))
+  const leaveDays = new Set()
+  for (const l of db.prepare("SELECT start_date,end_date FROM leaves WHERE emp_code=? AND status='อนุมัติ'").all(e.code))
+    for (const d of eachDay(l.start_date, l.end_date || l.start_date)) leaveDays.add(d)
+  const holi = new Set(db.prepare('SELECT date FROM holidays WHERE date>=? AND date<=?').all(monthStart, monthEnd).map((x) => x.date))
+  const days = []
+  const counts = { came: 0, late: 0, adj: 0, leave: 0, absent: 0, holiday: 0 }
+  for (const d of eachDay(monthStart, upTo)) {
+    const dow = new Date(d + 'T00:00:00').getDay()
+    const a = att[d]
+    let status
+    if (dow === 0 || holi.has(d)) { status = 'หยุด'; counts.holiday++ }
+    else if (a && a.check_in) { status = a.status === 'สาย' ? 'สาย' : 'มา'; counts.came++; if (a.status === 'สาย') counts.late++ }
+    else if (adj.has(d)) { status = 'ปรับปรุง'; counts.came++; counts.adj++ }
+    else if (leaveDays.has(d)) { status = 'ลา'; counts.leave++ }
+    else if (noAttendance) { status = 'ยกเว้น' }
+    else { status = 'ขาด'; counts.absent++ }
+    days.push({ date: d, dow, status, check_in: a?.check_in || '', check_out: a?.check_out || '' })
+  }
+  res.json({ code: e.code, name: e.name, role: e.role || '', period, no_attendance: noAttendance, days, counts })
+})
 // per-employee background-tracking links (managers/admin) — generates a token if missing
 api.get('/track-config', requireManager, (_req, res) => {
   const emps = db.prepare("SELECT id,code,name,track_token FROM employees WHERE status != 'ลาออก' ORDER BY name").all()

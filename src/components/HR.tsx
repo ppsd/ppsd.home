@@ -38,9 +38,18 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const nowYM = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
   const [attMonth, setAttMonth] = useState(nowYM())
   const [attSum, setAttSum] = useState<{ periodLabel: string; rows: { code: string; name: string; role: string; present: number; late: number; absent: number; leave: number; came: number; adj?: number; no_attendance?: boolean }[] } | null>(null)
-  useEffect(() => {
-    if (tab === 'attsummary') apiClient.get<typeof attSum>('/attendance/summary?period=' + attMonth).then(setAttSum).catch(() => setAttSum(null))
-  }, [tab, attMonth])
+  const loadAttSum = () => apiClient.get<typeof attSum>('/attendance/summary?period=' + attMonth).then(setAttSum).catch(() => setAttSum(null))
+  useEffect(() => { if (tab === 'attsummary') loadAttSum() /* eslint-disable-next-line */ }, [tab, attMonth])
+  // รายละเอียดลงเวลารายวันต่อคน (เปิดดูว่าวันไหนมา/ขาด + เติมได้)
+  type DayCell = { date: string; dow: number; status: string; check_in: string; check_out: string }
+  type Detail = { code: string; name: string; role: string; no_attendance?: boolean; days: DayCell[]; counts: { came: number; late: number; adj: number; leave: number; absent: number; holiday: number } }
+  const [detail, setDetail] = useState<Detail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const openDetail = (code: string) => { setDetailLoading(true); apiClient.get<Detail>(`/attendance/detail?emp_code=${encodeURIComponent(code)}&period=${attMonth}`).then(setDetail).catch(() => setDetail(null)).finally(() => setDetailLoading(false)) }
+  const fillDay = async (code: string, date: string) => {
+    try { await apiClient.post('/attendance/manual', { emp_code: code, date, check_in: '08:00', check_out: '17:00' }); openDetail(code); loadAttSum() }
+    catch (e) { alert((e as Error).message) }
+  }
   // ลงเวลา (kiosk) — ดู/แก้ไขตามเดือน + เพิ่มด้วยมือ (กรณีลืมตอกบัตร/ระบบยังไม่เปิด)
   type AttRow = { id: number; emp_code: string; emp_name: string; date: string; check_in: string; check_out: string; status: string }
   const [attListMonth, setAttListMonth] = useState(nowYM())
@@ -684,8 +693,8 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <tbody>
                 {(!attSum || attSum.rows.length === 0) && <tr><td colSpan={6} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>{attSum ? 'ไม่มีข้อมูลในเดือนนี้' : 'กำลังโหลด…'}</td></tr>}
                 {attSum?.rows.map((r) => (
-                  <tr key={r.code} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
-                    <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name}</td>
+                  <tr key={r.code} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6', cursor: 'pointer' }} onClick={() => openDetail(r.code)} title="คลิกดูรายวัน">
+                    <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name} <span style={{ fontSize: 11, color: '#30506A' }}>›</span></td>
                     <td style={{ ...td, color: '#5C6770' }}>{r.role || '—'}</td>
                     <td className="num" style={{ ...td, textAlign: 'center', fontWeight: 600, color: '#2E7D55' }}>{r.came}{r.adj ? <span style={{ display: 'block', fontSize: 9.5, fontWeight: 500, color: '#94A0A8' }}>(ปรับปรุง {r.adj})</span> : null}</td>
                     <td className="num" style={{ ...td, textAlign: 'center', fontWeight: 600, color: r.late ? '#B7791F' : '#94A0A8' }}>{r.late}</td>
@@ -695,7 +704,51 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                 ))}
               </tbody>
             </table>
-            <div style={{ fontSize: 11.5, color: '#94A0A8', padding: '10px 18px' }}>“มาทำงาน” รวมวันที่มาสายด้วย · “ขาด” = วันทำงาน (จ.–ส.) ที่ไม่มาและไม่มีใบลา/ปรับปรุงเวลา · อาทิตย์เป็นวันหยุด</div>
+            <div style={{ fontSize: 11.5, color: '#94A0A8', padding: '10px 18px' }}>“มาทำงาน” รวมวันที่มาสายด้วย · “ขาด” = วันทำงาน (จ.–ส.) ที่ไม่มาและไม่มีใบลา/ปรับปรุงเวลา · อาทิตย์เป็นวันหยุด · <b>คลิกชื่อคนเพื่อดูรายวัน</b></div>
+            {/* ----- รายละเอียดรายวันต่อคน ----- */}
+            {(detail || detailLoading) && (
+              <div onClick={() => setDetail(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(20,28,36,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}>
+                <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 620, maxWidth: '100%', maxHeight: '86vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}>
+                  {detailLoading && !detail ? <div style={{ padding: 40, textAlign: 'center', color: '#94A0A8' }}>กำลังโหลด…</div> : detail && (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid #EEF1F4', position: 'sticky', top: 0, background: '#fff' }}>
+                        <div><div style={{ fontSize: 16, fontWeight: 700 }}>{detail.name}</div><div style={{ fontSize: 12, color: '#94A0A8' }}>{detail.role} · {attSum?.periodLabel}</div></div>
+                        <button onClick={() => setDetail(null)} style={{ marginLeft: 'auto', border: 'none', background: '#F1F4F6', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 16, color: '#5C6770' }}>✕</button>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px 20px', fontSize: 12 }}>
+                        <span style={{ color: '#2E7D55', fontWeight: 600 }}>มา {detail.counts.came}</span>
+                        {detail.counts.adj > 0 && <span style={{ color: '#5C6770' }}>· ปรับปรุง {detail.counts.adj}</span>}
+                        {detail.counts.late > 0 && <span style={{ color: '#B7791F' }}>· สาย {detail.counts.late}</span>}
+                        {detail.counts.leave > 0 && <span style={{ color: '#30506A' }}>· ลา {detail.counts.leave}</span>}
+                        {!detail.no_attendance && <span style={{ color: '#C24036', fontWeight: 600 }}>· ขาด {detail.counts.absent}</span>}
+                      </div>
+                      {!detail.no_attendance && detail.counts.absent > 0 && (
+                        <div style={{ margin: '0 20px 10px', padding: '8px 12px', background: '#FBF6EC', border: '1px solid #ECDCB8', borderRadius: 9, fontSize: 12, color: '#8A6D3B' }}>
+                          วันที่ขึ้น “ขาด” = ไม่มีบัตรตอกและไม่มีปรับปรุงเวลา — ถ้าจริงๆ มาทำงาน กดปุ่ม “เติมมา” ในวันนั้นได้เลย
+                        </div>
+                      )}
+                      <div style={{ padding: '0 20px 20px' }}>
+                        {detail.days.map((d) => {
+                          const wd = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'][d.dow]
+                          const st = d.status
+                          const col = st === 'มา' ? { c: '#2E7D55', bg: '#E7F3EC' } : st === 'สาย' ? { c: '#B7791F', bg: '#F6ECD6' } : st === 'ปรับปรุง' ? { c: '#30506A', bg: '#E2E9EF' } : st === 'ลา' ? { c: '#30506A', bg: '#E2E9EF' } : st === 'หยุด' ? { c: '#94A0A8', bg: '#F1F4F6' } : st === 'ยกเว้น' ? { c: '#2E7D55', bg: '#E7F3EC' } : { c: '#C24036', bg: '#FBEEEC' }
+                          const dnum = Number(d.date.slice(8, 10))
+                          return (
+                            <div key={d.date} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 4px', borderTop: '1px solid #F4F6F8' }}>
+                              <span className="num" style={{ width: 30, textAlign: 'right', fontWeight: 600, color: d.dow === 0 ? '#C0852C' : '#3C4750' }}>{dnum}</span>
+                              <span style={{ width: 26, fontSize: 11.5, color: '#94A0A8' }}>{wd}</span>
+                              <span style={{ fontSize: 11.5, fontWeight: 600, color: col.c, background: col.bg, padding: '2px 10px', borderRadius: 20, minWidth: 62, textAlign: 'center' }}>{st === 'ยกเว้น' ? 'ไม่ต้องลงเวลา' : st}</span>
+                              {d.check_in && <span className="num" style={{ fontSize: 12, color: '#5C6770' }}>{d.check_in}{d.check_out ? ' – ' + d.check_out : ''}</span>}
+                              {st === 'ขาด' && <button onClick={() => fillDay(detail.code, d.date)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 11px', cursor: 'pointer' }}>+ เติมมา</button>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
 
