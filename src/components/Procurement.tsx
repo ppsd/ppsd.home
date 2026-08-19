@@ -74,7 +74,7 @@ function QuotePanel({ prId }: { prId: number }) {
   )
 }
 
-export default function Procurement() {
+export default function Procurement({ houseCode }: { houseCode?: string }) {
   const [tab, setTab] = useState('pr')
   const [quoteFor, setQuoteFor] = useState<number | null>(null)
   const [docPr, setDocPr] = useState<ApiPR | null>(null)
@@ -127,7 +127,7 @@ export default function Procurement() {
 
   // inline PO create form
   const [addingPo, setAddingPo] = useState(false)
-  const [poForm, setPoForm] = useState({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: '' })
+  const [poForm, setPoForm] = useState({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '' })
   // picking a vendor auto-fills its default credit terms (จัดซื้อแก้ได้)
   const pickVendor = (name: string) => {
     const v = vendors.find((x) => x.name === name)
@@ -147,13 +147,13 @@ export default function Procurement() {
     setPoErr('')
     try {
       await addPO({ vendor: poForm.vendor, item: poForm.item, amount: Number(poForm.amount.replace(/,/g, '')) || 0, pr_no: poForm.pr_no, image: poImg || undefined, payment_type: poForm.payment_type, credit_days: Number(poForm.credit_days) || 0, house_code: poForm.house_code })
-      setAddingPo(false); setPoForm({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: '' }); setPoImg('')
+      setAddingPo(false); setPoForm({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '' }); setPoImg('')
     } catch (e) { setPoErr((e as Error).message) }
   }
 
   // inline PR create form (with optional product image) — หลายรายการในใบเดียว
   const [addingPr, setAddingPr] = useState(false)
-  const [prForm, setPrForm] = useState({ house_code: '', category: '' })
+  const [prForm, setPrForm] = useState({ house_code: houseCode || '', category: '' })
   const emptyLine = { desc: '', qty: '', unit: '', price: '' }
   const [prLines, setPrLines] = useState<{ desc: string; qty: string; unit: string; price: string }[]>([{ ...emptyLine }])
   const lineAmt = (l: { qty: string; price: string }) => { const q = Number(l.qty.replace(/,/g, '')) || 0; const p = Number(l.price.replace(/,/g, '')) || 0; return q > 0 ? q * p : p }
@@ -181,7 +181,7 @@ export default function Procurement() {
     setPrBusy(true); setPrErr('')
     try {
       await addPr({ house_code: prForm.house_code, category: prForm.category, items, images: prImgs })
-      setAddingPr(false); setPrForm({ house_code: '', category: '' }); setPrLines([{ ...emptyLine }]); setPrImgs([])
+      setAddingPr(false); setPrForm({ house_code: houseCode || '', category: '' }); setPrLines([{ ...emptyLine }]); setPrImgs([])
     } catch (e) { setPrErr((e as Error).message) } finally { setPrBusy(false) }
   }
 
@@ -212,14 +212,17 @@ export default function Procurement() {
   ]
   const [q, setQ] = useState('')
   const ql = q.trim().toLowerCase()
-  const prList = (prs || []).filter((r) => `${r.no} ${r.house} ${r.item} ${r.by} ${r.status}`.toLowerCase().includes(ql))
-  const poList = purchaseOrders.filter((r) => `${r.no} ${r.vendor} ${r.item} ${r.status}`.toLowerCase().includes(ql))
+  // house-first: ถ้าเปิดจากในบ้าน → แสดงเฉพาะจัดซื้อของบ้านนั้น
+  const prHouseOf = (r: { house_code?: string; house?: string }) => r.house_code || houses.find((x) => x.code === r.house || x.name === r.house)?.code || ''
+  const prList = (prs || []).filter((r) => (!houseCode || prHouseOf(r) === houseCode) && `${r.no} ${r.house} ${r.item} ${r.by} ${r.status}`.toLowerCase().includes(ql))
+  const poList = purchaseOrders.filter((r) => (!houseCode || r.house_code === houseCode) && `${r.no} ${r.vendor} ${r.item} ${r.status}`.toLowerCase().includes(ql))
+  const shownTabs = houseCode ? procurementTabs.filter((t) => t.id === 'pr' || t.id === 'po') : procurementTabs
   const searchBox = <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเลขที่/ผู้ขาย/รายการ" style={{ ...prField, width: 220, padding: '6px 10px', fontSize: 12.5 }} />
 
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px', flexWrap: 'wrap' }}>
-        {procurementTabs.map((t) => {
+        {shownTabs.map((t) => {
           const active = tab === t.id
           return (
             <div key={t.id} onClick={() => setTab(t.id)} style={{ fontSize: 13, fontWeight: active ? 600 : 500, color: active ? '#fff' : '#5C6770', background: active ? '#30506A' : 'transparent', padding: '7px 14px', borderRadius: 7, cursor: 'pointer' }}>{t.label}</div>
@@ -239,10 +242,12 @@ export default function Procurement() {
           {addingPr && (
             <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10, marginBottom: 10 }}>
-                <select style={prField} value={prForm.house_code} onChange={(e) => setPrForm({ ...prForm, house_code: e.target.value })}>
-                  <option value="">— เลือกบ้าน —</option>
-                  {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
-                </select>
+                {houseCode
+                  ? <div style={{ ...prField, background: '#F7F9FB', color: '#5C6770', display: 'flex', alignItems: 'center' }}>🏠 {houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
+                  : <select style={prField} value={prForm.house_code} onChange={(e) => setPrForm({ ...prForm, house_code: e.target.value })}>
+                      <option value="">— เลือกบ้าน —</option>
+                      {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
+                    </select>}
                 <select style={prField} value={prForm.category} onChange={(e) => setPrForm({ ...prForm, category: e.target.value })}>
                   <option value="">— หมวด —</option>
                   {PR_CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -367,10 +372,12 @@ export default function Procurement() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12.5, color: '#5C6770' }}>ซื้อให้บ้าน:</span>
-                <select style={{ ...prField, width: 'auto', minWidth: 180 }} value={poForm.house_code} onChange={(e) => setPoForm({ ...poForm, house_code: e.target.value })}>
-                  <option value="">— ไม่ระบุบ้าน —</option>
-                  {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
-                </select>
+                {houseCode
+                  ? <div style={{ ...prField, width: 'auto', minWidth: 180, background: '#F7F9FB', color: '#5C6770' }}>🏠 {houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
+                  : <select style={{ ...prField, width: 'auto', minWidth: 180 }} value={poForm.house_code} onChange={(e) => setPoForm({ ...poForm, house_code: e.target.value })}>
+                      <option value="">— ไม่ระบุบ้าน —</option>
+                      {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
+                    </select>}
                 <span style={{ fontSize: 12.5, color: '#5C6770', marginLeft: 8 }}>การชำระเงิน:</span>
                 <select style={{ ...prField, width: 'auto' }} value={poForm.payment_type} onChange={(e) => setPoForm({ ...poForm, payment_type: e.target.value })}>
                   <option value="cash">เงินสด</option>

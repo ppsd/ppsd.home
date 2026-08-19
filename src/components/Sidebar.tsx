@@ -30,7 +30,7 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   useEffect(() => { const g = groupOf(activePage); if (g) setOpen((o) => (o[g] ? o : { ...o, [g]: true })) /* eslint-disable-next-line */ }, [activePage])
   const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }))
 
-  const dash = byId['dashboard']
+  const home = byId['houses'] // house-first: บ้าน เป็นเมนูหลักบนสุด
   const itemRow = (item: NavDef, indent: boolean) => {
     const active = activePage === item.id
     return (
@@ -56,7 +56,7 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
       <div style={{ height: 1, background: '#2C3F4F', margin: '0 14px 8px' }} />
 
       <nav style={{ flex: 1, overflowY: 'auto', padding: '4px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {visible(dash) && itemRow(dash, false)}
+        {visible(home) && itemRow(home, false)}
 
         {groups.map((g) => {
           const isOpen = !!open[g.id]

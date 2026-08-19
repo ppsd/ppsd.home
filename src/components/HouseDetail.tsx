@@ -12,6 +12,8 @@ import { api } from '../api'
 import FilesPanel from './FilesPanel'
 import ContractorsPanel from './ContractorsPanel'
 import InstallmentSection from './InstallmentSection'
+import WorkOrders from './WorkOrders'
+import Procurement from './Procurement'
 
 function Cell({ label, value, color, sub, br, bb }: { label: string; value: string; color: string; sub?: string; br?: boolean; bb?: boolean }) {
   return (
@@ -88,8 +90,10 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
 
   const detailTabsDef = [
     { id: 'installments', label: 'งวดงาน', count: String(houseInst.length) },
+    { id: 'workorders', label: 'ใบสั่งงาน', count: '' },
     { id: 'contractors', label: 'ช่าง / ผู้รับเหมา', count: '' },
     { id: 'issues', label: 'ปัญหา', count: String(houseIssues.length) },
+    { id: 'procurement', label: 'จัดซื้อ', count: '' },
     { id: 'expenses', label: 'รายจ่าย', count: '' },
   ]
 
@@ -248,6 +252,12 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
               </div>
             </>
           )}
+
+          {/* TAB: ใบสั่งงาน (เฉพาะบ้านนี้) */}
+            {tab === 'workorders' && <div style={{ padding: 16 }}><WorkOrders houseCode={house.code} /></div>}
+
+          {/* TAB: จัดซื้อ (เฉพาะบ้านนี้) */}
+            {tab === 'procurement' && <div style={{ padding: 16 }}><Procurement houseCode={house.code} /></div>}
 
           {/* TAB: ช่าง/ผู้รับเหมา */}
             {tab === 'contractors' && <ContractorsPanel houseCode={house.code} />}

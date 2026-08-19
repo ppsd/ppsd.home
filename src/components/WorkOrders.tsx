@@ -35,11 +35,13 @@ function stColor(s: string) {
 
 type Draft = Partial<WorkOrder> & { id: number }
 
-export default function WorkOrders() {
+export default function WorkOrders({ houseCode }: { houseCode?: string }) {
   const { data, user, refreshNotifications } = useApp()
   const employees = data.employees || []
   const houses = data.houses
-  const [rows, setRows] = useState<WorkOrder[]>([])
+  const [allRows, setRows] = useState<WorkOrder[]>([])
+  // house-first: ถ้าเปิดจากในบ้าน → แสดงเฉพาะใบสั่งงานของบ้านนั้น
+  const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [edit, setEdit] = useState<Draft | null>(null)
   const [printing, setPrinting] = useState<WorkOrder | null>(null)
 
@@ -48,11 +50,11 @@ export default function WorkOrders() {
   // งานด่วนที่สั่งถึงฉัน (หรือไล่ระดับมาถึงฉัน) และยังไม่เคยเปิด → บันทึกว่า "เห็นแล้ว" (read receipt ให้ CEO)
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mine = (rows as any[]).filter((r) => r.urgent && !r.seen && !r.ack && (r.executor === user?.name || r.esc_name === user?.name))
+    const mine = (allRows as any[]).filter((r) => r.urgent && !r.seen && !r.ack && (r.executor === user?.name || r.esc_name === user?.name))
     mine.forEach((r) => api.post('/work-orders/' + r.id + '/seen', {}).catch(() => {}))
-  }, [rows, user?.name])
+  }, [allRows, user?.name])
 
-  const newWo = (): void => setEdit({ id: 0, priority: 'ปกติ', executor: '', project: '', house_code: '', due_date: '', due_time: '', line_group: '', scope: '', dod: {}, budget: '', qc: QC_DEFAULT.map((q) => ({ ...q })), status: 'สั่งงาน' })
+  const newWo = (): void => setEdit({ id: 0, priority: 'ปกติ', executor: '', project: '', house_code: houseCode || '', due_date: '', due_time: '', line_group: '', scope: '', dod: {}, budget: '', qc: QC_DEFAULT.map((q) => ({ ...q })), status: 'สั่งงาน' })
   const openEdit = (r: WorkOrder) => setEdit({ ...r, qc: r.qc?.length ? r.qc : QC_DEFAULT.map((q) => ({ ...q })), dod: r.dod || {} })
   const save = async () => {
     if (!edit) return
@@ -83,7 +85,7 @@ export default function WorkOrders() {
               </select>
             </div>
             <div><div style={lbl}>ระดับความสำคัญ</div><select style={field} value={e.priority} onChange={(ev) => set({ priority: ev.target.value })}>{PRIORITIES.map((p) => <option key={p}>{p}</option>)}</select></div>
-            <div><div style={lbl}>บ้าน/โครงการ (ถ้ามี)</div><select style={field} value={e.house_code} onChange={(ev) => set({ house_code: ev.target.value })}><option value="">—</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select></div>
+            <div><div style={lbl}>บ้าน/โครงการ (ถ้ามี)</div>{houseCode ? <div style={{ ...field, background: '#F7F9FB', color: '#5C6770' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div> : <select style={field} value={e.house_code} onChange={(ev) => set({ house_code: ev.target.value })}><option value="">—</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select>}</div>
           </div>
           <div style={{ marginTop: 12 }}><div style={lbl}>ชื่องาน / โครงการ (Task Name)</div><input style={field} value={e.project} onChange={(ev) => set({ project: ev.target.value })} /></div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 12 }}>

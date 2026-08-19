@@ -58,7 +58,7 @@ export default function App() {
   const app = useApp()
   const { user, data, loading } = app
 
-  const [page, setPage] = useState<Page>('dashboard')
+  const [page, setPage] = useState<Page>('houses') // house-first: เปิดมาเจอรายการบ้านก่อน
   const [selId, setSelId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
