@@ -718,8 +718,10 @@ function computePayroll(period) {
     const absent = (isDaily || exempt) ? 0 : absentDaysInMonth(e, period)
     const daily = isDaily ? dailyRate : Math.round((e.base || 0) / 26)
     const deductDays = isDaily ? 0 : (rejected + unpaid + absent)
-    // ประกันสังคมของรายวันคิดจากรายได้จริงในงวด (5% เพดาน 875) ที่เหลือใช้ค่าที่บันทึกไว้
+    // ประกันสังคม + ภาษี ของรายวัน คิดจาก "รายได้จริงในงวด" (ค่าแรง×วันทำงาน) ไม่ใช่ค่าแรง×26
+    // (กันบั๊ก: รายวันค่าแรงสูง/ทำงาน 0 วัน แล้วภาษีพุ่งเพราะคูณ 26)
     const sso = isDaily ? ssoOf(basePay) : e.sso
+    const tax = isDaily ? taxMonthlyOf(basePay, sso, allowanceOf({ spouse: e.spouse, children: e.children })) : e.tax
     // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนสิ้นเดือน
     const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a
     // retention: หักเดือนละ (e.retention) แต่ไม่เกินเพดานที่เหลือ — ครบ 5,000 แล้วหักเป็น 0 เอง
@@ -728,7 +730,7 @@ function computePayroll(period) {
     const monthly = e.retention ?? 0
     const retention = Math.max(0, Math.min(monthly, RETENTION_CAP - paidBefore))
     return {
-      ...e, ot, sso, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
+      ...e, ot, sso, tax, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
       daily_rate: dailyRate, work_days: workDays, exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
       retention, student_loan: e.student_loan || 0, advance,
       retention_cap: RETENTION_CAP, retention_opening: opening,
@@ -787,7 +789,10 @@ function advanceLimit(emp, period) {
   const monthEnd = isoDate(new Date(yy, mm, 0))
   const today = todayISO()
   const upTo = monthEnd < today ? monthEnd : today // นับได้ไม่เกินวันนี้ (วันที่เบิก)
-  const worked = db.prepare("SELECT COUNT(*) c FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").get(emp.code, monthStart, upTo).c
+  // วันทำงาน = วันที่มีบัตรตอก + วันที่ปรับปรุงเวลาอนุมัติแล้ว (ลืมตอกแต่มาจริง) — ไม่นับซ้ำ
+  const punchDates = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(emp.code, monthStart, upTo).map((r) => r.date))
+  for (const a of db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(emp.name, monthStart, upTo)) punchDates.add(a.date)
+  const worked = punchDates.size
   const daily = emp.pay_type === 'รายวัน' ? emp.base : Math.round((emp.base || 0) / ADVANCE_DAY_BASE)
   return { worked, daily, limit: Math.floor(daily * worked / ADVANCE_DAILY_DIVISOR) }
 }
