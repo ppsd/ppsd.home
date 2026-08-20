@@ -31,7 +31,7 @@ const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color:
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12, textAlign: 'left' }
 const td: React.CSSProperties = { padding: '10px 14px', fontSize: 13 }
 
-export default function SiteDocs() {
+export default function SiteDocs({ houseCode }: { houseCode?: string }) {
   const { data } = useApp()
   const houses = data.houses
   const [kind, setKind] = useState('rfi')
@@ -39,7 +39,7 @@ export default function SiteDocs() {
   const [adding, setAdding] = useState(false)
   const [printing, setPrinting] = useState<SiteDoc | null>(null)
   const [q, setQ] = useState('')
-  const blank = { house_code: '', discipline: '', title: '', detail: '', assignee: '', cost_impact: '', days_impact: '' }
+  const blank = { house_code: houseCode || '', discipline: '', title: '', detail: '', assignee: '', cost_impact: '', days_impact: '' }
   const [f, setF] = useState(blank)
   const [err, setErr] = useState('')
 
@@ -59,7 +59,7 @@ export default function SiteDocs() {
   const remove = async (id: number) => { if (confirm('ลบเอกสารนี้?')) { await api.del('/site-docs/' + id); load() } }
 
   const ql = q.trim().toLowerCase()
-  const list = rows.filter((r) => !ql || `${r.no} ${r.title} ${r.discipline} ${r.house_code} ${r.status}`.toLowerCase().includes(ql))
+  const list = rows.filter((r) => (!houseCode || r.house_code === houseCode) && (!ql || `${r.no} ${r.title} ${r.discipline} ${r.house_code} ${r.status}`.toLowerCase().includes(ql)))
 
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -81,10 +81,12 @@ export default function SiteDocs() {
       {adding && (
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: 12 }}>
-            <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}>
-              <option value="">— เลือกบ้าน/โครงการ —</option>
-              {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
-            </select>
+            {houseCode
+              ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
+              : <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}>
+                <option value="">— เลือกบ้าน/โครงการ —</option>
+                {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
+              </select>}
             <select style={field} value={f.discipline} onChange={(e) => setF({ ...f, discipline: e.target.value })}>
               <option value="">— หมวดงาน —</option>
               {DISCIPLINES.map((d) => <option key={d}>{d}</option>)}

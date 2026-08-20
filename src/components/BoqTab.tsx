@@ -24,17 +24,18 @@ export function boqTotals(b: { items: BoqItem[]; markup_pct: number; vat_pct: nu
 
 const emptyItem: BoqItem = { cat: 'โครงสร้าง', desc: '', qty: 0, unit: '', mat: 0, lab: 0 }
 
-export default function BoqTab() {
+export default function BoqTab({ houseCode }: { houseCode?: string }) {
   const { data, reloadData } = useApp()
   const houses = data.houses
-  const [rows, setRows] = useState<Boq[]>([])
+  const [allRows, setRows] = useState<Boq[]>([])
+  const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [edit, setEdit] = useState<Boq | null>(null) // BOQ ที่กำลังแก้/สร้าง
   const [printing, setPrinting] = useState<Boq | null>(null)
 
   const load = () => api.get<Boq[]>('/boqs').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
 
-  const newBoq = () => setEdit({ id: 0, no: '', house_code: '', title: 'ประมาณราคาก่อสร้าง', markup_pct: 20, vat_pct: 7, items: [{ ...emptyItem }], date: '' })
+  const newBoq = () => setEdit({ id: 0, no: '', house_code: houseCode || '', title: 'ประมาณราคาก่อสร้าง', markup_pct: 20, vat_pct: 7, items: [{ ...emptyItem }], date: '' })
   const save = async () => {
     if (!edit) return
     const body = { house_code: edit.house_code, title: edit.title, markup_pct: edit.markup_pct, vat_pct: edit.vat_pct, items: edit.items.filter((i) => i.desc.trim()) }
@@ -62,10 +63,12 @@ export default function BoqTab() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 2fr 1fr 1fr', gap: 10 }}>
-          <select style={field} value={edit.house_code} onChange={(e) => setEdit({ ...edit, house_code: e.target.value })}>
-            <option value="">— เลือกบ้าน/โครงการ —</option>
-            {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
-          </select>
+          {houseCode
+            ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
+            : <select style={field} value={edit.house_code} onChange={(e) => setEdit({ ...edit, house_code: e.target.value })}>
+              <option value="">— เลือกบ้าน/โครงการ —</option>
+              {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
+            </select>}
           <input style={field} placeholder="ชื่อ BOQ" value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 12, color: '#5C6770' }}>ดำเนินการ+กำไร</span><input type="number" style={{ ...field, width: 60 }} value={edit.markup_pct} onChange={(e) => setEdit({ ...edit, markup_pct: Number(e.target.value) })} /><span style={{ fontSize: 12 }}>%</span></div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 12, color: '#5C6770' }}>VAT</span><input type="number" style={{ ...field, width: 60 }} value={edit.vat_pct} onChange={(e) => setEdit({ ...edit, vat_pct: Number(e.target.value) })} /><span style={{ fontSize: 12 }}>%</span></div>

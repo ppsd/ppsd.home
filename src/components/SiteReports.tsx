@@ -33,13 +33,14 @@ const WEEKLY_FIELDS: { k: string; label: string; area?: boolean }[] = [
   { k: 'note', label: 'หมายเหตุ', area: true },
 ]
 
-export default function SiteReports() {
+export default function SiteReports({ houseCode }: { houseCode?: string }) {
   const { data } = useApp()
   const houses = data.houses
   const [kind, setKind] = useState<'daily' | 'weekly'>('daily')
-  const [rows, setRows] = useState<SiteReport[]>([])
+  const [allRows, setRows] = useState<SiteReport[]>([])
+  const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [adding, setAdding] = useState(false)
-  const [house, setHouse] = useState('')
+  const [house, setHouse] = useState(houseCode || '')
   const [form, setForm] = useState<Record<string, string>>({})
   const [printing, setPrinting] = useState<SiteReport | null>(null)
 
@@ -49,7 +50,7 @@ export default function SiteReports() {
 
   const submit = async () => {
     await api.post('/site-reports', { kind, house_code: house, data: form })
-    setForm({}); setHouse(''); setAdding(false); load()
+    setForm({}); setHouse(houseCode || ''); setAdding(false); load()
   }
   const remove = async (id: number) => { if (confirm('ลบรายงานนี้?')) { await api.del('/site-reports/' + id); load() } }
 
@@ -82,10 +83,12 @@ export default function SiteReports() {
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
           <div style={{ marginBottom: 12 }}>
             <div style={lbl}>บ้าน / โครงการ</div>
-            <select style={field} value={house} onChange={(e) => setHouse(e.target.value)}>
-              <option value="">— เลือกบ้าน —</option>
-              {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
-            </select>
+            {houseCode
+              ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
+              : <select style={field} value={house} onChange={(e) => setHouse(e.target.value)}>
+                <option value="">— เลือกบ้าน —</option>
+                {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
+              </select>}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 12 }}>
             {fields.map((f) => (

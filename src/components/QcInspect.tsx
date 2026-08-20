@@ -21,12 +21,13 @@ function deriveStatus(items: QcItem[]) {
   return 'กำลังตรวจ'
 }
 
-export default function QcInspect() {
+export default function QcInspect({ houseCode }: { houseCode?: string }) {
   const { data } = useApp()
   const houses = data.houses
-  const [rows, setRows] = useState<QcInspection[]>([])
+  const [allRows, setRows] = useState<QcInspection[]>([])
+  const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [adding, setAdding] = useState(false)
-  const blankF = { house_code: '', category: '', type: '', zone: '', inspector: '', start_date: '', end_date: '' }
+  const blankF = { house_code: houseCode || '', category: '', type: '', zone: '', inspector: '', start_date: '', end_date: '' }
   const [f, setF] = useState(blankF)
   const [imgs, setImgs] = useState<string[]>([])
   const [openId, setOpenId] = useState<number | null>(null)
@@ -77,10 +78,12 @@ export default function QcInspect() {
       {adding && (
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
-            <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}>
-              <option value="">— เลือกบ้าน —</option>
-              {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
-            </select>
+            {houseCode
+              ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
+              : <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}>
+                <option value="">— เลือกบ้าน —</option>
+                {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
+              </select>}
             <select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value, type: '' })}>
               <option value="">— หมวดงาน —</option>
               {QC_CATEGORIES.map((c) => <option key={c}>{c}</option>)}

@@ -19,14 +19,15 @@ const lbl: React.CSSProperties = { fontSize: 12, color: '#5C6770', marginBottom:
 interface JhaStep { step: string; hazard: string; control: string; risk: string }
 const emptyJha: JhaStep = { step: '', hazard: '', control: '', risk: 'ปานกลาง' }
 
-export default function Safety() {
+export default function Safety({ houseCode }: { houseCode?: string }) {
   const { data } = useApp()
   const houses = data.houses
   const [kind, setKind] = useState<Kind>('ppe')
-  const [rows, setRows] = useState<SafetyRecord[]>([])
+  const [allRows, setRows] = useState<SafetyRecord[]>([])
+  const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [adding, setAdding] = useState(false)
   const [printing, setPrinting] = useState<SafetyRecord | null>(null)
-  const [house, setHouse] = useState('')
+  const [house, setHouse] = useState(houseCode || '')
   const [title, setTitle] = useState('')
   // per-kind form state
   const [ppe, setPpe] = useState<{ supervisor: string; workers: string; checks: Record<string, boolean>; note: string }>({ supervisor: '', workers: '', checks: {}, note: '' })
@@ -36,7 +37,7 @@ export default function Safety() {
   const load = () => api.get<SafetyRecord[]>('/safety-records?kind=' + kind).then(setRows).catch(() => setRows([]))
   useEffect(() => { load(); setAdding(false) /* eslint-disable-next-line */ }, [kind])
 
-  const resetForm = () => { setHouse(''); setTitle(''); setPpe({ supervisor: '', workers: '', checks: {}, note: '' }); setTbt({ time: '', speaker: '', attendees: '', hazards: '', controls: '', note: '' }); setJha({ analyst: '', reviewer: '', steps: [{ ...emptyJha }] }) }
+  const resetForm = () => { setHouse(houseCode || ''); setTitle(''); setPpe({ supervisor: '', workers: '', checks: {}, note: '' }); setTbt({ time: '', speaker: '', attendees: '', hazards: '', controls: '', note: '' }); setJha({ analyst: '', reviewer: '', steps: [{ ...emptyJha }] }) }
   const submit = async () => {
     const payload: Record<string, unknown> = kind === 'ppe' ? { ...ppe } : kind === 'toolbox' ? { ...tbt } : { analyst: jha.analyst, reviewer: jha.reviewer, steps: jha.steps.filter((s) => s.step.trim()) }
     await api.post('/safety-records', { kind, house_code: house, title, data: payload })
@@ -60,7 +61,7 @@ export default function Safety() {
       {adding && (
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 2fr', gap: 12, marginBottom: 12 }}>
-            <div><div style={lbl}>บ้าน / โครงการ</div><select style={field} value={house} onChange={(e) => setHouse(e.target.value)}><option value="">— เลือกบ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select></div>
+            <div><div style={lbl}>บ้าน / โครงการ</div>{houseCode ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div> : <select style={field} value={house} onChange={(e) => setHouse(e.target.value)}><option value="">— เลือกบ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select>}</div>
             <div><div style={lbl}>{kind === 'jha' ? 'ชื่องานที่วิเคราะห์' : kind === 'toolbox' ? 'หัวข้อพูดคุย' : 'พื้นที่/งานที่ตรวจ'}</div><input style={field} value={title} onChange={(e) => setTitle(e.target.value)} /></div>
           </div>
 

@@ -18,14 +18,15 @@ const lbl: React.CSSProperties = { fontSize: 12, color: '#5C6770', marginBottom:
 
 interface CheckItem { name: string; pass: boolean }
 
-export default function Handover() {
+export default function Handover({ houseCode }: { houseCode?: string }) {
   const { data } = useApp()
   const houses = data.houses
   const [kind, setKind] = useState<Kind>('handover')
-  const [rows, setRows] = useState<HandoverDoc[]>([])
+  const [allRows, setRows] = useState<HandoverDoc[]>([])
+  const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [adding, setAdding] = useState(false)
   const [printing, setPrinting] = useState<HandoverDoc | null>(null)
-  const [house, setHouse] = useState('')
+  const [house, setHouse] = useState(houseCode || '')
   const [title, setTitle] = useState('')
   const [hd, setHd] = useState<{ scope: string; deliver_to: string; deliver_by: string; items: CheckItem[]; defects: string; warranty: string }>({ scope: '', deliver_to: '', deliver_by: '', items: [{ name: '', pass: true }], defects: '', warranty: '' })
   const [cert, setCert] = useState({ contractor: '', project: '', value: '', period: '', scope: '', rating: 'ดีมาก', statement: '', issuer: '', issuer_role: '' })
@@ -33,7 +34,7 @@ export default function Handover() {
   const load = () => api.get<HandoverDoc[]>('/handovers?kind=' + kind).then(setRows).catch(() => setRows([]))
   useEffect(() => { load(); setAdding(false) /* eslint-disable-next-line */ }, [kind])
 
-  const reset = () => { setHouse(''); setTitle(''); setHd({ scope: '', deliver_to: '', deliver_by: '', items: [{ name: '', pass: true }], defects: '', warranty: '' }); setCert({ contractor: '', project: '', value: '', period: '', scope: '', rating: 'ดีมาก', statement: '', issuer: '', issuer_role: '' }) }
+  const reset = () => { setHouse(houseCode || ''); setTitle(''); setHd({ scope: '', deliver_to: '', deliver_by: '', items: [{ name: '', pass: true }], defects: '', warranty: '' }); setCert({ contractor: '', project: '', value: '', period: '', scope: '', rating: 'ดีมาก', statement: '', issuer: '', issuer_role: '' }) }
   const submit = async () => {
     const payload = kind === 'handover'
       ? { ...hd, items: hd.items.filter((i) => i.name.trim()) }
@@ -74,7 +75,7 @@ export default function Handover() {
       {adding && (
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 2fr', gap: 12, marginBottom: 12 }}>
-            <div><div style={lbl}>บ้าน / โครงการ</div><select style={field} value={house} onChange={(e) => setHouse(e.target.value)}><option value="">— เลือกบ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select></div>
+            <div><div style={lbl}>บ้าน / โครงการ</div>{houseCode ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div> : <select style={field} value={house} onChange={(e) => setHouse(e.target.value)}><option value="">— เลือกบ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select>}</div>
             <div><div style={lbl}>ชื่อเรื่อง/งาน</div><input style={field} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === 'handover' ? 'เช่น ส่งมอบงานงวดที่ 3' : 'เช่น รับรองผลงานก่อสร้างบ้าน'} /></div>
           </div>
 

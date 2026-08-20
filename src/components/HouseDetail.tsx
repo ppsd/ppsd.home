@@ -14,6 +14,12 @@ import ContractorsPanel from './ContractorsPanel'
 import InstallmentSection from './InstallmentSection'
 import WorkOrders from './WorkOrders'
 import Procurement from './Procurement'
+import QcInspect from './QcInspect'
+import SiteDocs from './SiteDocs'
+import SiteReports from './SiteReports'
+import Safety from './Safety'
+import Handover from './Handover'
+import BoqTab from './BoqTab'
 
 function Cell({ label, value, color, sub, br, bb }: { label: string; value: string; color: string; sub?: string; br?: boolean; bb?: boolean }) {
   return (
@@ -93,6 +99,12 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
     { id: 'workorders', label: 'ใบสั่งงาน', count: '' },
     { id: 'contractors', label: 'ช่าง / ผู้รับเหมา', count: '' },
     { id: 'issues', label: 'ปัญหา', count: String(houseIssues.length) },
+    { id: 'boq', label: 'BOQ', count: '' },
+    { id: 'qc', label: 'QC ตรวจงาน', count: '' },
+    { id: 'sitedocs', label: 'เอกสารหน้างาน', count: '' },
+    { id: 'sitereport', label: 'รายงานหน้างาน', count: '' },
+    { id: 'safety', label: 'ความปลอดภัย', count: '' },
+    { id: 'handover', label: 'ส่งมอบงาน', count: '' },
     { id: 'procurement', label: 'จัดซื้อ', count: '' },
     { id: 'expenses', label: 'รายจ่าย', count: '' },
   ]
@@ -258,6 +270,24 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
 
           {/* TAB: จัดซื้อ (เฉพาะบ้านนี้) */}
             {tab === 'procurement' && <div style={{ padding: 16 }}><Procurement houseCode={house.code} /></div>}
+
+          {/* TAB: BOQ (เฉพาะบ้านนี้) */}
+            {tab === 'boq' && <div style={{ padding: 16 }}><BoqTab houseCode={house.code} /></div>}
+
+          {/* TAB: QC ตรวจงาน (เฉพาะบ้านนี้) */}
+            {tab === 'qc' && <div style={{ padding: 16 }}><QcInspect houseCode={house.code} /></div>}
+
+          {/* TAB: เอกสารหน้างาน (เฉพาะบ้านนี้) */}
+            {tab === 'sitedocs' && <div style={{ padding: 16 }}><SiteDocs houseCode={house.code} /></div>}
+
+          {/* TAB: รายงานหน้างาน (เฉพาะบ้านนี้) */}
+            {tab === 'sitereport' && <div style={{ padding: 16 }}><SiteReports houseCode={house.code} /></div>}
+
+          {/* TAB: ความปลอดภัย (เฉพาะบ้านนี้) */}
+            {tab === 'safety' && <div style={{ padding: 16 }}><Safety houseCode={house.code} /></div>}
+
+          {/* TAB: ส่งมอบงาน (เฉพาะบ้านนี้) */}
+            {tab === 'handover' && <div style={{ padding: 16 }}><Handover houseCode={house.code} /></div>}
 
           {/* TAB: ช่าง/ผู้รับเหมา */}
             {tab === 'contractors' && <ContractorsPanel houseCode={house.code} />}
