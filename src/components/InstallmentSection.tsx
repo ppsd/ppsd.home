@@ -50,11 +50,18 @@ export default function InstallmentSection({
   const total = rows.reduce((s, r) => s + r.amount, 0)
   const settled = rows.reduce((s, r) => s + (r.paid || 0), 0) // ยอดที่จ่าย/เก็บจริง (รวมบางส่วน)
 
-  // customer-side งวด can only be collected after ตรวจรับ passes (ผ่าน / ผ่านบางส่วน)
+  // customer-side งวด: ตรวจรับผ่าน (ผ่าน / ผ่านบางส่วน) แล้วหรือยัง
   const acceptOk = (r: ApiInstallment) => accMap[r.id] === 'ผ่าน' || accMap[r.id] === 'ผ่านบางส่วน'
+  // ตรวจรับผ่านแล้ว หรือไม่ใช่ฝั่งลูกค้า → ไม่ต้องเตือน (ใช้แสดง * เตือนบนปุ่ม)
   const canCollect = (r: ApiInstallment) => !isCustomer || r.status === doneStatus || acceptOk(r)
+  // ยังไม่ตรวจรับ → เตือนก่อน แต่ยังกดเก็บเงินได้ (คืน true = ให้ทำต่อ)
+  const warnIfNotAccepted = (r: ApiInstallment) => {
+    if (!isCustomer || r.status === doneStatus || acceptOk(r)) return true
+    return window.confirm(`งวดที่ ${r.no} ยังไม่ได้ตรวจรับงาน\n\nยืนยันเก็บเงินงวดนี้เลยหรือไม่?`)
+  }
 
   const doCollect = async (r: ApiInstallment) => {
+    if (!warnIfNotAccepted(r)) return
     try {
       await app.collectInstallment(r.id, houseCode)
     } catch (e) {
@@ -63,6 +70,7 @@ export default function InstallmentSection({
   }
 
   const partialPay = async (r: ApiInstallment) => {
+    if (!warnIfNotAccepted(r)) return
     const remaining = r.amount - (r.paid || 0)
     const word = isCustomer ? 'เก็บ' : 'จ่าย'
     const ans = window.prompt(`${word}งวดที่ ${r.no} ทีละบางส่วน — ใส่จำนวนเงินครั้งนี้\n(คงเหลือ ${remaining.toLocaleString('en-US')})`, String(remaining))
@@ -175,8 +183,8 @@ export default function InstallmentSection({
                 </td>
                 <td style={{ padding: '10px 18px', textAlign: 'center' }}>
                   <div style={{ display: 'flex', gap: 5, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
-                    {(() => { const ok = canCollect(r); return <button onClick={() => doCollect(r)} disabled={!ok} title={done ? 'ยกเลิกการจ่าย/เก็บทั้งงวด' : ok ? 'จ่าย/เก็บเต็มจำนวน' : 'ต้องตรวจรับงวดงานให้ผ่านก่อนถึงเบิกได้'} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#fff', background: done ? '#94A0A8' : ok ? accent : '#C4CCD3', border: 'none', borderRadius: 7, padding: '3px 9px', cursor: ok ? 'pointer' : 'not-allowed' }}>{done ? 'ยกเลิก' : actionLabel + 'เต็ม'}</button> })()}
-                    {!done && (() => { const ok = canCollect(r); return <button onClick={() => partialPay(r)} disabled={!ok} title={ok ? 'จ่าย/เก็บทีละบางส่วน' : 'ต้องตรวจรับงวดงานให้ผ่านก่อนถึงเบิกได้'} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: ok ? accent : '#B4BCC3', background: '#fff', border: `1px solid ${ok ? accent + '55' : '#E1E5EA'}`, borderRadius: 7, padding: '3px 9px', cursor: ok ? 'pointer' : 'not-allowed' }}>บางส่วน</button> })()}
+                    {(() => { const ok = canCollect(r); return <button onClick={() => doCollect(r)} title={done ? 'ยกเลิกการจ่าย/เก็บทั้งงวด' : ok ? 'จ่าย/เก็บเต็มจำนวน' : 'ยังไม่ได้ตรวจรับงวดนี้ — กดเพื่อเก็บเงิน (ระบบจะเตือนก่อน)'} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#fff', background: done ? '#94A0A8' : accent, border: 'none', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>{done ? 'ยกเลิก' : actionLabel + 'เต็ม'}{!done && !ok && ' *'}</button> })()}
+                    {!done && (() => { const ok = canCollect(r); return <button onClick={() => partialPay(r)} title={ok ? 'จ่าย/เก็บทีละบางส่วน' : 'ยังไม่ได้ตรวจรับงวดนี้ — กดเพื่อเก็บเงิน (ระบบจะเตือนก่อน)'} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: accent, background: '#fff', border: `1px solid ${accent}55`, borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>บางส่วน{!ok && ' *'}</button> })()}
                     {isCustomer && (() => { const ar = accMap[r.id]; const col = ar === 'ผ่าน' ? { c: '#2E7D55', b: '#CDE3D6' } : ar === 'ไม่ผ่าน' ? { c: '#C24036', b: '#E7CDC9' } : ar ? { c: '#B7791F', b: '#EAD9B6' } : { c: '#30506A', b: '#D2DAE1' }; return <button onClick={() => setAcceptFor(r)} title="ตรวจรับงวดงาน (ก่อนเบิก)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: col.c, background: '#fff', border: `1px solid ${col.b}`, borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>{ar ? `ตรวจรับ: ${ar}` : 'ตรวจรับ'}</button> })()}
                     {isCustomer && (r.paid || 0) > 0 && <button onClick={() => setReceipt(r)} title="พิมพ์ใบเสร็จรับเงิน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>ใบเสร็จ</button>}
                     <button onClick={() => startEdit(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>แก้ไข</button>
