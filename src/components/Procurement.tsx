@@ -9,6 +9,7 @@ import EfilingList from './EfilingList'
 import PrApprovalDoc from './PrApprovalDoc'
 import PoDoc from './PoDoc'
 import WhtDoc from './WhtDoc'
+import PaymentVoucher from './PaymentVoucher'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '10px 14px' }
@@ -80,6 +81,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const [docPr, setDocPr] = useState<ApiPR | null>(null)
   const [docPo, setDocPo] = useState<ApiPO | null>(null)
   const [docWht, setDocWht] = useState<ApiPayment | null>(null)
+  const [docVoucher, setDocVoucher] = useState<ApiPayment | null>(null)
   const { data, decidePr, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor } = useApp()
   // อนุมัติ/ปฏิเสธ PR — แสดงข้อความถ้าถูกกติกากันโกงบล็อก (เช่น อนุมัติใบตัวเอง / ต้องอนุมัติ 2 ชั้น)
   const doDecide = (id: number, status: string) => decidePr(id, status).catch((e) => alert((e as Error).message))
@@ -515,8 +517,9 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{r.wht_rate}%</td>
                   <td className="num" style={{ ...td, textAlign: 'right', color: '#C0852C', fontWeight: 600 }}>{baht(r.wht)}</td>
                   <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.net)}</td>
-                  <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
-                    <button onClick={() => setDocWht(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>พิมพ์</button>
+                  <td style={{ ...td, padding: '10px 18px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    <button onClick={() => setDocVoucher(r)} className="hov-f3f5f7" title="ใบจ่ายเงิน" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>ใบจ่ายเงิน</button>
+                    <button onClick={() => setDocWht(r)} className="hov-f3f5f7" title="หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>50 ทวิ</button>
                   </td>
                 </tr>
               ))}
@@ -632,6 +635,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
       {docPr && <PrApprovalDoc pr={docPr} onClose={() => setDocPr(null)} />}
       {docPo && <PoDoc po={docPo} houseName={houses.find((h) => h.code === docPo.house_code)?.name || docPo.house_code || ''} onClose={() => setDocPo(null)} />}
       {docWht && (() => { const emp = (data.employees || []).find((e) => e.name === docWht.payee); return <WhtDoc payment={docWht} payeeSignature={emp?.signature} payeeTaxId={emp?.tax_id || undefined} onClose={() => setDocWht(null)} /> })()}
+      {docVoucher && <PaymentVoucher payment={docVoucher} onClose={() => setDocVoucher(null)} />}
     </div>
   )
 }

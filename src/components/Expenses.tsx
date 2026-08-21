@@ -3,6 +3,8 @@ import { expenseCatFilters, expenseSummary } from '../erpData'
 import { catStyle, baht } from '../data'
 import { useApp } from '../store'
 import { exportXlsx, ExportButton } from '../exportCsv'
+import ExpenseVoucher from './ExpenseVoucher'
+import type { ApiExpense } from '../store'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '10px 14px' }
@@ -10,6 +12,7 @@ const td: React.CSSProperties = { padding: '10px 14px' }
 export default function Expenses({ onAddExpense }: { onAddExpense: () => void }) {
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [docExp, setDocExp] = useState<ApiExpense | null>(null)
   const { expenses } = useApp().data
 
   const todayISO = new Date().toISOString().slice(0, 10)
@@ -67,6 +70,7 @@ export default function Expenses({ onAddExpense }: { onAddExpense: () => void })
               <th style={th}>หมวด</th>
               <th style={th}>ผู้ขาย/ผู้รับ</th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'right' }}>จำนวนเงิน</th>
+              <th style={{ ...th, textAlign: 'center' }}>พิมพ์</th>
             </tr>
           </thead>
           <tbody>
@@ -80,6 +84,7 @@ export default function Expenses({ onAddExpense }: { onAddExpense: () => void })
                   <td style={td}><span style={{ fontSize: 11, fontWeight: 500, color: cs.c, background: cs.bg, padding: '2px 9px', borderRadius: 20 }}>{r.cat}</span></td>
                   <td style={{ ...td, color: '#5C6770' }}>{r.vendor}</td>
                   <td className="num" style={{ ...td, padding: '10px 18px', textAlign: 'right', fontWeight: 600 }}>{baht(r.amount)}</td>
+                  <td style={{ ...td, textAlign: 'center' }}><button onClick={() => setDocExp(r)} className="hov-f3f5f7" title="ใบจ่ายค่าใช้จ่าย" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ใบจ่าย</button></td>
                 </tr>
               )
             })}
@@ -88,10 +93,12 @@ export default function Expenses({ onAddExpense }: { onAddExpense: () => void })
             <tr style={{ borderTop: '2px solid #E1E5EA', background: '#F7F9FB' }}>
               <td colSpan={5} style={{ padding: '11px 18px', fontWeight: 600, color: '#5C6770' }}>รวมรายจ่าย (ตามตัวกรอง)</td>
               <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 700, fontSize: 14, color: '#C24036' }}>{baht(total)}</td>
+              <td />
             </tr>
           </tfoot>
         </table>
       </div>
+      {docExp && <ExpenseVoucher exp={docExp} houseName={docExp.house} onClose={() => setDocExp(null)} />}
     </div>
   )
 }
