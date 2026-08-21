@@ -61,9 +61,10 @@ export default function InstallmentSection({
   }
 
   const doCollect = async (r: ApiInstallment) => {
-    if (!warnIfNotAccepted(r)) return
+    const undo = r.status === doneStatus // จ่าย/เก็บครบแล้ว → กดปุ่มนี้ = ยกเลิก
+    if (!undo && !warnIfNotAccepted(r)) return
     try {
-      await app.collectInstallment(r.id, houseCode)
+      await app.collectInstallment(r.id, houseCode, undo)
     } catch (e) {
       alert((e as Error).message)
     }

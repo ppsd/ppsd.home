@@ -424,7 +424,7 @@ interface AppCtx {
   decideLeave: (id: number, status: string) => Promise<void>
   addTimeAdj: (b: Record<string, unknown>) => Promise<void>
   decideTimeAdj: (id: number, status: string) => Promise<void>
-  collectInstallment: (id: number, code: string) => Promise<void>
+  collectInstallment: (id: number, code: string, uncollect?: boolean) => Promise<void>
   updateInstallment: (id: number, b: Record<string, unknown>) => Promise<void>
   payInstallment: (id: number, amount: number) => Promise<void>
   deleteInstallment: (id: number) => Promise<void>
@@ -697,8 +697,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await api.post('/time-adjustments/' + id + '/decision', { status })
           await Promise.all([reload('timeAdjustments', '/time-adjustments'), reload('notifications', '/notifications')])
         },
-        collectInstallment: async (id, code) => {
-          await api.post('/installments/' + id + '/collect')
+        collectInstallment: async (id, code, uncollect) => {
+          await api.post('/installments/' + id + '/collect', { uncollect: !!uncollect })
           await Promise.all([
             reload('installments', '/installments'),
             reload('houses', '/houses'),
