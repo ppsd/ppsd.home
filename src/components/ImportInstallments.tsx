@@ -7,17 +7,47 @@ import { useApp } from '../store'
 interface Row { no: number; detail: string; amount: number; side: 'customer' | 'contractor'; due_iso?: string }
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 10px', outline: 'none' }
 
-// แยกข้อความที่วางมา (จาก Excel = คั่นด้วย tab) เป็นงวดงาน
+// หาจำนวนเงินในข้อความ — เอาที่ติดกับ "บาท" หรือ "เป็นเงิน" ก่อน, ไม่งั้นเอาเลขที่มากสุด
+function extractAmount(t: string): number {
+  let m = t.match(/([\d,]+(?:\.\d+)?)\s*บาท/); if (m) return Number(m[1].replace(/,/g, '')) || 0
+  m = t.match(/(?:เป็นเงิน|จำนวนเงิน|ยอดเงิน|ยอด)\s*([\d,]+(?:\.\d+)?)/); if (m) return Number(m[1].replace(/,/g, '')) || 0
+  const nums = [...t.matchAll(/[\d,]+(?:\.\d+)?/g)].map((x) => Number(x[0].replace(/,/g, ''))).filter((n) => n >= 100)
+  return nums.length ? Math.max(...nums) : 0
+}
+// ตัดคำว่า "งวดที่ N" และวลีจำนวนเงินออกจากรายละเอียด
+function cleanDetail(t: string): string {
+  return t.replace(/งวด(?:ที่|ที)?\s*\d{1,3}/, '')
+    .replace(/(?:เป็นเงิน|จำนวนเงิน|ยอดเงิน)?\s*[\d,]+(?:\.\d+)?\s*บาท(?:ถ้วน)?/g, '')
+    .replace(/\s+/g, ' ').replace(/^[\s:.\-–—)]+/, '').trim()
+}
+// แยกข้อความที่วางมาเป็นงวดงาน — รองรับ Excel (tab), Word (ย่อหน้าเดียว/หลายบรรทัด), ข้อความทั่วไป
 function parsePaste(text: string, side: 'customer' | 'contractor'): Row[] {
-  return text.split(/\r?\n/).map((ln) => ln.trim()).filter(Boolean).map((ln, i) => {
-    const cols = (ln.includes('\t') ? ln.split('\t') : ln.split(/\s{2,}|,|\|/)).map((c) => c.trim()).filter((c) => c !== '')
-    // หาจำนวนเงิน = คอลัมน์ตัวเลขตัวสุดท้าย
-    let amount = 0, amtIdx = -1
-    for (let j = cols.length - 1; j >= 0; j--) { const n = Number(cols[j].replace(/[,\s฿]/g, '')); if (cols[j].replace(/[,\s฿]/g, '') !== '' && !Number.isNaN(n) && n > 0) { amount = n; amtIdx = j; break } }
-    const noCol = cols[0] && /^\d{1,3}$/.test(cols[0]) ? Number(cols[0]) : i + 1
-    const detail = cols.filter((_, j) => j !== amtIdx && !(j === 0 && /^\d{1,3}$/.test(cols[0]))).join(' ').trim() || cols.filter((_, j) => j !== amtIdx).join(' ').trim()
-    return { no: noCol, detail, amount, side }
-  }).filter((r) => r.detail || r.amount > 0)
+  const clean = text.replace(/\r/g, '').trim()
+  if (!clean) return []
+  // 1) Excel: มี tab → แยกเป็นคอลัมน์
+  if (clean.includes('\t')) {
+    return clean.split(/\n+/).map((l) => l.trim()).filter(Boolean).map((ln, i) => {
+      const cols = ln.split('\t').map((c) => c.trim())
+      let amount = 0, amtIdx = -1
+      for (let j = cols.length - 1; j >= 0; j--) { const s = cols[j].replace(/[,\s฿]|บาท|ถ้วน/g, ''); const n = Number(s); if (s !== '' && !Number.isNaN(n) && n > 0) { amount = n; amtIdx = j; break } }
+      const noCol = cols[0] && /^\d{1,3}$/.test(cols[0]) ? Number(cols[0]) : i + 1
+      const detail = cols.filter((_, j) => j !== amtIdx && !(j === 0 && /^\d{1,3}$/.test(cols[0]))).join(' ').trim()
+      return { no: noCol, detail, amount, side }
+    }).filter((r) => r.detail || r.amount > 0)
+  }
+  // 2) Word: จับคำว่า "งวดที่ N" แล้วตัดเป็นงวด (แม้ทั้งหมดอยู่ย่อหน้าเดียว)
+  const markers = [...clean.matchAll(/งวด(?:ที่|ที)?\s*(\d{1,3})/g)]
+  if (markers.length >= 2) {
+    const out: Row[] = []
+    for (let i = 0; i < markers.length; i++) {
+      const s = markers[i].index!, e = i + 1 < markers.length ? markers[i + 1].index! : clean.length
+      const chunk = clean.slice(s, e)
+      out.push({ no: Number(markers[i][1]), detail: cleanDetail(chunk), amount: extractAmount(chunk), side })
+    }
+    return out.filter((r) => r.detail || r.amount > 0)
+  }
+  // 3) บรรทัดละงวด
+  return clean.split(/\n+/).map((l) => l.trim()).filter(Boolean).map((ln, i) => ({ no: i + 1, detail: cleanDetail(ln), amount: extractAmount(ln), side })).filter((r) => r.detail || r.amount > 0)
 }
 
 export default function ImportInstallments({ houseCode, houseName, onClose, onDone }: { houseCode: string; houseName: string; onClose: () => void; onDone: () => void }) {
@@ -83,7 +113,7 @@ export default function ImportInstallments({ houseCode, houseName, onClose, onDo
 
           {/* แหล่งข้อมูล */}
           <div style={{ display: 'flex', gap: 2, background: '#F1F4F6', borderRadius: 9, padding: 4, marginBottom: 14, width: 'fit-content' }}>
-            {([['file', '📄 อัปโหลดสัญญา (AI อ่านให้)'], ['paste', '📋 วางจาก Excel/ข้อความ']] as const).map(([v, l]) => (
+            {([['file', '📄 อัปโหลดสัญญา (AI อ่านให้)'], ['paste', '📋 วางจาก Excel / Word']] as const).map(([v, l]) => (
               <div key={v} onClick={() => setSrc(v)} style={{ fontSize: 12.5, fontWeight: src === v ? 600 : 500, color: src === v ? '#fff' : '#5C6770', background: src === v ? '#30506A' : 'transparent', padding: '6px 14px', borderRadius: 7, cursor: 'pointer' }}>{l}</div>
             ))}
           </div>
@@ -111,8 +141,9 @@ export default function ImportInstallments({ houseCode, houseName, onClose, onDo
           )}
           {src === 'paste' && (
             <div style={{ marginBottom: 14 }}>
-              <textarea value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={'วางจาก Excel ได้เลย (คัดลอกเซลล์มาวาง)\nตัวอย่าง 1 บรรทัด = 1 งวด:\n1\tเก็บมัดจำเริ่มก่อสร้าง\t487000\n2\tงานฐานรากแล้วเสร็จ\t487000'} style={{ ...field, width: '100%', minHeight: 120, resize: 'vertical', fontFamily: 'monospace' }} />
-              <button onClick={doParse} className="btn-primary" style={{ marginTop: 8, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer' }}>แปลงเป็นงวดงาน →</button>
+              <textarea value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={'วางจาก Excel หรือ Word ได้เลย — ก็อปข้อความงวดงานมาทั้งหมด ระบบตัดเป็นงวดให้เอง\n\nจาก Excel (คั่นด้วยแท็บ):\n1  เก็บมัดจำเริ่มก่อสร้าง  487,000\n\nจาก Word (ก็อปทั้งย่อหน้า):\nงวดที่ 1 เก็บมัดจำเริ่มก่อสร้าง เป็นเงิน 487,000 บาท งวดที่ 2 งานฐานรากแล้วเสร็จ เป็นเงิน 487,000 บาท …'} style={{ ...field, width: '100%', minHeight: 140, resize: 'vertical' }} />
+              <div style={{ fontSize: 11.5, color: '#94A0A8', margin: '6px 0' }}>ระบบจับคำว่า “งวดที่ 1, 2, 3…” และยอด “…บาท” ให้อัตโนมัติ — ตรวจ/แก้ในตารางก่อนบันทึกได้เสมอ</div>
+              <button onClick={doParse} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer' }}>แปลงเป็นงวดงาน →</button>
             </div>
           )}
 
