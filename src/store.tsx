@@ -319,6 +319,7 @@ export interface ApiFile {
   name: string
   mime: string
   size: number
+  category?: string
   uploaded: string
   uploader: string
 }

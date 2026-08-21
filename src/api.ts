@@ -61,4 +61,24 @@ export const api = {
     a.click()
     URL.revokeObjectURL(url)
   },
+  // อัปโหลดไฟล์แบบ raw (ไม่แปลง base64) — ส่งไฟล์ตรงๆ ใน body พร้อม meta ใน query
+  uploadFile: async <T>(file: File, meta: { house?: string; category?: string }) => {
+    const q = new URLSearchParams({ name: file.name, mime: file.type || 'application/octet-stream', house: meta.house || '', category: meta.category || '' })
+    const res = await fetch('/api/files?' + q.toString(), {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/octet-stream' },
+      body: file,
+    })
+    if (!res.ok) { let m = 'อัปโหลดไม่สำเร็จ'; try { m = (await res.json()).error || m } catch { /* ignore */ } throw new ApiError(res.status, m) }
+    return res.json() as Promise<T>
+  },
+  // เปิดดูไฟล์ในเบราว์เซอร์ทันที (แท็บใหม่) — ไม่บังคับดาวน์โหลด
+  openFile: async (p: string) => {
+    const res = await fetch('/api' + p, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+    if (!res.ok) throw new ApiError(res.status, 'เปิดไฟล์ไม่สำเร็จ')
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  },
 }

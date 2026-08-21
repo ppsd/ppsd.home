@@ -12,4 +12,5 @@ server/data/*.sqlite
 server/data/*.sqlite-*
 server/data/*.key
 server/data/backups/
+server/data/files/
 cloudflared.exe

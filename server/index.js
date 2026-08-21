@@ -2608,32 +2608,48 @@ api.post('/sales-docs/:id/convert', canWrite, (req, res) => {
 })
 
 
+// เก็บไฟล์แนบลงดิสก์จริง (แทน base64 ในฐานข้อมูล) — รองรับไฟล์ใหญ่/จำนวนมาก
+const uploadsDir = join(__dirname, 'data', 'files')
+mkdirSync(uploadsDir, { recursive: true })
+const FILE_COLS = 'id,house_code,name,mime,size,category,uploaded,uploader'
 api.get('/files', (req, res) => {
-  const where = req.query.house ? 'WHERE house_code=?' : ''
   const rows = req.query.house
-    ? db.prepare(`SELECT id,house_code,name,mime,size,uploaded,uploader FROM files ${where} ORDER BY id DESC`).all(req.query.house)
-    : db.prepare('SELECT id,house_code,name,mime,size,uploaded,uploader FROM files ORDER BY id DESC').all()
+    ? db.prepare(`SELECT ${FILE_COLS} FROM files WHERE house_code=? ORDER BY id DESC`).all(req.query.house)
+    : db.prepare(`SELECT ${FILE_COLS} FROM files ORDER BY id DESC`).all()
   res.json(rows)
 })
-api.post('/files', canWrite, (req, res) => {
-  const { house_code, name, mime, data } = req.body || {}
-  if (!name || !data) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
-  const size = Math.round((String(data).length * 3) / 4)
+// อัปโหลดแบบ raw (ไม่ต้อง base64) — ข้อมูลไฟล์อยู่ใน body, ชื่อ/หมวด/บ้าน อยู่ใน query
+api.post('/files', canWrite, express.raw({ type: '*/*', limit: '210mb' }), (req, res) => {
+  const name = req.query.name ? String(req.query.name) : ''
+  const buf = req.body
+  if (!name || !Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
   const info = db
-    .prepare('INSERT INTO files (house_code,name,mime,size,data,uploaded,uploader) VALUES (?,?,?,?,?,?,?)')
-    .run(house_code || '', name, mime || 'application/octet-stream', size, data, todayTH(), req.user.name)
-  res.status(201).json(db.prepare('SELECT id,house_code,name,mime,size,uploaded,uploader FROM files WHERE id=?').get(info.lastInsertRowid))
+    .prepare(`INSERT INTO files (house_code,name,mime,size,category,uploaded,uploader) VALUES (?,?,?,?,?,?,?)`)
+    .run(String(req.query.house || ''), name, String(req.query.mime || 'application/octet-stream'), buf.length, String(req.query.category || ''), todayTH(), req.user.name)
+  const id = info.lastInsertRowid
+  writeFileSync(join(uploadsDir, String(id)), buf)
+  db.prepare('UPDATE files SET path=? WHERE id=?').run(String(id), id)
+  res.status(201).json(db.prepare(`SELECT ${FILE_COLS} FROM files WHERE id=?`).get(id))
 })
-api.get('/files/:id/download', (req, res) => {
+function fileBuffer(f) {
+  if (f.path) { const p = join(uploadsDir, f.path); if (existsSync(p)) return readFileSync(p) }
+  if (f.data) return Buffer.from(String(f.data).replace(/^data:[^;]+;base64,/, ''), 'base64') // เดิม (base64 ในฐานข้อมูล)
+  return null
+}
+function sendStored(req, res, disposition) {
   const f = db.prepare('SELECT * FROM files WHERE id=?').get(req.params.id)
   if (!f) return res.status(404).json({ error: 'ไม่พบไฟล์' })
-  const b64 = String(f.data).replace(/^data:[^;]+;base64,/, '')
-  const buf = Buffer.from(b64, 'base64')
+  const buf = fileBuffer(f)
+  if (!buf) return res.status(404).json({ error: 'ไม่พบไฟล์บนดิสก์' })
   res.setHeader('Content-Type', f.mime || 'application/octet-stream')
-  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+  res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(f.name)}`)
   res.send(buf)
-})
+}
+api.get('/files/:id/view', (req, res) => sendStored(req, res, 'inline'))      // เปิดดูในเบราว์เซอร์ทันที
+api.get('/files/:id/download', (req, res) => sendStored(req, res, 'attachment')) // ดาวน์โหลด
 api.delete('/files/:id', canWrite, (req, res) => {
+  const f = db.prepare('SELECT path FROM files WHERE id=?').get(req.params.id)
+  if (f?.path) { try { unlinkSync(join(uploadsDir, f.path)) } catch { /* ignore */ } }
   db.prepare('DELETE FROM files WHERE id=?').run(req.params.id)
   res.json({ ok: true })
 })

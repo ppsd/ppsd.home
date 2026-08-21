@@ -344,6 +344,8 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_jl_account ON journal_lines(account)')
 db.exec('CREATE INDEX IF NOT EXISTS idx_je_source ON journal_entries(source, source_id)')
 ensureColumn('journal_lines', 'reconciled', 'INTEGER') // เฟส 3: 1 = กระทบยอดธนาคารแล้ว
 ensureColumn('installments', 'due_iso', 'TEXT')        // เฟส 3: วันครบกำหนด (ISO) สำหรับ AR/AP aging
+ensureColumn('files', 'category', 'TEXT')              // หมวดไฟล์แนบ (สัญญา/แบบ/ใบอนุญาต/รูป/อื่นๆ)
+ensureColumn('files', 'path', 'TEXT')                  // ชื่อไฟล์บนดิสก์ (เก็บไฟล์จริงแทน base64 ในฐานข้อมูล)
 
 // ===== เฟส 4: สินทรัพย์ถาวร + ค่าเสื่อมราคา =====
 db.exec(`CREATE TABLE IF NOT EXISTS fixed_assets (
