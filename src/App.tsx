@@ -29,6 +29,7 @@ import DocRegister from './components/DocRegister'
 import ExpressExport from './components/ExpressExport'
 import QcSummary from './components/QcSummary'
 import CostFinance from './components/CostFinance'
+import Accounting from './components/Accounting'
 import Pms from './components/Pms'
 import CeoVoice from './components/CeoVoice'
 import Login from './Login'
@@ -41,7 +42,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -51,7 +52,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
-  ceovoice: 'ceovoice',
+  ceovoice: 'ceovoice', accounting: 'accounting',
 }
 
 export default function App() {
@@ -301,6 +302,7 @@ export default function App() {
           {page === 'express' && <ExpressExport />}
           {page === 'qcsummary' && <QcSummary onOpenKpi={() => go('pms')} />}
           {page === 'costing' && <CostFinance />}
+          {page === 'accounting' && <Accounting />}
           {page === 'pms' && <Pms />}
           {page === 'ceovoice' && <CeoVoice />}
         </main>

@@ -315,6 +315,65 @@ db.exec(`CREATE TABLE IF NOT EXISTS ledger (
   amount INTEGER, budget INTEGER, method TEXT, party TEXT, note TEXT, by TEXT, created TEXT, date_iso TEXT
 )`)
 
+// ===== ระบบบัญชีคู่ (Double-entry General Ledger) — เฟส 1 =====
+// ผังบัญชี (Chart of Accounts)
+db.exec(`CREATE TABLE IF NOT EXISTS accounts (
+  code TEXT PRIMARY KEY,
+  name TEXT,
+  type TEXT,          -- asset | liability | equity | revenue | cost | expense
+  parent TEXT,        -- รหัสบัญชีแม่ (ถ้ามี)
+  is_active INTEGER DEFAULT 1,
+  builtin INTEGER DEFAULT 0
+)`)
+// สมุดรายวัน (Journal) — หัวรายการ
+db.exec(`CREATE TABLE IF NOT EXISTS journal_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  no TEXT, date TEXT, date_iso TEXT, memo TEXT, house_code TEXT,
+  source TEXT,        -- manual | inst | exp | payroll | ... (ที่มาของรายการ)
+  source_id TEXT,     -- อ้างอิงเอกสารต้นทาง (ใช้ลงบัญชีอัตโนมัติแบบไม่ซ้ำ)
+  void INTEGER DEFAULT 0,
+  by TEXT, created TEXT
+)`)
+// บรรทัดเดบิต/เครดิต (Journal lines) — ผลรวมเดบิต = เครดิตเสมอ
+db.exec(`CREATE TABLE IF NOT EXISTS journal_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entry_id INTEGER, account TEXT, debit REAL DEFAULT 0, credit REAL DEFAULT 0, memo TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_jl_entry ON journal_lines(entry_id)')
+db.exec('CREATE INDEX IF NOT EXISTS idx_jl_account ON journal_lines(account)')
+db.exec('CREATE INDEX IF NOT EXISTS idx_je_source ON journal_entries(source, source_id)')
+
+// ผังบัญชีมาตรฐาน (ธุรกิจรับเหมาก่อสร้าง SME ไทย) — seed แบบ idempotent ตามรหัส
+{
+  const CHART = [
+    // สินทรัพย์
+    ['1010', 'เงินสด', 'asset'], ['1020', 'เงินฝากธนาคาร', 'asset'], ['1030', 'เงินสดย่อย', 'asset'],
+    ['1140', 'ลูกหนี้การค้า', 'asset'], ['1160', 'ภาษีซื้อ', 'asset'],
+    ['1170', 'งานระหว่างก่อสร้าง', 'asset'], ['1180', 'วัสดุคงเหลือ', 'asset'],
+    ['1210', 'อาคารและอุปกรณ์', 'asset'], ['1220', 'ค่าเสื่อมราคาสะสม', 'asset'],
+    // หนี้สิน
+    ['2010', 'เจ้าหนี้การค้า', 'liability'], ['2020', 'เจ้าหนี้เงินประกันผลงาน', 'liability'],
+    ['2030', 'ภาษีขาย', 'liability'], ['2040', 'ภาษีหัก ณ ที่จ่ายค้างนำส่ง', 'liability'],
+    ['2050', 'ประกันสังคมค้างนำส่ง', 'liability'], ['2060', 'เงินเดือนค้างจ่าย', 'liability'],
+    ['2070', 'เงินรับล่วงหน้าจากลูกค้า', 'liability'],
+    // ส่วนของผู้ถือหุ้น
+    ['3010', 'ทุนจดทะเบียน', 'equity'], ['3020', 'กำไรสะสม', 'equity'],
+    // รายได้
+    ['4010', 'รายได้จากการรับเหมาก่อสร้าง', 'revenue'], ['4090', 'รายได้อื่น', 'revenue'],
+    // ต้นทุนงานก่อสร้าง
+    ['5010', 'ต้นทุนค่าวัสดุ', 'cost'], ['5020', 'ต้นทุนค่าแรง', 'cost'],
+    ['5030', 'ต้นทุนผู้รับเหมาช่วง', 'cost'], ['5040', 'ต้นทุนเครื่องจักร/อุปกรณ์', 'cost'],
+    ['5090', 'ต้นทุนงานก่อสร้างอื่น', 'cost'],
+    // ค่าใช้จ่ายดำเนินงาน
+    ['6010', 'เงินเดือน (สำนักงาน)', 'expense'], ['6020', 'ค่าใช้จ่ายสำนักงาน', 'expense'],
+    ['6030', 'ค่าขนส่ง/น้ำมัน', 'expense'], ['6040', 'ค่าธรรมเนียม/ค่าบริการวิชาชีพ', 'expense'],
+    ['6050', 'ค่าเสื่อมราคา', 'expense'], ['6090', 'ค่าใช้จ่ายอื่น', 'expense'],
+  ]
+  const ins = db.prepare('INSERT OR IGNORE INTO accounts (code,name,type,builtin) VALUES (?,?,?,1)')
+  const many = db.transaction((rows) => rows.forEach((r) => ins.run(r[0], r[1], r[2])))
+  many(CHART)
+}
+
 // ===== เฟส 3: QC Checklist / รายงานหน้างาน / ตรวจรับงวด =====
 db.exec(`CREATE TABLE IF NOT EXISTS qc_inspections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -93,6 +93,7 @@ export const nav: NavDef[] = [
   { id: 'pms', label: 'ประเมินผล KPI', icon: 'M3 3v18h18 M8 17V9 M13 17V5 M18 17v-6', gate: 'pms' },
   { id: 'reports', label: 'รายงาน', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18' },
   { id: 'costing', label: 'ต้นทุน / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', gate: 'finance' },
+  { id: 'accounting', label: 'บัญชีแยกประเภท (GL)', icon: 'M4 4h16v16H4z M4 9h16 M9 9v11 M14 13h3 M14 16h3', gate: 'finance' },
   { id: 'audit', label: 'ตรวจสอบ', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z M9 12l2 2 4-4', gate: 'manager' },
   { id: 'users', label: 'ผู้ใช้งาน', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z' },
 ]
@@ -105,7 +106,7 @@ export const navGroups: NavGroup[] = [
   { id: 'overview', label: 'ภาพรวม / ข้ามบ้าน', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18', items: ['dashboard', 'gantt', 'qcsummary', 'ceovoice'] },
   { id: 'site', label: 'งานหน้างาน (ข้ามบ้าน)', icon: 'M3 21h18 M5 21V7l7-4 7 4v14 M9 21v-6h6v6', items: ['issues', 'workorders', 'qc', 'sitedocs', 'sitereport', 'safety', 'handover'] },
   { id: 'procure', label: 'จัดซื้อ', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01', items: ['procurement'] },
-  { id: 'finance', label: 'บัญชี / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', items: ['installments', 'sales', 'expenses', 'costing', 'express', 'docreg', 'audit'] },
+  { id: 'finance', label: 'บัญชี / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', items: ['installments', 'sales', 'expenses', 'costing', 'accounting', 'express', 'docreg', 'audit'] },
   { id: 'central', label: 'ส่วนกลางบริษัท', icon: 'M16 19c0-2.8-2.2-5-5-5s-5 2.2-5 5 M11 11a3 3 0 100-6 3 3 0 000 6 M18 13.2a3 3 0 10-2.4-5.4', items: ['hr', 'time', 'pms', 'customers', 'users'] },
   { id: 'other', label: 'อื่นๆ', icon: 'M12 15a3 3 0 100-6 3 3 0 000 6z M4 12h1 M19 12h1 M12 4v1 M12 19v1', items: ['reports'] },
 ]
@@ -135,6 +136,7 @@ export const titles: Record<string, [string, string]> = {
   pms: ['บุคลากร', 'ประเมินผลรายเดือน (KPI / PMS)'],
   reports: ['วิเคราะห์', 'รายงาน + กราฟ'],
   costing: ['การเงิน', 'ต้นทุน / ประเมินราคา'],
+  accounting: ['การเงิน', 'บัญชีแยกประเภท (ระบบบัญชีคู่)'],
   audit: ['ควบคุมภายใน', 'ตรวจสอบ'],
   users: ['ตั้งค่า', 'ผู้ใช้งาน'],
 }

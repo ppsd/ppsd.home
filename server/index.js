@@ -9,6 +9,7 @@ import { login, logout, requireAuth, requireRole, requireManager, isManager, req
 import { hashPin, verifyPin } from './security.js'
 import { randomBytes } from 'node:crypto'
 import { EFILINGS, efilingList } from './efiling.js'
+import * as acct from './accounting.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -483,6 +484,7 @@ api.put('/installments/:id', canWrite, (req, res) => {
   db.prepare('UPDATE installments SET no=?, detail=?, days=?, due=?, amount=?, status=?, contractor=? WHERE id=?')
     .run(f('no', true), f('detail'), String(f('days')), f('due'), f('amount', true), f('status'), f('contractor'), inst.id)
   recomputeHouse(inst.house_code)
+  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(inst-edit):', e.message) }
   audit(req, 'แก้ไขงวดงาน', `${inst.house_code} งวด ${inst.no}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
 })
@@ -491,6 +493,7 @@ api.delete('/installments/:id', canWrite, (req, res) => {
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
   db.prepare('DELETE FROM installments WHERE id=?').run(inst.id)
   recomputeHouse(inst.house_code)
+  try { acct.removeAutoJournal('inst', inst.id) } catch (e) { console.error('journal(inst-del):', e.message) }
   audit(req, 'ลบงวดงาน', `${inst.house_code} งวด ${inst.no}`)
   res.json({ ok: true })
 })
@@ -516,6 +519,7 @@ api.post('/installments/:id/collect', canWrite, (req, res) => {
   db.prepare('UPDATE installments SET status=?, paid=?, ontime=? WHERE id=?')
     .run(status, paid, done && !isContractor ? 'ตรงเวลา' : inst.ontime, inst.id)
   recomputeHouse(inst.house_code)
+  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(collect):', e.message) }
   audit(req, done ? (isContractor ? 'จ่ายช่าง' : 'เก็บเงินงวด') : 'ยกเลิก', `${inst.house_code} งวด ${inst.no}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
 })
@@ -531,6 +535,7 @@ api.post('/installments/:id/pay', canWrite, (req, res) => {
   const status = instStatus(inst.side, inst.amount, paid)
   db.prepare('UPDATE installments SET paid=?, status=? WHERE id=?').run(paid, status, inst.id)
   recomputeHouse(inst.house_code)
+  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(pay):', e.message) }
   audit(req, inst.side === 'contractor' ? 'จ่ายช่างบางส่วน' : 'เก็บเงินบางส่วน', `${inst.house_code} งวด ${inst.no} +${add}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
 })
@@ -583,7 +588,51 @@ api.post('/expenses', canWrite, (req, res) => {
   const info = db
     .prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,date_iso) VALUES (?,?,?,?,?,?,?)')
     .run(thDateFromISO(iso), house_code || '', item, cat || 'อื่นๆ', vendor || '', Number(amount) || 0, iso)
-  res.status(201).json(db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid))
+  const row = db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid)
+  try { acct.syncExpenseJournal(row) } catch (e) { console.error('journal(expense):', e.message) }
+  res.status(201).json(row)
+})
+
+// ---------- ระบบบัญชีคู่ (General Ledger) — เฟส 1 ----------
+const acctRange = (req) => ({ from: req.query.from || undefined, to: req.query.to || undefined })
+// ผังบัญชี
+api.get('/accounts', financeOnly, (_req, res) => res.json(acct.listAccounts()))
+api.post('/accounts', financeOnly, (req, res) => {
+  const { code, name, type, parent } = req.body || {}
+  if (!code || !name || !type) return res.status(400).json({ error: 'ต้องระบุ รหัส/ชื่อ/ประเภทบัญชี' })
+  if (!['asset', 'liability', 'equity', 'revenue', 'cost', 'expense'].includes(type)) return res.status(400).json({ error: 'ประเภทบัญชีไม่ถูกต้อง' })
+  if (db.prepare('SELECT code FROM accounts WHERE code=?').get(code)) return res.status(409).json({ error: 'มีรหัสบัญชีนี้แล้ว' })
+  db.prepare('INSERT INTO accounts (code,name,type,parent,is_active,builtin) VALUES (?,?,?,?,1,0)').run(String(code), name, type, parent || null)
+  audit(req, 'เพิ่มผังบัญชี', `${code} ${name}`)
+  res.status(201).json(db.prepare('SELECT * FROM accounts WHERE code=?').get(code))
+})
+// สมุดรายวัน
+api.get('/journal', financeOnly, (req, res) => res.json(acct.listJournal({ ...acctRange(req), source: req.query.source || undefined, limit: Number(req.query.limit) || 500 })))
+api.post('/journal', financeOnly, (req, res) => {
+  const { date_iso, memo, house_code, lines } = req.body || {}
+  try {
+    const id = acct.postJournal({ date_iso, memo, house_code, source: 'manual', by: req.user.name, lines })
+    audit(req, 'บันทึกรายการบัญชี (สมุดรายวัน)', memo || `#${id}`)
+    res.status(201).json({ id })
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+api.post('/journal/:id/void', financeOnly, (req, res) => {
+  const e = db.prepare('SELECT * FROM journal_entries WHERE id=?').get(req.params.id)
+  if (!e) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  if (e.source && e.source !== 'manual') return res.status(400).json({ error: 'รายการอัตโนมัติยกเลิกจากเอกสารต้นทาง (แก้ที่งวดงาน/รายจ่าย)' })
+  db.prepare('UPDATE journal_entries SET void=1 WHERE id=?').run(e.id)
+  audit(req, 'ยกเลิกรายการบัญชี', e.no)
+  res.json({ ok: true })
+})
+// แยกประเภท / งบทดลอง / งบการเงิน
+api.get('/gl/:account', financeOnly, (req, res) => res.json(acct.ledgerOf(req.params.account, acctRange(req))))
+api.get('/trial-balance', financeOnly, (req, res) => res.json(acct.trialBalance(acctRange(req))))
+api.get('/income-statement', financeOnly, (req, res) => res.json(acct.incomeStatement(acctRange(req))))
+api.get('/balance-sheet', financeOnly, (req, res) => res.json(acct.balanceSheet(acctRange(req))))
+// สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากข้อมูลเดิมทั้งหมด (idempotent)
+api.post('/accounting/rebuild', financeOnly, (req, res) => {
+  try { const n = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${n} รายการ`); res.json({ ok: true, count: n }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 // ---------- HR ----------
