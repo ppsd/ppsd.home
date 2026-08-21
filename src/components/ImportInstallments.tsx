@@ -20,10 +20,37 @@ function cleanDetail(t: string): string {
     .replace(/(?:เป็นเงิน|จำนวนเงิน|ยอดเงิน)?\s*[\d,]+(?:\.\d+)?\s*บาท(?:ถ้วน)?/g, '')
     .replace(/\s+/g, ' ').replace(/^[\s:.\-–—)]+/, '').trim()
 }
-// แยกข้อความที่วางมาเป็นงวดงาน — รองรับ Excel (tab), Word (ย่อหน้าเดียว/หลายบรรทัด), ข้อความทั่วไป
+const isNoLine = (s: string) => /^\d{1,3}$/.test(s)
+const isPctLine = (s: string) => /^\d{1,3}(?:\.\d+)?\s*%$/.test(s)
+const isMoneyLine = (s: string) => /^[\d,]+(?:\.\d+)?$/.test(s) && Number(s.replace(/,/g, '')) >= 100
+// รูปแบบ "บล็อก" — แต่ละงวดกระจายหลายบรรทัด: เลขงวด / % / ชำระเมื่อ... / จำนวนเงิน
+function parseBlocks(lines: string[], side: 'customer' | 'contractor'): Row[] | null {
+  const idxs: number[] = []
+  lines.forEach((l, i) => { if (isNoLine(l)) idxs.push(i) })
+  if (idxs.length < 2) return null
+  const out: Row[] = []
+  for (let k = 0; k < idxs.length; k++) {
+    const start = idxs[k], end = k + 1 < idxs.length ? idxs[k + 1] : lines.length
+    const no = Number(lines[start]); const block = lines.slice(start + 1, end)
+    let amount = 0, pct = ''; const details: string[] = []
+    for (const ln of block) {
+      if (isPctLine(ln)) { pct = ln.replace(/\s/g, ''); continue }
+      if (isMoneyLine(ln)) { const n = Number(ln.replace(/,/g, '')); if (n > amount) amount = n; continue }
+      details.push(ln)
+    }
+    if (!amount) for (const ln of block) { const a = extractAmount(ln); if (a > amount) amount = a }
+    let detail = details.join(' ').replace(/ชำระเมื่อ/g, '').replace(/\s+/g, ' ').replace(/^[\s:.\-–—]+/, '').trim()
+    if (pct) detail = (detail + ' (' + pct + ')').trim()
+    out.push({ no, detail, amount, side })
+  }
+  return out
+}
+// แยกข้อความที่วางมาเป็นงวดงาน — รองรับ Excel (tab), Word (ย่อหน้า/งวดที่ N), รูปแบบบล็อกหลายบรรทัด
 function parsePaste(text: string, side: 'customer' | 'contractor'): Row[] {
-  const clean = text.replace(/\r/g, '').trim()
+  let clean = text.replace(/\r/g, '').trim()
   if (!clean) return []
+  // ตัดส่วนท้ายที่เป็นยอดรวม (จะได้ไม่นับเป็นงวด)
+  clean = clean.replace(/\n\s*(ยอดเงินทั้งหมด|ยอดรวม|รวมทั้งสิ้น|รวมเงิน|รวมทั้งหมด)[\s\S]*$/, '')
   // 1) Excel: มี tab → แยกเป็นคอลัมน์
   if (clean.includes('\t')) {
     return clean.split(/\n+/).map((l) => l.trim()).filter(Boolean).map((ln, i) => {
@@ -35,7 +62,7 @@ function parsePaste(text: string, side: 'customer' | 'contractor'): Row[] {
       return { no: noCol, detail, amount, side }
     }).filter((r) => r.detail || r.amount > 0)
   }
-  // 2) Word: จับคำว่า "งวดที่ N" แล้วตัดเป็นงวด (แม้ทั้งหมดอยู่ย่อหน้าเดียว)
+  // 2) Word ย่อหน้าเดียว: จับคำว่า "งวดที่ N"
   const markers = [...clean.matchAll(/งวด(?:ที่|ที)?\s*(\d{1,3})/g)]
   if (markers.length >= 2) {
     const out: Row[] = []
@@ -46,8 +73,12 @@ function parsePaste(text: string, side: 'customer' | 'contractor'): Row[] {
     }
     return out.filter((r) => r.detail || r.amount > 0)
   }
-  // 3) บรรทัดละงวด
-  return clean.split(/\n+/).map((l) => l.trim()).filter(Boolean).map((ln, i) => ({ no: i + 1, detail: cleanDetail(ln), amount: extractAmount(ln), side })).filter((r) => r.detail || r.amount > 0)
+  const lines = clean.split(/\n+/).map((l) => l.trim()).filter(Boolean)
+  // 3) รูปแบบบล็อก (เลขงวดขึ้นบรรทัดเดี่ยว แล้วตามด้วย %/รายละเอียด/จำนวนเงิน)
+  const blk = parseBlocks(lines, side)
+  if (blk && blk.length >= 2 && blk.filter((r) => r.amount > 0).length >= Math.ceil(blk.length / 2)) return blk.filter((r) => r.detail || r.amount > 0)
+  // 4) บรรทัดละงวด
+  return lines.map((ln, i) => ({ no: i + 1, detail: cleanDetail(ln), amount: extractAmount(ln), side })).filter((r) => r.detail || r.amount > 0)
 }
 
 export default function ImportInstallments({ houseCode, houseName, onClose, onDone }: { houseCode: string; houseName: string; onClose: () => void; onDone: () => void }) {
