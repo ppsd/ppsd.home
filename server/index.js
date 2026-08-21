@@ -2618,14 +2618,27 @@ api.get('/files', (req, res) => {
     : db.prepare(`SELECT ${FILE_COLS} FROM files ORDER BY id DESC`).all()
   res.json(rows)
 })
-// อัปโหลดแบบ raw (ไม่ต้อง base64) — ข้อมูลไฟล์อยู่ใน body, ชื่อ/หมวด/บ้าน อยู่ใน query
-api.post('/files', canWrite, express.raw({ type: '*/*', limit: '210mb' }), (req, res) => {
-  const name = req.query.name ? String(req.query.name) : ''
-  const buf = req.body
-  if (!name || !Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
+// อัปโหลดไฟล์ — รองรับทั้งแบบ raw (ใหม่ · body=ไฟล์, meta ใน query)
+// และแบบ JSON+base64 (เดิม) เผื่อหน้าเว็บกับเซิร์ฟเวอร์คนละเวอร์ชัน
+api.post('/files', canWrite, express.raw({ type: 'application/octet-stream', limit: '210mb' }), (req, res) => {
+  const q = req.query || {}
+  let name, mime, house, category, buf
+  if (Buffer.isBuffer(req.body)) {
+    name = q.name ? String(q.name) : ''
+    mime = String(q.mime || 'application/octet-stream')
+    house = String(q.house || ''); category = String(q.category || '')
+    buf = req.body
+  } else {
+    const b = req.body || {} // รูปแบบเดิม (JSON + base64)
+    name = b.name || ''
+    mime = b.mime || 'application/octet-stream'
+    house = b.house_code || String(q.house || ''); category = b.category || String(q.category || '')
+    buf = b.data ? Buffer.from(String(b.data).replace(/^data:[^;]+;base64,/, ''), 'base64') : null
+  }
+  if (!name || !buf || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
   const info = db
     .prepare(`INSERT INTO files (house_code,name,mime,size,category,uploaded,uploader) VALUES (?,?,?,?,?,?,?)`)
-    .run(String(req.query.house || ''), name, String(req.query.mime || 'application/octet-stream'), buf.length, String(req.query.category || ''), todayTH(), req.user.name)
+    .run(house, name, mime, buf.length, category, todayTH(), req.user.name)
   const id = info.lastInsertRowid
   writeFileSync(join(uploadsDir, String(id)), buf)
   db.prepare('UPDATE files SET path=? WHERE id=?').run(String(id), id)
