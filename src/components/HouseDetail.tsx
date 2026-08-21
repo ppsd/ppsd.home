@@ -20,6 +20,7 @@ import SiteReports from './SiteReports'
 import Safety from './Safety'
 import Handover from './Handover'
 import BoqTab from './BoqTab'
+import ImportInstallments from './ImportInstallments'
 
 function Cell({ label, value, color, sub, br, bb }: { label: string; value: string; color: string; sub?: string; br?: boolean; bb?: boolean }) {
   return (
@@ -47,7 +48,8 @@ const INST_CATS = [
 ]
 
 export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHouse }: HouseDetailProps) {
-  const { data, user } = useApp()
+  const { data, user, reloadData } = useApp()
+  const [importing, setImporting] = useState(false)
   // กำไรของบ้าน เห็นได้เฉพาะผู้จัดการ (และผู้ดูแล) เท่านั้น คนอื่นขึ้น "-"
   const canSeeProfit = !!user?.isManager
   const profitText = (v: number) => (canSeeProfit ? baht(v) : '-')
@@ -247,6 +249,10 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
           {/* TAB: งวดงาน — หมวดมาตรฐาน + หัวข้อใหญ่ที่เพิ่มเอง × 2 ฝั่ง (ลูกค้า/ช่าง) */}
           {tab === 'installments' && (
             <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', borderBottom: '1px solid #EEF1F4', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12.5, color: '#5C6770' }}>ไม่ต้องกรอกทีละงวด — อัปโหลดสัญญาให้ AI อ่าน หรือวางจาก Excel</span>
+                <button onClick={() => setImporting(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>⬆ นำเข้างวดงาน (อัปโหลดสัญญา)</button>
+              </div>
               {cats.map((c) => (
                 <div key={c.key}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', background: '#F0F3F6', borderTop: '1px solid #E1E5EA', borderBottom: '1px solid #E1E5EA' }}>
@@ -371,6 +377,8 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
           )}
         </div>
       </div>
+
+      {importing && <ImportInstallments houseCode={house.code} houseName={house.name} onClose={() => setImporting(false)} onDone={() => { reloadData('installments', '/installments'); reloadData('houses', '/houses') }} />}
     </div>
   )
 }

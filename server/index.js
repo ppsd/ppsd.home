@@ -477,6 +477,76 @@ api.post('/houses/:code/installments', canWrite, (req, res) => {
   recomputeHouse(req.params.code)
   res.status(201).json(db.prepare('SELECT * FROM installments WHERE id = ?').get(info.lastInsertRowid))
 })
+// นำเข้างวดงานเป็นชุด (bulk) — จาก Excel/วางข้อความ หรือจากที่ AI อ่านสัญญามา
+api.post('/houses/:code/installments/bulk', canWrite, (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : []
+  if (!items.length) return res.status(400).json({ error: 'ไม่มีงวดงานให้นำเข้า' })
+  const ins = db.prepare('INSERT INTO installments (house_code,no,detail,days,due,due_iso,ontime,amount,status,side,category,contractor,paid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)')
+  let n = 0
+  db.transaction(() => {
+    for (const it of items) {
+      const side = it.side === 'contractor' ? 'contractor' : 'customer'
+      const category = (it.category != null && String(it.category).trim()) ? String(it.category).trim() : 'house'
+      const dueIso = /^\d{4}-\d{2}-\d{2}$/.test(String(it.due_iso || '')) ? it.due_iso : null
+      const dueDisp = it.due || (dueIso ? thDateFromISO(dueIso) : 'กำหนดใหม่')
+      const amount = Number(String(it.amount).replace(/,/g, '')) || 0
+      if (!String(it.detail || '').trim() && amount <= 0) continue
+      ins.run(req.params.code, Number(it.no) || (n + 1), String(it.detail || ''), String(it.days || '-'), dueDisp, dueIso, '-', amount, side === 'contractor' ? 'รอจ่าย' : 'รอเก็บเงิน', side, category, String(it.contractor || ''))
+      n++
+    }
+  })()
+  recomputeHouse(req.params.code)
+  audit(req, 'นำเข้างวดงาน', `${req.params.code} ${n} งวด`)
+  res.json({ ok: true, count: n })
+})
+// ให้ AI อ่านตารางงวดงานจากสัญญา (PDF/รูป) → คืน JSON งวดงานให้พรีวิว
+const EXTRACT_PROMPT = `คุณเป็นผู้ช่วยกรอกข้อมูลงวดงานก่อสร้างจากสัญญา อ่าน "ตารางงวดการชำระเงิน/งวดงาน" ในเอกสารนี้ แล้วสรุปเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
+รูปแบบ: {"installments":[{"no":1,"detail":"รายละเอียดงานงวดนี้","amount":238000,"side":"customer"}]}
+กติกา:
+- amount เป็นตัวเลขล้วน ไม่มีคอมม่า
+- side = "customer" สำหรับงวดที่ลูกค้าจ่ายให้เรา (งวดขาย/งวดลูกค้า), "contractor" สำหรับงวดที่เราจ่ายให้ช่าง ถ้าไม่ชัดให้ใช้ "customer"
+- detail = ข้อความสรุปงานของงวดนั้นตามที่เขียนในสัญญา
+- ถ้ามีวันครบกำหนดชัดเจน ใส่ "due_iso":"YYYY-MM-DD"
+- เรียงตามลำดับงวด ถ้าไม่พบตารางงวดงานเลย ให้คืน {"installments":[]}`
+function extractJsonBlock(text) {
+  if (!text) return null
+  const m = text.match(/\{[\s\S]*\}/)
+  if (!m) return null
+  try { return JSON.parse(m[0]) } catch { return null }
+}
+api.post('/houses/:code/installments/extract', canWrite, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
+  const key = getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY || ''
+  if (!key) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่ากุญแจ AI (ไปที่ ตรวจสอบ → ตั้งค่า AI) — หรือใช้วิธี “วางจาก Excel” แทนได้' })
+  const buf = req.body
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
+  const mime = String(req.query.mime || 'application/pdf')
+  const b64 = buf.toString('base64')
+  const media = mime.includes('pdf')
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+    : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: getSetting('ai_model', 'claude-3-5-sonnet-latest'), max_tokens: 4000, messages: [{ role: 'user', content: [media, { type: 'text', text: EXTRACT_PROMPT }] }] }),
+    })
+    const data = await r.json()
+    if (!r.ok) return res.status(502).json({ error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)) })
+    const text = (data.content || []).map((c) => c.text || '').join('')
+    const parsed = extractJsonBlock(text)
+    const items = (parsed?.installments || parsed || []).map((it, i) => ({ no: Number(it.no) || i + 1, detail: String(it.detail || ''), amount: Number(String(it.amount).toString().replace(/,/g, '')) || 0, side: it.side === 'contractor' ? 'contractor' : 'customer', due_iso: /^\d{4}-\d{2}-\d{2}$/.test(String(it.due_iso || '')) ? it.due_iso : '' }))
+    audit(req, 'AI อ่านงวดงานจากสัญญา', `${req.params.code} ${items.length} งวด`)
+    res.json({ items })
+  } catch (e) { res.status(502).json({ error: 'เรียก AI ไม่สำเร็จ: ' + e.message }) }
+})
+// ตั้งค่ากุญแจ AI (admin) — เก็บใน settings
+api.get('/ai-settings', adminOnly, (_req, res) => res.json({ hasKey: !!(getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY), model: getSetting('ai_model', 'claude-3-5-sonnet-latest') }))
+api.post('/ai-settings', adminOnly, (req, res) => {
+  if (req.body?.api_key != null) setSetting('ai_api_key', String(req.body.api_key || ''))
+  if (req.body?.model) setSetting('ai_model', String(req.body.model))
+  audit(req, 'ตั้งค่า AI', req.body?.model || '')
+  res.json({ ok: true, hasKey: !!(getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY) })
+})
 // edit an installment (รายละเอียด/วัน/กำหนด/จำนวนเงิน/สถานะ)
 api.put('/installments/:id', canWrite, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)

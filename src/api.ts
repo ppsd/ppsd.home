@@ -72,6 +72,17 @@ export const api = {
     if (!res.ok) { let m = 'อัปโหลดไม่สำเร็จ'; try { m = (await res.json()).error || m } catch { /* ignore */ } throw new ApiError(res.status, m) }
     return res.json() as Promise<T>
   },
+  // อัปโหลดไฟล์ raw ไปยัง path ที่ระบุ (แนบ mime ใน query) แล้วคืน JSON
+  uploadRaw: async <T>(path: string, file: File) => {
+    const sep = path.includes('?') ? '&' : '?'
+    const res = await fetch('/api' + path + sep + 'mime=' + encodeURIComponent(file.type || 'application/octet-stream'), {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/octet-stream' },
+      body: file,
+    })
+    if (!res.ok) { let m = 'อัปโหลดไม่สำเร็จ'; try { m = (await res.json()).error || m } catch { /* ignore */ } throw new ApiError(res.status, m) }
+    return res.json() as Promise<T>
+  },
   // เปิดดูไฟล์ในเบราว์เซอร์ทันที (แท็บใหม่) — ไม่บังคับดาวน์โหลด
   openFile: async (p: string) => {
     const res = await fetch('/api' + p, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
