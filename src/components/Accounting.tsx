@@ -29,6 +29,9 @@ const TABS = [
   { id: 'journal', label: 'สมุดรายวัน' },
   { id: 'gl', label: 'แยกประเภท' },
   { id: 'coa', label: 'ผังบัญชี' },
+  { id: 'assets', label: 'สินทรัพย์/ค่าเสื่อม' },
+  { id: 'tax', label: 'สรุปภาษี' },
+  { id: 'closing', label: 'ปิดบัญชี/ยอดยกมา' },
 ]
 
 export default function Accounting() {
@@ -74,6 +77,9 @@ export default function Accounting() {
       {tab === 'journal' && <Journal accounts={accounts} />}
       {tab === 'gl' && <GeneralLedger accounts={accounts} />}
       {tab === 'coa' && <ChartOfAccounts accounts={accounts} reload={loadAccounts} />}
+      {tab === 'assets' && <Assets />}
+      {tab === 'tax' && <TaxSummary />}
+      {tab === 'closing' && <Closing accounts={accounts} />}
     </div>
   )
 }
@@ -646,6 +652,184 @@ function Reconcile() {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// ---------- สินทรัพย์ถาวร + ค่าเสื่อมราคา ----------
+interface Asset { id: number; code: string; name: string; category: string; acquire_date: string; cost: number; salvage: number; life_years: number; house_code: string; disposed: number; dispose_date?: string; base: number; accumulated: number; bookValue: number; monthly: number }
+function Assets() {
+  const [rows, setRows] = useState<Asset[]>([])
+  const [adding, setAdding] = useState(false)
+  const [msg, setMsg] = useState('')
+  const today = new Date().toISOString().slice(0, 10)
+  const blank = { name: '', category: 'อุปกรณ์', acquire_date: today, cost: '', salvage: '', life_years: '5' }
+  const [f, setF] = useState(blank)
+  const load = () => api.get<Asset[]>('/assets').then(setRows).catch(() => setRows([]))
+  useEffect(() => { load() }, [])
+  const add = async () => {
+    try { await api.post('/assets', { ...f, cost: Number(f.cost) || 0, salvage: Number(f.salvage) || 0, life_years: Number(f.life_years) || 5 }); setF(blank); setAdding(false); load() }
+    catch (e) { setMsg((e as Error).message) }
+  }
+  const runDep = async () => { const r = await api.post<{ assets: number; totalDepreciation: number }>('/assets/run-depreciation', {}); setMsg(`ลงค่าเสื่อมราคา ${r.assets} รายการ รวม ${baht(r.totalDepreciation)} เข้าบัญชีแล้ว (Dr ค่าเสื่อม / Cr ค่าเสื่อมสะสม)`); load() }
+  const dispose = async (a: Asset) => { if (confirm(`จำหน่าย/ตัดจำหน่ายสินทรัพย์ "${a.name}"?`)) { await api.post('/assets/' + a.id + '/dispose', {}); load() } }
+  const totCost = rows.reduce((s, r) => s + r.cost, 0), totAcc = rows.reduce((s, r) => s + r.accumulated, 0), totBook = rows.reduce((s, r) => s + r.bookValue, 0)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontSize: 13, color: '#5C6770' }}>สินทรัพย์ถาวร <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> รายการ (เส้นตรง)</div>
+        <button onClick={runDep} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>↻ ลงค่าเสื่อมราคา ณ วันนี้</button>
+        <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ เพิ่มสินทรัพย์</button>
+      </div>
+      {msg && <div style={{ fontSize: 12.5, color: '#2E7D55', background: '#E2F1EA', border: '1px solid #CDE3D6', borderRadius: 9, padding: '9px 13px' }}>{msg}</div>}
+      {adding && (
+        <div style={{ ...card, padding: 16, display: 'grid', gridTemplateColumns: '1.6fr 1fr 130px 120px 100px 90px auto', gap: 10, alignItems: 'end' }}>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>ชื่อสินทรัพย์</div><input style={{ ...field, width: '100%' }} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หมวด</div><input style={{ ...field, width: '100%' }} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>วันได้มา</div><input type="date" style={{ ...field, width: '100%' }} value={f.acquire_date} onChange={(e) => setF({ ...f, acquire_date: e.target.value })} /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>ราคาทุน</div><input type="number" style={{ ...field, width: '100%', textAlign: 'right' }} value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>ซาก</div><input type="number" style={{ ...field, width: '100%', textAlign: 'right' }} value={f.salvage} onChange={(e) => setF({ ...f, salvage: e.target.value })} /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>อายุ(ปี)</div><input type="number" style={{ ...field, width: '100%', textAlign: 'right' }} value={f.life_years} onChange={(e) => setF({ ...f, life_years: e.target.value })} /></div>
+          <button onClick={add} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>บันทึก</button>
+        </div>
+      )}
+      <div style={card}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead><tr style={{ background: '#F7F9FB' }}>
+            <th style={{ ...th, paddingLeft: 18 }}>สินทรัพย์</th><th style={th}>ได้มา</th>
+            <th style={{ ...th, textAlign: 'right' }}>ราคาทุน</th><th style={{ ...th, textAlign: 'right' }}>ค่าเสื่อม/เดือน</th>
+            <th style={{ ...th, textAlign: 'right' }}>ค่าเสื่อมสะสม</th><th style={{ ...th, textAlign: 'right' }}>มูลค่าคงเหลือ</th><th style={{ ...th, textAlign: 'center', paddingRight: 18 }}>จัดการ</th>
+          </tr></thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={7} style={{ padding: 40, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีสินทรัพย์ — กด “เพิ่มสินทรัพย์”</td></tr>}
+            {rows.map((a) => (
+              <tr key={a.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6', opacity: a.disposed ? 0.5 : 1 }}>
+                <td style={{ padding: '9px 18px' }}><div style={{ fontWeight: 500 }}>{a.name}{a.disposed ? ' (จำหน่ายแล้ว)' : ''}</div><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{a.category}{a.life_years ? ` · ${a.life_years} ปี` : ''}</div></td>
+                <td className="num" style={{ padding: '9px 12px', color: '#5C6770' }}>{a.acquire_date}</td>
+                <td className="num" style={{ padding: '9px 12px', textAlign: 'right' }}>{baht(a.cost)}</td>
+                <td className="num" style={{ padding: '9px 12px', textAlign: 'right', color: '#5C6770' }}>{baht(a.monthly)}</td>
+                <td className="num" style={{ padding: '9px 12px', textAlign: 'right', color: '#C0852C' }}>{baht(a.accumulated)}</td>
+                <td className="num" style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 600 }}>{baht(a.bookValue)}</td>
+                <td style={{ padding: '9px 18px', textAlign: 'center' }}>{!a.disposed && <button onClick={() => dispose(a)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, color: '#C24036', background: '#fff', border: '1px solid #E7CDC9', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>จำหน่าย</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+          {rows.length > 0 && <tfoot><tr style={{ borderTop: '2px solid #E1E5EA', background: '#F7F9FB', fontWeight: 700 }}>
+            <td colSpan={2} style={{ padding: '11px 18px' }}>รวม</td>
+            <td className="num" style={{ padding: '11px 12px', textAlign: 'right' }}>{baht(totCost)}</td><td />
+            <td className="num" style={{ padding: '11px 12px', textAlign: 'right' }}>{baht(totAcc)}</td>
+            <td className="num" style={{ padding: '11px 12px', textAlign: 'right' }}>{baht(totBook)}</td><td />
+          </tr></tfoot>}
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ---------- สรุปภาษี (ภ.พ.30 / หัก ณ ที่จ่าย / ภ.ง.ด.50) ----------
+interface TaxData { outputVat: number; inputVat: number; vatPayable: number; wht: number; whtByType: { type: string; gross: number; wht: number; n: number }[]; netProfit: number; corpTax: number }
+function TaxSummary() {
+  const [t, setT] = useState<TaxData | null>(null)
+  useEffect(() => { api.get<TaxData>('/tax-summary').then(setT).catch(() => setT(null)) }, [])
+  if (!t) return <div style={{ color: '#94A0A8', padding: 20 }}>ยังไม่มีข้อมูล</div>
+  const line = (l: string, v: number, c = '#3C4750', bold = false) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontWeight: bold ? 700 : 500, fontSize: bold ? 15 : 13, color: c }}><span>{l}</span><span className="num">{baht(v)}</span></div>
+  )
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>สรุปเพื่อการบริหาร/เตรียมยื่น — ยอดภาษีจริงและการยื่นทำผ่านเมนู “ส่งออกบัญชี” และสำนักงานบัญชี/ผู้สอบบัญชี</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 14 }}>
+        <div style={{ ...card, padding: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#30506A' }}>ภ.พ.30 — ภาษีมูลค่าเพิ่ม</div>
+          <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>VAT Return</div>
+          {line('ภาษีขาย (Output VAT)', t.outputVat, '#2E7D55')}
+          {line('ภาษีซื้อ (Input VAT)', t.inputVat, '#C0852C')}
+          <div style={{ borderTop: '1px solid #E1E5EA', marginTop: 6, paddingTop: 6 }}>{line(t.vatPayable >= 0 ? 'ภาษีที่ต้องชำระ' : 'ภาษีขอคืน', Math.abs(t.vatPayable), t.vatPayable >= 0 ? '#C24036' : '#2E7D55', true)}</div>
+        </div>
+        <div style={{ ...card, padding: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#6B4E9E' }}>ภาษีหัก ณ ที่จ่าย</div>
+          <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>ภ.ง.ด.1 / 3 / 53</div>
+          {t.whtByType.length ? t.whtByType.map((w, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12.5, color: '#5C6770' }}><span>{w.type || 'อื่นๆ'} ({w.n})</span><span className="num">{baht(w.wht)}</span></div>
+          )) : <div style={{ fontSize: 12, color: '#94A0A8' }}>ยังไม่มีรายการ</div>}
+          <div style={{ borderTop: '1px solid #E1E5EA', marginTop: 6, paddingTop: 6 }}>{line('รวมภาษีหัก ณ ที่จ่าย', t.wht, '#6B4E9E', true)}</div>
+        </div>
+        <div style={{ ...card, padding: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#C0852C' }}>ภ.ง.ด.50 — ภาษีเงินได้นิติบุคคล</div>
+          <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>ประมาณการ (อัตรา SME)</div>
+          {line('กำไรสุทธิทางบัญชี', t.netProfit)}
+          {line('ประมาณการภาษี', t.corpTax, '#C24036', true)}
+          <div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 8 }}>SME: กำไร ≤ 3 แสน ยกเว้น · 3 แสน–3 ล้าน 15% · เกิน 3 ล้าน 20% (ยังไม่รวมรายการปรับปรุงทางภาษี)</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------- ปิดบัญชี / ยอดยกมา ----------
+function Closing({ accounts }: { accounts: Account[] }) {
+  const [closedThrough, setClosedThrough] = useState('')
+  const [lockDate, setLockDate] = useState('')
+  const [fyEnd, setFyEnd] = useState('')
+  const [msg, setMsg] = useState('')
+  const [openDate, setOpenDate] = useState('')
+  const [openLines, setOpenLines] = useState<{ account: string; amount: string }[]>([{ account: '', amount: '' }, { account: '', amount: '' }])
+  const load = () => api.get<{ closedThrough: string }>('/closing').then((r) => setClosedThrough(r.closedThrough)).catch(() => {})
+  useEffect(() => { load() }, [])
+  const lock = async () => { const r = await api.post<{ closedThrough: string }>('/closing/lock', { date: lockDate }); setClosedThrough(r.closedThrough); setMsg(lockDate ? `ปิดงวดบัญชีถึง ${lockDate} แล้ว — ลงรายการก่อนวันนี้ไม่ได้` : 'ยกเลิกการปิดงวดแล้ว') }
+  const unlock = async () => { await api.post('/closing/lock', { date: '' }); setClosedThrough(''); setMsg('ยกเลิกการปิดงวดแล้ว') }
+  const closeYear = async () => { if (!fyEnd) { setMsg('เลือกวันสิ้นปีบัญชีก่อน'); return } if (!confirm(`ปิดบัญชีสิ้นปี ณ ${fyEnd}? ระบบจะปิดรายได้/ค่าใช้จ่ายเข้ากำไรสะสม`)) return; try { await api.post('/closing/year-end', { date: fyEnd }); setMsg('ปิดบัญชีสิ้นปีแล้ว — กำไรสุทธิถูกโอนเข้ากำไรสะสม') } catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) } }
+  const postOpening = async () => {
+    const balances = openLines.filter((l) => l.account && Number(l.amount)).map((l) => ({ account: l.account, amount: Number(l.amount) }))
+    if (!balances.length) { setMsg('ใส่ยอดยกมาก่อน'); return }
+    try { await api.post('/closing/opening', { date: openDate || undefined, balances }); setMsg('บันทึกยอดยกมาแล้ว (ผลต่างเข้ากำไรสะสมอัตโนมัติ)'); setOpenLines([{ account: '', amount: '' }, { account: '', amount: '' }]) }
+    catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
+  }
+  const setL = (i: number, patch: Partial<{ account: string; amount: string }>) => setOpenLines((ls) => ls.map((l, j) => j === i ? { ...l, ...patch } : l))
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {msg && <div style={{ fontSize: 12.5, color: msg.startsWith('ผิดพลาด') ? '#C24036' : '#2E7D55', background: msg.startsWith('ผิดพลาด') ? '#FBEEEC' : '#E2F1EA', border: '1px solid ' + (msg.startsWith('ผิดพลาด') ? '#E7CDC9' : '#CDE3D6'), borderRadius: 9, padding: '9px 13px' }}>{msg}</div>}
+
+      {/* ยอดยกมา */}
+      <div style={{ ...card, padding: 18 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#1E2E3B' }}>ยอดยกมา (Opening Balances)</div>
+        <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 10 }}>สำหรับย้ายข้อมูลจากระบบเดิม/Express — ใส่ยอดคงเหลือแต่ละบัญชี ระบบจะลงผลต่างเข้ากำไรสะสมให้สมดุลอัตโนมัติ</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}><span style={{ fontSize: 12.5, color: '#5C6770' }}>ณ วันที่:</span><input type="date" style={field} value={openDate} onChange={(e) => setOpenDate(e.target.value)} /></div>
+        {openLines.map((l, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 160px 30px', gap: 8, marginBottom: 6 }}>
+            <select style={field} value={l.account} onChange={(e) => setL(i, { account: e.target.value })}><option value="">— เลือกบัญชี —</option>{accounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
+            <input type="number" style={{ ...field, textAlign: 'right' }} value={l.amount} onChange={(e) => setL(i, { amount: e.target.value })} placeholder="ยอดคงเหลือ" />
+            <button onClick={() => setOpenLines((ls) => ls.length > 1 ? ls.filter((_, j) => j !== i) : ls)} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer' }}>✕</button>
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          <button onClick={() => setOpenLines((ls) => [...ls, { account: '', amount: '' }])} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: '#fff', border: '1px dashed #B9C6D0', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>+ เพิ่มบัญชี</button>
+          <button onClick={postOpening} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer' }}>บันทึกยอดยกมา</button>
+        </div>
+      </div>
+
+      {/* ปิดงวด (lock) */}
+      <div style={{ ...card, padding: 18 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#1E2E3B' }}>ปิดงวดบัญชี (ล็อกไม่ให้แก้ย้อนหลัง)</div>
+        <div style={{ fontSize: 12.5, color: '#5C6770', margin: '6px 0 10px' }}>สถานะปัจจุบัน: {closedThrough ? <b style={{ color: '#C24036' }}>ปิดถึง {closedThrough}</b> : <span style={{ color: '#2E7D55' }}>ยังไม่ปิดงวด</span>}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5, color: '#5C6770' }}>ปิดถึงวันที่:</span>
+          <input type="date" style={field} value={lockDate} onChange={(e) => setLockDate(e.target.value)} />
+          <button onClick={lock} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#C24036', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ปิดงวด</button>
+          {closedThrough && <button onClick={unlock} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิกการปิด</button>}
+        </div>
+      </div>
+
+      {/* ปิดปี */}
+      <div style={{ ...card, padding: 18 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#1E2E3B' }}>ปิดบัญชีสิ้นปี (Year-end Closing)</div>
+        <div style={{ fontSize: 11.5, color: '#94A0A8', margin: '6px 0 10px' }}>ปิดยอดรายได้/ต้นทุน/ค่าใช้จ่ายเข้ากำไรสะสม (3020) — ทำหลังตรวจงบเรียบร้อยแล้ว</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12.5, color: '#5C6770' }}>วันสิ้นปีบัญชี:</span>
+          <input type="date" style={field} value={fyEnd} onChange={(e) => setFyEnd(e.target.value)} />
+          <button onClick={closeYear} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ปิดบัญชีสิ้นปี</button>
+        </div>
+      </div>
     </div>
   )
 }

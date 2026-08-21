@@ -345,6 +345,14 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_je_source ON journal_entries(source, sou
 ensureColumn('journal_lines', 'reconciled', 'INTEGER') // เฟส 3: 1 = กระทบยอดธนาคารแล้ว
 ensureColumn('installments', 'due_iso', 'TEXT')        // เฟส 3: วันครบกำหนด (ISO) สำหรับ AR/AP aging
 
+// ===== เฟส 4: สินทรัพย์ถาวร + ค่าเสื่อมราคา =====
+db.exec(`CREATE TABLE IF NOT EXISTS fixed_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT, name TEXT, category TEXT, acquire_date TEXT, cost REAL, salvage REAL,
+  life_years REAL, method TEXT, house_code TEXT, note TEXT,
+  disposed INTEGER DEFAULT 0, dispose_date TEXT, by TEXT, created TEXT
+)`)
+
 // ผังบัญชีมาตรฐาน (ธุรกิจรับเหมาก่อสร้าง SME ไทย) — seed แบบ idempotent ตามรหัส
 {
   const CHART = [

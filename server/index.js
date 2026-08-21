@@ -645,6 +645,18 @@ api.post('/reconcile', financeOnly, (req, res) => { const n = acct.setReconciled
 // เฟส 3: ลูกหนี้/เจ้าหนี้คงค้าง + อายุหนี้
 api.get('/ar-aging', financeOnly, (_req, res) => res.json(acct.arAging()))
 api.get('/ap-aging', financeOnly, (_req, res) => res.json(acct.apAging()))
+// เฟส 4: สินทรัพย์ถาวร + ค่าเสื่อมราคา
+api.get('/assets', financeOnly, (_req, res) => res.json(acct.listAssets()))
+api.post('/assets', financeOnly, (req, res) => { try { const a = acct.addAsset(req.body || {}, req.user.name); audit(req, 'เพิ่มสินทรัพย์ถาวร', a.name); res.status(201).json(a) } catch (e) { res.status(400).json({ error: e.message }) } })
+api.post('/assets/:id/dispose', financeOnly, (req, res) => { try { acct.disposeAsset(req.params.id, req.body?.date); audit(req, 'จำหน่ายสินทรัพย์', req.params.id); res.json({ ok: true }) } catch (e) { res.status(400).json({ error: e.message }) } })
+api.post('/assets/run-depreciation', financeOnly, (req, res) => { try { const r = acct.runDepreciation(req.body?.asOf, req.user.name); audit(req, 'ลงค่าเสื่อมราคา', `${r.assets} รายการ ${r.totalDepreciation}`); res.json(r) } catch (e) { res.status(400).json({ error: e.message }) } })
+// เฟส 4: ปิดงวด / ปิดปี / ยอดยกมา
+api.get('/closing', financeOnly, (_req, res) => res.json({ closedThrough: acct.closedThrough() }))
+api.post('/closing/lock', financeOnly, (req, res) => { acct.setClosedThrough(req.body?.date || ''); audit(req, 'ปิดงวดบัญชี', req.body?.date || 'ยกเลิกล็อก'); res.json({ ok: true, closedThrough: acct.closedThrough() }) })
+api.post('/closing/opening', financeOnly, (req, res) => { try { const id = acct.postOpening(req.body?.balances, req.body?.date, req.user.name); audit(req, 'บันทึกยอดยกมา', `#${id}`); res.json({ ok: true, id }) } catch (e) { res.status(400).json({ error: e.message }) } })
+api.post('/closing/year-end', financeOnly, (req, res) => { try { const id = acct.closeYear(req.body?.date, req.user.name); audit(req, 'ปิดบัญชีสิ้นปี', req.body?.date); res.json({ ok: true, id }) } catch (e) { res.status(400).json({ error: e.message }) } })
+// เฟส 4: สรุปภาษี
+api.get('/tax-summary', financeOnly, (req, res) => res.json(acct.taxSummary(acctRange(req))))
 // สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากข้อมูลเดิมทั้งหมด (idempotent)
 api.post('/accounting/rebuild', financeOnly, (req, res) => {
   try { const n = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${n} รายการ`); res.json({ ok: true, count: n }) }

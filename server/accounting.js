@@ -63,6 +63,8 @@ export const postJournal = db.transaction((entry) => {
   if (lines.length < 2) throw new Error('รายการบัญชีต้องมีอย่างน้อย 2 บรรทัด')
   if (dr !== cr) throw new Error(`เดบิต (${dr}) ไม่เท่ากับ เครดิต (${cr}) — รายการไม่สมดุล`)
   if (dr === 0) throw new Error('ยอดเงินต้องไม่เป็นศูนย์')
+  const entryIso = entry.date_iso || todayISO()
+  if (isDateLocked(entryIso, entry.source)) throw new Error(`งวดบัญชีถึงวันที่ ${closedThrough()} ถูกปิดแล้ว — ลงรายการวันที่ ${entryIso} ไม่ได้`)
 
   // idempotent: ถ้ามี source+source_id เดิม ลบทิ้งก่อน
   if (entry.source && entry.source !== 'manual' && entry.source_id != null) {
@@ -312,3 +314,130 @@ function agingFor(side) {
 }
 export function arAging() { return agingFor('customer') }
 export function apAging() { return agingFor('contractor') }
+
+// ========================= เฟส 4 =========================
+// ---- ปิดงวด (period lock) ----
+export function closedThrough() { return getSetting('acct_closed_through', '') }
+export function setClosedThrough(iso) {
+  const up = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+  up.run('acct_closed_through', iso ? String(iso) : '')
+}
+// ตรวจว่าปิดงวดแล้วหรือยัง (ใช้กันการลงบัญชีย้อนเข้าไปในงวดที่ปิด)
+export function isDateLocked(iso, source) {
+  if (source === 'opening' || source === 'yearclose') return false
+  const c = closedThrough()
+  return c && iso && iso <= c
+}
+
+// ---- สินทรัพย์ถาวร + ค่าเสื่อมราคา (เส้นตรง) ----
+function monthsElapsed(fromIso, toIso) {
+  const a = new Date(fromIso + 'T00:00:00'), b = new Date(toIso + 'T00:00:00')
+  if (isNaN(a) || isNaN(b) || b < a) return 0
+  let m = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth())
+  if (b.getDate() >= a.getDate()) m += 0; // นับเดือนที่ครบแล้ว
+  return Math.max(0, m)
+}
+export function depreciableBase(a) { return r2((a.cost || 0) - (a.salvage || 0)) }
+export function accumulatedDep(a, asOfIso) {
+  const base = depreciableBase(a)
+  const lifeM = Math.max(1, Math.round((a.life_years || 1) * 12))
+  const monthly = r2(base / lifeM)
+  const elapsed = Math.min(lifeM, monthsElapsed(a.acquire_date, asOfIso))
+  // เดือนสุดท้ายปัดเก็บส่วนที่เหลือให้ครบพอดี
+  return elapsed >= lifeM ? base : r2(monthly * elapsed)
+}
+export function listAssets() {
+  const asOf = todayISO()
+  return db.prepare('SELECT * FROM fixed_assets ORDER BY id DESC').all().map((a) => {
+    const acc = a.disposed ? depreciableBase(a) : accumulatedDep(a, asOf)
+    return { ...a, base: depreciableBase(a), accumulated: acc, bookValue: r2((a.cost || 0) - acc), monthly: r2(depreciableBase(a) / Math.max(1, Math.round((a.life_years || 1) * 12))) }
+  })
+}
+export function addAsset(a, by) {
+  const info = db.prepare(`INSERT INTO fixed_assets (code,name,category,acquire_date,cost,salvage,life_years,method,house_code,note,by,created)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(a.code || '', a.name || '', a.category || '', a.acquire_date || todayISO(),
+    Number(a.cost) || 0, Number(a.salvage) || 0, Number(a.life_years) || 5, a.method || 'straight', a.house_code || '', a.note || '', by || '', nowTS())
+  const id = info.lastInsertRowid
+  // ลงบัญชีซื้อสินทรัพย์: Dr อาคารและอุปกรณ์ / Cr ธนาคาร
+  const cost = r2(Number(a.cost) || 0)
+  if (cost > 0) postJournal({ date_iso: a.acquire_date || undefined, memo: `ซื้อสินทรัพย์ ${a.name || ''}`, house_code: a.house_code, source: 'asset', source_id: id, lines: [{ account: '1210', debit: cost, credit: 0 }, { account: defaultBank(), debit: 0, credit: cost }] })
+  return db.prepare('SELECT * FROM fixed_assets WHERE id=?').get(id)
+}
+export function disposeAsset(id, date) {
+  const a = db.prepare('SELECT * FROM fixed_assets WHERE id=?').get(id)
+  if (!a) throw new Error('ไม่พบสินทรัพย์')
+  db.prepare('UPDATE fixed_assets SET disposed=1, dispose_date=? WHERE id=?').run(date || todayISO(), id)
+  return true
+}
+// ลงค่าเสื่อมสะสม ณ วันที่ (ปรับปรุงยอดสะสมของแต่ละสินทรัพย์ให้ตรง — idempotent)
+export function runDepreciation(asOfIso, by) {
+  const asOf = asOfIso || todayISO()
+  let posted = 0, total = 0
+  for (const a of db.prepare('SELECT * FROM fixed_assets').all()) {
+    const acc = a.disposed ? depreciableBase(a) : accumulatedDep(a, asOf)
+    if (acc <= 0) { removeAutoJournal('dep', a.id); continue }
+    postJournal({ date_iso: asOf, memo: `ค่าเสื่อมราคาสะสม ${a.name || ''}`, house_code: a.house_code, source: 'dep', source_id: a.id, by,
+      lines: [{ account: '6050', debit: acc, credit: 0 }, { account: '1220', debit: 0, credit: acc }] })
+    posted++; total = r2(total + acc)
+  }
+  return { assets: posted, totalDepreciation: total, asOf }
+}
+
+// ---- ยอดยกมา (Opening balances) ----
+// balances = [{account, amount}] amount = ยอดตามธรรมชาติของบัญชี (บวก) — ส่วนต่างลง กำไรสะสม 3020
+export function postOpening(balances, dateIso, by) {
+  const accts = Object.fromEntries(listAccounts().map((a) => [a.code, a]))
+  const lines = []
+  let dr = 0, cr = 0
+  for (const b of balances || []) {
+    const acc = accts[b.account]; const amt = r2(Number(b.amount) || 0)
+    if (!acc || amt === 0) continue
+    if (DEBIT_NORMAL.has(acc.type)) { lines.push({ account: b.account, debit: amt, credit: 0, memo: 'ยอดยกมา' }); dr = r2(dr + amt) }
+    else { lines.push({ account: b.account, debit: 0, credit: amt, memo: 'ยอดยกมา' }); cr = r2(cr + amt) }
+  }
+  if (!lines.length) throw new Error('ไม่มียอดยกมาให้บันทึก')
+  // ส่วนต่างลงกำไรสะสม (3020) เพื่อให้สมดุล
+  const diff = r2(dr - cr)
+  if (diff > 0) lines.push({ account: '3020', debit: 0, credit: diff, memo: 'ยอดยกมา (ผลต่างเข้ากำไรสะสม)' })
+  else if (diff < 0) lines.push({ account: '3020', debit: -diff, credit: 0, memo: 'ยอดยกมา (ผลต่างเข้ากำไรสะสม)' })
+  return postJournal({ date_iso: dateIso || todayISO(), memo: 'ยอดยกมา (Opening Balances)', source: 'opening', source_id: 'opening', by, lines })
+}
+
+// ---- ปิดปี (year-end closing) — ปิด รายได้/ต้นทุน/ค่าใช้จ่าย เข้ากำไรสะสม ----
+export function closeYear(fyEndIso, by) {
+  const tb = trialBalance({ to: fyEndIso })
+  const pl = tb.filter((r) => ['revenue', 'cost', 'expense'].includes(r.type) && Math.abs(r.balance) > 0.005)
+  if (!pl.length) throw new Error('ไม่มียอดรายได้/ค่าใช้จ่ายให้ปิด')
+  const lines = []
+  let net = 0
+  for (const r of pl) {
+    if (r.type === 'revenue') { lines.push({ account: r.code, debit: r.balance, credit: 0, memo: 'ปิดบัญชีสิ้นปี' }); net = r2(net + r.balance) }
+    else { lines.push({ account: r.code, debit: 0, credit: r.balance, memo: 'ปิดบัญชีสิ้นปี' }); net = r2(net - r.balance) }
+  }
+  // net = กำไรสุทธิ → เข้ากำไรสะสม (3020)
+  if (net > 0) lines.push({ account: '3020', debit: 0, credit: net, memo: 'กำไรสุทธิเข้ากำไรสะสม' })
+  else lines.push({ account: '3020', debit: -net, credit: 0, memo: 'ขาดทุนสุทธิเข้ากำไรสะสม' })
+  const yr = String(fyEndIso).slice(0, 4)
+  return postJournal({ date_iso: fyEndIso, memo: `ปิดบัญชีสิ้นปี ${Number(yr) + 543}`, source: 'yearclose', source_id: yr, by, lines })
+}
+
+// ---- สรุปภาษี: ภ.พ.30 (VAT) / หัก ณ ที่จ่าย / ภ.ง.ด.50 (ประมาณการ) ----
+export function taxSummary(range = {}) {
+  const outputVat = r2(db.prepare('SELECT COALESCE(SUM(vat),0) v FROM sales_docs').get().v)
+  const expenseTotal = r2(db.prepare('SELECT COALESCE(SUM(amount),0) a FROM expenses').get().a)
+  const inputVat = r2((expenseTotal * 7) / 107)
+  const vatPayable = r2(outputVat - inputVat)
+  const wht = r2(db.prepare('SELECT COALESCE(SUM(wht),0) w FROM payments').get().w)
+  const whtByType = db.prepare("SELECT type, COALESCE(SUM(gross),0) gross, COALESCE(SUM(wht),0) wht, COUNT(*) n FROM payments GROUP BY type").all()
+  // ภ.ง.ด.50 ประมาณการภาษีเงินได้นิติบุคคล จากกำไรสุทธิทางบัญชี (อัตรา SME)
+  const netProfit = incomeStatement(range).netProfit
+  const corpTax = estimateCorpTax(netProfit)
+  return { outputVat, inputVat, vatPayable, wht, whtByType, netProfit, corpTax }
+}
+// อัตรา SME: 0-300,000 ยกเว้น · 300,001-3,000,000 = 15% · เกิน 3,000,000 = 20%
+export function estimateCorpTax(netProfit) {
+  const p = Math.max(0, r2(netProfit))
+  if (p <= 300000) return 0
+  if (p <= 3000000) return r2((p - 300000) * 0.15)
+  return r2((3000000 - 300000) * 0.15 + (p - 3000000) * 0.20)
+}
