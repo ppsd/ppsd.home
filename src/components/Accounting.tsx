@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { baht } from '../data'
+import { exportXlsx, ExportButton } from '../exportCsv'
+import { company } from '../erpData'
 
 // ระบบบัญชีคู่ (Double-entry / General Ledger) — เฟส 1
 // งบการเงิน · งบทดลอง · สมุดรายวัน · แยกประเภท · ผังบัญชี
@@ -19,6 +21,8 @@ const card: React.CSSProperties = { background: '#fff', border: '1px solid #E1E5
 
 const TABS = [
   { id: 'statements', label: 'งบการเงิน' },
+  { id: 'cashflow', label: 'งบกระแสเงินสด' },
+  { id: 'projects', label: 'กำไรรายโครงการ' },
   { id: 'trial', label: 'งบทดลอง' },
   { id: 'journal', label: 'สมุดรายวัน' },
   { id: 'gl', label: 'แยกประเภท' },
@@ -60,6 +64,8 @@ export default function Accounting() {
       </div>
 
       {tab === 'statements' && <Statements />}
+      {tab === 'cashflow' && <CashFlowStatement />}
+      {tab === 'projects' && <ProjectPnl />}
       {tab === 'trial' && <TrialBalance />}
       {tab === 'journal' && <Journal accounts={accounts} />}
       {tab === 'gl' && <GeneralLedger accounts={accounts} />}
@@ -81,6 +87,42 @@ function Statements() {
     api.get<BalanceSheet>('/balance-sheet' + qs).then(setBs).catch(() => setBs(null))
   }
   useEffect(() => { load() /* eslint-disable-next-line */ }, [])
+  const printStatements = async () => {
+    const qs = (() => { const q = new URLSearchParams(); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to); return q.toString() ? '?' + q.toString() : '' })()
+    const cf = await api.get<CashFlow>('/cash-flow' + qs).catch(() => null)
+    const money = (n: number) => (n < 0 ? '(' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ')' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+    const rowsHtml = (arr: TBRow[]) => arr.map((r) => `<tr><td style="padding-left:18px">${r.code} ${r.name}</td><td class="n">${money(r.balance)}</td></tr>`).join('')
+    const period = range.from || range.to ? `${range.from || 'เริ่มต้น'} ถึง ${range.to || 'ปัจจุบัน'}` : 'ตั้งแต่เริ่มต้นจนถึงปัจจุบัน'
+    const cfSec = (title: string, rows: { label: string; amount: number }[], total: number) => `<tr class="h"><td colspan="2">${title}</td></tr>${rows.map((r) => `<tr><td style="padding-left:18px">${r.label}</td><td class="n">${money(r.amount)}</td></tr>`).join('') || '<tr><td style="padding-left:18px">—</td><td class="n"></td></tr>'}<tr class="s"><td>รวม</td><td class="n">${money(total)}</td></tr>`
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>งบการเงิน ${company.name}</title>
+    <style>body{font-family:'Kanit','TH Sarabun New',sans-serif;color:#1C2730;margin:28px;font-size:13px}
+    h1{font-size:16px;margin:0}.sub{color:#5C6770;font-size:11px}.tit{font-size:15px;font-weight:700;margin:22px 0 2px}
+    table{width:100%;border-collapse:collapse;margin-top:6px}td{padding:3px 6px;border-bottom:1px solid #EEF1F4}
+    .n{text-align:right;font-variant-numeric:tabular-nums}.h td{font-weight:700;color:#30506A;border-bottom:1px solid #ccc;padding-top:8px}
+    .s td{font-weight:700;border-top:2px solid #999;border-bottom:none}.doc{page-break-after:always}
+    @media print{@page{margin:14mm}}</style></head><body>
+    <div style="border-bottom:2px solid #1E2E3B;padding-bottom:8px"><h1>${company.name}</h1><div class="sub">${company.address}<br>${company.taxId}</div></div>
+    <div class="doc"><div class="tit">งบกำไรขาดทุน</div><div class="sub">สำหรับงวด ${period}</div><table>
+      <tr class="h"><td>รายได้</td><td class="n"></td></tr>${is ? rowsHtml(is.revenue) : ''}<tr class="s"><td>รวมรายได้</td><td class="n">${money(is?.totalRevenue || 0)}</td></tr>
+      <tr class="h"><td>ต้นทุนงานก่อสร้าง</td><td class="n"></td></tr>${is ? rowsHtml(is.cost) : ''}<tr class="s"><td>รวมต้นทุน</td><td class="n">${money(is?.totalCost || 0)}</td></tr>
+      <tr class="s"><td>กำไรขั้นต้น</td><td class="n">${money(is?.grossProfit || 0)}</td></tr>
+      <tr class="h"><td>ค่าใช้จ่ายดำเนินงาน</td><td class="n"></td></tr>${is ? rowsHtml(is.expense) : ''}<tr class="s"><td>รวมค่าใช้จ่าย</td><td class="n">${money(is?.totalExpense || 0)}</td></tr>
+      <tr class="s"><td>กำไร(ขาดทุน)สุทธิ</td><td class="n">${money(is?.netProfit || 0)}</td></tr></table></div>
+    <div class="doc"><div class="tit">งบแสดงฐานะการเงิน</div><div class="sub">ณ ${range.to || 'ปัจจุบัน'}</div><table>
+      <tr class="h"><td>สินทรัพย์</td><td class="n"></td></tr>${bs ? rowsHtml(bs.assets) : ''}<tr class="s"><td>รวมสินทรัพย์</td><td class="n">${money(bs?.totalAssets || 0)}</td></tr>
+      <tr class="h"><td>หนี้สิน</td><td class="n"></td></tr>${bs ? rowsHtml(bs.liabilities) : ''}<tr class="s"><td>รวมหนี้สิน</td><td class="n">${money(bs?.totalLiabilities || 0)}</td></tr>
+      <tr class="h"><td>ส่วนของผู้ถือหุ้น</td><td class="n"></td></tr>${bs ? rowsHtml(bs.equity) : ''}<tr><td style="padding-left:18px">กำไร(ขาดทุน)สะสมงวดนี้</td><td class="n">${money(bs?.netProfit || 0)}</td></tr><tr class="s"><td>รวมส่วนของผู้ถือหุ้น</td><td class="n">${money(bs?.totalEquity || 0)}</td></tr>
+      <tr class="s"><td>รวมหนี้สินและส่วนของผู้ถือหุ้น</td><td class="n">${money((bs?.totalLiabilities || 0) + (bs?.totalEquity || 0))}</td></tr></table></div>
+    ${cf ? `<div><div class="tit">งบกระแสเงินสด</div><div class="sub">สำหรับงวด ${period}</div><table>
+      <tr><td>เงินสดยกมาต้นงวด</td><td class="n">${money(cf.opening)}</td></tr>
+      ${cfSec('กระแสเงินสดจากกิจกรรมดำเนินงาน', cf.operating, cf.netOperating)}
+      ${cfSec('กระแสเงินสดจากกิจกรรมลงทุน', cf.investing, cf.netInvesting)}
+      ${cfSec('กระแสเงินสดจากกิจกรรมจัดหาเงิน', cf.financing, cf.netFinancing)}
+      <tr class="s"><td>เงินสดเพิ่มขึ้น(ลดลง)สุทธิ</td><td class="n">${money(cf.netChange)}</td></tr>
+      <tr class="s"><td>เงินสดคงเหลือปลายงวด</td><td class="n">${money(cf.closing)}</td></tr></table></div>` : ''}
+    <script>window.onload=function(){window.print()}</script></body></html>`
+    const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close() }
+  }
   const row = (label: string, val: number, opts: { bold?: boolean; top?: boolean; color?: string } = {}) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: opts.top ? '9px 0 0' : '4px 0', marginTop: opts.top ? 6 : 0, borderTop: opts.top ? '1px solid #E1E5EA' : undefined, fontWeight: opts.bold ? 700 : 500, fontSize: opts.bold ? 15 : 13, color: opts.color || (opts.bold ? '#1E2E3B' : '#3C4750') }}>
       <span>{label}</span><span className="num">{baht(val)}</span>
@@ -101,6 +143,7 @@ function Statements() {
         <button onClick={load} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>ดูงบ</button>
         {(range.from || range.to) && <button onClick={() => { setRange({ from: '', to: '' }); setTimeout(load, 0) }} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>ล้าง</button>}
         <span style={{ fontSize: 11.5, color: '#94A0A8', marginLeft: 4 }}>(ไม่ระบุ = ตั้งแต่ต้นจนถึงปัจจุบัน)</span>
+        <button onClick={printStatements} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>🖨 พิมพ์งบการเงิน</button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 14 }}>
         {/* งบกำไรขาดทุน */}
@@ -155,7 +198,10 @@ function TrialBalance() {
   useEffect(() => { api.get<TBRow[]>('/trial-balance').then(setRows).catch(() => setRows([])) }, [])
   const totDr = rows.reduce((s, r) => s + r.debit, 0)
   const totCr = rows.reduce((s, r) => s + r.credit, 0)
+  const doExport = () => exportXlsx('งบทดลอง', ['รหัส', 'ชื่อบัญชี', 'ประเภท', 'เดบิต', 'เครดิต'], rows.map((r) => [r.code, r.name, TYPE_LABEL[r.type] || r.type, r.debit, r.credit]), 'งบทดลอง')
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{rows.length > 0 && <ExportButton onClick={doExport} label="ส่งออก Excel" />}</div>
     <div style={card}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead><tr style={{ background: '#F7F9FB' }}>
@@ -180,6 +226,7 @@ function TrialBalance() {
           <td className="num" style={{ padding: '11px 18px', textAlign: 'right' }}>{baht(totCr)}</td>
         </tr></tfoot>}
       </table>
+    </div>
     </div>
   )
 }
@@ -364,6 +411,97 @@ function ChartOfAccounts({ accounts, reload }: { accounts: Account[]; reload: ()
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ---------- งบกระแสเงินสด (Cash Flow — วิธีตรง) ----------
+interface CashFlow { opening: number; operating: { label: string; amount: number }[]; investing: { label: string; amount: number }[]; financing: { label: string; amount: number }[]; netOperating: number; netInvesting: number; netFinancing: number; netChange: number; closing: number }
+function CashFlowStatement() {
+  const [cf, setCf] = useState<CashFlow | null>(null)
+  const [range, setRange] = useState({ from: '', to: '' })
+  const load = () => {
+    const q = new URLSearchParams(); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)
+    api.get<CashFlow>('/cash-flow' + (q.toString() ? '?' + q.toString() : '')).then(setCf).catch(() => setCf(null))
+  }
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [])
+  const section = (title: string, rows: { label: string; amount: number }[], total: number, color: string) => (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color }}>{title}</div>
+      {rows.length ? rows.map((r, i) => (
+        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 13, color: '#3C4750' }}>
+          <span>{r.label}</span><span className="num" style={{ color: r.amount < 0 ? '#C24036' : '#2E7D55' }}>{baht(r.amount)}</span>
+        </div>
+      )) : <div style={{ fontSize: 12, color: '#94A0A8', padding: '3px 0' }}>—</div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', marginTop: 4, borderTop: '1px solid #EEF1F4', fontWeight: 600, fontSize: 13 }}><span>เงินสดสุทธิ{title.replace('กระแสเงินสดจาก', '')}</span><span className="num">{baht(total)}</span></div>
+    </div>
+  )
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12.5, color: '#5C6770' }}>ช่วงวันที่:</span>
+        <input type="date" style={field} value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
+        <span style={{ color: '#94A0A8' }}>–</span>
+        <input type="date" style={field} value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
+        <button onClick={load} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>ดูงบ</button>
+        {(range.from || range.to) && <button onClick={() => { setRange({ from: '', to: '' }); setTimeout(load, 0) }} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>ล้าง</button>}
+      </div>
+      <div style={{ ...card, padding: 20, maxWidth: 560 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#1E2E3B' }}>งบกระแสเงินสด</div>
+        <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 6 }}>Cash Flow Statement (วิธีตรง)</div>
+        {cf ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 13, fontWeight: 600, color: '#5C6770' }}><span>เงินสดยกมาต้นงวด</span><span className="num">{baht(cf.opening)}</span></div>
+            {section('กระแสเงินสดจากกิจกรรมดำเนินงาน', cf.operating, cf.netOperating, '#2E7D55')}
+            {section('กระแสเงินสดจากกิจกรรมลงทุน', cf.investing, cf.netInvesting, '#30506A')}
+            {section('กระแสเงินสดจากกิจกรรมจัดหาเงิน', cf.financing, cf.netFinancing, '#6B4E9E')}
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', marginTop: 8, borderTop: '2px solid #E1E5EA', fontWeight: 700, fontSize: 14 }}><span>เงินสดเพิ่มขึ้น(ลดลง)สุทธิ</span><span className="num" style={{ color: cf.netChange < 0 ? '#C24036' : '#2E7D55' }}>{baht(cf.netChange)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', fontWeight: 700, fontSize: 15, color: '#1E2E3B' }}><span>เงินสดคงเหลือปลายงวด</span><span className="num">{baht(cf.closing)}</span></div>
+          </>
+        ) : <div style={{ color: '#94A0A8', padding: 20, textAlign: 'center' }}>ยังไม่มีข้อมูล</div>}
+      </div>
+    </div>
+  )
+}
+
+// ---------- กำไรรายโครงการ ----------
+interface ProjectRow { house_code: string; house_name: string; revenue: number; cost: number; expense: number; profit: number }
+function ProjectPnl() {
+  const [rows, setRows] = useState<ProjectRow[]>([])
+  useEffect(() => { api.get<ProjectRow[]>('/project-pnl').then(setRows).catch(() => setRows([])) }, [])
+  const doExport = () => exportXlsx('กำไรรายโครงการ', ['บ้าน/โครงการ', 'รายได้', 'ต้นทุน', 'ค่าใช้จ่าย', 'กำไร(ขาดทุน)'], rows.map((r) => [r.house_name, r.revenue, r.cost, r.expense, r.profit]), 'รายโครงการ')
+  const tot = rows.reduce((s, r) => ({ revenue: s.revenue + r.revenue, cost: s.cost + r.cost, expense: s.expense + r.expense, profit: s.profit + r.profit }), { revenue: 0, cost: 0, expense: 0, profit: 0 })
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{rows.length > 0 && <ExportButton onClick={doExport} label="ส่งออก Excel" />}</div>
+      <div style={card}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead><tr style={{ background: '#F7F9FB' }}>
+            <th style={{ ...th, paddingLeft: 18 }}>บ้าน / โครงการ</th>
+            <th style={{ ...th, textAlign: 'right' }}>รายได้</th><th style={{ ...th, textAlign: 'right' }}>ต้นทุน</th>
+            <th style={{ ...th, textAlign: 'right' }}>ค่าใช้จ่าย</th><th style={{ ...th, textAlign: 'right', paddingRight: 18 }}>กำไร(ขาดทุน)</th>
+          </tr></thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={5} style={{ padding: 40, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีข้อมูล — กด “สร้างบัญชีจากข้อมูลเดิม” ด้านบน</td></tr>}
+            {rows.map((r) => (
+              <tr key={r.house_code || r.house_name} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
+                <td style={{ padding: '10px 18px', fontWeight: 500 }}>{r.house_name}</td>
+                <td className="num" style={{ padding: '10px 12px', textAlign: 'right', color: '#2E7D55' }}>{baht(r.revenue)}</td>
+                <td className="num" style={{ padding: '10px 12px', textAlign: 'right', color: '#C0852C' }}>{baht(r.cost)}</td>
+                <td className="num" style={{ padding: '10px 12px', textAlign: 'right', color: '#6B4E9E' }}>{baht(r.expense)}</td>
+                <td className="num" style={{ padding: '10px 18px', textAlign: 'right', fontWeight: 700, color: r.profit >= 0 ? '#2E7D55' : '#C24036' }}>{baht(r.profit)}</td>
+              </tr>
+            ))}
+          </tbody>
+          {rows.length > 0 && <tfoot><tr style={{ borderTop: '2px solid #E1E5EA', background: '#F7F9FB', fontWeight: 700 }}>
+            <td style={{ padding: '11px 18px' }}>รวมทุกโครงการ</td>
+            <td className="num" style={{ padding: '11px 12px', textAlign: 'right' }}>{baht(tot.revenue)}</td>
+            <td className="num" style={{ padding: '11px 12px', textAlign: 'right' }}>{baht(tot.cost)}</td>
+            <td className="num" style={{ padding: '11px 12px', textAlign: 'right' }}>{baht(tot.expense)}</td>
+            <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: tot.profit >= 0 ? '#2E7D55' : '#C24036' }}>{baht(tot.profit)}</td>
+          </tr></tfoot>}
+        </table>
+      </div>
     </div>
   )
 }

@@ -629,6 +629,8 @@ api.get('/gl/:account', financeOnly, (req, res) => res.json(acct.ledgerOf(req.pa
 api.get('/trial-balance', financeOnly, (req, res) => res.json(acct.trialBalance(acctRange(req))))
 api.get('/income-statement', financeOnly, (req, res) => res.json(acct.incomeStatement(acctRange(req))))
 api.get('/balance-sheet', financeOnly, (req, res) => res.json(acct.balanceSheet(acctRange(req))))
+api.get('/cash-flow', financeOnly, (req, res) => res.json(acct.cashFlow(acctRange(req))))
+api.get('/project-pnl', financeOnly, (req, res) => res.json(acct.projectPnl(acctRange(req))))
 // สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากข้อมูลเดิมทั้งหมด (idempotent)
 api.post('/accounting/rebuild', financeOnly, (req, res) => {
   try { const n = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${n} รายการ`); res.json({ ok: true, count: n }) }

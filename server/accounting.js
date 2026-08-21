@@ -164,6 +164,78 @@ export function balanceSheet({ to } = {}) {
   return { assets, liabilities, equity, totalAssets, totalLiabilities, equityBooked, netProfit, totalEquity,
     balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.5 }
 }
+// ---- เฟส 2: งบกระแสเงินสด (Cash Flow — วิธีตรง) ----
+const CASH_ACCOUNTS = ['1010', '1020', '1030']
+// จัดหมวดกระแสเงินสดจากบัญชีคู่ (ฝั่งที่ไม่ใช่เงินสด)
+function cashCategory(otherCode) {
+  const c = String(otherCode || '')
+  if (c.startsWith('12')) return { act: 'investing', label: 'ซื้อ/ขายสินทรัพย์ถาวร' }
+  if (c === '3010' || c === '3020') return { act: 'financing', label: 'เงินทุน/เงินของเจ้าของ' }
+  if (c.startsWith('4')) return { act: 'operating', label: 'รับเงินจากงานก่อสร้าง/รายได้' }
+  if (c.startsWith('5')) return { act: 'operating', label: 'จ่ายต้นทุนงานก่อสร้าง' }
+  if (c.startsWith('6')) return { act: 'operating', label: 'จ่ายค่าใช้จ่ายดำเนินงาน' }
+  if (c === '2010' || c === '2020') return { act: 'operating', label: 'จ่ายชำระเจ้าหนี้' }
+  if (c === '1140' || c === '2070') return { act: 'operating', label: 'รับ-จ่ายกับลูกค้า' }
+  if (c.startsWith('2')) return { act: 'operating', label: 'ภาษี/หนี้สินหมุนเวียน' }
+  return { act: 'operating', label: 'อื่นๆ' }
+}
+// ยอดเงินสดคงเหลือก่อนวันที่ (iso) — ยอดยกมา
+function cashBalanceBefore(iso) {
+  if (!iso) return 0
+  const r = db.prepare(`SELECT SUM(l.debit - l.credit) v FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+    WHERE e.void=0 AND e.date_iso < ? AND l.account IN (${CASH_ACCOUNTS.map(() => '?').join(',')})`).get(iso, ...CASH_ACCOUNTS)
+  return r2(r?.v || 0)
+}
+export function cashFlow({ from, to } = {}) {
+  const where = ['e.void=0']
+  const args = []
+  if (from) { where.push('e.date_iso >= ?'); args.push(from) }
+  if (to) { where.push('e.date_iso <= ?'); args.push(to) }
+  // ทุก entry ที่แตะเงินสด: หายอดเงินสดสุทธิของ entry + ฝั่งตรงข้ามที่ใหญ่สุดเพื่อจัดหมวด
+  const entries = db.prepare(`SELECT DISTINCT e.id FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id
+    WHERE ${where.join(' AND ')} AND l.account IN (${CASH_ACCOUNTS.map(() => '?').join(',')})`).all(...args, ...CASH_ACCOUNTS)
+  const buckets = {} // key act|label -> amount
+  const lineStmt = db.prepare('SELECT account, debit, credit FROM journal_lines WHERE entry_id=?')
+  for (const { id } of entries) {
+    const ls = lineStmt.all(id)
+    const cashDelta = r2(ls.filter((l) => CASH_ACCOUNTS.includes(l.account)).reduce((s, l) => s + (l.debit - l.credit), 0))
+    if (cashDelta === 0) continue
+    const others = ls.filter((l) => !CASH_ACCOUNTS.includes(l.account))
+    const main = others.sort((a, b) => Math.abs(b.debit - b.credit) - Math.abs(a.debit - a.credit))[0]
+    const cat = cashCategory(main?.account)
+    const key = cat.act + '|' + cat.label
+    buckets[key] = r2((buckets[key] || 0) + cashDelta)
+  }
+  const mk = (act) => Object.entries(buckets).filter(([k]) => k.startsWith(act + '|')).map(([k, v]) => ({ label: k.split('|')[1], amount: v }))
+  const operating = mk('operating'), investing = mk('investing'), financing = mk('financing')
+  const sum = (arr) => r2(arr.reduce((s, r) => s + r.amount, 0))
+  const netOperating = sum(operating), netInvesting = sum(investing), netFinancing = sum(financing)
+  const netChange = r2(netOperating + netInvesting + netFinancing)
+  const opening = cashBalanceBefore(from)
+  return { opening, operating, investing, financing, netOperating, netInvesting, netFinancing, netChange, closing: r2(opening + netChange) }
+}
+
+// ---- เฟส 2: งบกำไรขาดทุนรายโครงการ (per-house P&L) ----
+export function projectPnl({ from, to } = {}) {
+  const where = ['e.void=0', "a.type IN ('revenue','cost','expense')"]
+  const args = []
+  if (from) { where.push('e.date_iso >= ?'); args.push(from) }
+  if (to) { where.push('e.date_iso <= ?'); args.push(to) }
+  const rows = db.prepare(`SELECT e.house_code, a.type, SUM(l.debit) dr, SUM(l.credit) cr
+    FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+    WHERE ${where.join(' AND ')} GROUP BY e.house_code, a.type`).all(...args)
+  const houses = {}
+  for (const r of rows) {
+    const hc = r.house_code || '(ไม่ระบุบ้าน)'
+    houses[hc] = houses[hc] || { house_code: r.house_code || '', revenue: 0, cost: 0, expense: 0 }
+    const val = r.type === 'revenue' ? r2(r.cr - r.dr) : r2(r.dr - r.cr)
+    houses[hc][r.type] = val
+  }
+  const nameOf = (code) => code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code) : '(ไม่ระบุบ้าน)'
+  return Object.values(houses).map((h) => ({ ...h, house_name: nameOf(h.house_code), profit: r2(h.revenue - h.cost - h.expense) }))
+    .sort((a, b) => b.revenue - a.revenue)
+}
+
 // สมุดรายวัน (list)
 export function listJournal({ from, to, source, limit = 500 } = {}) {
   const where = []
