@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { filters, statusStyle, barColor, baht } from '../data'
 import { useApp } from '../store'
+import type { ApiHouse } from '../store'
 
 interface HouseListProps {
   search: string
@@ -10,8 +12,39 @@ interface HouseListProps {
   onAddHouse: () => void
 }
 
+// ย่อรูปฝั่ง client ก่อนเก็บ (กว้างไม่เกิน 1400px, JPEG) เพื่อให้ไฟล์เล็ก โหลดเร็ว
+function resizeImage(file: File, maxW = 1400, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const scale = Math.min(1, maxW / img.width)
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale)
+        const c = document.createElement('canvas'); c.width = w; c.height = h
+        c.getContext('2d')!.drawImage(img, 0, 0, w, h)
+        resolve(c.toDataURL('image/jpeg', quality))
+      }
+      img.onerror = reject
+      img.src = String(r.result)
+    }
+    r.onerror = reject
+    r.readAsDataURL(file)
+  })
+}
+
 export default function HouseList({ search, statusFilter, onSearch, onSetFilter, onOpenHouse, onAddHouse }: HouseListProps) {
-  const { houses } = useApp().data
+  const app = useApp()
+  const { houses } = app.data
+  const canEdit = app.user?.role === 'admin' || app.user?.role === 'accounting' || app.user?.role === 'site' || !!app.user?.isManager
+  const [uploading, setUploading] = useState<number | null>(null)
+  const pickPhoto = async (h: ApiHouse, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; e.target.value = ''
+    if (!file) return
+    setUploading(h.id)
+    try { const photo = await resizeImage(file); await app.updateHouse(h.id, { photo }) }
+    catch { /* ignore */ } finally { setUploading(null) }
+  }
   const q = search.trim().toLowerCase()
   const filtered = houses.filter((h) => {
     const okS = statusFilter === 'all' || h.status === statusFilter
@@ -63,9 +96,17 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
           const ss = statusStyle(h.status)
           return (
             <div key={h.id} onClick={() => onOpenHouse(h.id)} className="house-card" style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden', cursor: 'pointer' }}>
-              <div style={{ height: 96, background: 'repeating-linear-gradient(135deg,#EAEEF2 0 12px,#E2E8ED 12px 24px)', position: 'relative', display: 'flex', alignItems: 'flex-end', padding: 11 }}>
-                <span style={{ position: 'absolute', top: 11, right: 11, fontSize: 11, fontWeight: 600, color: ss.c, background: ss.bg, padding: '3px 10px', borderRadius: 20 }}>{h.status}</span>
-                <span style={{ fontSize: 10.5, color: '#8A98A3', fontFamily: 'monospace', background: 'rgba(255,255,255,.7)', padding: '2px 7px', borderRadius: 5 }}>{h.code}</span>
+              <div style={{ height: 130, background: h.photo ? '#1E2E3B' : 'repeating-linear-gradient(135deg,#EAEEF2 0 12px,#E2E8ED 12px 24px)', position: 'relative', display: 'flex', alignItems: 'flex-end', padding: 11 }}>
+                {h.photo && <img src={h.photo} alt={h.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
+                <span style={{ position: 'absolute', top: 11, right: 11, fontSize: 11, fontWeight: 600, color: ss.c, background: ss.bg, padding: '3px 10px', borderRadius: 20, zIndex: 1 }}>{h.status}</span>
+                {canEdit && (
+                  <label onClick={(e) => e.stopPropagation()} title={h.photo ? 'เปลี่ยนรูปบ้าน' : 'ใส่รูปบ้าน'} style={{ position: 'absolute', top: 11, left: 11, zIndex: 1, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: '#30506A', background: 'rgba(255,255,255,.92)', border: '1px solid rgba(0,0,0,.06)', borderRadius: 20, padding: '3px 9px', cursor: uploading === h.id ? 'wait' : 'pointer' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
+                    {uploading === h.id ? 'กำลังอัปโหลด…' : h.photo ? 'เปลี่ยนรูป' : 'ใส่รูป'}
+                    <input type="file" accept="image/*" onChange={(e) => pickPhoto(h, e)} style={{ display: 'none' }} />
+                  </label>
+                )}
+                <span style={{ fontSize: 10.5, color: h.photo ? '#fff' : '#8A98A3', fontFamily: 'monospace', background: h.photo ? 'rgba(0,0,0,.45)' : 'rgba(255,255,255,.7)', padding: '2px 7px', borderRadius: 5, position: 'relative', zIndex: 1 }}>{h.code}</span>
               </div>
               <div style={{ padding: '14px 16px 16px' }}>
                 <div style={{ fontSize: 15, fontWeight: 600, color: '#1C2730' }}>{h.name}</div>

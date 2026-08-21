@@ -41,6 +41,7 @@ export interface ApiHouse {
   supervisor?: string
   service_fee?: number
   site_location?: string
+  photo?: string
 }
 export interface ApiInstallment {
   id: number
