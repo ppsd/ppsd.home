@@ -41,6 +41,44 @@ export const fmtMoney = (v: string | number) => {
 }
 export const unMoney = (v: string) => Number(String(v).replace(/[^\d.]/g, '')) || 0
 
+// แปลงจำนวนเงินเป็นตัวอักษรภาษาไทย เช่น 5278 → "ห้าพันสองร้อยเจ็ดสิบแปดบาทถ้วน"
+export function bahtText(amount: number): string {
+  const num = Math.abs(Math.round((amount + Number.EPSILON) * 100) / 100)
+  const neg = amount < 0 ? 'ลบ' : ''
+  const digits = ['ศูนย์', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า']
+  const pos = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน', 'ล้าน']
+  const readGroup = (n: string): string => {
+    let s = ''
+    const len = n.length
+    for (let i = 0; i < len; i++) {
+      const d = Number(n[i]); const p = len - i - 1
+      if (d === 0) continue
+      if (p === 0 && d === 1 && len > 1) s += 'เอ็ด'
+      else if (p === 1 && d === 2) s += 'ยี่สิบ'
+      else if (p === 1 && d === 1) s += 'สิบ'
+      else s += digits[d] + pos[p]
+    }
+    return s
+  }
+  const readInt = (n: number): string => {
+    if (n === 0) return 'ศูนย์'
+    let str = String(n), out = ''
+    // แยกเป็นกลุ่มละ 6 หลัก คั่นด้วย "ล้าน"
+    const groups: string[] = []
+    while (str.length > 6) { groups.unshift(str.slice(-6)); str = str.slice(0, -6) }
+    groups.unshift(str)
+    groups.forEach((g, i) => { const r = readGroup(g); if (r) out += r + (i < groups.length - 1 ? 'ล้าน' : '') })
+    return out
+  }
+  const baht = Math.floor(num)
+  const satang = Math.round((num - baht) * 100)
+  let s = ''
+  if (baht > 0) s += readInt(baht) + 'บาท'
+  if (satang > 0) s += readInt(satang) + 'สตางค์'
+  else s += (baht > 0 ? 'ถ้วน' : 'ศูนย์บาทถ้วน')
+  return neg + s
+}
+
 export interface Swatch {
   c: string
   bg: string

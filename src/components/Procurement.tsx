@@ -630,7 +630,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
       </div>
 
       {docPr && <PrApprovalDoc pr={docPr} onClose={() => setDocPr(null)} />}
-      {docPo && <PoDoc po={docPo} onClose={() => setDocPo(null)} />}
+      {docPo && <PoDoc po={docPo} houseName={houses.find((h) => h.code === docPo.house_code)?.name || docPo.house_code || ''} onClose={() => setDocPo(null)} />}
       {docWht && <WhtDoc payment={docWht} payeeSignature={(data.employees || []).find((e) => e.name === docWht.payee)?.signature} onClose={() => setDocWht(null)} />}
     </div>
   )

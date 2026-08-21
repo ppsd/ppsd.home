@@ -1,16 +1,23 @@
 import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
-import { baht } from '../data'
+import { bahtText } from '../data'
 import type { ApiPO } from '../store'
 
-const cell: React.CSSProperties = { padding: '7px 10px', fontSize: 12.5, border: '1px solid #E1E5EA' }
-const hcell: React.CSSProperties = { ...cell, background: '#F7F9FB', fontWeight: 700, color: '#1C2730' }
+// ใบสั่งซื้อ (PO) — เลย์เอาต์ตามแบบเอกสารบริษัท (โปรแกรมบัญชี)
+const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const bd = '1px solid #333'
+const th: React.CSSProperties = { border: bd, padding: '5px 6px', fontSize: 12, fontWeight: 700, background: '#F2F2F2' }
+const td: React.CSSProperties = { border: bd, padding: '5px 6px', fontSize: 12, verticalAlign: 'top' }
 
-export default function PoDoc({ po, onClose }: { po: ApiPO; onClose: () => void }) {
-  const vat = Math.round(po.amount * 0.07)
+export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName?: string; onClose: () => void }) {
+  const net = po.amount || 0
+  const vat = Math.round(net * 0.07 * 100) / 100
+  const grand = net + vat
+  const credit = po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'
+  const lbl: React.CSSProperties = { color: '#333', width: 78, display: 'inline-block', verticalAlign: 'top' }
   return (
     <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
-      <div className="no-print" style={{ maxWidth: 760, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div className="no-print" style={{ maxWidth: 780, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>ใบสั่งซื้อ {po.no}</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
           <button onClick={() => window.print()} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>🖨 พิมพ์</button>
@@ -18,56 +25,86 @@ export default function PoDoc({ po, onClose }: { po: ApiPO; onClose: () => void 
         </div>
       </div>
 
-      <div className="print-area" style={{ maxWidth: 760, margin: '0 auto', background: '#fff', borderRadius: 6, padding: '34px 38px', boxShadow: '0 24px 70px rgba(20,30,40,.3)' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, borderBottom: '2px solid #1E2E3B', paddingBottom: 14, marginBottom: 18 }}>
-          <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover' }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>{company.name}</div>
-            <div style={{ fontSize: 11, color: '#5C6770' }}>{company.address}</div>
-            <div style={{ fontSize: 11, color: '#5C6770' }}>{company.taxId}</div>
+      <div className="print-area" style={{ maxWidth: 780, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 12 }}>
+        {/* หัวเอกสาร */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 54, height: 54, objectFit: 'cover' }} />
+          <div style={{ flex: 1, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{company.name}</div>
+            <div style={{ fontSize: 11, color: '#333' }}>{company.address}</div>
+            <div style={{ fontSize: 11, color: '#333' }}>โทร. {company.phone || '089-999-2474'}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#1E2E3B' }}>ใบสั่งซื้อ (PO)</div>
-            <div className="num" style={{ fontSize: 11.5, color: '#5C6770', fontFamily: 'monospace' }}>{po.no}</div>
-            <div style={{ fontSize: 11.5, color: '#5C6770' }}>วันที่ {po.date}</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>ใบสั่งซื้อ</div>
+            <div style={{ fontSize: 11, color: '#333', marginTop: 2 }}>ต้นฉบับ / Original</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: '#333', marginTop: 4, borderBottom: '2px solid #1E2E3B', paddingBottom: 8 }}>เลขประจำตัวผู้เสียภาษี / Tax ID : {String(company.taxId).replace(/\D+/g, '') || company.taxId}</div>
+
+        {/* ผู้จำหน่าย + ข้อมูลเอกสาร */}
+        <div style={{ display: 'flex', gap: 0, border: bd, borderTop: 'none', marginTop: 12 }}>
+          <div style={{ flex: 1, padding: '8px 10px', borderRight: bd, lineHeight: 1.7 }}>
+            <div><span style={lbl}>ผู้จำหน่าย</span><b>{po.vendor || '-'}</b></div>
+            <div><span style={lbl}>อ้างอิง PR</span>{po.pr_no || '-'}</div>
+            <div><span style={lbl}>การชำระ</span>{credit}</div>
+          </div>
+          <div style={{ width: 300, padding: '8px 10px', lineHeight: 1.7 }}>
+            <div><span style={lbl}>เลขที่</span><b className="num">{po.no}</b></div>
+            <div><span style={lbl}>วันที่</span><span className="num">{po.date}</span></div>
+            <div><span style={lbl}>บ้าน/โครงการ</span>{houseName || '-'}</div>
+            <div><span style={lbl}>ครบกำหนด</span><span className="num">{po.payment_type === 'credit' ? (po.due_date || '-') : '-'}</span></div>
           </div>
         </div>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 14 }}>
-          <tbody>
-            <tr><td style={{ ...cell, color: '#5C6770', width: '20%' }}>ผู้ขาย</td><td style={cell}>{po.vendor}</td><td style={{ ...cell, color: '#5C6770', width: '20%' }}>อ้างอิง PR</td><td style={cell}>{po.pr_no || '-'}</td></tr>
+        {/* ตารางรายการ */}
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
+          <thead>
             <tr>
-              <td style={{ ...cell, color: '#5C6770' }}>การชำระเงิน</td>
-              <td style={cell}>{po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'}</td>
-              <td style={{ ...cell, color: '#5C6770' }}>ครบกำหนดชำระ</td>
-              <td style={cell}>{po.payment_type === 'credit' ? (po.due_date || '-') : '-'}</td>
+              <th style={{ ...th, width: 34 }}>ลำดับ</th>
+              <th style={{ ...th, textAlign: 'left' }}>รหัสสินค้า / รายละเอียด</th>
+              <th style={{ ...th, width: 52 }}>จำนวน</th>
+              <th style={{ ...th, width: 60 }}>หน่วยละ</th>
+              <th style={{ ...th, width: 60 }}>ส่วนลด</th>
+              <th style={{ ...th, width: 90 }}>ราคารวมภาษี</th>
             </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ ...td, textAlign: 'center' }} className="num">1</td>
+              <td style={td}>{po.item}</td>
+              <td style={{ ...td, textAlign: 'right' }} className="num">-</td>
+              <td style={{ ...td, textAlign: 'right' }} className="num">-</td>
+              <td style={{ ...td, textAlign: 'right' }} className="num">0.00</td>
+              <td style={{ ...td, textAlign: 'right' }} className="num">{money(net)}</td>
+            </tr>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <tr key={i}><td style={{ ...td, height: 20 }}>&nbsp;</td><td style={td} /><td style={td} /><td style={td} /><td style={td} /><td style={td} /></tr>
+            ))}
           </tbody>
         </table>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr><th style={{ ...hcell, textAlign: 'left' }}>รายการ</th><th style={{ ...hcell, textAlign: 'right', width: 150 }}>จำนวนเงิน</th></tr></thead>
-          <tbody><tr><td style={cell}>{po.item}</td><td className="num" style={{ ...cell, textAlign: 'right' }}>{po.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr></tbody>
-          <tfoot>
-            <tr><td style={cell}>รวมเป็นเงิน</td><td className="num" style={{ ...cell, textAlign: 'right' }}>{baht(po.amount)}</td></tr>
-            <tr><td style={cell}>ภาษีมูลค่าเพิ่ม 7%</td><td className="num" style={{ ...cell, textAlign: 'right' }}>{baht(vat)}</td></tr>
-            <tr><td style={{ ...hcell, textAlign: 'left' }}>ยอดสุทธิ</td><td className="num" style={{ ...hcell, textAlign: 'right', fontSize: 14 }}>{baht(po.amount + vat)}</td></tr>
-          </tfoot>
-        </table>
-
-        {po.image && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 12, color: '#5C6770', marginBottom: 6 }}>รูปสินค้า</div>
-            <img src={po.image} alt="สินค้า" style={{ maxWidth: '100%', maxHeight: 260, borderRadius: 8, border: '1px solid #E1E5EA' }} />
+        {/* สรุปยอด + ตัวอักษร */}
+        <div style={{ display: 'flex', border: bd, borderTop: 'none' }}>
+          <div style={{ flex: 1, padding: '8px 10px', borderRight: bd, fontSize: 11 }}>
+            <div style={{ color: '#333' }}>หมายเหตุ</div>
+            <div style={{ marginTop: 18, paddingTop: 6, borderTop: '1px dotted #999' }}>ตัวอักษร: <b>({bahtText(grand)})</b></div>
           </div>
-        )}
+          <div style={{ width: 260 }}>
+            {[['ราคาสินค้า', money(net)], ['หัก ส่วนลด', '0.00'], ['ภาษีมูลค่าเพิ่ม 7%', money(vat)]].map(([l, v], i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: '1px solid #E1E5EA' }}><span style={{ color: '#333' }}>{l}</span><span className="num">{v}</span></div>
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 10px', background: '#F2F2F2', fontWeight: 700, fontSize: 13 }}><span>จำนวนเงินรวมทั้งสิ้น</span><span className="num">{money(grand)}</span></div>
+          </div>
+        </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 48, gap: 40 }}>
-          {['ผู้สั่งซื้อ', 'ผู้อนุมัติ'].map((l, i) => (
+        {/* ลายเซ็น */}
+        <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11.5 }}>ในนาม <b>{company.name}</b></div>
+        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 40, gap: 40 }}>
+          {['ผู้สั่งสินค้า', 'ผู้อนุมัติ'].map((l, i) => (
             <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ borderTop: '1px dotted #94A0A8', marginBottom: 7 }} />
-              <div style={{ fontSize: 12, color: '#5C6770' }}>({l})</div>
-              <div style={{ fontSize: 11, color: '#94A0A8', marginTop: 3 }}>วันที่ ........./........./.........</div>
+              <div style={{ borderTop: '1px dotted #666', marginBottom: 6 }} />
+              <div style={{ fontSize: 11.5, color: '#333' }}>({l})</div>
+              <div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 3 }}>วันที่ ........./........./.........</div>
             </div>
           ))}
         </div>
