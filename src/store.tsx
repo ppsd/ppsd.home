@@ -234,6 +234,8 @@ export interface ApiPayment {
   wht_rate: number
   wht: number
   net: number
+  house_code?: string
+  note?: string
 }
 export interface ApiUser {
   id: number

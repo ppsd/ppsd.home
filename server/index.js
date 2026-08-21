@@ -1358,8 +1358,8 @@ api.post('/payments', financeOnly, (req, res) => {
   const wht = Math.round((gross * rate) / 100)
   const seq = db.prepare('SELECT COUNT(*) c FROM payments').get().c + 208
   const no = `PV-${docYear()}-${String(seq).padStart(4, '0')}`
-  const info = db.prepare('INSERT INTO payments (date,no,payee,type,gross,wht_rate,wht,net) VALUES (?,?,?,?,?,?,?,?)')
-    .run(todayTH(), no, b.payee, type, gross, rate, wht, gross - wht)
+  const info = db.prepare('INSERT INTO payments (date,no,payee,type,gross,wht_rate,wht,net,house_code,note) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(todayTH(), no, b.payee, type, gross, rate, wht, gross - wht, String(b.house_code || ''), String(b.note || ''))
   audit(req, 'บันทึกจ่ายเงิน', `${b.payee} ฿${gross}`)
   res.status(201).json(db.prepare('SELECT * FROM payments WHERE id=?').get(info.lastInsertRowid))
 })
@@ -2786,6 +2786,11 @@ api.get('/reports', financeOnly, (_req, res) => {
   // material expense per house (actual)
   const matByHouse = {}
   for (const e of expenses) matByHouse[e.house_code] = (matByHouse[e.house_code] || 0) + e.amount
+  // ใบจ่ายเงิน/หัก ณ ที่จ่าย ที่ผูกกับบ้าน (ค่าเซ็นแบบ/ธรรมเนียม/ค่าป้าย ฯลฯ) — ต้นทุนจริง = ยอดก่อนหัก (gross)
+  const payByHouse = {}
+  for (const p of db.prepare('SELECT house_code, gross FROM payments').all()) if (p.house_code) payByHouse[p.house_code] = (payByHouse[p.house_code] || 0) + (p.gross || 0)
+  // รวมค่าใช้จ่ายที่ผูกบ้านเข้ากำไรรายโครงการด้วย
+  for (const code in payByHouse) { const p = houseProj[code]; if (p && byProject[p]) byProject[p].expense += payByHouse[code] }
   // ----- งบกระแสเงินสด (สรุปเงินเข้า/ออก) -----
   const inCustomer = houses.reduce((s, h) => s + (h.collected || 0), 0)
   const outContractor = houses.reduce((s, h) => s + (h.paid || 0), 0)
@@ -2803,8 +2808,9 @@ api.get('/reports', financeOnly, (_req, res) => {
     const plan = h.contractor_value || 0 // ต้นทุนช่างตามแผน
     const actualContractor = h.paid || 0
     const actualMaterial = matByHouse[h.code] || 0
-    const actual = actualContractor + actualMaterial
-    return { code: h.code, name: h.name, plan, actualContractor, actualMaterial, actual, variance: plan - actual }
+    const actualOther = payByHouse[h.code] || 0 // ค่าใช้จ่ายย่อยที่จ่ายผ่านใบจ่ายเงิน
+    const actual = actualContractor + actualMaterial + actualOther
+    return { code: h.code, name: h.name, plan, actualContractor, actualMaterial, actualOther, actual, variance: plan - actual }
   })
   res.json({
     projects: Object.values(byProject),

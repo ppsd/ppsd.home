@@ -90,12 +90,12 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
 
   // payment + vendor inline forms
   const [addingPay, setAddingPay] = useState(false)
-  const [payForm, setPayForm] = useState({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3' })
+  const [payForm, setPayForm] = useState({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3', house_code: '', note: '' })
   const [payErr, setPayErr] = useState('')
   const submitPay = async () => {
     if (!payForm.payee.trim() || !payForm.gross) { setPayErr('กรอกผู้รับเงินและจำนวนเงิน'); return }
     setPayErr('')
-    try { await addPayment({ ...payForm, gross: unMoney(payForm.gross), wht_rate: Number(payForm.wht_rate) }); setAddingPay(false); setPayForm({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3' }) } catch (e) { setPayErr((e as Error).message) }
+    try { await addPayment({ ...payForm, gross: unMoney(payForm.gross), wht_rate: Number(payForm.wht_rate) }); setAddingPay(false); setPayForm({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3', house_code: '', note: '' }) } catch (e) { setPayErr((e as Error).message) }
   }
   const [addingVendor, setAddingVendor] = useState(false)
   const [vendorForm, setVendorForm] = useState({ name: '', type: 'นิติบุคคล', tax_id: '', credit_days: '' })
@@ -482,6 +482,14 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 <MoneyInput style={prField} placeholder="ยอดก่อนหัก (บาท)" value={payForm.gross} onChange={(v) => setPayForm({ ...payForm, gross: v })} />
                 <input style={prField} type="number" placeholder="อัตรา %" value={payForm.wht_rate} onChange={(e) => setPayForm({ ...payForm, wht_rate: e.target.value })} />
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: 10, marginTop: 10 }}>
+                <select style={prField} value={payForm.house_code} onChange={(e) => setPayForm({ ...payForm, house_code: e.target.value })}>
+                  <option value="">— ผูกกับบ้าน (ไม่บังคับ) —</option>
+                  {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
+                </select>
+                <input style={prField} placeholder="รายละเอียด/หมายเหตุ (เช่น ค่าเซ็นแบบ, ค่าป้าย)" value={payForm.note} onChange={(e) => setPayForm({ ...payForm, note: e.target.value })} />
+              </div>
+              <div style={{ fontSize: 11, color: '#94A0A8', marginTop: 6 }}>เลือกบ้านเพื่อให้ยอดนี้ถูกรวมเข้า “ต้นทุนจริง/กำไรสุทธิ” ของบ้านนั้น</div>
               {(() => { const emp = (data.employees || []).find((e) => e.name === payForm.payee.trim()); if (!emp) return null; return <div style={{ fontSize: 11.5, marginTop: 6, color: emp.signature ? '#2E7D55' : '#B7791F' }}>{emp.signature ? '✓ เป็นพนักงาน — จะดึงลายเซ็นมาในใบ 50 ทวิ ให้อัตโนมัติ' : '⚠ เป็นพนักงาน แต่ยังไม่มีลายเซ็นในระบบ (เพิ่มได้ที่หน้าบุคลากร)'}</div> })()}
               {payErr && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 8 }}>{payErr}</div>}
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
@@ -635,7 +643,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
       {docPr && <PrApprovalDoc pr={docPr} onClose={() => setDocPr(null)} />}
       {docPo && <PoDoc po={docPo} houseName={houses.find((h) => h.code === docPo.house_code)?.name || docPo.house_code || ''} onClose={() => setDocPo(null)} />}
       {docWht && (() => { const emp = (data.employees || []).find((e) => e.name === docWht.payee); return <WhtDoc payment={docWht} payeeSignature={emp?.signature} payeeTaxId={emp?.tax_id || undefined} onClose={() => setDocWht(null)} /> })()}
-      {docVoucher && <PaymentVoucher payment={docVoucher} onClose={() => setDocVoucher(null)} />}
+      {docVoucher && <PaymentVoucher payment={docVoucher} note={docVoucher.note || (houses.find((h) => h.code === docVoucher.house_code)?.name ? 'บ้าน ' + houses.find((h) => h.code === docVoucher.house_code)?.name : '')} onClose={() => setDocVoucher(null)} />}
     </div>
   )
 }

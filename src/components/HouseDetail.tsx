@@ -93,6 +93,10 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
   const houseIssues = data.issues.filter((r) => r.house_code === house.code)
   const houseExp = data.expenses.filter((r) => r.house_code === house.code)
   const expTotal = houseExp.reduce((s, e) => s + e.amount, 0)
+  // ใบจ่ายเงิน/หัก ณ ที่จ่าย ที่ผูกกับบ้านนี้ (ค่าเซ็นแบบ/ธรรมเนียม/ค่าป้าย ฯลฯ) — ต้นทุน = ยอดก่อนหัก (gross)
+  const housePays = (data.payments || []).filter((p) => p.house_code === house.code)
+  const payTotal = housePays.reduce((s, p) => s + (p.gross || 0), 0)
+  const otherCost = expTotal + payTotal // ค่าใช้จ่ายย่อยจริงทั้งหมดของบ้าน
 
   const detailTabsDef = [
     { id: 'installments', label: 'งวดงาน', count: String(houseInst.length) },
@@ -155,7 +159,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         <Cell label="ต้นทุนช่าง (รวมสัญญา)" value={baht(house.contractor_value || 0)} color="#C0852C" br />
         <Cell label="จ่ายช่างแล้ว" value={baht(house.paid || 0)} color="#30506A" sub={`ค้างจ่าย ${baht(Math.max(0, (house.contractor_value || 0) - (house.paid || 0)))}`} br />
         <div style={{ padding: '16px 18px' }}>
-          <div style={{ fontSize: 12, color: '#5C6770' }}>ความคืบหน้า · รายจ่ายอื่น {baht(expTotal)}</div>
+          <div style={{ fontSize: 12, color: '#5C6770' }}>ความคืบหน้า · ค่าใช้จ่ายย่อย {baht(otherCost)}{canSeeProfit && payTotal > 0 ? ` (รายจ่าย ${baht(expTotal)} + จ่ายเงิน ${baht(payTotal)})` : ''}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 7 }}>
             <div style={{ flex: 1, height: 9, background: '#EEF1F4', borderRadius: 20, overflow: 'hidden' }}>
               <div style={{ height: '100%', width: house.pct + '%', background: '#30506A', borderRadius: 20 }} />
@@ -198,8 +202,8 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
               <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 700, fontSize: 14, color: !canSeeProfit ? '#94A0A8' : (house.value - (house.contractor_value || 0)) >= 0 ? '#2E7D55' : '#C24036' }}>{profitText(house.value - (house.contractor_value || 0))}</td>
             </tr>
             <tr style={{ background: '#F7F9FB' }}>
-              <td colSpan={3} style={{ padding: '10px 18px', fontWeight: 600, color: '#5C6770' }}>กำไรสุทธิ <span style={{ fontSize: 11, fontWeight: 400, color: '#94A0A8' }}>(หักค่าวัสดุจริง {canSeeProfit ? baht(expTotal) : '—'})</span></td>
-              <td className="num" style={{ padding: '10px 18px', textAlign: 'right', fontWeight: 700, fontSize: 14, color: !canSeeProfit ? '#94A0A8' : (house.value - (house.contractor_value || 0) - expTotal) >= 0 ? '#2E7D55' : '#C24036' }}>{profitText(house.value - (house.contractor_value || 0) - expTotal)}</td>
+              <td colSpan={3} style={{ padding: '10px 18px', fontWeight: 600, color: '#5C6770' }}>กำไรสุทธิ <span style={{ fontSize: 11, fontWeight: 400, color: '#94A0A8' }}>(หักค่าใช้จ่ายจริง {canSeeProfit ? baht(otherCost) : '—'}{canSeeProfit && payTotal > 0 ? ` = รายจ่าย ${baht(expTotal)} + จ่ายเงิน ${baht(payTotal)}` : ''})</span></td>
+              <td className="num" style={{ padding: '10px 18px', textAlign: 'right', fontWeight: 700, fontSize: 14, color: !canSeeProfit ? '#94A0A8' : (house.value - (house.contractor_value || 0) - otherCost) >= 0 ? '#2E7D55' : '#C24036' }}>{profitText(house.value - (house.contractor_value || 0) - otherCost)}</td>
             </tr>
           </tfoot>
         </table>

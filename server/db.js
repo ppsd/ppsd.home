@@ -346,6 +346,8 @@ ensureColumn('journal_lines', 'reconciled', 'INTEGER') // เฟส 3: 1 = ก�
 ensureColumn('installments', 'due_iso', 'TEXT')        // เฟส 3: วันครบกำหนด (ISO) สำหรับ AR/AP aging
 ensureColumn('files', 'category', 'TEXT')              // หมวดไฟล์แนบ (สัญญา/แบบ/ใบอนุญาต/รูป/อื่นๆ)
 ensureColumn('files', 'path', 'TEXT')                  // ชื่อไฟล์บนดิสก์ (เก็บไฟล์จริงแทน base64 ในฐานข้อมูล)
+ensureColumn('payments', 'house_code', 'TEXT')         // ผูกใบจ่ายเงิน/หัก ณ ที่จ่าย กับบ้าน (รวมเข้าต้นทุนบ้าน)
+ensureColumn('payments', 'note', 'TEXT')               // หมายเหตุ/รายละเอียดค่าใช้จ่าย
 
 // ===== เฟส 4: สินทรัพย์ถาวร + ค่าเสื่อมราคา =====
 db.exec(`CREATE TABLE IF NOT EXISTS fixed_assets (
