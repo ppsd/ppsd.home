@@ -202,7 +202,7 @@ export default function App() {
       title: 'เพิ่มรายจ่าย',
       sub: 'บันทึกรายจ่ายใหม่',
       fields: [
-        { label: 'วันที่จ่าย (ตั้งล่วงหน้าได้)', value: new Date().toISOString().slice(0, 10), ph: '', type: 'date', required: true, hint: 'เลือกวันที่จ่ายจริง — ตั้งเป็นวันในอนาคตได้ (จะขึ้นป้าย “กำหนดจ่าย”)' },
+        { label: 'วันที่จ่าย (ย้อนหลัง/ล่วงหน้าได้)', value: new Date().toISOString().slice(0, 10), ph: '', type: 'date', required: true, hint: 'เลือกวันที่จ่ายจริง — เลือกวันย้อนหลังได้ (บันทึกรายจ่ายเก่า) หรือวันในอนาคต (จะขึ้นป้าย “กำหนดจ่าย”)' },
         { label: 'รหัสบ้าน (เช่น RK-014)', value: '', ph: 'RK-014' },
         { label: 'รายการ', value: '', ph: 'เช่น ปูนซีเมนต์', required: true },
         { label: 'หมวด (วัสดุ/ค่าแรง/ขนส่ง/อื่นๆ)', value: 'วัสดุ', ph: '' },
