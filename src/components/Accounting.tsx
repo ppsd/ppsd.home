@@ -23,6 +23,8 @@ const TABS = [
   { id: 'statements', label: 'งบการเงิน' },
   { id: 'cashflow', label: 'งบกระแสเงินสด' },
   { id: 'projects', label: 'กำไรรายโครงการ' },
+  { id: 'aging', label: 'ลูกหนี้/เจ้าหนี้' },
+  { id: 'reconcile', label: 'กระทบยอดธนาคาร' },
   { id: 'trial', label: 'งบทดลอง' },
   { id: 'journal', label: 'สมุดรายวัน' },
   { id: 'gl', label: 'แยกประเภท' },
@@ -66,6 +68,8 @@ export default function Accounting() {
       {tab === 'statements' && <Statements />}
       {tab === 'cashflow' && <CashFlowStatement />}
       {tab === 'projects' && <ProjectPnl />}
+      {tab === 'aging' && <AgingReport />}
+      {tab === 'reconcile' && <Reconcile />}
       {tab === 'trial' && <TrialBalance />}
       {tab === 'journal' && <Journal accounts={accounts} />}
       {tab === 'gl' && <GeneralLedger accounts={accounts} />}
@@ -502,6 +506,146 @@ function ProjectPnl() {
           </tr></tfoot>}
         </table>
       </div>
+    </div>
+  )
+}
+
+// ---------- ลูกหนี้/เจ้าหนี้คงค้าง + อายุหนี้ (AR/AP Aging) ----------
+interface AgingItem { id: number; house_name: string; party: string; no: number; detail: string; due: string; due_iso?: string; outstanding: number; bucket: string; overdue: boolean }
+interface Aging { items: AgingItem[]; totals: Record<string, number>; total: number }
+const BUCKETS: { k: string; label: string; color: string }[] = [
+  { k: 'current', label: 'ยังไม่ถึงกำหนด', color: '#2E7D55' },
+  { k: 'd30', label: 'เกิน 1–30 วัน', color: '#B7791F' },
+  { k: 'd60', label: 'เกิน 31–60 วัน', color: '#C0852C' },
+  { k: 'd90', label: 'เกิน 61–90 วัน', color: '#C24036' },
+  { k: 'd90plus', label: 'เกิน 90 วัน', color: '#8A2A20' },
+  { k: 'nodue', label: 'ไม่ระบุกำหนด', color: '#94A0A8' },
+]
+function AgingReport() {
+  const [ar, setAr] = useState<Aging | null>(null)
+  const [ap, setAp] = useState<Aging | null>(null)
+  useEffect(() => {
+    api.get<Aging>('/ar-aging').then(setAr).catch(() => setAr(null))
+    api.get<Aging>('/ap-aging').then(setAp).catch(() => setAp(null))
+  }, [])
+  const block = (title: string, data: Aging | null, accent: string, partyLabel: string) => (
+    <div style={{ ...card, padding: 0 }}>
+      <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: accent }}>{title}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 13, color: '#5C6770' }}>รวมค้าง <b className="num" style={{ color: accent }}>{baht(data?.total || 0)}</b></span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 1, background: '#EEF1F4' }}>
+        {BUCKETS.map((b) => (
+          <div key={b.k} style={{ background: '#fff', padding: '10px 12px' }}>
+            <div style={{ fontSize: 11, color: b.color, fontWeight: 600 }}>{b.label}</div>
+            <div className="num" style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{baht(data?.totals?.[b.k] || 0)}</div>
+          </div>
+        ))}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+        <thead><tr style={{ background: '#F7F9FB' }}>
+          <th style={{ ...th, paddingLeft: 18 }}>{partyLabel}</th><th style={th}>งวด/รายละเอียด</th><th style={th}>ครบกำหนด</th><th style={{ ...th, textAlign: 'right', paddingRight: 18 }}>ค้างชำระ</th>
+        </tr></thead>
+        <tbody>
+          {(!data || data.items.length === 0) && <tr><td colSpan={4} style={{ padding: 26, textAlign: 'center', color: '#94A0A8' }}>ไม่มียอดค้าง</td></tr>}
+          {data?.items.map((r) => (
+            <tr key={r.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
+              <td style={{ padding: '8px 18px' }}>{r.house_name}{r.party ? <div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.party}</div> : null}</td>
+              <td style={{ padding: '8px 12px', color: '#5C6770' }}>งวด {r.no} {r.detail}</td>
+              <td style={{ padding: '8px 12px', color: r.overdue ? '#C24036' : '#5C6770' }}>{r.due_iso || r.due || '—'}{r.overdue ? ' ⚠' : ''}</td>
+              <td className="num" style={{ padding: '8px 18px', textAlign: 'right', fontWeight: 600 }}>{baht(r.outstanding)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>อายุหนี้คำนวณจากวันครบกำหนดของงวดงาน — งวดที่ยังไม่ได้ตั้งวันครบกำหนดจะอยู่กลุ่ม “ไม่ระบุกำหนด” (ตั้งวันได้ที่งวดงานในแต่ละบ้าน)</div>
+      {block('ลูกหนี้การค้า (ค้างรับจากลูกค้า)', ar, '#2E7D55', 'ลูกค้า / บ้าน')}
+      {block('เจ้าหนี้ (ค้างจ่ายช่าง/ผู้รับเหมา)', ap, '#C0852C', 'ช่าง / บ้าน')}
+    </div>
+  )
+}
+
+// ---------- กระทบยอดธนาคาร (Bank Reconciliation) ----------
+interface RecAccount { code: string; name: string; type: string }
+interface RecLine { id: number; no: string; date: string; date_iso: string; memo: string; debit: number; credit: number; reconciled: number }
+interface RecData { account: RecAccount | null; rows: RecLine[]; bookBalance: number; clearedBalance: number; unclearedCount: number }
+function Reconcile() {
+  const [cashAccts, setCashAccts] = useState<RecAccount[]>([])
+  const [account, setAccount] = useState('')
+  const [data, setData] = useState<RecData | null>(null)
+  const [stmt, setStmt] = useState('')
+  const [defaults, setDefaults] = useState<{ bank: string; cash: string }>({ bank: '', cash: '' })
+  const [savedMsg, setSavedMsg] = useState('')
+  const loadAccts = () => api.get<RecAccount[]>('/cash-accounts').then(setCashAccts).catch(() => setCashAccts([]))
+  const loadDefaults = () => api.get<{ bank: string; cash: string }>('/acct-defaults').then(setDefaults).catch(() => {})
+  useEffect(() => { loadAccts(); loadDefaults() }, [])
+  const load = (code: string) => { if (!code) { setData(null); return } api.get<RecData>('/reconcile/' + code).then(setData).catch(() => setData(null)) }
+  const toggle = async (line: RecLine) => { await api.post('/reconcile', { ids: [line.id], reconciled: !line.reconciled }); load(account) }
+  const saveDefaults = async () => { await api.post('/acct-defaults', defaults); setSavedMsg('บันทึกค่าตั้งต้นแล้ว'); setTimeout(() => setSavedMsg(''), 2500) }
+  const diff = data ? (Number(String(stmt).replace(/,/g, '')) || 0) - data.clearedBalance : 0
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* ตั้งค่าบัญชีเงินตั้งต้น (หลายบัญชี/เงินสดย่อย) */}
+      <div style={{ ...card, padding: 16, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: '#30506A', width: '100%' }}>บัญชีเงินตั้งต้น (ใช้ลงบัญชีอัตโนมัติ — รองรับหลายบัญชีธนาคาร/เงินสดย่อย)</div>
+        <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>บัญชีรับ-จ่ายเงินโอน/ธนาคาร</div>
+          <select style={field} value={defaults.bank} onChange={(e) => setDefaults({ ...defaults, bank: e.target.value })}>{cashAccts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></div>
+        <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>บัญชีจ่ายเงินสด (รายจ่าย)</div>
+          <select style={field} value={defaults.cash} onChange={(e) => setDefaults({ ...defaults, cash: e.target.value })}>{cashAccts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></div>
+        <button onClick={saveDefaults} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>บันทึก</button>
+        {savedMsg && <span style={{ fontSize: 12, color: '#2E7D55' }}>{savedMsg}</span>}
+        <span style={{ fontSize: 11, color: '#94A0A8', width: '100%' }}>เพิ่มบัญชีธนาคาร/เงินสดย่อยได้ที่แท็บ “ผังบัญชี” (รหัส 10xx ประเภทสินทรัพย์) แล้วมาเลือกที่นี่</span>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12.5, color: '#5C6770' }}>กระทบยอดบัญชี:</span>
+        <select style={{ ...field, minWidth: 240 }} value={account} onChange={(e) => { setAccount(e.target.value); load(e.target.value) }}>
+          <option value="">— เลือกบัญชีเงินสด/ธนาคาร —</option>
+          {cashAccts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+        </select>
+        {data && <>
+          <span style={{ fontSize: 12.5, color: '#5C6770', marginLeft: 8 }}>ยอดคงเหลือตามยอด statement:</span>
+          <input style={{ ...field, width: 150, textAlign: 'right' }} value={stmt} onChange={(e) => setStmt(e.target.value)} placeholder="0.00" />
+        </>}
+      </div>
+
+      {data && data.account && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12 }}>
+            {[['ยอดตามบัญชี (Book)', data.bookBalance, '#30506A'], ['ยอดที่กระทบแล้ว (Cleared)', data.clearedBalance, '#2E7D55'], ['ผลต่างกับ statement', diff, Math.abs(diff) < 0.5 ? '#2E7D55' : '#C24036']].map(([l, v, c], i) => (
+              <div key={i} style={{ ...card, padding: 14 }}>
+                <div style={{ fontSize: 12, color: '#5C6770' }}>{l as string}</div>
+                <div className="num" style={{ fontSize: 20, fontWeight: 700, color: c as string, marginTop: 3 }}>{baht(v as number)}</div>
+                {i === 2 && <div style={{ fontSize: 10.5, color: Math.abs(diff) < 0.5 ? '#2E7D55' : '#C24036', marginTop: 2 }}>{Math.abs(diff) < 0.5 ? '✓ ตรงกับ statement' : `ยังไม่ตรง (${data.unclearedCount} รายการยังไม่กระทบ)`}</div>}
+              </div>
+            ))}
+          </div>
+          <div style={card}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr style={{ background: '#F7F9FB' }}>
+                <th style={{ ...th, paddingLeft: 18, textAlign: 'center', width: 60 }}>เคลียร์</th><th style={th}>เลขที่/วันที่</th><th style={th}>คำอธิบาย</th>
+                <th style={{ ...th, textAlign: 'right' }}>เงินเข้า</th><th style={{ ...th, textAlign: 'right', paddingRight: 18 }}>เงินออก</th>
+              </tr></thead>
+              <tbody>
+                {data.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center', color: '#94A0A8' }}>ไม่มีความเคลื่อนไหว</td></tr>}
+                {data.rows.map((r) => (
+                  <tr key={r.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6', background: r.reconciled ? '#F3FAF6' : undefined }}>
+                    <td style={{ padding: '8px 18px', textAlign: 'center' }}><input type="checkbox" checked={!!r.reconciled} onChange={() => toggle(r)} /></td>
+                    <td style={{ padding: '8px 12px' }}><span className="num" style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.no}</span><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.date}</div></td>
+                    <td style={{ padding: '8px 12px', color: '#5C6770' }}>{r.memo}</td>
+                    <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.debit ? '#2E7D55' : '#CBD3DA' }}>{r.debit ? baht(r.debit) : '-'}</td>
+                    <td className="num" style={{ padding: '8px 18px', textAlign: 'right', color: r.credit ? '#C24036' : '#CBD3DA' }}>{r.credit ? baht(r.credit) : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -49,6 +49,7 @@ export interface ApiInstallment {
   detail: string
   days: string
   due: string
+  due_iso?: string
   ontime: string
   amount: number
   paid?: number

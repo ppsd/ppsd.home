@@ -15,6 +15,20 @@ export function accountBalance(type, debit, credit) {
   return DEBIT_NORMAL.has(type) ? r2(debit - credit) : r2(credit - debit)
 }
 
+// ค่าตั้งต้นบัญชีเงินที่ใช้ชำระ (ตั้งค่าได้ — รองรับหลายบัญชีธนาคาร/เงินสดย่อย)
+function getSetting(k, def) { return db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value ?? def }
+export function defaultBank() { return getSetting('acct_bank_default', '1020') }
+export function defaultCash() { return getSetting('acct_cash_default', '1010') }
+export function setDefaults({ bank, cash }) {
+  const up = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+  if (bank) up.run('acct_bank_default', String(bank))
+  if (cash) up.run('acct_cash_default', String(cash))
+}
+// บัญชีเงินสด/ธนาคารทั้งหมด (รหัส 10xx ประเภทสินทรัพย์) — สำหรับหลายบัญชี + กระทบยอด
+export function cashAccounts() {
+  return db.prepare("SELECT * FROM accounts WHERE is_active=1 AND type='asset' AND code >= '1000' AND code < '1100' ORDER BY code").all()
+}
+
 // รหัสบัญชีตามหมวดค่าใช้จ่าย/รายจ่าย
 export function expenseAccountFor(cat = '') {
   const c = String(cat)
@@ -77,9 +91,10 @@ export function syncInstallmentJournal(inst) {
   const amt = r2(inst.paid || 0)
   if (amt <= 0) { removeAutoJournal('inst', inst.id); return }
   const memo = `งวด ${inst.no} ${inst.detail || ''} (${inst.house_code || ''})`.trim()
+  const bank = defaultBank()
   const lines = inst.side === 'contractor'
-    ? [{ account: '5030', debit: amt, credit: 0, memo }, { account: '1020', debit: 0, credit: amt, memo }]
-    : [{ account: '1020', debit: amt, credit: 0, memo }, { account: '4010', debit: 0, credit: amt, memo }]
+    ? [{ account: '5030', debit: amt, credit: 0, memo }, { account: bank, debit: 0, credit: amt, memo }]
+    : [{ account: bank, debit: amt, credit: 0, memo }, { account: '4010', debit: 0, credit: amt, memo }]
   postJournal({ memo, house_code: inst.house_code, source: 'inst', source_id: inst.id, lines })
 }
 // รายจ่าย: Dr บัญชีต้นทุน/ค่าใช้จ่าย ตามหมวด / Cr เงินสด
@@ -88,7 +103,7 @@ export function syncExpenseJournal(exp) {
   if (amt <= 0) { removeAutoJournal('exp', exp.id); return }
   const acc = expenseAccountFor(exp.cat || exp.category)
   const memo = `${exp.item || 'รายจ่าย'} ${exp.vendor ? '· ' + exp.vendor : ''}`.trim()
-  postJournal({ date_iso: exp.date_iso || undefined, memo, house_code: exp.house_code, source: 'exp', source_id: exp.id, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: '1010', debit: 0, credit: amt, memo }] })
+  postJournal({ date_iso: exp.date_iso || undefined, memo, house_code: exp.house_code, source: 'exp', source_id: exp.id, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: defaultCash(), debit: 0, credit: amt, memo }] })
 }
 
 // backfill จากข้อมูลเดิมทั้งหมด (idempotent) — คืนจำนวนรายการที่ลง
@@ -248,3 +263,52 @@ export function listJournal({ from, to, source, limit = 500 } = {}) {
   const li = db.prepare('SELECT jl.*, a.name AS account_name FROM journal_lines jl LEFT JOIN accounts a ON a.code=jl.account WHERE jl.entry_id=? ORDER BY jl.id')
   return entries.map((e) => ({ ...e, lines: li.all(e.id) }))
 }
+
+// ---- เฟส 3: กระทบยอดธนาคาร (Bank Reconciliation) ----
+// รายการเดินบัญชีของบัญชีเงินสด/ธนาคารเดียว พร้อมสถานะกระทบยอด
+export function reconcileLines(account) {
+  const acc = db.prepare('SELECT * FROM accounts WHERE code=?').get(account)
+  if (!acc) return { account: null, rows: [], bookBalance: 0, clearedBalance: 0, unclearedCount: 0 }
+  const rows = db.prepare(`SELECT l.id, e.no, e.date, e.date_iso, e.memo, e.house_code, l.debit, l.credit, COALESCE(l.reconciled,0) reconciled
+    FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+    WHERE l.account=? AND e.void=0 ORDER BY e.date_iso, e.id`).all(account)
+  const bookBalance = r2(rows.reduce((s, r) => s + (r.debit - r.credit), 0))
+  const clearedBalance = r2(rows.filter((r) => r.reconciled).reduce((s, r) => s + (r.debit - r.credit), 0))
+  const unclearedCount = rows.filter((r) => !r.reconciled).length
+  return { account: acc, rows, bookBalance, clearedBalance, unclearedCount }
+}
+export const setReconciled = db.transaction((ids, val) => {
+  const up = db.prepare('UPDATE journal_lines SET reconciled=? WHERE id=?')
+  for (const id of ids) up.run(val ? 1 : 0, id)
+  return ids.length
+})
+
+// ---- เฟส 3: ลูกหนี้/เจ้าหนี้คงค้าง + อายุหนี้ (AR/AP Aging) ----
+function todayISO2() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
+function daysBetween(aIso, bIso) { const a = new Date(aIso + 'T00:00:00'), b = new Date(bIso + 'T00:00:00'); if (isNaN(a) || isNaN(b)) return null; return Math.round((b - a) / 86400000) }
+function bucketOf(dueIso) {
+  if (!dueIso) return 'nodue'
+  const od = daysBetween(dueIso, todayISO2())
+  if (od == null) return 'nodue'
+  if (od <= 0) return 'current'   // ยังไม่ถึงกำหนด
+  if (od <= 30) return 'd30'
+  if (od <= 60) return 'd60'
+  if (od <= 90) return 'd90'
+  return 'd90plus'
+}
+const EMPTY_BUCKETS = () => ({ current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0, nodue: 0 })
+// side: 'customer' = ลูกหนี้(AR), 'contractor' = เจ้าหนี้(AP)
+function agingFor(side) {
+  const rows = db.prepare(`SELECT i.*, h.name AS house_name, h.customer FROM installments i
+    LEFT JOIN houses h ON h.code=i.house_code WHERE i.side=? AND COALESCE(i.paid,0) < i.amount`).all(side)
+  const items = rows.map((r) => {
+    const outstanding = r2((r.amount || 0) - (r.paid || 0))
+    return { id: r.id, house_code: r.house_code, house_name: r.house_name || r.house_code, party: side === 'customer' ? (r.customer || r.house_name || '') : (r.contractor || ''), no: r.no, detail: r.detail, due: r.due, due_iso: r.due_iso, amount: r.amount, paid: r.paid || 0, outstanding, bucket: bucketOf(r.due_iso), overdue: r.status === 'เลยกำหนด' || ['d30', 'd60', 'd90', 'd90plus'].includes(bucketOf(r.due_iso)) }
+  }).filter((r) => r.outstanding > 0)
+  const totals = EMPTY_BUCKETS()
+  let total = 0
+  for (const it of items) { totals[it.bucket] = r2(totals[it.bucket] + it.outstanding); total = r2(total + it.outstanding) }
+  return { items, totals, total }
+}
+export function arAging() { return agingFor('customer') }
+export function apAging() { return agingFor('contractor') }

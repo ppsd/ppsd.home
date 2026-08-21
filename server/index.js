@@ -469,9 +469,11 @@ api.post('/houses/:code/installments', canWrite, (req, res) => {
   // หมวดมาตรฐาน 3 อย่าง หรือหัวข้อใหญ่ที่ผู้ใช้เพิ่มเอง (ใช้ชื่อหัวข้อเป็น category ได้เลย)
   const category = (b.category != null && String(b.category).trim()) ? String(b.category).trim() : 'house'
   const defStatus = side === 'contractor' ? 'รอจ่าย' : 'รอเก็บเงิน'
+  const dueIso = /^\d{4}-\d{2}-\d{2}$/.test(String(b.due_iso || '')) ? b.due_iso : null
+  const dueDisp = b.due || (dueIso ? thDateFromISO(dueIso) : 'กำหนดใหม่')
   const info = db
-    .prepare('INSERT INTO installments (house_code,no,detail,days,due,ontime,amount,status,side,category,contractor,paid) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)')
-    .run(req.params.code, Number(b.no) || 0, b.detail || '', String(b.days || '-'), b.due || 'กำหนดใหม่', '-', Number(b.amount) || 0, b.status || defStatus, side, category, b.contractor || '')
+    .prepare('INSERT INTO installments (house_code,no,detail,days,due,due_iso,ontime,amount,status,side,category,contractor,paid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)')
+    .run(req.params.code, Number(b.no) || 0, b.detail || '', String(b.days || '-'), dueDisp, dueIso, '-', Number(b.amount) || 0, b.status || defStatus, side, category, b.contractor || '')
   recomputeHouse(req.params.code)
   res.status(201).json(db.prepare('SELECT * FROM installments WHERE id = ?').get(info.lastInsertRowid))
 })
@@ -481,8 +483,10 @@ api.put('/installments/:id', canWrite, (req, res) => {
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
   const b = req.body || {}
   const f = (k, num) => (b[k] != null && b[k] !== '' ? (num ? Number(b[k]) : b[k]) : inst[k])
-  db.prepare('UPDATE installments SET no=?, detail=?, days=?, due=?, amount=?, status=?, contractor=? WHERE id=?')
-    .run(f('no', true), f('detail'), String(f('days')), f('due'), f('amount', true), f('status'), f('contractor'), inst.id)
+  const dueIso = /^\d{4}-\d{2}-\d{2}$/.test(String(b.due_iso || '')) ? b.due_iso : inst.due_iso
+  const dueDisp = b.due != null && b.due !== '' ? b.due : (dueIso && (!inst.due || inst.due === 'กำหนดใหม่' || b.due_iso) ? thDateFromISO(dueIso) : inst.due)
+  db.prepare('UPDATE installments SET no=?, detail=?, days=?, due=?, due_iso=?, amount=?, status=?, contractor=? WHERE id=?')
+    .run(f('no', true), f('detail'), String(f('days')), dueDisp, dueIso, f('amount', true), f('status'), f('contractor'), inst.id)
   recomputeHouse(inst.house_code)
   try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(inst-edit):', e.message) }
   audit(req, 'แก้ไขงวดงาน', `${inst.house_code} งวด ${inst.no}`)
@@ -631,6 +635,16 @@ api.get('/income-statement', financeOnly, (req, res) => res.json(acct.incomeStat
 api.get('/balance-sheet', financeOnly, (req, res) => res.json(acct.balanceSheet(acctRange(req))))
 api.get('/cash-flow', financeOnly, (req, res) => res.json(acct.cashFlow(acctRange(req))))
 api.get('/project-pnl', financeOnly, (req, res) => res.json(acct.projectPnl(acctRange(req))))
+// เฟส 3: หลายบัญชีเงินสด/ธนาคาร + ค่าตั้งต้น
+api.get('/cash-accounts', financeOnly, (_req, res) => res.json(acct.cashAccounts()))
+api.get('/acct-defaults', financeOnly, (_req, res) => res.json({ bank: acct.defaultBank(), cash: acct.defaultCash() }))
+api.post('/acct-defaults', financeOnly, (req, res) => { acct.setDefaults({ bank: req.body?.bank, cash: req.body?.cash }); audit(req, 'ตั้งค่าบัญชีเงินตั้งต้น', `ธนาคาร ${req.body?.bank || '-'} เงินสด ${req.body?.cash || '-'}`); res.json({ ok: true }) })
+// เฟส 3: กระทบยอดธนาคาร
+api.get('/reconcile/:account', financeOnly, (req, res) => res.json(acct.reconcileLines(req.params.account)))
+api.post('/reconcile', financeOnly, (req, res) => { const n = acct.setReconciled(req.body?.ids || [], !!req.body?.reconciled); res.json({ ok: true, count: n }) })
+// เฟส 3: ลูกหนี้/เจ้าหนี้คงค้าง + อายุหนี้
+api.get('/ar-aging', financeOnly, (_req, res) => res.json(acct.arAging()))
+api.get('/ap-aging', financeOnly, (_req, res) => res.json(acct.apAging()))
 // สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากข้อมูลเดิมทั้งหมด (idempotent)
 api.post('/accounting/rebuild', financeOnly, (req, res) => {
   try { const n = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${n} รายการ`); res.json({ ok: true, count: n }) }

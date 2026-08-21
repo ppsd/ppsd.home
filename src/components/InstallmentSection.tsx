@@ -10,7 +10,7 @@ import AcceptanceModal from './AcceptanceModal'
 const th: React.CSSProperties = { padding: '9px 12px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 10px', outline: 'none', width: '100%' }
 
-const blank = { no: '', detail: '', days: '', due: '', amount: '', contractor: '' }
+const blank = { no: '', detail: '', days: '', due: '', due_iso: '', amount: '', contractor: '' }
 
 // One side of a house's งวดงาน — ลูกค้า (รับเงิน) or ช่าง (จ่ายเงิน).
 // Supports add / edit / delete / mark-collected(paid).
@@ -92,7 +92,7 @@ export default function InstallmentSection({
   const startEdit = (r: ApiInstallment) => {
     setAdding(false)
     setEditId(r.id)
-    setForm({ no: String(r.no), detail: r.detail, days: String(r.days || ''), due: r.due || '', amount: String(r.amount), contractor: r.contractor || '' })
+    setForm({ no: String(r.no), detail: r.detail, days: String(r.days || ''), due: r.due || '', due_iso: r.due_iso || '', amount: String(r.amount), contractor: r.contractor || '' })
   }
   const cancel = () => {
     setAdding(false)
@@ -107,6 +107,7 @@ export default function InstallmentSection({
         detail: form.detail,
         days: form.days,
         due: form.due,
+        due_iso: form.due_iso,
         amount: Number(String(form.amount).replace(/,/g, '')) || 0,
         contractor: isCustomer ? '' : form.contractor,
       }
@@ -232,7 +233,7 @@ function InstForm({
         <input style={field} placeholder="งวด" value={form.no} onChange={(e) => setForm({ ...form, no: e.target.value })} />
         <input style={field} placeholder="รายละเอียดงาน" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} />
         <input style={field} placeholder="วัน" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} />
-        <input style={field} placeholder="วันกำหนด" value={form.due} onChange={(e) => setForm({ ...form, due: e.target.value })} />
+        <input style={field} type="date" title="วันครบกำหนด (ใช้คำนวณอายุหนี้)" value={form.due_iso} onChange={(e) => setForm({ ...form, due_iso: e.target.value, due: '' })} />
         <MoneyInput style={field} placeholder="จำนวนเงิน" value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} />
       </div>
       {showContractor && (
