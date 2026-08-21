@@ -461,6 +461,9 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
           </>
         )}
 
+        {/* ประวัติการซื้อ / ราคา */}
+        {tab === 'history' && <PurchaseHistory purchaseOrders={purchaseOrders} prs={prs} expenses={data.expenses || []} houses={houses} />}
+
         {/* Payments + WHT */}
         {tab === 'pay' && (
           <>
@@ -629,6 +632,77 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
       {docPr && <PrApprovalDoc pr={docPr} onClose={() => setDocPr(null)} />}
       {docPo && <PoDoc po={docPo} onClose={() => setDocPo(null)} />}
       {docWht && <WhtDoc payment={docWht} payeeSignature={(data.employees || []).find((e) => e.name === docWht.payee)?.signature} onClose={() => setDocWht(null)} />}
+    </div>
+  )
+}
+
+// ประวัติการซื้อ/ราคา — ค้นชื่อวัสดุแล้วเห็นว่าเคยซื้อที่ไหน วันไหน ราคาเท่าไหร่ (รวมจาก PO + รายจ่าย + PR)
+interface HistRec { source: string; date: string; iso: string; vendor: string; item: string; qty?: number; unit?: string; unitPrice?: number; amount: number; house: string; ref: string; status?: string }
+function PurchaseHistory({ purchaseOrders, prs, expenses, houses }: { purchaseOrders: ApiPO[]; prs: ApiPR[]; expenses: { id: number; date: string; date_iso?: string; house_code: string; item: string; cat: string; vendor: string; amount: number }[]; houses: { code: string; name: string }[] }) {
+  const [q, setQ] = useState('')
+  const hName = (code?: string) => houses.find((h) => h.code === code)?.name || code || ''
+  const all: HistRec[] = []
+  for (const p of purchaseOrders) all.push({ source: 'PO', date: p.date, iso: '', vendor: p.vendor || '', item: p.item || '', amount: p.amount || 0, house: hName(p.house_code), ref: p.no, status: p.status })
+  for (const e of expenses) all.push({ source: 'รายจ่าย', date: e.date, iso: e.date_iso || '', vendor: e.vendor || '', item: e.item || '', amount: e.amount || 0, house: hName(e.house_code), ref: e.cat || '' })
+  for (const pr of prs) {
+    if (pr.items && pr.items.length) for (const it of pr.items) all.push({ source: 'PR', date: pr.date, iso: '', vendor: '', item: it.desc || '', qty: it.qty, unit: it.unit, unitPrice: it.price, amount: (it.qty || 0) * (it.price || 0), house: hName(pr.house_code) || pr.house || '', ref: pr.no, status: pr.status })
+    else all.push({ source: 'PR', date: pr.date, iso: '', vendor: '', item: pr.item || '', amount: pr.amount || 0, house: hName(pr.house_code) || pr.house || '', ref: pr.no, status: pr.status })
+  }
+  const ql = q.trim().toLowerCase()
+  const list = (ql ? all.filter((r) => r.item.toLowerCase().includes(ql) || r.vendor.toLowerCase().includes(ql)) : all)
+    .sort((a, b) => (b.iso || '').localeCompare(a.iso || '') || b.ref.localeCompare(a.ref))
+  const withUnit = list.filter((r) => (r.unitPrice || 0) > 0)
+  const prices = withUnit.map((r) => r.unitPrice as number)
+  const min = prices.length ? Math.min(...prices) : 0
+  const max = prices.length ? Math.max(...prices) : 0
+  const avg = prices.length ? prices.reduce((s, p) => s + p, 0) / prices.length : 0
+  const vendors = [...new Set(list.map((r) => r.vendor).filter(Boolean))]
+  const last = list[0]
+  const srcColor = (s: string) => s === 'PO' ? { c: '#30506A', bg: '#E2E9EF' } : s === 'PR' ? { c: '#6B4E9E', bg: '#EEE9F5' } : { c: '#C0852C', bg: '#F6ECD6' }
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>ประวัติการซื้อ / ราคาที่เคยซื้อ</div>
+          <div style={{ fontSize: 11.5, color: '#94A0A8' }}>ค้นชื่อวัสดุ → เห็นว่าเคยสั่งซื้อที่ไหน วันไหน ราคาเท่าไหร่ (รวมจากใบสั่งซื้อ + รายจ่าย + ใบขอซื้อ)</div>
+        </div>
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="พิมพ์ชื่อวัสดุ เช่น ปูน / เหล็ก / กระเบื้อง หรือชื่อผู้ขาย" style={{ ...prField, marginLeft: 'auto', width: 320 }} />
+      </div>
+
+      {ql && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12, margin: '12px 0' }}>
+          <div style={{ background: '#F7F9FB', borderRadius: 10, padding: '12px 14px' }}><div style={{ fontSize: 12, color: '#5C6770' }}>ซื้อทั้งหมด</div><div className="num" style={{ fontSize: 20, fontWeight: 700 }}>{list.length} ครั้ง</div></div>
+          <div style={{ background: '#F7F9FB', borderRadius: 10, padding: '12px 14px' }}><div style={{ fontSize: 12, color: '#5C6770' }}>ราคา/หน่วย ต่ำ–สูง</div><div className="num" style={{ fontSize: 16, fontWeight: 700 }}>{prices.length ? `${baht(min)} – ${baht(max)}` : '—'}</div><div className="num" style={{ fontSize: 11, color: '#94A0A8' }}>{prices.length ? `เฉลี่ย ${baht(Math.round(avg))}` : 'ไม่มีข้อมูลราคา/หน่วย'}</div></div>
+          <div style={{ background: '#F7F9FB', borderRadius: 10, padding: '12px 14px' }}><div style={{ fontSize: 12, color: '#5C6770' }}>ผู้ขายที่เคยซื้อ</div><div style={{ fontSize: 13, fontWeight: 600, marginTop: 3, lineHeight: 1.4 }}>{vendors.length ? vendors.slice(0, 4).join(', ') + (vendors.length > 4 ? ` +${vendors.length - 4}` : '') : '—'}</div></div>
+          {last && <div style={{ background: '#F7F9FB', borderRadius: 10, padding: '12px 14px' }}><div style={{ fontSize: 12, color: '#5C6770' }}>ซื้อล่าสุด</div><div style={{ fontSize: 13, fontWeight: 600, marginTop: 3 }}>{last.vendor || last.source} · {baht(last.amount)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>{last.date}</div></div>}
+        </div>
+      )}
+
+      <div style={{ border: '1px solid #EEF1F4', borderRadius: 10, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead><tr style={{ background: '#F7F9FB' }}>
+            <th style={{ ...th, paddingLeft: 16 }}>วันที่</th><th style={th}>แหล่ง</th><th style={th}>รายการ</th><th style={th}>ผู้ขาย</th>
+            <th style={{ ...th, textAlign: 'right' }}>จำนวน</th><th style={{ ...th, textAlign: 'right' }}>ราคา/หน่วย</th><th style={{ ...th, textAlign: 'right' }}>ยอดรวม</th><th style={th}>บ้าน</th><th style={{ ...th, paddingRight: 16 }}>อ้างอิง</th>
+          </tr></thead>
+          <tbody>
+            {list.length === 0 && <tr><td colSpan={9} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>{ql ? `ไม่พบประวัติการซื้อ “${q}”` : 'พิมพ์ชื่อวัสดุด้านบนเพื่อค้นหา (หรือดูรายการทั้งหมดด้านล่าง)'}</td></tr>}
+            {list.slice(0, 300).map((r, i) => { const sc = srcColor(r.source); return (
+              <tr key={i} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
+                <td style={{ padding: '8px 16px', color: '#5C6770', whiteSpace: 'nowrap' }}>{r.date || '—'}</td>
+                <td style={{ padding: '8px 14px' }}><span style={{ fontSize: 10.5, fontWeight: 600, color: sc.c, background: sc.bg, padding: '2px 8px', borderRadius: 20 }}>{r.source}</span></td>
+                <td style={{ padding: '8px 14px', fontWeight: 500 }}>{r.item || '—'}</td>
+                <td style={{ padding: '8px 14px', color: '#5C6770' }}>{r.vendor || '—'}</td>
+                <td className="num" style={{ padding: '8px 14px', textAlign: 'right', color: '#5C6770' }}>{r.qty ? `${r.qty}${r.unit ? ' ' + r.unit : ''}` : '—'}</td>
+                <td className="num" style={{ padding: '8px 14px', textAlign: 'right' }}>{r.unitPrice ? baht(r.unitPrice) : '—'}</td>
+                <td className="num" style={{ padding: '8px 14px', textAlign: 'right', fontWeight: 600 }}>{baht(r.amount)}</td>
+                <td style={{ padding: '8px 14px', color: '#5C6770' }}>{r.house || '—'}</td>
+                <td style={{ padding: '8px 16px', color: '#94A0A8', fontSize: 11.5 }}>{r.ref || '—'}</td>
+              </tr>
+            ) })}
+          </tbody>
+        </table>
+      </div>
+      {list.length > 300 && <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 8, textAlign: 'center' }}>แสดง 300 รายการแรก — พิมพ์ค้นหาเพื่อกรองให้แคบลง</div>}
     </div>
   )
 }

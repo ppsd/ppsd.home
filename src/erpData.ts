@@ -46,6 +46,7 @@ export const installmentFilters = [
 export const procurementTabs = [
   { id: 'pr', label: 'ใบขอซื้อ (PR)' },
   { id: 'po', label: 'ใบสั่งซื้อ (PO)' },
+  { id: 'history', label: 'ประวัติการซื้อ / ราคา' },
   { id: 'pay', label: 'จ่ายเงิน / หัก ณ ที่จ่าย' },
   { id: 'payable', label: 'ยอดค้างจ่าย' },
   { id: 'vendors', label: 'ผู้ขาย / ผู้รับเหมา' },
