@@ -631,7 +631,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
 
       {docPr && <PrApprovalDoc pr={docPr} onClose={() => setDocPr(null)} />}
       {docPo && <PoDoc po={docPo} houseName={houses.find((h) => h.code === docPo.house_code)?.name || docPo.house_code || ''} onClose={() => setDocPo(null)} />}
-      {docWht && <WhtDoc payment={docWht} payeeSignature={(data.employees || []).find((e) => e.name === docWht.payee)?.signature} onClose={() => setDocWht(null)} />}
+      {docWht && (() => { const emp = (data.employees || []).find((e) => e.name === docWht.payee); return <WhtDoc payment={docWht} payeeSignature={emp?.signature} payeeTaxId={emp?.tax_id || undefined} onClose={() => setDocWht(null)} /> })()}
     </div>
   )
 }

@@ -107,6 +107,9 @@ export interface ApiEmployee {
   retention_opening?: number
   daily_rate?: number
   backup_code?: string
+  tax_id?: string
+  bank_name?: string
+  bank_acct?: string
 }
 export interface ApiPayroll extends ApiEmployee {
   base: number
