@@ -109,6 +109,21 @@ export default function Pms() {
       alert(`ดึงผลงาน QC ของ ${e.emp_name} แล้ว\n• ตรวจ ${st.total} ใบ · ผ่าน ${st.passed} · อัตราผ่าน ${st.passRate}%\nใส่เป็น KPI ให้แล้ว — กำหนดน้ำหนักได้เอง`)
     } catch (err) { alert((err as Error).message) }
   }
+  // ดึงคะแนน KPI จากใบสั่งงาน (ส่งงานตรงเวลา/ล่าช้า) → ใส่เป็น KPI (อัตราส่งงานตรงเวลา %)
+  const autoFillWo = async (e: Draft) => {
+    if (!e.emp_name) { alert('เลือกพนักงานก่อน'); return }
+    try {
+      const s = await api.get<{ kpiPoints: number; scoredCount: number; earlyCount: number; lateCount: number; ontimeCount: number; onTimeRate: number }>('/work-orders/executor-stats?executor=' + encodeURIComponent(e.emp_name))
+      if (!s.scoredCount) { alert('ยังไม่มีใบสั่งงานที่ผู้สั่งกดรับ (ยังไม่มีคะแนน) ของ ' + e.emp_name); return }
+      const onTimePct = Math.round(((s.earlyCount + s.ontimeCount) / s.scoredCount) * 100)
+      const kpiName = 'อัตราส่งงานตรงเวลา (ใบสั่งงาน) (%)'
+      const idx = e.kpi.findIndex((k) => k.name === kpiName)
+      const row = { name: kpiName, weight: idx >= 0 ? e.kpi[idx].weight : 0, target: 100, actual: onTimePct }
+      const kpi = idx >= 0 ? e.kpi.map((k, i) => i === idx ? row : k) : [...e.kpi, row]
+      setEdit({ ...e, kpi })
+      alert(`ดึงคะแนนใบสั่งงานของ ${e.emp_name} แล้ว\n• รับงานแล้ว ${s.scoredCount} งาน · คะแนน KPI รวม ${s.kpiPoints >= 0 ? '+' : ''}${s.kpiPoints}\n• ตรงเวลา/ก่อนกำหนด ${s.earlyCount + s.ontimeCount} งาน · ช้า ${s.lateCount} งาน\n• อัตราส่งตรงเวลา ${onTimePct}%\nใส่เป็น KPI ให้แล้ว — กำหนดน้ำหนักได้เอง`)
+    } catch (err) { alert((err as Error).message) }
+  }
   const applyTemplate = (pos: string) => {
     const t = PMS_TEMPLATES.find((x) => x.position === pos)
     if (!edit) return
@@ -174,7 +189,8 @@ export default function Pms() {
         {edit.kpi.length > 0 && (
           <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, overflow: 'hidden' }}>
             <div style={{ padding: '9px 12px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center' }}>ส่วนที่ 1 · KPI <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5, marginLeft: 6 }}>(เต็ม 70)</span>
-              <button onClick={() => autoFillQc(edit)} title="ดึงอัตรางานตรวจ QC ผ่าน ของคนนี้มาใส่เป็น KPI" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>↺ ดึงผลงาน QC</button>
+              <button onClick={() => autoFillWo(edit)} title="ดึงคะแนนจากใบสั่งงาน (ส่งงานตรงเวลา/ล่าช้า) มาใส่เป็น KPI" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #C9D3DB', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>↺ ดึงคะแนนใบสั่งงาน</button>
+              <button onClick={() => autoFillQc(edit)} title="ดึงอัตรางานตรวจ QC ผ่าน ของคนนี้มาใส่เป็น KPI" className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>↺ ดึงผลงาน QC</button>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}><th style={th}>ตัวชี้วัด</th><th style={{ ...th, textAlign: 'center', width: 55 }}>น้ำหนัก</th><th style={{ ...th, textAlign: 'center', width: 70 }}>เป้า %</th><th style={{ ...th, textAlign: 'center', width: 90 }}>ทำได้จริง %</th><th style={{ ...th, textAlign: 'right', width: 60 }}>คะแนน</th></tr></thead>
