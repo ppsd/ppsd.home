@@ -2424,7 +2424,27 @@ api.put('/pms/:id', pmsOnly, (req, res) => {
 api.delete('/pms/:id', pmsOnly, (req, res) => { db.prepare('DELETE FROM pms_reviews WHERE id=?').run(req.params.id); res.json({ ok: true }) })
 
 // ---------- ใบสั่งงาน + ควบคุมคุณภาพ (Work Order & QC) ----------
-const woRow = (r) => r ? { ...r, dod: jparse(r.dod) || {}, qc: jparse(r.qc) || [] } : r
+const woRow = (r) => r ? { ...r, dod: jparse(r.dod) || {}, qc: jparse(r.qc) || [], submit_files: jparse(r.submit_files) || [] } : r
+// เกณฑ์คะแนน KPI ใบสั่งงาน: ตรงเวลา/ก่อนกำหนด +10 · ส่งเร็ว +2/วัน (สูงสุด +20)
+// ส่งช้า -5/วัน (ต่ำสุด -25) · งานด่วนไม่รับใน 5 นาที (escalate) -10 · ไม่มีกำหนด +5
+function daysBetweenISO(aIso, bIso) {
+  const a = new Date(String(aIso) + 'T00:00:00'), b = new Date(String(bIso) + 'T00:00:00')
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null
+  return Math.round((b - a) / 86400000)
+}
+function woKpiScore(wo, submitIso) {
+  let pts = 0, days = null
+  if (!wo.due_date) pts = 5
+  else {
+    const early = daysBetweenISO(submitIso, wo.due_date) // + = ส่งก่อนกำหนดกี่วัน
+    days = early
+    if (early == null) pts = 5
+    else if (early >= 0) pts = Math.min(20, 10 + 2 * early)
+    else pts = Math.max(-25, 5 * early) // early ติดลบ → -5/วัน
+  }
+  if (wo.urgent && (wo.esc_level > 0 || wo.status === 'เกินเวลา')) pts -= 10 // ด่วนแต่ไม่รับใน 5 นาที
+  return { pts, days }
+}
 api.get('/work-orders', (_req, res) => res.json(db.prepare('SELECT * FROM work_orders ORDER BY id DESC').all().map(woRow)))
 api.post('/work-orders', canWrite, (req, res) => {
   const b = req.body || {}
@@ -2471,6 +2491,35 @@ api.post('/work-orders/:id/ack', (req, res) => {
     .run(req.user.name, todayTH(), nowTS(), nowTS(), d.id)
   audit(req, 'รับทราบใบสั่งงาน', d.no)
   res.json(woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(d.id)))
+})
+// ผู้รับงาน "ส่งงาน" พร้อมแนบไฟล์/ลิงก์เป็นหลักฐาน → รอผู้สั่งกดรับ
+api.post('/work-orders/:id/submit', (req, res) => {
+  const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบใบสั่งงาน' })
+  const allowed = !d.executor || d.executor === req.user.name || d.esc_name === req.user.name || isManager(req.user)
+  if (!allowed) return res.status(403).json({ error: 'เฉพาะผู้รับผิดชอบงานเท่านั้นที่ส่งงานได้' })
+  const b = req.body || {}
+  const files = Array.isArray(b.files) ? b.files.filter((f) => f && f.id).map((f) => ({ id: f.id, name: String(f.name || 'ไฟล์') })) : []
+  const link = String(b.link || '').trim()
+  if (!files.length && !link) return res.status(400).json({ error: 'ต้องแนบไฟล์งานอย่างน้อย 1 ไฟล์ หรือใส่ลิงก์งาน เพื่อยืนยันว่าส่งงานแล้ว' })
+  db.prepare("UPDATE work_orders SET status='ส่งงาน', submit_ts=?, submit_date=?, submit_link=?, submit_files=?, submit_note=? WHERE id=?")
+    .run(nowTS(), todayISO(), link, JSON.stringify(files), String(b.note || ''), d.id)
+  audit(req, 'ส่งงาน (ใบสั่งงาน)', `${d.no} ${files.length ? files.length + ' ไฟล์' : ''}${link ? ' + ลิงก์' : ''}`)
+  res.json(woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(d.id)))
+})
+// ผู้สั่งงาน "กดรับงาน" → ยืนยันรับงาน + คิดคะแนน KPI ตามตรงเวลา/ล่าช้า
+api.post('/work-orders/:id/accept', canWrite, (req, res) => {
+  const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบใบสั่งงาน' })
+  const allowed = !d.reviewer || d.reviewer === req.user.name || d.by === req.user.name || isManager(req.user)
+  if (!allowed) return res.status(403).json({ error: 'เฉพาะผู้สั่งงาน (หรือผู้จัดการ) เท่านั้นที่กดรับงานได้' })
+  if (d.status !== 'ส่งงาน' && !req.body?.force) return res.status(409).json({ error: 'ยังไม่มีการส่งงาน — รอผู้รับงานกด “ส่งงาน” ก่อน' })
+  const submitIso = d.submit_date || todayISO()
+  const { pts, days } = woKpiScore(d, submitIso)
+  db.prepare("UPDATE work_orders SET status='เสร็จ', acceptance='รับงานแล้ว', acceptance_note=?, accept_ts=?, accept_by=?, score=?, kpi_days=? WHERE id=?")
+    .run(String(req.body?.note || ''), nowTS(), req.user.name, pts, days == null ? 0 : days, d.id)
+  audit(req, 'รับงาน (ใบสั่งงาน)', `${d.no} · ${d.executor || '-'} KPI ${pts >= 0 ? '+' : ''}${pts}`)
+  res.json({ ...woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(d.id)), kpi_points: pts, kpi_days: days })
 })
 // ผู้รับ "เปิดดู" ใบสั่งงาน → บันทึกว่าเห็นแล้วเมื่อไหร่ (read receipt)
 api.post('/work-orders/:id/seen', (req, res) => {
@@ -2574,13 +2623,19 @@ api.delete('/work-orders/:id', canWrite, (req, res) => { db.prepare('DELETE FROM
 api.get('/work-orders/executor-stats', auditView, (req, res) => {
   const name = req.query.executor || ''
   const todayISO = new Date().toISOString().slice(0, 10)
-  const rows = db.prepare('SELECT due_date,status FROM work_orders WHERE executor=?').all(name)
+  const rows = db.prepare('SELECT due_date,status,score,kpi_days,submit_date FROM work_orders WHERE executor=?').all(name)
   const done = (s) => s === 'เสร็จ' || s === 'ตรวจผ่าน'
   const total = rows.length
   const overdue = rows.filter((r) => r.due_date && r.due_date < todayISO && !done(r.status)).length
   const withDue = rows.filter((r) => r.due_date).length
   const onTime = withDue - rows.filter((r) => r.due_date && r.due_date < todayISO && !done(r.status)).length
-  res.json({ executor: name, total, overdue, onTimeRate: withDue ? Math.round((onTime / withDue) * 100) : 100 })
+  // คะแนน KPI สะสมจากใบสั่งงานที่ผู้สั่งรับแล้ว
+  const scored = rows.filter((r) => r.score != null)
+  const kpiPoints = scored.reduce((s, r) => s + (r.score || 0), 0)
+  const earlyCount = scored.filter((r) => (r.kpi_days || 0) > 0).length
+  const lateCount = scored.filter((r) => (r.kpi_days || 0) < 0).length
+  const ontimeCount = scored.filter((r) => (r.kpi_days || 0) === 0).length
+  res.json({ executor: name, total, overdue, onTimeRate: withDue ? Math.round((onTime / withDue) * 100) : 100, kpiPoints, scoredCount: scored.length, earlyCount, lateCount, ontimeCount })
 })
 api.post('/houses/:code/contractors', canWrite, (req, res) => {
   const b = req.body || {}

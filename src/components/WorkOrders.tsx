@@ -11,6 +11,8 @@ export interface WorkOrder {
   exec_start: string; exec_end: string; exec_total: string; obstacle: string; fix_note: string
   qc: QcRow[]; acceptance: string; acceptance_note: string; score: number; commendation: string; lessons: string
   status: string; ack: number; ack_by: string; ack_date: string
+  submit_ts?: string; submit_date?: string; submit_link?: string; submit_files?: { id: number; name: string }[]; submit_note?: string
+  accept_ts?: string; accept_by?: string; kpi_days?: number; urgent?: number; by?: string; esc_name?: string
 }
 
 const PRIORITIES = ['ปกติ', 'ด่วน', 'ด่วนที่สุด']
@@ -65,6 +67,35 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
   const ack = async (r: WorkOrder) => { await api.post('/work-orders/' + r.id + '/ack', {}); load(); refreshNotifications?.() }
   const remove = async (id: number) => { if (confirm('ลบใบสั่งงานนี้?')) { await api.del('/work-orders/' + id); load() } }
   const isMine = (r: WorkOrder) => r.executor === user?.name
+  const canAccept = (r: WorkOrder) => !r.reviewer || r.reviewer === user?.name || r.by === (user?.name) || !!user?.isManager
+  // ---- ส่งงาน (แนบไฟล์/ลิงก์) ----
+  const [submitFor, setSubmitFor] = useState<WorkOrder | null>(null)
+  const [sf, setSf] = useState<{ link: string; note: string; files: { id: number; name: string }[] }>({ link: '', note: '', files: [] })
+  const [sbusy, setSbusy] = useState('')
+  const [serr, setSerr] = useState('')
+  const openSubmit = (r: WorkOrder) => { setSubmitFor(r); setSf({ link: '', note: '', files: [] }); setSerr('') }
+  const pickSubmitFile = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(ev.target.files || []); ev.target.value = ''
+    if (!files.length || !submitFor) return
+    setSbusy('อัปโหลด…')
+    for (const file of files) {
+      try { const r = await api.uploadFile<{ id: number; name: string }>(file, { house: submitFor.house_code || '', category: 'ส่งงาน' }); setSf((s) => ({ ...s, files: [...s.files, { id: r.id, name: r.name }] })) }
+      catch (e) { setSerr((e as Error).message) }
+    }
+    setSbusy('')
+  }
+  const doSubmit = async () => {
+    if (!submitFor) return
+    if (!sf.files.length && !sf.link.trim()) { setSerr('ต้องแนบไฟล์งานอย่างน้อย 1 ไฟล์ หรือใส่ลิงก์งาน'); return }
+    setSbusy('กำลังส่งงาน…'); setSerr('')
+    try { await api.post('/work-orders/' + submitFor.id + '/submit', { link: sf.link.trim(), note: sf.note, files: sf.files }); setSubmitFor(null); load(); refreshNotifications?.() }
+    catch (e) { setSerr((e as Error).message) } finally { setSbusy('') }
+  }
+  const accept = async (r: WorkOrder) => {
+    if (!confirm(`รับงาน "${r.project || r.scope}" จาก ${r.executor || '-'}?\nระบบจะคิดคะแนน KPI ให้อัตโนมัติตามตรงเวลา/ล่าช้า`)) return
+    try { const res = await api.post<{ kpi_points: number; kpi_days: number }>('/work-orders/' + r.id + '/accept', {}); const d = res.kpi_days; alert(`รับงานแล้ว ✓\nคะแนน KPI: ${res.kpi_points >= 0 ? '+' : ''}${res.kpi_points}` + (d > 0 ? ` (ส่งก่อนกำหนด ${d} วัน)` : d < 0 ? ` (ส่งช้า ${-d} วัน)` : ' (ตรงเวลา)')); load(); refreshNotifications?.() }
+    catch (e) { alert((e as Error).message) }
+  }
 
   if (edit) {
     const e = edit
@@ -180,9 +211,20 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
                   <td style={{ padding: '10px 14px' }}><div style={{ fontWeight: 500, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.project || r.scope || '-'}</div>{r.due_date && <div style={{ fontSize: 11, color: '#94A0A8' }}>ครบ {r.due_date}{r.due_time ? ' ' + r.due_time : ''}</div>}</td>
                   <td style={{ padding: '10px 14px', color: '#5C6770' }}>{r.executor || '-'}{r.ack ? <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 600, color: '#2E7D55' }}>✓ รับทราบ</span> : <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 600, color: '#B7791F' }}>รอรับทราบ</span>}</td>
                   <td style={{ padding: '10px 14px', textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: pc.c, background: pc.bg, padding: '2px 10px', borderRadius: 20 }}>{r.priority}</span></td>
-                  <td style={{ padding: '10px 14px', textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: sc.c, background: sc.bg, padding: '2px 10px', borderRadius: 20 }}>{r.status}</span></td>
+                  <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: sc.c, background: sc.bg, padding: '2px 10px', borderRadius: 20 }}>{r.status}</span>
+                    {(r.status === 'ส่งงาน' || r.status === 'เสร็จ') && (r.submit_link || (r.submit_files && r.submit_files.length > 0)) && (
+                      <div style={{ marginTop: 4, display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                        {r.submit_link && <a href={r.submit_link} target="_blank" rel="noreferrer" style={{ fontSize: 10.5, color: '#30506A' }}>🔗 ลิงก์งาน</a>}
+                        {(r.submit_files || []).map((f) => <button key={f.id} onClick={() => api.openFile('/files/' + f.id + '/view')} style={{ border: 'none', background: 'none', color: '#30506A', cursor: 'pointer', fontSize: 10.5, fontFamily: 'inherit', textDecoration: 'underline' }}>📎 {f.name.length > 14 ? f.name.slice(0, 12) + '…' : f.name}</button>)}
+                      </div>
+                    )}
+                    {r.status === 'เสร็จ' && r.score != null && <div style={{ marginTop: 3, fontSize: 10.5, fontWeight: 700, color: r.score >= 0 ? '#2E7D55' : '#C24036' }}>KPI {r.score >= 0 ? '+' : ''}{r.score}{typeof r.kpi_days === 'number' ? (r.kpi_days > 0 ? ` · ก่อน ${r.kpi_days}ว.` : r.kpi_days < 0 ? ` · ช้า ${-r.kpi_days}ว.` : ' · ตรงเวลา') : ''}</div>}
+                  </td>
                   <td style={{ padding: '10px 18px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                     {isMine(r) && !r.ack && <button onClick={() => ack(r)} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>รับทราบ</button>}
+                    {isMine(r) && r.ack && r.status !== 'ส่งงาน' && r.status !== 'เสร็จ' && r.status !== 'ตรวจผ่าน' && <button onClick={() => openSubmit(r)} className="btn-primary" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>ส่งงาน</button>}
+                    {r.status === 'ส่งงาน' && canAccept(r) && <button onClick={() => accept(r)} className="btn-primary" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>✓ รับงาน</button>}
                     <button onClick={() => openEdit(r)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>เปิด/บันทึกผล</button>
                     <button onClick={() => setPrinting(r)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨</button>
                     <button onClick={() => remove(r.id)} style={{ marginLeft: 6, border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
@@ -194,6 +236,36 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
         </table>
       </div>
       {printing && <WorkOrderPrint wo={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name} onClose={() => setPrinting(null)} />}
+
+      {submitFor && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 70, display: 'flex', padding: '24px 16px', overflow: 'auto' }}>
+          <div style={{ maxWidth: 480, width: '100%', margin: 'auto', background: '#fff', borderRadius: 14, boxShadow: '0 24px 70px rgba(20,30,40,.3)', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #EEF1F4' }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>ส่งงาน — {submitFor.project || submitFor.scope}</div>
+              <div style={{ fontSize: 12, color: '#94A0A8' }}>แนบไฟล์งานหรือลิงก์ เพื่อยืนยันว่าส่งงานแล้วจริง แล้วรอผู้สั่งกดรับ</div>
+            </div>
+            <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <div style={lbl}>แนบไฟล์งาน (รูป/PDF/ไฟล์อื่น)</div>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 13px', cursor: 'pointer' }}>
+                  + เลือกไฟล์<input type="file" multiple onChange={pickSubmitFile} style={{ display: 'none' }} />
+                </label>
+                {sf.files.length > 0 && <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {sf.files.map((f, i) => <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}><span style={{ color: '#2E7D55' }}>📎</span><span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span><button onClick={() => setSf((s) => ({ ...s, files: s.files.filter((_, j) => j !== i) }))} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer' }}>✕</button></div>)}
+                </div>}
+              </div>
+              <div><div style={lbl}>หรือใส่ลิงก์งาน (Google Drive / รูป / วิดีโอ)</div><input style={field} value={sf.link} onChange={(e) => setSf({ ...sf, link: e.target.value })} placeholder="https://…" /></div>
+              <div><div style={lbl}>หมายเหตุ (ถ้ามี)</div><input style={field} value={sf.note} onChange={(e) => setSf({ ...sf, note: e.target.value })} placeholder="เช่น งานเสร็จครบตามสั่ง" /></div>
+              {sbusy && <div style={{ fontSize: 12.5, color: '#30506A' }}>{sbusy}</div>}
+              {serr && <div style={{ fontSize: 12.5, color: '#C24036' }}>{serr}</div>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid #EEF1F4' }}>
+              <button onClick={() => setSubmitFor(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={doSubmit} disabled={!!sbusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ส่งงาน ✓</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

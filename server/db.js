@@ -281,6 +281,14 @@ for (const [c, t] of [
   ['esc_code', 'TEXT'], ['esc_name', 'TEXT'], ['esc_ts', 'TEXT'], // ตอนนี้อยู่ที่ใคร
   ['esc_log', 'TEXT'],          // ประวัติการไล่ระดับ (JSON)
   ['source', 'TEXT'],           // 'voice' ถ้ามาจากสั่งงานด้วยเสียงของ CEO
+  ['submit_ts', 'TEXT'],        // เวลาที่ผู้รับงาน "ส่งงาน" (YYYY-MM-DD HH:MM:SS)
+  ['submit_date', 'TEXT'],      // วันส่งงาน (ISO) ใช้เทียบกับกำหนดส่งเพื่อคิด KPI
+  ['submit_link', 'TEXT'],      // ลิงก์งานที่แนบมาตอนส่งงาน
+  ['submit_files', 'TEXT'],     // ไฟล์งานที่แนบ (JSON: [{id,name}])
+  ['submit_note', 'TEXT'],      // หมายเหตุตอนส่งงาน
+  ['accept_ts', 'TEXT'],        // เวลาที่ผู้สั่งงาน "กดรับงาน"
+  ['accept_by', 'TEXT'],        // ผู้สั่งงานที่กดรับ
+  ['kpi_days', 'INTEGER'],      // ส่งก่อน(+)/หลัง(-) กำหนดกี่วัน (เก็บไว้อ้างอิง)
 ]) ensureColumn('work_orders', c, t)
 
 // ===== ประเมินผลรายเดือน (PMS / KPI) =====
