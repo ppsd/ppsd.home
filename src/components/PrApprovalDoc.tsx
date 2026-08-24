@@ -1,6 +1,7 @@
 import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import type { ApiPR } from '../store'
+import ApproverSigns from './ApproverSigns'
 
 // ใบขอซื้อ / ขอจ้าง (PR) — เลย์เอาต์ตามแบบฟอร์มบริษัท
 const bd = '1px solid #333'
@@ -114,9 +115,7 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
         <div style={{ border: bd, marginTop: 12, padding: '6px 10px', fontSize: 11.5 }}>
           <b>ผลการพิจารณา</b> &nbsp;&nbsp; {chk(approved)} อนุมัติ &nbsp;&nbsp;&nbsp; {chk(rejected)} ไม่อนุมัติ
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-          <Sig role="ผู้อนุมัติ" name={approved ? pr.approver : undefined} sig={approved ? pr.approver_sig : undefined} date={approved ? pr.approved_date : undefined} />
-        </div>
+        <ApproverSigns approval={pr.approval} />
 
         {!approved && !rejected && (
           <div className="no-print" style={{ marginTop: 14, fontSize: 12, color: '#B7791F', background: '#F6ECD6', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>

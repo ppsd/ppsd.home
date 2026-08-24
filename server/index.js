@@ -295,6 +295,7 @@ const adminOnly = requireRole('admin')
 // ค่าตั้งต้นของกติกาควบคุม (admin แก้ได้ในหน้า "ตรวจสอบ")
 const CONTROL_DEFAULTS = {
   block_self_approve: true, // ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ
+  approvers_required: 3, // จำนวนผู้อนุมัติที่ต้องกดอนุมัติ (1–3) สำหรับ PR/PO/เบิก-จ่าย
   two_step_above: 500000, // PR ยอด ≥ นี้ ต้องอนุมัติ 2 ชั้น (คนละคน)
   quote_min: 3, // จำนวนใบเทียบราคาขั้นต่ำ
   quote_required_above: 100000, // PO ยอด ≥ นี้ ควรมีใบเทียบราคาครบ
@@ -317,6 +318,58 @@ function acceptanceOk(installmentId) {
 function controls() {
   try { return { ...CONTROL_DEFAULTS, ...JSON.parse(getSetting('controls', '{}')) } } catch { return { ...CONTROL_DEFAULTS } }
 }
+
+// ===== เครื่องอนุมัติหลายขั้น (generic) — ใช้ร่วมกัน PR/PO/ใบจ่ายเงิน/ใบจ่ายค่าใช้จ่าย =====
+const APPROVE_DOCS = {
+  pr: { table: 'purchase_requests', label: 'ใบขอซื้อ', requester: 'by' },
+  po: { table: 'purchase_orders', label: 'ใบสั่งซื้อ', requester: 'by', noStatus: true }, // status ของ PO ใช้เป็นสถานะรับของ ไม่ทับ
+  payment: { table: 'payments', label: 'ใบจ่ายเงิน', requester: null },
+  expense: { table: 'expenses', label: 'ใบจ่ายค่าใช้จ่าย', requester: null },
+}
+function approversRequired() { return Math.max(1, Math.min(3, Number(controls().approvers_required) || 3)) }
+function approvalSteps(docType, docId) { return db.prepare('SELECT * FROM doc_approvals WHERE doc_type=? AND doc_id=? ORDER BY step, id').all(docType, Number(docId)) }
+function approvalState(docType, docId) {
+  const steps = approvalSteps(docType, docId)
+  const rejected = steps.find((s) => s.decision === 'reject')
+  const approvals = steps.filter((s) => s.decision === 'approve')
+  const required = approversRequired()
+  return { required, count: approvals.length, approvals: approvals.map((a) => ({ step: a.step, approver: a.approver, sig: a.approver_sig, role: a.role, date: a.date, note: a.note })), rejected: !!rejected, rejectedBy: rejected?.approver, rejectNote: rejected?.note, done: !rejected && approvals.length >= required }
+}
+function setDocStatus(docType, docId, status) {
+  const cfg = APPROVE_DOCS[docType]; if (!cfg || cfg.noStatus) return
+  try { db.prepare(`UPDATE ${cfg.table} SET status=? WHERE id=?`).run(status, Number(docId)) } catch { /* บางตารางไม่มี status */ }
+}
+function doApprove(docType, docId, req) {
+  const cfg = APPROVE_DOCS[docType]; if (!cfg) throw { code: 400, msg: 'ประเภทเอกสารไม่ถูกต้อง' }
+  const doc = db.prepare(`SELECT * FROM ${cfg.table} WHERE id=?`).get(Number(docId)); if (!doc) throw { code: 404, msg: 'ไม่พบเอกสาร' }
+  const me = db.prepare('SELECT name, signature, role FROM users WHERE id=?').get(req.user.id)
+  const ctrl = controls()
+  const st = approvalState(docType, docId)
+  if (st.rejected) throw { code: 409, msg: 'เอกสารนี้ถูกปฏิเสธแล้ว' }
+  if (st.done) throw { code: 409, msg: 'อนุมัติครบแล้ว' }
+  if (ctrl.block_self_approve && cfg.requester && doc[cfg.requester] && doc[cfg.requester] === me.name) throw { code: 403, msg: 'ห้ามอนุมัติเอกสารที่ตัวเองเป็นผู้ขอ/ผู้จัดทำ (แยกหน้าที่)' }
+  if (st.approvals.some((a) => a.approver === me.name)) throw { code: 403, msg: 'คุณอนุมัติเอกสารนี้ไปแล้ว — แต่ละขั้นต้องเป็นคนละคน' }
+  const step = st.approvals.length + 1
+  db.prepare('INSERT INTO doc_approvals (doc_type,doc_id,step,decision,approver,approver_sig,role,note,date,ts) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(docType, Number(docId), step, 'approve', me.name, me.signature || null, me.role || '', req.body?.note || '', todayTH(), nowTS())
+  const now = approvalState(docType, docId)
+  setDocStatus(docType, docId, now.done ? 'อนุมัติ' : 'รออนุมัติ')
+  audit(req, `อนุมัติ ${cfg.label} (ขั้น ${step}/${now.required})`, doc.no || String(docId))
+  return now
+}
+function doReject(docType, docId, req) {
+  const cfg = APPROVE_DOCS[docType]; if (!cfg) throw { code: 400, msg: 'ประเภทเอกสารไม่ถูกต้อง' }
+  const doc = db.prepare(`SELECT * FROM ${cfg.table} WHERE id=?`).get(Number(docId)); if (!doc) throw { code: 404, msg: 'ไม่พบเอกสาร' }
+  const me = db.prepare('SELECT name, signature, role FROM users WHERE id=?').get(req.user.id)
+  const st = approvalState(docType, docId)
+  if (st.rejected) throw { code: 409, msg: 'ถูกปฏิเสธแล้ว' }
+  db.prepare('INSERT INTO doc_approvals (doc_type,doc_id,step,decision,approver,approver_sig,role,note,date,ts) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(docType, Number(docId), st.approvals.length + 1, 'reject', me.name, me.signature || null, me.role || '', req.body?.note || '', todayTH(), nowTS())
+  setDocStatus(docType, docId, 'ปฏิเสธ')
+  audit(req, `ปฏิเสธ ${cfg.label}`, doc.no || String(docId))
+  return approvalState(docType, docId)
+}
+const attachApproval = (docType) => (r) => r ? { ...r, approval: approvalState(docType, r.id) } : r
 // กันโกงแบบ "บล็อกจริง" ตอนออก PO — คืนข้อความถ้าถูกบล็อก, หรือ null ถ้าผ่าน
 function poBlockReason(b, ctrl) {
   const amount = Number(b.amount) || 0
@@ -652,7 +705,7 @@ api.get('/expenses', (_req, res) => {
         `SELECT e.*, h.name AS house FROM expenses e
          LEFT JOIN houses h ON h.code = e.house_code ORDER BY e.id DESC`
       )
-      .all()
+      .all().map(attachApproval('expense'))
   )
 })
 api.post('/expenses', canWrite, (req, res) => {
@@ -1282,7 +1335,7 @@ api.put('/settings/attendance', adminOnly, (req, res) => {
 })
 
 // ---------- purchase orders (PO) ----------
-api.get('/purchase-orders', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM purchase_orders ORDER BY id DESC').all()))
+api.get('/purchase-orders', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM purchase_orders ORDER BY id DESC').all().map(attachApproval('po'))))
 api.post('/purchase-orders', financeOnly, (req, res) => {
   const b = req.body || {}
   if (!b.vendor || !b.item) return res.status(400).json({ error: 'กรุณากรอกผู้ขายและรายการ' })
@@ -1352,7 +1405,7 @@ api.put('/vendors/:id', financeOnly, (req, res) => {
 function jparse(s) { if (!s) return null; try { return JSON.parse(s) } catch { return null } }
 function prRow(r) { return r ? { ...r, items: jparse(r.items), images: jparse(r.images) } : r }
 api.get('/purchase-requests', financeOnly, (_req, res) =>
-  res.json(db.prepare('SELECT * FROM purchase_requests ORDER BY id DESC').all().map(prRow))
+  res.json(db.prepare('SELECT * FROM purchase_requests ORDER BY id DESC').all().map((r) => ({ ...prRow(r), approval: approvalState('pr', r.id) })))
 )
 // create a PR — requester = current user, snapshot their signature, optional product image
 // รองรับหลายรายการในใบเดียว: ส่ง items: [{desc,qty,unit,price}] มา (จำนวนเงินรวม = ผลรวมของทุกรายการ)
@@ -1383,43 +1436,18 @@ api.post('/purchase-requests', financeOnly, (req, res) => {
   res.status(201).json(prRow(db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(info.lastInsertRowid)))
 })
 // approve/reject — managers only; on approval, snapshot approver name + signature
+// PR อนุมัติ/ปฏิเสธ — ใช้เครื่องอนุมัติกลาง (หลายขั้นตามที่ตั้ง)
 api.post('/purchase-requests/:id/decision', requireManager, (req, res) => {
-  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
-  if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
-  const ctrl = controls()
-  const decision = req.body?.status === 'อนุมัติ' ? 'อนุมัติ' : 'ปฏิเสธ'
-  const me = db.prepare('SELECT name, signature, role FROM users WHERE id = ?').get(req.user.id)
-  if (decision === 'ปฏิเสธ') {
-    db.prepare('UPDATE purchase_requests SET status=? WHERE id=?').run('ปฏิเสธ', pr.id)
-    audit(req, 'ปฏิเสธใบขอซื้อ', pr.no)
-    return res.json(db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(pr.id))
-  }
-  // กันโกง #1: ห้ามอนุมัติใบที่ตัวเองเป็นผู้ขอ
-  if (ctrl.block_self_approve && pr.by && pr.by === me.name) {
-    return res.status(403).json({ error: 'ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ (แยกหน้าที่ผู้ขอ/ผู้อนุมัติ)' })
-  }
-  const needTwoStep = (pr.amount || 0) >= (ctrl.two_step_above || Infinity)
-  // ชั้นที่ 2 (สำหรับยอดสูง): ต้องเป็นคนละคนกับผู้อนุมัติชั้นแรก และเป็น admin
-  if (pr.status === 'รออนุมัติชั้น 2') {
-    if (me.name === pr.approver) return res.status(403).json({ error: 'ผู้อนุมัติชั้นที่ 2 ต้องเป็นคนละคนกับชั้นแรก' })
-    if (me.role !== 'admin') return res.status(403).json({ error: 'การอนุมัติชั้นที่ 2 (ยอดสูง) ต้องเป็นผู้ดูแลระบบ' })
-    db.prepare('UPDATE purchase_requests SET status=?, approver2=?, approver2_sig=?, approved2_date=? WHERE id=?')
-      .run('อนุมัติ', me.name, me.signature || null, todayTH(), pr.id)
-    audit(req, 'อนุมัติใบขอซื้อ (ชั้น 2)', `${pr.no} · ${baht(pr.amount)}`)
-    return res.json(db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(pr.id))
-  }
-  // ชั้นแรก
-  const first = db.prepare('UPDATE purchase_requests SET status=?, approver=?, approver_sig=?, approved_date=? WHERE id=?')
-  if (needTwoStep) {
-    first.run('รออนุมัติชั้น 2', me.name, me.signature || null, todayTH(), pr.id)
-    audit(req, 'อนุมัติใบขอซื้อ (ชั้น 1 · รอชั้น 2)', `${pr.no} · ${baht(pr.amount)}`)
-  } else {
-    first.run('อนุมัติ', me.name, me.signature || null, todayTH(), pr.id)
-    audit(req, 'อนุมัติใบขอซื้อ', pr.no)
-  }
-  res.json(db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(pr.id))
+  try {
+    const st = req.body?.status === 'อนุมัติ' ? doApprove('pr', req.params.id, req) : doReject('pr', req.params.id, req)
+    res.json({ ...prRow(db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)), approval: st })
+  } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) }
 })
-api.get('/payments', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM payments ORDER BY id DESC').all()))
+// เครื่องอนุมัติกลาง — ใช้ได้ทุกประเภทเอกสาร (po/payment/expense/pr)
+api.get('/approvals/:docType/:docId', (req, res) => res.json(approvalState(req.params.docType, req.params.docId)))
+api.post('/approve/:docType/:docId', requireManager, (req, res) => { try { res.json(doApprove(req.params.docType, req.params.docId, req)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) } })
+api.post('/reject/:docType/:docId', requireManager, (req, res) => { try { res.json(doReject(req.params.docType, req.params.docId, req)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) } })
+api.get('/payments', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM payments ORDER BY id DESC').all().map(attachApproval('payment'))))
 api.post('/payments', financeOnly, (req, res) => {
   const b = req.body || {}
   if (!b.payee || !b.gross) return res.status(400).json({ error: 'กรุณากรอกผู้รับเงินและจำนวนเงิน' })

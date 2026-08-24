@@ -351,6 +351,16 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_jl_entry ON journal_lines(entry_id)')
 db.exec('CREATE INDEX IF NOT EXISTS idx_jl_account ON journal_lines(account)')
 db.exec('CREATE INDEX IF NOT EXISTS idx_je_source ON journal_entries(source, source_id)')
 ensureColumn('journal_entries', 'ref', 'TEXT') // เลขที่เอกสารอ้างอิง (เช่น เลขบิลเงินสดย่อย)
+
+// ===== อนุมัติหลายขั้น (generic) สำหรับ PR/PO/ใบจ่ายเงิน/ใบจ่ายค่าใช้จ่าย =====
+db.exec(`CREATE TABLE IF NOT EXISTS doc_approvals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_type TEXT, doc_id INTEGER, step INTEGER, decision TEXT,
+  approver TEXT, approver_sig TEXT, role TEXT, note TEXT, date TEXT, ts TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_docappr ON doc_approvals(doc_type, doc_id)')
+ensureColumn('payments', 'status', 'TEXT')   // สถานะอนุมัติใบจ่ายเงิน
+ensureColumn('expenses', 'status', 'TEXT')    // สถานะอนุมัติใบจ่ายค่าใช้จ่าย
 ensureColumn('journal_lines', 'reconciled', 'INTEGER') // เฟส 3: 1 = กระทบยอดธนาคารแล้ว
 ensureColumn('installments', 'due_iso', 'TEXT')        // เฟส 3: วันครบกำหนด (ISO) สำหรับ AR/AP aging
 ensureColumn('files', 'category', 'TEXT')              // หมวดไฟล์แนบ (สัญญา/แบบ/ใบอนุญาต/รูป/อื่นๆ)

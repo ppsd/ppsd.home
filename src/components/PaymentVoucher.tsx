@@ -2,6 +2,7 @@ import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import { bahtText } from '../data'
 import type { ApiPayment } from '../store'
+import ApproverSigns from './ApproverSigns'
 
 // ใบจ่ายเงิน (Payment Voucher / PS) — จ่ายเจ้าหนี้/ช่าง ตามแบบเอกสารบริษัท
 const f2 = (n: number) => (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -89,16 +90,8 @@ export default function PaymentVoucher({ payment, payeeAddr, note, onClose }: { 
         <div style={{ marginTop: 8, fontSize: 11 }}>วันที่จ่ายเงิน <span className="num">{payment.date}</span></div>
         <div style={{ fontSize: 11 }}>ตัวอักษร: <b>({bahtText(payment.net)})</b></div>
 
-        {/* ลายเซ็น 3 ช่อง */}
-        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 40, gap: 24 }}>
-          {['ผู้ตรวจสอบ', 'ผู้อนุมัติ', 'ผู้รับเงิน'].map((l, i) => (
-            <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ borderTop: '1px dotted #666', marginBottom: 5 }} />
-              <div style={{ fontSize: 11 }}>{l}</div>
-              <div style={{ fontSize: 10, color: '#94A0A8', marginTop: 2 }}>วันที่ ..../..../....</div>
-            </div>
-          ))}
-        </div>
+        {/* ลายเซ็นผู้อนุมัติ (ตามจำนวนที่ตั้ง) */}
+        <ApproverSigns approval={payment.approval} firstLabel="ผู้ตรวจสอบ/อนุมัติ" />
       </div>
     </div>
   )

@@ -9,6 +9,7 @@ interface AuditRow { id: number; ts: string; user: string; action: string; detai
 type Controls = Record<string, number | boolean>
 
 const CTRL_LABELS: Record<string, string> = {
+  approvers_required: 'จำนวนผู้อนุมัติเอกสาร (จัดซื้อ/จ่ายเงิน) 1–3 คน',
   block_self_approve: 'ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ',
   two_step_above: 'ยอด PR ที่ต้องอนุมัติ 2 ชั้น (บาท)',
   quote_required_above: 'ยอด PO ที่ต้องมีใบเทียบราคา (บาท)',

@@ -2,6 +2,7 @@ import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import { bahtText } from '../data'
 import type { ApiExpense } from '../store'
+import ApproverSigns from './ApproverSigns'
 
 // ใบจ่ายค่าใช้จ่ายอื่น ๆ (Other Expense / OE) — ตามแบบเอกสารบริษัท
 const f2 = (n: number) => (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -91,15 +92,7 @@ export default function ExpenseVoucher({ exp, houseName, onClose }: { exp: ApiEx
 
         <div style={{ marginTop: 8, fontSize: 11 }}>ตัวอักษร: <b>({bahtText(total)})</b></div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 40, gap: 24 }}>
-          {['ผู้ตรวจสอบ', 'ผู้อนุมัติ', 'ผู้รับเงิน'].map((l, i) => (
-            <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ borderTop: '1px dotted #666', marginBottom: 5 }} />
-              <div style={{ fontSize: 11 }}>{l}</div>
-              <div style={{ fontSize: 10, color: '#94A0A8', marginTop: 2 }}>วันที่ ..../..../....</div>
-            </div>
-          ))}
-        </div>
+        <ApproverSigns approval={exp.approval} firstLabel="ผู้ตรวจสอบ/อนุมัติ" />
       </div>
     </div>
   )

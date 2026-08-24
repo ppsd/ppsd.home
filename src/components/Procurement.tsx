@@ -10,6 +10,7 @@ import PrApprovalDoc from './PrApprovalDoc'
 import PoDoc from './PoDoc'
 import WhtDoc from './WhtDoc'
 import PaymentVoucher from './PaymentVoucher'
+import ApprovalBar from './ApprovalBar'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '10px 14px' }
@@ -82,9 +83,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const [docPo, setDocPo] = useState<ApiPO | null>(null)
   const [docWht, setDocWht] = useState<ApiPayment | null>(null)
   const [docVoucher, setDocVoucher] = useState<ApiPayment | null>(null)
-  const { data, decidePr, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor } = useApp()
+  const { data, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor, reloadData } = useApp()
   // อนุมัติ/ปฏิเสธ PR — แสดงข้อความถ้าถูกกติกากันโกงบล็อก (เช่น อนุมัติใบตัวเอง / ต้องอนุมัติ 2 ชั้น)
-  const doDecide = (id: number, status: string) => decidePr(id, status).catch((e) => alert((e as Error).message))
   const purchaseOrders = data.purchaseOrders || []
   const vendors = data.vendors || []
 
@@ -327,17 +327,11 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   </td>
                   <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.amount)}</td>
                   <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center' }}>
-                      {r.status === 'รออนุมัติ' || r.status === 'รออนุมัติชั้น 2' ? (
-                        <>
-                          {r.status === 'รออนุมัติชั้น 2' && <span title="ยอดสูง ต้องอนุมัติ 2 ชั้น (คนละคน)" style={{ fontSize: 10.5, fontWeight: 600, color: '#B7791F' }}>ชั้น 2</span>}
-                          <button onClick={() => doDecide(r.id, 'อนุมัติ')} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>อนุมัติ</button>
-                          <button onClick={() => doDecide(r.id, 'ปฏิเสธ')} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#FBEEEC', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>ปฏิเสธ</button>
-                        </>
-                      ) : <Pill s={r.status} />}
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <ApprovalBar docType="pr" docId={r.id} approval={r.approval} onDone={() => reloadData('prs', '/purchase-requests')} />
                       <button onClick={() => setQuoteFor(quoteFor === r.id ? null : r.id)} className="hov-f3f5f7" title="เปรียบเทียบราคาผู้ขาย" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>⚖ เทียบราคา</button>
                       <button onClick={() => setDocPr(r)} className="hov-f3f5f7" title="ดู/พิมพ์ใบ PR" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨 ใบ PR</button>
-                      {r.status === 'อนุมัติ' && <button onClick={() => makePoFromPr(r)} title="สร้างใบสั่งซื้อจาก PR นี้" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>→ PO</button>}
+                      {(r.approval?.done || r.status === 'อนุมัติ') && <button onClick={() => makePoFromPr(r)} title="สร้างใบสั่งซื้อจาก PR นี้" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>→ PO</button>}
                     </div>
                   </td>
                 </tr>
@@ -454,7 +448,10 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                     </select>
                   </td>
                   <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
-                    <button onClick={() => setDocPo(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>🖨 พิมพ์ PO</button>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <ApprovalBar docType="po" docId={r.id} approval={r.approval} onDone={() => reloadData('purchaseOrders', '/purchase-orders')} compact />
+                      <button onClick={() => setDocPo(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>🖨 พิมพ์ PO</button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -526,7 +523,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <td className="num" style={{ ...td, textAlign: 'right', color: '#C0852C', fontWeight: 600 }}>{baht(r.wht)}</td>
                   <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.net)}</td>
                   <td style={{ ...td, padding: '10px 18px', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                    <button onClick={() => setDocVoucher(r)} className="hov-f3f5f7" title="ใบจ่ายเงิน" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>ใบจ่ายเงิน</button>
+                    <ApprovalBar docType="payment" docId={r.id} approval={r.approval} onDone={() => reloadData('payments', '/payments')} compact />
+                    <button onClick={() => setDocVoucher(r)} className="hov-f3f5f7" title="ใบจ่ายเงิน" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>ใบจ่ายเงิน</button>
                     <button onClick={() => setDocWht(r)} className="hov-f3f5f7" title="หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>50 ทวิ</button>
                   </td>
                 </tr>

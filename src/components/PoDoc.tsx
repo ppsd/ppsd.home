@@ -2,6 +2,7 @@ import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import { bahtText } from '../data'
 import type { ApiPO } from '../store'
+import ApproverSigns from './ApproverSigns'
 
 // ใบสั่งซื้อ (PO) — เลย์เอาต์ตามแบบเอกสารบริษัท (โปรแกรมบัญชี)
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -99,15 +100,7 @@ export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName
 
         {/* ลายเซ็น */}
         <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11.5 }}>ในนาม <b>{company.name}</b></div>
-        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 40, gap: 40 }}>
-          {['ผู้สั่งสินค้า', 'ผู้อนุมัติ'].map((l, i) => (
-            <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ borderTop: '1px dotted #666', marginBottom: 6 }} />
-              <div style={{ fontSize: 11.5, color: '#333' }}>({l})</div>
-              <div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 3 }}>วันที่ ........./........./.........</div>
-            </div>
-          ))}
-        </div>
+        <ApproverSigns approval={po.approval} firstLabel="ผู้สั่งซื้อ/อนุมัติ" />
       </div>
     </div>
   )

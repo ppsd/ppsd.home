@@ -73,6 +73,9 @@ export interface ApiIssue {
   house?: string
   project?: string
 }
+export interface ApprovalStep { step: number; approver: string; sig?: string | null; role?: string; date?: string; note?: string }
+export interface Approval { required: number; count: number; approvals: ApprovalStep[]; rejected: boolean; rejectedBy?: string; rejectNote?: string; done: boolean }
+
 export interface ApiExpense {
   id: number
   date: string
@@ -83,6 +86,8 @@ export interface ApiExpense {
   amount: number
   house?: string
   date_iso?: string
+  approval?: Approval
+  status?: string
 }
 export interface ApiEmployee {
   id: number
@@ -183,6 +188,7 @@ export interface ApiPO {
   credit_days?: number
   due_date?: string
   house_code?: string
+  approval?: Approval
 }
 export interface KioskEmp {
   code: string
@@ -224,6 +230,7 @@ export interface ApiPR {
   approver_sig?: string | null
   approved_date?: string | null
   image?: string | null
+  approval?: Approval
 }
 export interface ApiPayment {
   id: number
@@ -237,6 +244,8 @@ export interface ApiPayment {
   net: number
   house_code?: string
   note?: string
+  approval?: Approval
+  status?: string
 }
 export interface ApiUser {
   id: number
