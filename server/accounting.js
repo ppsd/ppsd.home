@@ -17,8 +17,10 @@ export function accountBalance(type, debit, credit) {
 
 // ค่าตั้งต้นบัญชีเงินที่ใช้ชำระ (ตั้งค่าได้ — รองรับหลายบัญชีธนาคาร/เงินสดย่อย)
 function getSetting(k, def) { return db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value ?? def }
+function setSettingRaw(k, v) { db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, String(v)) }
 export function defaultBank() { return getSetting('acct_bank_default', '1020') }
 export function defaultCash() { return getSetting('acct_cash_default', '1010') }
+export const PETTY_ACCOUNT = '1030' // เงินสดย่อย
 export function setDefaults({ bank, cash }) {
   const up = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
   if (bank) up.run('acct_bank_default', String(bank))
@@ -440,4 +442,32 @@ export function estimateCorpTax(netProfit) {
   if (p <= 300000) return 0
   if (p <= 3000000) return r2((p - 300000) * 0.15)
   return r2((3000000 - 300000) * 0.15 + (p - 3000000) * 0.20)
+}
+
+// ========================= เงินสดย่อย (Petty Cash — imprest) =========================
+// ตั้งวงเงิน (float) เช่น 10,000 · จ่ายค่าใช้จ่ายส่วนกลางจากเงินสดย่อย · เติมกลับให้เต็มทุกอาทิตย์
+export function pettyFloat() { return Number(getSetting('petty_float', '10000')) || 10000 }
+export function setPettyFloat(n) { setSettingRaw('petty_float', Math.max(0, Number(n) || 0)) }
+export function pettyState() {
+  const float = pettyFloat()
+  const gl = ledgerOf(PETTY_ACCOUNT)
+  const balance = gl.rows.length ? gl.rows[gl.rows.length - 1].balance : 0
+  return { float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-60).reverse() }
+}
+// บันทึกจ่ายค่าใช้จ่ายจากเงินสดย่อย (ส่วนกลาง ไม่ผูกบ้าน): Dr ค่าใช้จ่าย(ตามหมวด) / Cr เงินสดย่อย
+export function pettyExpense({ date_iso, cat, item, amount, by }) {
+  const amt = r2(Number(String(amount).replace(/,/g, '')) || 0)
+  if (amt <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
+  const acc = expenseAccountFor(cat)
+  const memo = `เงินสดย่อย: ${item || cat || 'ค่าใช้จ่าย'}`.trim()
+  return postJournal({ date_iso, memo, source: 'petty', by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: PETTY_ACCOUNT, debit: 0, credit: amt, memo }] })
+}
+// เติมเงินสดย่อยให้เต็มวงเงิน: Dr เงินสดย่อย / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float)
+export function pettyTopup({ date_iso, amount, from, by }) {
+  const st = pettyState()
+  const amt = amount != null && amount !== '' ? r2(Number(String(amount).replace(/,/g, '')) || 0) : st.toReplenish
+  if (amt <= 0) throw new Error('เงินสดย่อยเต็มวงเงินอยู่แล้ว ไม่ต้องเติม')
+  const bank = from || defaultBank()
+  postJournal({ date_iso, memo: `เติมเงินสดย่อยให้เต็มวงเงิน (${st.float.toLocaleString('en-US')})`, source: 'petty_topup', by, lines: [{ account: PETTY_ACCOUNT, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
+  return { amount: amt, float: st.float }
 }

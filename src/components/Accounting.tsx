@@ -25,6 +25,7 @@ const TABS = [
   { id: 'projects', label: 'กำไรรายโครงการ' },
   { id: 'aging', label: 'ลูกหนี้/เจ้าหนี้' },
   { id: 'reconcile', label: 'กระทบยอดธนาคาร' },
+  { id: 'petty', label: 'เงินสดย่อย' },
   { id: 'trial', label: 'งบทดลอง' },
   { id: 'journal', label: 'สมุดรายวัน' },
   { id: 'gl', label: 'แยกประเภท' },
@@ -73,6 +74,7 @@ export default function Accounting() {
       {tab === 'projects' && <ProjectPnl />}
       {tab === 'aging' && <AgingReport />}
       {tab === 'reconcile' && <Reconcile />}
+      {tab === 'petty' && <PettyCash />}
       {tab === 'trial' && <TrialBalance />}
       {tab === 'journal' && <Journal accounts={accounts} />}
       {tab === 'gl' && <GeneralLedger accounts={accounts} />}
@@ -829,6 +831,83 @@ function Closing({ accounts }: { accounts: Account[] }) {
           <input type="date" style={field} value={fyEnd} onChange={(e) => setFyEnd(e.target.value)} />
           <button onClick={closeYear} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ปิดบัญชีสิ้นปี</button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------- เงินสดย่อย (Petty Cash — imprest) ----------
+interface PettyRow { no: string; date: string; memo: string; debit: number; credit: number; balance: number }
+interface PettyState { float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number }
+const PETTY_CATS = ['ค่าน้ำมัน/ขนส่ง', 'ของใช้สำนักงาน', 'ค่ารับรอง', 'ค่าบริการ', 'ค่าดำเนินการ', 'อื่นๆ']
+function PettyCash() {
+  const [st, setSt] = useState<PettyState | null>(null)
+  const [msg, setMsg] = useState('')
+  const today = new Date().toISOString().slice(0, 10)
+  const [f, setF] = useState({ date_iso: today, cat: 'ค่าน้ำมัน/ขนส่ง', item: '', amount: '' })
+  const [floatEdit, setFloatEdit] = useState('')
+  const load = () => api.get<PettyState>('/petty-cash').then((s) => { setSt(s); setFloatEdit(String(s.float)) }).catch(() => setSt(null))
+  useEffect(() => { load() }, [])
+  const spend = async () => {
+    if (!f.amount) { setMsg('ใส่จำนวนเงิน'); return }
+    try { await api.post('/petty-cash/expense', f); setF({ ...f, item: '', amount: '' }); setMsg('บันทึกจ่ายเงินสดย่อยแล้ว'); load() }
+    catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
+  }
+  const topup = async () => {
+    try { const r = await api.post<PettyState>('/petty-cash/topup', {}); setMsg(`เติมเงินสดย่อย ${baht(r.added || 0)} จากธนาคาร → เต็มวงเงินแล้ว`); load() }
+    catch (e) { setMsg((e as Error).message) }
+  }
+  const saveFloat = async () => { await api.post('/petty-cash/float', { float: Number(floatEdit) || 0 }); setMsg('ตั้งวงเงินแล้ว'); load() }
+  if (!st) return <div style={{ color: '#94A0A8', padding: 20 }}>กำลังโหลด…</div>
+  const pct = st.float > 0 ? Math.max(0, Math.min(100, Math.round((st.balance / st.float) * 100))) : 0
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>เงินสดย่อยเป็น “ส่วนกลางบริษัท” (ไม่ผูกบ้าน) — จ่ายค่าใช้จ่ายเล็กๆ น้อยๆ แล้วเติมกลับให้เต็มวงเงินทุกอาทิตย์</div>
+      {msg && <div style={{ fontSize: 12.5, color: msg.startsWith('ผิดพลาด') || msg.includes('เต็มวงเงินอยู่แล้ว') ? '#C24036' : '#2E7D55', background: msg.startsWith('ผิดพลาด') || msg.includes('เต็มวงเงินอยู่แล้ว') ? '#FBEEEC' : '#E2F1EA', border: '1px solid #CDE3D6', borderRadius: 9, padding: '9px 13px' }}>{msg}</div>}
+
+      {/* สรุปยอด + ปุ่มเติม */}
+      <div style={{ ...card, padding: 18, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 16, alignItems: 'center' }}>
+        <div><div style={{ fontSize: 12, color: '#5C6770' }}>เงินสดย่อยคงเหลือ</div><div className="num" style={{ fontSize: 26, fontWeight: 700, color: st.balance < st.float * 0.3 ? '#C24036' : '#1E2E3B' }}>{baht(st.balance)}</div>
+          <div style={{ height: 8, background: '#EEF1F4', borderRadius: 20, overflow: 'hidden', marginTop: 6 }}><div style={{ height: '100%', width: pct + '%', background: pct < 30 ? '#C24036' : '#2E7D55', borderRadius: 20 }} /></div></div>
+        <div><div style={{ fontSize: 12, color: '#5C6770' }}>วงเงิน (Float)</div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}><input value={floatEdit} onChange={(e) => setFloatEdit(e.target.value)} style={{ ...field, width: 100, textAlign: 'right' }} /><button onClick={saveFloat} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '7px 10px', cursor: 'pointer' }}>ตั้ง</button></div></div>
+        <div><div style={{ fontSize: 12, color: '#5C6770' }}>ต้องเติมให้เต็ม</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color: '#C0852C' }}>{baht(st.toReplenish)}</div></div>
+        <div style={{ textAlign: 'right' }}><button onClick={topup} disabled={st.toReplenish <= 0} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: st.toReplenish > 0 ? '#2E7D55' : '#C4CCD3', border: 'none', borderRadius: 9, padding: '11px 18px', cursor: st.toReplenish > 0 ? 'pointer' : 'not-allowed' }}>↑ เติมให้เต็มวงเงิน</button><div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 4 }}>ตัดจากธนาคารเข้าเงินสดย่อย</div></div>
+      </div>
+
+      {/* บันทึกจ่ายเงินสดย่อย */}
+      <div style={{ ...card, padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>บันทึกจ่ายเงินสดย่อย (ส่วนกลาง)</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr 1.4fr 120px auto', gap: 10, alignItems: 'end' }}>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>วันที่</div><input type="date" style={{ ...field, width: '100%' }} value={f.date_iso} onChange={(e) => setF({ ...f, date_iso: e.target.value })} /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หมวด</div><select style={{ ...field, width: '100%' }} value={f.cat} onChange={(e) => setF({ ...f, cat: e.target.value })}>{PETTY_CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>รายการ</div><input style={{ ...field, width: '100%' }} value={f.item} onChange={(e) => setF({ ...f, item: e.target.value })} placeholder="เช่น ค่าน้ำมันรถ, กาแฟรับรอง" /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>จำนวนเงิน</div><input type="number" style={{ ...field, width: '100%', textAlign: 'right' }} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+          <button onClick={spend} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>บันทึกจ่าย</button>
+        </div>
+      </div>
+
+      {/* ประวัติ */}
+      <div style={card}>
+        <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600 }}>ความเคลื่อนไหวเงินสดย่อย</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead><tr style={{ background: '#F7F9FB' }}>
+            <th style={{ ...th, paddingLeft: 16 }}>เลขที่/วันที่</th><th style={th}>รายการ</th>
+            <th style={{ ...th, textAlign: 'right' }}>เติมเข้า</th><th style={{ ...th, textAlign: 'right' }}>จ่ายออก</th><th style={{ ...th, textAlign: 'right', paddingRight: 16 }}>คงเหลือ</th>
+          </tr></thead>
+          <tbody>
+            {st.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีความเคลื่อนไหว — กด “เติมให้เต็มวงเงิน” เพื่อเริ่มตั้งเงินสดย่อย</td></tr>}
+            {st.rows.map((r, i) => (
+              <tr key={i} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
+                <td style={{ padding: '8px 16px' }}><span className="num" style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.no}</span><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.date}</div></td>
+                <td style={{ padding: '8px 12px', color: '#5C6770' }}>{r.memo}</td>
+                <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.debit ? '#2E7D55' : '#CBD3DA' }}>{r.debit ? baht(r.debit) : '-'}</td>
+                <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.credit ? '#C24036' : '#CBD3DA' }}>{r.credit ? baht(r.credit) : '-'}</td>
+                <td className="num" style={{ padding: '8px 16px', textAlign: 'right', fontWeight: 600 }}>{baht(r.balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )
