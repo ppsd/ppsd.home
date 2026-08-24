@@ -839,18 +839,27 @@ function Closing({ accounts }: { accounts: Account[] }) {
 // ---------- เงินสดย่อย (Petty Cash — imprest) ----------
 interface PettyRow { no: string; date: string; memo: string; debit: number; credit: number; balance: number }
 interface PettyState { float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number }
+interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string }
+interface PettyStatement { float: number; from: string; to: string; opening: number; rows: PettyStmtRow[]; totalOut: number; totalIn: number; closing: number; toReplenish: number }
 const PETTY_CATS = ['ค่าน้ำมัน/ขนส่ง', 'ของใช้สำนักงาน', 'ค่ารับรอง', 'ค่าบริการ', 'ค่าดำเนินการ', 'อื่นๆ']
 function PettyCash() {
   const [st, setSt] = useState<PettyState | null>(null)
   const [msg, setMsg] = useState('')
   const today = new Date().toISOString().slice(0, 10)
-  const [f, setF] = useState({ date_iso: today, cat: 'ค่าน้ำมัน/ขนส่ง', item: '', amount: '' })
+  const firstOfMonth = today.slice(0, 8) + '01'
+  const [f, setF] = useState({ date_iso: today, cat: 'ค่าน้ำมัน/ขนส่ง', item: '', amount: '', ref: '' })
   const [floatEdit, setFloatEdit] = useState('')
+  const [range, setRange] = useState({ from: firstOfMonth, to: today })
+  const [stmt, setStmt] = useState<PettyStatement | null>(null)
   const load = () => api.get<PettyState>('/petty-cash').then((s) => { setSt(s); setFloatEdit(String(s.float)) }).catch(() => setSt(null))
   useEffect(() => { load() }, [])
+  const printStatement = async () => {
+    const q = new URLSearchParams(); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)
+    const s = await api.get<PettyStatement>('/petty-cash/statement?' + q.toString()); setStmt(s)
+  }
   const spend = async () => {
     if (!f.amount) { setMsg('ใส่จำนวนเงิน'); return }
-    try { await api.post('/petty-cash/expense', f); setF({ ...f, item: '', amount: '' }); setMsg('บันทึกจ่ายเงินสดย่อยแล้ว'); load() }
+    try { await api.post('/petty-cash/expense', f); setF({ ...f, item: '', amount: '', ref: '' }); setMsg('บันทึกจ่ายเงินสดย่อยแล้ว'); load() }
     catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
   }
   const topup = async () => {
@@ -878,13 +887,24 @@ function PettyCash() {
       {/* บันทึกจ่ายเงินสดย่อย */}
       <div style={{ ...card, padding: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>บันทึกจ่ายเงินสดย่อย (ส่วนกลาง)</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr 1.4fr 120px auto', gap: 10, alignItems: 'end' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '120px 90px 1fr 1.3fr 110px auto', gap: 10, alignItems: 'end' }}>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>วันที่</div><input type="date" style={{ ...field, width: '100%' }} value={f.date_iso} onChange={(e) => setF({ ...f, date_iso: e.target.value })} /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>เลขที่เอกสาร</div><input style={{ ...field, width: '100%' }} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} placeholder="บิล/ใบเสร็จ" /></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หมวด</div><select style={{ ...field, width: '100%' }} value={f.cat} onChange={(e) => setF({ ...f, cat: e.target.value })}>{PETTY_CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>รายการ</div><input style={{ ...field, width: '100%' }} value={f.item} onChange={(e) => setF({ ...f, item: e.target.value })} placeholder="เช่น ค่าน้ำมันรถ, กาแฟรับรอง" /></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>จำนวนเงิน</div><input type="number" style={{ ...field, width: '100%', textAlign: 'right' }} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
           <button onClick={spend} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>บันทึกจ่าย</button>
         </div>
+      </div>
+
+      {/* พิมพ์ใบสรุปตามรอบ */}
+      <div style={{ ...card, padding: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>ใบสรุปรายจ่ายเงินสดย่อย</span>
+        <span style={{ fontSize: 12, color: '#5C6770' }}>รอบวันที่</span>
+        <input type="date" style={field} value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
+        <span style={{ color: '#94A0A8' }}>–</span>
+        <input type="date" style={field} value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
+        <button onClick={printStatement} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>🖨 ออกใบสรุป</button>
       </div>
 
       {/* ประวัติ */}
@@ -908,6 +928,83 @@ function PettyCash() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      {stmt && <PettyStatementDoc s={stmt} onClose={() => setStmt(null)} />}
+    </div>
+  )
+}
+
+// ใบสรุปรายจ่ายเงินสดย่อย (พิมพ์) — ตามแบบเอกสารบริษัท
+function PettyStatementDoc({ s, onClose }: { s: PettyStatement; onClose: () => void }) {
+  const m = (n: number) => n ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''
+  const bd = '1px solid #333'
+  const cell: React.CSSProperties = { border: bd, padding: '3px 7px', fontSize: 11.5 }
+  const hd: React.CSSProperties = { ...cell, background: '#F2F2F2', fontWeight: 700, textAlign: 'center' }
+  const thDate = (iso: string) => { const d = new Date(iso + 'T00:00:00'); return Number.isNaN(d.getTime()) ? iso : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear() + 543}` }
+  return (
+    <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 70, overflow: 'auto', padding: '24px 16px' }}>
+      <div className="no-print" style={{ maxWidth: 760, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>ใบสรุปรายจ่ายเงินสดย่อย</div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+          <button onClick={() => window.print()} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>🖨 พิมพ์</button>
+          <button onClick={onClose} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 500, color: '#1C2730', background: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ปิด</button>
+        </div>
+      </div>
+      <div className="print-area" style={{ maxWidth: 760, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '26px 30px', boxShadow: '0 24px 70px rgba(20,30,40,.3)' }}>
+        <div style={{ textAlign: 'center', lineHeight: 1.5 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>{company.name}</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>ใบสรุป รายจ่ายเงินสดย่อย</div>
+          <div style={{ fontSize: 12, color: '#333' }}>รอบวันที่ {s.from ? thDate(s.from) : '-'} – {s.to ? thDate(s.to) : '-'}</div>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th style={{ ...hd, width: 66 }}>วันที่</th><th style={{ ...hd, width: 44 }}>ลำดับ</th><th style={{ ...hd, width: 78 }}>เลขที่เอกสาร</th>
+              <th style={{ ...hd }}>รายการ</th><th style={{ ...hd, width: 80 }}>รายรับ</th><th style={{ ...hd, width: 80 }}>รายจ่าย</th><th style={{ ...hd, width: 82 }}>คงเหลือ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={cell} /><td style={cell} /><td style={cell} />
+              <td style={{ ...cell, fontWeight: 600 }}>ยอดยกมา</td>
+              <td style={{ ...cell, textAlign: 'right' }} className="num">{m(s.opening)}</td>
+              <td style={cell} />
+              <td style={{ ...cell, textAlign: 'right' }} className="num">{m(s.opening)}</td>
+            </tr>
+            {s.rows.map((r, i) => (
+              <tr key={i}>
+                <td style={{ ...cell, textAlign: 'center', whiteSpace: 'nowrap' }} className="num">{r.date_iso ? thDate(r.date_iso) : r.date}</td>
+                <td style={{ ...cell, textAlign: 'center' }} className="num">{r.seq}</td>
+                <td style={{ ...cell, textAlign: 'center' }} className="num">{r.ref}</td>
+                <td style={cell}>{r.memo}</td>
+                <td style={{ ...cell, textAlign: 'right' }} className="num">{r.in ? m(r.in) : ''}</td>
+                <td style={{ ...cell, textAlign: 'right' }} className="num">{r.out ? m(r.out) : ''}</td>
+                <td style={{ ...cell, textAlign: 'right' }} className="num">{m(r.balance)}</td>
+              </tr>
+            ))}
+            {Array.from({ length: Math.max(0, 6 - s.rows.length) }).map((_, i) => (
+              <tr key={'e' + i}><td style={{ ...cell, height: 18 }}>&nbsp;</td><td style={cell} /><td style={cell} /><td style={cell} /><td style={cell} /><td style={cell} /><td style={cell} /></tr>
+            ))}
+            <tr>
+              <td style={{ ...hd, textAlign: 'right' }} colSpan={4}>รวมจำนวนเงินทั้งสิ้น</td>
+              <td style={{ ...hd, textAlign: 'right' }} className="num">{m(s.totalIn)}</td>
+              <td style={{ ...hd, textAlign: 'right' }} className="num">{m(s.totalOut)}</td>
+              <td style={{ ...hd, textAlign: 'right' }} className="num">{m(s.closing)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style={{ fontSize: 11.5, color: '#C24036', marginTop: 10 }}>
+          * เพื่อให้อยู่ในวงเงินสดย่อย {s.float.toLocaleString('en-US')} บาท<br />
+          {s.toReplenish > 0
+            ? <>ต้องเติมอีก <b>{s.toReplenish.toLocaleString('en-US')}</b> บาท ({s.float.toLocaleString('en-US')} − {s.closing.toLocaleString('en-US')} = {s.toReplenish.toLocaleString('en-US')})</>
+            : <>เงินสดย่อยเต็มวงเงินแล้ว (คงเหลือ {s.closing.toLocaleString('en-US')} บาท)</>}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 40, gap: 30, fontSize: 11.5 }}>
+          {['ผู้จัดทำ', 'ผู้ตรวจสอบ', 'ผู้อนุมัติ'].map((l, i) => (
+            <div key={i} style={{ flex: 1, textAlign: 'center' }}><div style={{ borderTop: '1px dotted #666', marginBottom: 5 }} /><div>({l})</div><div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 2 }}>วันที่ ..../..../....</div></div>
+          ))}
+        </div>
       </div>
     </div>
   )

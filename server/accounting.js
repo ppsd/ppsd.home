@@ -74,8 +74,8 @@ export const postJournal = db.transaction((entry) => {
     for (const o of old) { db.prepare('DELETE FROM journal_lines WHERE entry_id=?').run(o.id); db.prepare('DELETE FROM journal_entries WHERE id=?').run(o.id) }
   }
   const iso = entry.date_iso || todayISO()
-  const info = db.prepare('INSERT INTO journal_entries (no,date,date_iso,memo,house_code,source,source_id,by,created) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run('', thFromISO(iso), iso, entry.memo || '', entry.house_code || '', entry.source || 'manual', entry.source_id != null ? String(entry.source_id) : null, entry.by || '', nowTS())
+  const info = db.prepare('INSERT INTO journal_entries (no,date,date_iso,memo,house_code,source,source_id,by,created,ref) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run('', thFromISO(iso), iso, entry.memo || '', entry.house_code || '', entry.source || 'manual', entry.source_id != null ? String(entry.source_id) : null, entry.by || '', nowTS(), entry.ref || '')
   const id = info.lastInsertRowid
   db.prepare('UPDATE journal_entries SET no=? WHERE id=?').run(entry.no || jvNo(id), id)
   const li = db.prepare('INSERT INTO journal_lines (entry_id,account,debit,credit,memo) VALUES (?,?,?,?,?)')
@@ -148,7 +148,7 @@ export function ledgerOf(account, { from, to } = {}) {
   const args = [account]
   if (from) { where.push('e.date_iso >= ?'); args.push(from) }
   if (to) { where.push('e.date_iso <= ?'); args.push(to) }
-  const rows = db.prepare(`SELECT e.id entry_id, e.no, e.date, e.date_iso, e.memo, e.house_code, l.debit, l.credit
+  const rows = db.prepare(`SELECT e.id entry_id, e.no, e.ref, e.date, e.date_iso, e.memo, e.house_code, l.debit, l.credit
     FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
     WHERE ${where.join(' AND ')} ORDER BY e.date_iso, e.id`).all(...args)
   let run = 0
@@ -455,19 +455,41 @@ export function pettyState() {
   return { float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-60).reverse() }
 }
 // บันทึกจ่ายค่าใช้จ่ายจากเงินสดย่อย (ส่วนกลาง ไม่ผูกบ้าน): Dr ค่าใช้จ่าย(ตามหมวด) / Cr เงินสดย่อย
-export function pettyExpense({ date_iso, cat, item, amount, by }) {
+export function pettyExpense({ date_iso, cat, item, amount, ref, by }) {
   const amt = r2(Number(String(amount).replace(/,/g, '')) || 0)
   if (amt <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
   const acc = expenseAccountFor(cat)
-  const memo = `เงินสดย่อย: ${item || cat || 'ค่าใช้จ่าย'}`.trim()
-  return postJournal({ date_iso, memo, source: 'petty', by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: PETTY_ACCOUNT, debit: 0, credit: amt, memo }] })
+  const memo = `${item || cat || 'ค่าใช้จ่าย'}`.trim()
+  return postJournal({ date_iso, memo, ref: ref || '', source: 'petty', by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: PETTY_ACCOUNT, debit: 0, credit: amt, memo }] })
 }
 // เติมเงินสดย่อยให้เต็มวงเงิน: Dr เงินสดย่อย / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float)
-export function pettyTopup({ date_iso, amount, from, by }) {
+export function pettyTopup({ date_iso, amount, from, ref, note, by }) {
   const st = pettyState()
   const amt = amount != null && amount !== '' ? r2(Number(String(amount).replace(/,/g, '')) || 0) : st.toReplenish
   if (amt <= 0) throw new Error('เงินสดย่อยเต็มวงเงินอยู่แล้ว ไม่ต้องเติม')
   const bank = from || defaultBank()
-  postJournal({ date_iso, memo: `เติมเงินสดย่อยให้เต็มวงเงิน (${st.float.toLocaleString('en-US')})`, source: 'petty_topup', by, lines: [{ account: PETTY_ACCOUNT, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
+  postJournal({ date_iso, memo: note || `เติม/ทดแทนเงินสดย่อยให้เต็มวงเงิน (${st.float.toLocaleString('en-US')})`, ref: ref || '', source: 'petty_topup', by, lines: [{ account: PETTY_ACCOUNT, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
   return { amount: amt, float: st.float }
+}
+// ยอดคงเหลือของบัญชีก่อนวันที่ (สินทรัพย์ = เดบิต − เครดิต)
+function accountBalanceBefore(account, iso) {
+  if (!iso) return 0
+  const r = db.prepare('SELECT SUM(l.debit - l.credit) v FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE e.void=0 AND e.date_iso < ? AND l.account=?').get(iso, account)
+  return r2(r?.v || 0)
+}
+// ใบสรุปรายจ่ายเงินสดย่อยตามรอบวันที่ (ยอดยกมา → เข้า/ออก → คงเหลือ → ต้องเติมให้เต็ม)
+export function pettyStatement({ from, to } = {}) {
+  const float = pettyFloat()
+  const opening = accountBalanceBefore(PETTY_ACCOUNT, from)
+  const gl = ledgerOf(PETTY_ACCOUNT, { from, to })
+  let bal = opening, seq = 0
+  const rows = gl.rows.map((r) => {
+    const inAmt = r2(r.debit || 0), outAmt = r2(r.credit || 0)
+    bal = r2(bal + inAmt - outAmt)
+    return { date: r.date, date_iso: r.date_iso || '', ref: r.ref || '', memo: r.memo, in: inAmt, out: outAmt, balance: bal, seq: outAmt > 0 ? String(++seq).padStart(3, '0') : '' }
+  })
+  const totalOut = r2(rows.reduce((s, r) => s + r.out, 0))
+  const totalInMoves = r2(rows.reduce((s, r) => s + r.in, 0))
+  const closing = r2(opening + totalInMoves - totalOut)
+  return { float, from, to, opening, rows, totalOut, totalInMoves, totalIn: r2(opening + totalInMoves), closing, toReplenish: r2(Math.max(0, float - closing)) }
 }

@@ -350,6 +350,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS journal_lines (
 db.exec('CREATE INDEX IF NOT EXISTS idx_jl_entry ON journal_lines(entry_id)')
 db.exec('CREATE INDEX IF NOT EXISTS idx_jl_account ON journal_lines(account)')
 db.exec('CREATE INDEX IF NOT EXISTS idx_je_source ON journal_entries(source, source_id)')
+ensureColumn('journal_entries', 'ref', 'TEXT') // เลขที่เอกสารอ้างอิง (เช่น เลขบิลเงินสดย่อย)
 ensureColumn('journal_lines', 'reconciled', 'INTEGER') // เฟส 3: 1 = กระทบยอดธนาคารแล้ว
 ensureColumn('installments', 'due_iso', 'TEXT')        // เฟส 3: วันครบกำหนด (ISO) สำหรับ AR/AP aging
 ensureColumn('files', 'category', 'TEXT')              // หมวดไฟล์แนบ (สัญญา/แบบ/ใบอนุญาต/รูป/อื่นๆ)
