@@ -190,6 +190,24 @@ export interface ApiPO {
   house_code?: string
   approval?: Approval
 }
+export interface ApiMaterialPrice {
+  id: number
+  name: string
+  nkey?: string
+  unit: string
+  central: number
+  min: number
+  max: number
+  latest: number
+  po_count: number
+  qty_total: number
+  last_date?: string
+  confidence: string
+  source?: string
+  note?: string
+  active?: number
+  updated?: string
+}
 export interface KioskEmp {
   code: string
   name: string
@@ -386,6 +404,7 @@ interface AppData {
   purchaseOrders: ApiPO[] | null
   kioskEmployees: KioskEmp[]
   positions: string[]
+  materialPrices: ApiMaterialPrice[] | null
 }
 
 const EMPTY: AppData = {
@@ -394,7 +413,7 @@ const EMPTY: AppData = {
   users: null, dashboard: null, efilings: null,
   customers: [], tasks: [], salesDocs: [], notifications: [], reports: null,
   leaves: [], timeAdjustments: [],
-  attendance: [], purchaseOrders: null, kioskEmployees: [], positions: [],
+  attendance: [], purchaseOrders: null, kioskEmployees: [], positions: [], materialPrices: null,
 }
 
 interface AppCtx {
@@ -509,8 +528,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ])
     const reports = finance ? await tryGet<Reports | null>('/reports', null) : null
     const purchaseOrders = finance ? await tryGet<ApiPO[]>('/purchase-orders', []) : null
+    const materialPrices = finance ? await tryGet<ApiMaterialPrice[]>('/material-prices', []) : null
     const positions = await tryGet<string[]>('/positions', [])
-    setData({ houses, installments, issues, expenses, employees, payroll, payrollMeta, ot, vendors, prs, payments, users, dashboard, efilings, customers, tasks, salesDocs, notifications, reports, leaves, timeAdjustments, attendance, purchaseOrders, kioskEmployees, positions })
+    setData({ houses, installments, issues, expenses, employees, payroll, payrollMeta, ot, vendors, prs, payments, users, dashboard, efilings, customers, tasks, salesDocs, notifications, reports, leaves, timeAdjustments, attendance, purchaseOrders, kioskEmployees, positions, materialPrices })
   }
 
   // restore session on first load if a token exists

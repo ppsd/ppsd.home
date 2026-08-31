@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { procurementTabs, payables, approvalStyle } from '../erpData'
-import { baht, unMoney } from '../data'
+import { baht, unMoney, matchMaterial } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
 import type { ApiPR, ApiPO, ApiPayment } from '../store'
@@ -87,6 +87,27 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   // อนุมัติ/ปฏิเสธ PR — แสดงข้อความถ้าถูกกติกากันโกงบล็อก (เช่น อนุมัติใบตัวเอง / ต้องอนุมัติ 2 ชั้น)
   const purchaseOrders = data.purchaseOrders || []
   const vendors = data.vendors || []
+  const materialPrices = data.materialPrices || []
+  // เตือนราคาแพง: อ่านเกณฑ์ % จากกติกาควบคุม (ปรับได้ในหน้าตรวจสอบ)
+  const [warnPct, setWarnPct] = useState(10)
+  useEffect(() => { api.get<Record<string, number>>('/controls').then((c) => setWarnPct(Number(c.overprice_warn_pct ?? 10))).catch(() => {}) }, [])
+  // ป้ายราคากลาง + เตือนถ้าราคาต่อหน่วยที่กรอกสูงกว่าราคากลาง
+  const priceHint = (desc: string, price: string) => {
+    const m = matchMaterial(desc, materialPrices)
+    if (!m) return null
+    const mp = m.mp
+    const p = Number(String(price).replace(/,/g, '')) || 0
+    const over = warnPct > 0 && p > 0 && p > mp.central * (1 + warnPct / 100)
+    const overPct = mp.central > 0 ? Math.round(((p - mp.central) / mp.central) * 100) : 0
+    return (
+      <div style={{ fontSize: 11, margin: '1px 2px 2px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ color: '#94A0A8' }}>ราคากลาง <b style={{ color: '#5C6770' }}>{baht(mp.central)}</b>{mp.unit ? `/${mp.unit}` : ''} · เคยซื้อ {mp.po_count || '–'} ครั้ง</span>
+        {over
+          ? <span style={{ fontWeight: 700, color: '#C24036', background: '#FBEAE7', borderRadius: 6, padding: '1px 8px' }}>⚠ สูงกว่าราคากลาง {overPct}%</span>
+          : p > 0 && p <= mp.central ? <span style={{ color: '#2E7D55', fontWeight: 600 }}>✓ ไม่เกินราคากลาง</span> : null}
+      </div>
+    )
+  }
 
   // payment + vendor inline forms
   const [addingPay, setAddingPay] = useState(false)
@@ -261,13 +282,16 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <span>รายการสินค้า</span><span style={{ textAlign: 'right' }}>จำนวน</span><span>หน่วย</span><span style={{ textAlign: 'right' }}>ราคา/หน่วย</span><span style={{ textAlign: 'right' }}>รวม</span><span />
                 </div>
                 {prLines.map((l, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '2.4fr 0.7fr 0.7fr 1fr 1fr 28px', gap: 8, alignItems: 'center' }}>
-                    <input style={{ ...prField, padding: '7px 9px' }} placeholder={`รายการที่ ${i + 1}`} value={l.desc} onChange={(e) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, desc: e.target.value } : x))} />
-                    <input style={{ ...prField, padding: '7px 9px', textAlign: 'right' }} inputMode="numeric" placeholder="0" value={l.qty} onChange={(e) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
-                    <input style={{ ...prField, padding: '7px 9px' }} placeholder="หน่วย" value={l.unit} onChange={(e) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, unit: e.target.value } : x))} />
-                    <MoneyInput style={{ ...prField, padding: '7px 9px', textAlign: 'right' }} placeholder="0" value={l.price} onChange={(v) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, price: v } : x))} />
-                    <div className="num" style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 600, color: '#1C2730', paddingRight: 4 }}>{baht(lineAmt(l))}</div>
-                    <button onClick={() => setPrLines((ls) => ls.length > 1 ? ls.filter((_, j) => j !== i) : ls)} title="ลบรายการ" style={{ border: 'none', background: 'none', color: prLines.length > 1 ? '#C24036' : '#CBD3DA', cursor: prLines.length > 1 ? 'pointer' : 'default', fontSize: 15 }}>✕</button>
+                  <div key={i}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '2.4fr 0.7fr 0.7fr 1fr 1fr 28px', gap: 8, alignItems: 'center' }}>
+                      <input style={{ ...prField, padding: '7px 9px' }} placeholder={`รายการที่ ${i + 1}`} value={l.desc} onChange={(e) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, desc: e.target.value } : x))} />
+                      <input style={{ ...prField, padding: '7px 9px', textAlign: 'right' }} inputMode="numeric" placeholder="0" value={l.qty} onChange={(e) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
+                      <input style={{ ...prField, padding: '7px 9px' }} placeholder="หน่วย" value={l.unit} onChange={(e) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, unit: e.target.value } : x))} />
+                      <MoneyInput style={{ ...prField, padding: '7px 9px', textAlign: 'right' }} placeholder="0" value={l.price} onChange={(v) => setPrLines((ls) => ls.map((x, j) => j === i ? { ...x, price: v } : x))} />
+                      <div className="num" style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 600, color: '#1C2730', paddingRight: 4 }}>{baht(lineAmt(l))}</div>
+                      <button onClick={() => setPrLines((ls) => ls.length > 1 ? ls.filter((_, j) => j !== i) : ls)} title="ลบรายการ" style={{ border: 'none', background: 'none', color: prLines.length > 1 ? '#C24036' : '#CBD3DA', cursor: prLines.length > 1 ? 'pointer' : 'default', fontSize: 15 }}>✕</button>
+                    </div>
+                    {priceHint(l.desc, l.price)}
                   </div>
                 ))}
                 <div style={{ display: 'flex', alignItems: 'center', marginTop: 2 }}>
@@ -366,6 +390,9 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 <MoneyInput style={prField} placeholder="มูลค่า (บาท)" value={poForm.amount} onChange={(v) => setPoForm({ ...poForm, amount: v })} />
                 <input style={prField} placeholder="อ้างอิง PR (ถ้ามี)" value={poForm.pr_no} onChange={(e) => setPoForm({ ...poForm, pr_no: e.target.value })} />
               </div>
+              {(() => { const m = matchMaterial(poForm.item, materialPrices); return m ? (
+                <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 6 }}>อ้างอิงราคากลาง <b style={{ color: '#5C6770' }}>{baht(m.mp.central)}</b>{m.mp.unit ? `/${m.mp.unit}` : ''} · เคยซื้อ {m.mp.po_count || '–'} ครั้ง (ต่ำสุด {baht(m.mp.min)} – สูงสุด {baht(m.mp.max)})</div>
+              ) : null })()}
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12.5, color: '#5C6770' }}>ซื้อให้บ้าน:</span>
                 {houseCode

@@ -10,6 +10,7 @@ type Controls = Record<string, number | boolean>
 
 const CTRL_LABELS: Record<string, string> = {
   approvers_required: 'จำนวนผู้อนุมัติเอกสาร (จัดซื้อ/จ่ายเงิน) 1–3 คน',
+  overprice_warn_pct: 'เตือนเมื่อราคาต่อหน่วยสูงกว่าราคากลางเกิน (%) · 0 = ปิด',
   block_self_approve: 'ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ',
   two_step_above: 'ยอด PR ที่ต้องอนุมัติ 2 ชั้น (บาท)',
   quote_required_above: 'ยอด PO ที่ต้องมีใบเทียบราคา (บาท)',

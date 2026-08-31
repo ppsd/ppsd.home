@@ -8,6 +8,7 @@ import HouseDetail from './components/HouseDetail'
 import Modal from './components/Modal'
 import Installments from './components/Installments'
 import Procurement from './components/Procurement'
+import MaterialPrices from './components/MaterialPrices'
 import HR from './components/HR'
 import TimeKiosk from './components/TimeKiosk'
 import PrintDoc from './components/PrintDoc'
@@ -39,14 +40,14 @@ import type { DocKind } from './erpData'
 import type { ApiPayroll } from './store'
 
 type Page =
-  | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement'
+  | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
   | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
-  procurement: 'procurement', hr: 'hr', time: 'time', issues: 'issues',
+  procurement: 'procurement', matprices: 'matprices', hr: 'hr', time: 'time', issues: 'issues',
   expenses: 'expenses', users: 'users', customers: 'customers',
   gantt: 'gantt', sales: 'sales', reports: 'reports',
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
@@ -282,6 +283,7 @@ export default function App() {
 
           {page === 'installments' && <Installments />}
           {page === 'procurement' && <Procurement />}
+          {page === 'matprices' && <MaterialPrices />}
           {page === 'hr' && <HR onPrint={openPrint} />}
           {page === 'time' && <TimeKiosk />}
           {page === 'issues' && <Issues onAddIssue={openAddIssue} />}

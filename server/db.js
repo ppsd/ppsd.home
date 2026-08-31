@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import * as seed from './seed.js'
+import { materialPrices as matPriceSeed } from './matprices-seed.js'
 import { hashPin, isHashed } from './security.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -368,6 +369,25 @@ ensureColumn('files', 'path', 'TEXT')                  // ชื่อไฟล�
 ensureColumn('payments', 'house_code', 'TEXT')         // ผูกใบจ่ายเงิน/หัก ณ ที่จ่าย กับบ้าน (รวมเข้าต้นทุนบ้าน)
 ensureColumn('payments', 'note', 'TEXT')               // หมายเหตุ/รายละเอียดค่าใช้จ่าย
 ensureColumn('houses', 'photo', 'TEXT')                // รูปหน้าปกบ้าน (data URL ย่อขนาดแล้ว)
+
+// ===== ราคากลางวัสดุ (Material Standard Prices) — อ้างอิงจากประวัติสั่งซื้อจริง =====
+db.exec(`CREATE TABLE IF NOT EXISTS material_prices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT, nkey TEXT, unit TEXT,
+  central REAL, min REAL, max REAL, latest REAL,
+  po_count INTEGER, qty_total REAL, last_date TEXT,
+  confidence TEXT, source TEXT, note TEXT, active INTEGER DEFAULT 1,
+  updated TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_matprice_nkey ON material_prices(nkey)')
+// เติมค่าตั้งต้นจากประวัติที่บริษัทอัปโหลด (ครั้งเดียว ตอนฐานข้อมูลยังว่าง)
+if (db.prepare('SELECT COUNT(*) c FROM material_prices').get().c === 0) {
+  const nkey = (n) => String(n).replace(/\s+/g, '').replace(/["“”]/g, '').toLowerCase()
+  const insMp = db.prepare(`INSERT INTO material_prices (name,nkey,unit,central,min,max,latest,po_count,qty_total,last_date,confidence,source,active,updated)
+    VALUES (@name,@nkey,@unit,@central,@min,@max,@latest,@po_count,@qty_total,@last_date,@confidence,'ประวัติ',1,@updated)`)
+  const today = new Date().toISOString().slice(0, 10)
+  db.transaction((rows) => rows.forEach((r) => insMp.run({ ...r, nkey: nkey(r.name), updated: today })))(matPriceSeed || [])
+}
 
 // ===== เฟส 4: สินทรัพย์ถาวร + ค่าเสื่อมราคา =====
 db.exec(`CREATE TABLE IF NOT EXISTS fixed_assets (

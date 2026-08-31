@@ -296,6 +296,7 @@ const adminOnly = requireRole('admin')
 const CONTROL_DEFAULTS = {
   block_self_approve: true, // ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ
   approvers_required: 3, // จำนวนผู้อนุมัติที่ต้องกดอนุมัติ (1–3) สำหรับ PR/PO/เบิก-จ่าย
+  overprice_warn_pct: 10, // เตือนเมื่อราคาต่อหน่วยสูงกว่าราคากลางเกินกี่ % (0 = ปิดการเตือน)
   two_step_above: 500000, // PR ยอด ≥ นี้ ต้องอนุมัติ 2 ชั้น (คนละคน)
   quote_min: 3, // จำนวนใบเทียบราคาขั้นต่ำ
   quote_required_above: 100000, // PO ยอด ≥ นี้ ควรมีใบเทียบราคาครบ
@@ -1447,6 +1448,82 @@ api.post('/purchase-requests/:id/decision', requireManager, (req, res) => {
 api.get('/approvals/:docType/:docId', (req, res) => res.json(approvalState(req.params.docType, req.params.docId)))
 api.post('/approve/:docType/:docId', requireManager, (req, res) => { try { res.json(doApprove(req.params.docType, req.params.docId, req)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) } })
 api.post('/reject/:docType/:docId', requireManager, (req, res) => { try { res.json(doReject(req.params.docType, req.params.docId, req)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) } })
+// ===== ราคากลางวัสดุ (Material Standard Prices) — อ้างอิงจากประวัติสั่งซื้อจริง =====
+const nkeyOf = (n) => String(n || '').replace(/\s+/g, '').replace(/["“”]/g, '').toLowerCase()
+api.get('/material-prices', financeOnly, (_req, res) =>
+  res.json(db.prepare('SELECT * FROM material_prices WHERE active=1 ORDER BY po_count DESC, central DESC').all()))
+api.post('/material-prices', financeOnly, (req, res) => {
+  const b = req.body || {}
+  const name = String(b.name || '').trim()
+  if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อวัสดุ' })
+  const central = Number(b.central) || 0
+  const today = new Date().toISOString().slice(0, 10)
+  const info = db.prepare(`INSERT INTO material_prices (name,nkey,unit,central,min,max,latest,po_count,qty_total,last_date,confidence,source,note,active,updated)
+    VALUES (?,?,?,?,?,?,?,0,0,?,?,'กำหนดเอง',?,1,?)`)
+    .run(name, nkeyOf(name), String(b.unit || ''), central, Number(b.min) || central, Number(b.max) || central, Number(b.latest) || central, todayTH(), String(b.confidence || 'กำหนดเอง'), String(b.note || ''), today)
+  audit(req, 'เพิ่มราคากลางวัสดุ', `${name} ฿${central}`)
+  res.status(201).json(db.prepare('SELECT * FROM material_prices WHERE id=?').get(info.lastInsertRowid))
+})
+api.put('/material-prices/:id', financeOnly, (req, res) => {
+  const b = req.body || {}
+  const cur = db.prepare('SELECT * FROM material_prices WHERE id=?').get(req.params.id)
+  if (!cur) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  const name = b.name != null ? String(b.name).trim() : cur.name
+  const num = (k, d) => (b[k] != null && b[k] !== '' ? Number(b[k]) : d)
+  db.prepare('UPDATE material_prices SET name=?, nkey=?, unit=?, central=?, min=?, max=?, latest=?, confidence=?, note=?, active=?, updated=? WHERE id=?')
+    .run(name, nkeyOf(name), b.unit != null ? String(b.unit) : cur.unit, num('central', cur.central), num('min', cur.min), num('max', cur.max), num('latest', cur.latest),
+      b.confidence != null ? String(b.confidence) : cur.confidence, b.note != null ? String(b.note) : cur.note, b.active != null ? (b.active ? 1 : 0) : cur.active, new Date().toISOString().slice(0, 10), req.params.id)
+  audit(req, 'แก้ราคากลางวัสดุ', name)
+  res.json(db.prepare('SELECT * FROM material_prices WHERE id=?').get(req.params.id))
+})
+api.delete('/material-prices/:id', financeOnly, (req, res) => {
+  const cur = db.prepare('SELECT * FROM material_prices WHERE id=?').get(req.params.id)
+  db.prepare('DELETE FROM material_prices WHERE id=?').run(req.params.id)
+  if (cur) audit(req, 'ลบราคากลางวัสดุ', cur.name)
+  res.json({ ok: true })
+})
+// อัปเดตราคากลางจากประวัติสั่งซื้อจริงในระบบ (รายการใน PR ที่มีราคาต่อหน่วย) — เว้นรายการที่ตั้งราคาเอง
+api.post('/material-prices/recompute', financeOnly, (req, res) => {
+  const prs = db.prepare('SELECT id, items FROM purchase_requests ORDER BY id').all()
+  const g = {}
+  for (const pr of prs) {
+    let items = []; try { items = JSON.parse(pr.items || '[]') } catch { items = [] }
+    for (const it of items) {
+      const name = String(it.desc || '').trim(); const up = Number(it.price) || 0; const qty = Number(it.qty) || 0
+      if (!name || up <= 0) continue
+      const unit = String(it.unit || '').trim()
+      const k = nkeyOf(name) + '|' + unit
+      const o = g[k] = g[k] || { name, unit, prices: [], qs: 0, amts: 0, pos: new Set(), latest: up }
+      o.prices.push(up); o.qs += qty; o.amts += qty > 0 ? qty * up : up; o.pos.add(pr.id); o.latest = up
+    }
+  }
+  const today = new Date().toISOString().slice(0, 10)
+  const round = (x) => Math.round(x * 100) / 100
+  let updated = 0, added = 0
+  const findStmt = db.prepare('SELECT * FROM material_prices WHERE nkey=? AND COALESCE(unit,\'\')=?')
+  const insStmt = db.prepare(`INSERT INTO material_prices (name,nkey,unit,central,min,max,latest,po_count,qty_total,last_date,confidence,source,active,updated)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,'ระบบ',1,?)`)
+  const updStmt = db.prepare('UPDATE material_prices SET unit=?, central=?, min=?, max=?, latest=?, po_count=?, qty_total=?, confidence=?, source=?, updated=? WHERE id=?')
+  db.transaction(() => {
+    for (const o of Object.values(g)) {
+      const min = Math.min(...o.prices), max = Math.max(...o.prices)
+      const po = o.pos.size
+      const central = o.qs > 0 ? round(o.amts / o.qs) : round(o.prices.reduce((a, b) => a + b, 0) / o.prices.length)
+      const conf = po >= 4 ? 'สูง' : po >= 2 ? 'กลาง' : 'ต่ำ'
+      const nk = nkeyOf(o.name)
+      const ex = findStmt.get(nk, o.unit || '')
+      if (ex) {
+        if (ex.source === 'กำหนดเอง') continue // ไม่ทับรายการที่ผู้ใช้ตั้งราคาเอง
+        updStmt.run(o.unit || '', central, min, max, o.latest, po, round(o.qs), conf, ex.source === 'ประวัติ' ? 'ประวัติ+ระบบ' : 'ระบบ', today, ex.id); updated++
+      } else {
+        insStmt.run(o.name, nk, o.unit || '', central, min, max, o.latest, po, round(o.qs), today, conf, today); added++
+      }
+    }
+  })()
+  audit(req, 'อัปเดตราคากลางจากประวัติจริง', `แก้ ${updated} · เพิ่ม ${added}`)
+  res.json({ ok: true, updated, added, groups: Object.keys(g).length })
+})
+
 api.get('/payments', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM payments ORDER BY id DESC').all().map(attachApproval('payment'))))
 api.post('/payments', financeOnly, (req, res) => {
   const b = req.body || {}

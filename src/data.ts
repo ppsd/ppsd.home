@@ -126,6 +126,7 @@ export const nav: NavDef[] = [
   { id: 'expenses', label: 'รายจ่าย', icon: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6' },
   { id: 'sales', label: 'เอกสารขาย', icon: 'M7 3h10l2 4v14H5V7z M9 12h6 M9 16h6' },
   { id: 'procurement', label: 'จัดซื้อ / จ่าย', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01' },
+  { id: 'matprices', label: 'ราคากลางวัสดุ', icon: 'M3 5v6.6a2 2 0 00.6 1.4l8 8 7-7-8-8A2 2 0 009.6 3H4a1 1 0 00-1 1z M7.5 7.5h.01', gate: 'finance' },
   { id: 'time', label: 'ลงเวลา', icon: 'M12 21a9 9 0 100-18 9 9 0 000 18z M12 7.5v5l3 2' },
   { id: 'hr', label: 'บุคลากร / HR', icon: 'M16 19c0-2.8-2.2-5-5-5s-5 2.2-5 5 M11 11a3 3 0 100-6 3 3 0 000 6 M18 13.2a3 3 0 10-2.4-5.4' },
   { id: 'pms', label: 'ประเมินผล KPI', icon: 'M3 3v18h18 M8 17V9 M13 17V5 M18 17v-6', gate: 'pms' },
@@ -143,7 +144,7 @@ export interface NavGroup { id: string; label: string; icon: string; items: stri
 export const navGroups: NavGroup[] = [
   { id: 'overview', label: 'ภาพรวม / ข้ามบ้าน', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18', items: ['dashboard', 'gantt', 'qcsummary', 'ceovoice'] },
   { id: 'site', label: 'งานหน้างาน (ข้ามบ้าน)', icon: 'M3 21h18 M5 21V7l7-4 7 4v14 M9 21v-6h6v6', items: ['issues', 'workorders', 'qc', 'sitedocs', 'sitereport', 'safety', 'handover'] },
-  { id: 'procure', label: 'จัดซื้อ', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01', items: ['procurement'] },
+  { id: 'procure', label: 'จัดซื้อ', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01', items: ['procurement', 'matprices'] },
   { id: 'finance', label: 'บัญชี / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', items: ['installments', 'sales', 'expenses', 'costing', 'accounting', 'express', 'docreg', 'audit'] },
   { id: 'central', label: 'ส่วนกลางบริษัท', icon: 'M16 19c0-2.8-2.2-5-5-5s-5 2.2-5 5 M11 11a3 3 0 100-6 3 3 0 000 6 M18 13.2a3 3 0 10-2.4-5.4', items: ['hr', 'time', 'pms', 'customers', 'users'] },
   { id: 'other', label: 'อื่นๆ', icon: 'M12 15a3 3 0 100-6 3 3 0 000 6z M4 12h1 M19 12h1 M12 4v1 M12 19v1', items: ['reports'] },
@@ -169,6 +170,7 @@ export const titles: Record<string, [string, string]> = {
   expenses: ['การเงิน', 'รายจ่าย'],
   sales: ['การขาย', 'เอกสารขาย'],
   procurement: ['การเงิน', 'จัดซื้อ / จ่าย'],
+  matprices: ['จัดซื้อ', 'ราคากลางวัสดุ (จากประวัติสั่งซื้อจริง)'],
   time: ['บุคลากร', 'ลงเวลา'],
   hr: ['บุคลากร', 'บุคลากร / HR'],
   pms: ['บุคลากร', 'ประเมินผลรายเดือน (KPI / PMS)'],
@@ -493,4 +495,32 @@ export interface ModalDef {
   fields: ModalField[]
   /** Called with the current field values (in field order) when the user saves. */
   onSubmit?: (values: string[]) => Promise<void>
+}
+
+// ===== จับคู่ชื่อวัสดุกับราคากลาง (fuzzy) — ใช้เตือนราคาแพงตอนทำ PR/PO =====
+export function normMat(s: string) {
+  return String(s || '').replace(/\s+/g, '').replace(/["“”#]/g, '').toLowerCase()
+}
+export function matchMaterial<T extends { name: string; unit?: string }>(desc: string, list: T[]): { mp: T; score: number } | null {
+  const d = String(desc || '').trim()
+  if (d.length < 3 || !list || !list.length) return null
+  const dn = normMat(d)
+  const toks = (s: string) => new Set(String(s).toLowerCase().split(/[\s()#"'“”]+/).filter((t) => t.length >= 2))
+  const dt = toks(d)
+  let best: { mp: T; score: number } | null = null
+  for (const mp of list) {
+    const mn = normMat(mp.name)
+    let score = 0
+    if (mn === dn) score = 1
+    else if (mn.length >= 4 && dn.length >= 4 && (mn.includes(dn) || dn.includes(mn))) score = 0.85
+    else {
+      const mt = toks(mp.name)
+      let inter = 0
+      dt.forEach((t) => { if (mt.has(t)) inter++ })
+      const uni = new Set([...dt, ...mt]).size
+      score = uni ? inter / uni : 0
+    }
+    if (!best || score > best.score) best = { mp, score }
+  }
+  return best && best.score >= 0.5 ? best : null
 }
