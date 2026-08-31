@@ -45,6 +45,12 @@ function SlipBody({ slip }: { slip?: ApiPayroll }) {
   const retention = slip?.retention ?? 0
   const loan = slip?.student_loan ?? 0
   const advance = slip?.advance ?? 0
+  // เงินประกันผลงานสะสม (บริษัทเก็บไว้ คืนเมื่อครบเงื่อนไข)
+  const retPaid = slip?.retention_paid ?? 0
+  const retCap = slip?.retention_cap ?? 5000
+  const retPeriods = slip?.retention_periods ?? 0
+  const retComplete = retPaid >= retCap
+  const retRemain = Math.max(0, retCap - retPaid)
   const gross = base + ot
   const totalDeduct = sso + tax + leave + retention + loan + advance
   const net = gross - totalDeduct
@@ -75,7 +81,7 @@ function SlipBody({ slip }: { slip?: ApiPayroll }) {
               <tr><td style={lblTd}>ประกันสังคม (5%)</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(sso)}</td></tr>
               <tr><td style={lblTd}>ภาษีหัก ณ ที่จ่าย</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(tax)}</td></tr>
               <tr><td style={lblTd}>หักลา/ขาดงาน</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(leave)}</td></tr>
-              {retention > 0 && <tr><td style={lblTd}>หัก Retention</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(retention)}</td></tr>}
+              {retention > 0 && <tr><td style={lblTd}>หักเงินประกันผลงาน</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(retention)}</td></tr>}
               {loan > 0 && <tr><td style={lblTd}>หัก กยศ</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(loan)}</td></tr>}
               {advance > 0 && <tr><td style={lblTd}>หักเบิกล่วงหน้า</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(advance)}</td></tr>}
               <tr><td style={{ ...lblTd, fontWeight: 700, color: '#1C2730' }}>รวมรายการหัก</td><td className="num" style={{ ...valTd, textAlign: 'right', fontWeight: 700 }}>{fmt2(totalDeduct)}</td></tr>
@@ -83,6 +89,16 @@ function SlipBody({ slip }: { slip?: ApiPayroll }) {
           </table>
         </div>
       </div>
+      {retPaid > 0 && (
+        <div style={{ marginTop: 14, background: '#F6ECD6', border: '1px solid #E8D6AD', borderRadius: 8, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6A1F' }}>เงินประกันผลงานสะสม (บริษัทเก็บไว้)</span>
+          <span className="num" style={{ fontSize: 18, fontWeight: 700, color: '#C0852C' }}>฿{fmt2(retPaid)}</span>
+          <span style={{ fontSize: 12, color: '#8A6A1F' }}>สะสมแล้ว <b>{retPeriods}</b> งวด · เพดาน ฿{fmt2(retCap)}</span>
+          {retComplete
+            ? <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: '#2E7D55', background: '#E2F1EA', borderRadius: 20, padding: '2px 11px' }}>ครบเพดานแล้ว — หยุดหัก</span>
+            : <span style={{ marginLeft: 'auto', fontSize: 11.5, color: '#8A6A1F' }}>คงเหลือหักอีก ฿{fmt2(retRemain)}</span>}
+        </div>
+      )}
       <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
         <div style={{ background: '#F7F9FB', border: '1px solid #E1E5EA', borderRadius: 8, padding: '12px 20px', minWidth: 260, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: '#1C2730' }}>เงินได้สุทธิ</span>

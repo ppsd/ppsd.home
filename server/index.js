@@ -906,6 +906,19 @@ function retentionPaidBefore(empCode, opening, excludePeriod) {
   }
   return (Number(opening) || 0) + sum
 }
+// จำนวน "งวด" ที่หักเงินประกันสะสมมาก่อนงวด excludePeriod = งวดยกมา (ประมาณจากยอดยกมา ÷ ยอดหักต่อเดือน) + งวดที่ปิดแล้วที่มีการหักจริง
+function retentionPeriodsBefore(empCode, opening, monthly, excludePeriod) {
+  const runs = db.prepare('SELECT data FROM payroll_runs WHERE period != ?').all(excludePeriod || '')
+  let periods = 0
+  for (const r of runs) {
+    try {
+      const row = JSON.parse(r.data).find((x) => x.code === empCode)
+      if (row && (Number(row.retention) || 0) > 0) periods += 1
+    } catch { /* ข้ามงวดที่ข้อมูลเสีย */ }
+  }
+  const openingPeriods = (Number(monthly) || 0) > 0 ? Math.round((Number(opening) || 0) / Number(monthly)) : ((Number(opening) || 0) > 0 ? 1 : 0)
+  return openingPeriods + periods
+}
 // ตำแหน่งที่ไม่ต้องลงเวลา — ยังได้เงินเดือนเต็ม (ไม่หักขาดงานจากการไม่ตอกบัตร)
 const NO_ATTENDANCE_ROLES = ['CEO', 'ผู้จัดการ']
 // compute payroll rows live for a period (resigned employees excluded)
@@ -943,6 +956,7 @@ function computePayroll(period) {
       retention_cap: RETENTION_CAP, retention_opening: opening,
       retention_monthly: monthly, // ยอดที่ตั้งให้หักต่อเดือน (แก้ได้) — ต่างจาก retention ที่ถูกจำกัดด้วยเพดาน
       retention_paid: paidBefore + retention, // ยอดสะสมถึงงวดนี้ (รวมงวดนี้)
+      retention_periods: retentionPeriodsBefore(e.code, opening, monthly, period) + (retention > 0 ? 1 : 0), // จำนวนงวดที่หักสะสมมาแล้ว (รวมงวดนี้)
     }
   })
 }

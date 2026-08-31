@@ -133,6 +133,7 @@ export interface ApiPayroll extends ApiEmployee {
   retention_opening?: number
   retention_paid?: number
   retention_monthly?: number
+  retention_periods?: number
   daily_rate?: number
   work_days?: number
   exempt_attendance?: boolean
