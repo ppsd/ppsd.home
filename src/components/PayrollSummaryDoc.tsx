@@ -98,7 +98,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 return (
                   <tr key={p.id}>
                     <td style={tdC} className="num">{i + 1}</td>
-                    <td style={tdC}>{p.prefix || ''}</td>
+                    <td style={tdC}>{p.prefix === 'นางสาว' ? 'น.ส.' : (p.prefix || '')}</td>
                     <td style={td}>{nm.first}</td>
                     <td style={td}>{nm.last}</td>
                     <td style={tdC} className="num">{p.tax_id || ''}</td>

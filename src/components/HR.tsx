@@ -311,7 +311,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             {addingEmp && (
               <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
-                  <select style={field} value={emp.prefix} onChange={(e) => setEmp({ ...emp, prefix: e.target.value })} title="คำนำหน้า (ใช้ในใบสรุปการจ่ายค่าจ้าง)"><option value="">คำนำหน้า</option><option>นาย</option><option>นาง</option><option>นางสาว</option></select>
+                  <select style={field} value={emp.prefix} onChange={(e) => setEmp({ ...emp, prefix: e.target.value })} title="คำนำหน้า (ใช้ในใบสรุปการจ่ายค่าจ้าง)"><option value="">คำนำหน้า</option><option>นาย</option><option>นาง</option><option>น.ส.</option></select>
                   <input style={field} placeholder="ชื่อ-สกุล *" value={emp.name} onChange={(e) => setEmp({ ...emp, name: e.target.value })} />
                   <input style={field} placeholder="ชื่อเล่น (เช่น พี่แมน)" value={emp.nickname} onChange={(e) => setEmp({ ...emp, nickname: e.target.value })} />
                   <select style={field} value={emp.role} onChange={(e) => setEmp({ ...emp, role: e.target.value })}>{posList.map((p) => <option key={p}>{p}</option>)}</select>
@@ -392,7 +392,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   return (
                     <tr key={e.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                       <td className="num" style={{ ...td, padding: '10px 18px', fontFamily: 'monospace', color: '#5C6770' }}>{e.code}</td>
-                      <td style={{ ...td, fontWeight: 500 }}>{e.name}</td>
+                      <td style={{ ...td, fontWeight: 500 }}>{(e as { prefix?: string }).prefix ? <span style={{ color: '#5C6770', fontWeight: 400 }}>{(e as { prefix?: string }).prefix} </span> : ''}{e.name}{(e as { nickname?: string }).nickname ? <span style={{ fontSize: 11, color: '#94A0A8' }}> ({(e as { nickname?: string }).nickname})</span> : ''}</td>
                       <td style={{ ...td, color: '#3C4750' }}>{e.role}</td>
                       <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: e.pay_type === 'รายวัน' ? '#C0852C' : '#30506A', background: e.pay_type === 'รายวัน' ? '#F6ECD6' : '#E2E9EF', padding: '2px 9px', borderRadius: 20 }}>{e.pay_type || 'รายเดือน'}</span></td>
                       <td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{e.sick_used ?? 0}/{e.sick_quota ?? 0}</td>
