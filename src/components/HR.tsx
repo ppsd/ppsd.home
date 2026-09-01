@@ -102,6 +102,14 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     catch (e) { alert((e as Error).message) }
     finally { setLoanSaving(null) }
   }
+  // แก้ยอดภาษีต่อคนตรงตารางเงินเดือน (ภาษีกรอกเอง)
+  const [taxSaving, setTaxSaving] = useState<number | null>(null)
+  const saveTax = async (id: number, raw: string) => {
+    setTaxSaving(id)
+    try { await app.updateEmployee(id, { tax: unMoney(raw) }) }
+    catch (e) { alert((e as Error).message) }
+    finally { setTaxSaving(null) }
+  }
   // แก้จำนวนวันทำงาน (รายวัน เช่น แม่บ้าน) ตรงตารางเงินเดือน → คิดเงินอัตโนมัติ
   // รองรับครึ่งวัน เช่น 17.5 วัน (parseFloat เก็บจุดทศนิยม)
   const parseDays = (v: string) => { const n = parseFloat(String(v).replace(/[^\d.]/g, '')); return isNaN(n) ? 0 : n }
@@ -449,7 +457,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
               <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={{ ...th, textAlign: 'right' }}>ฐานเงิน</th><th style={{ ...th, textAlign: 'right' }}>OT</th>
-              <th style={{ ...th, textAlign: 'right' }}>ปกส.</th><th style={{ ...th, textAlign: 'right' }}>ภาษี</th>
+              <th style={{ ...th, textAlign: 'right' }}>ปกส.</th><th style={{ ...th, textAlign: 'right' }}>ภาษี <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th>
               <th style={{ ...th, textAlign: 'right' }}>หักลา/ขาด</th><th style={{ ...th, textAlign: 'right' }}>Retention <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>กยศ <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>เบิกล่วงหน้า</th><th style={{ ...th, textAlign: 'right' }}>หักอื่นๆ</th><th style={{ ...th, textAlign: 'right' }}>สุทธิ</th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>สลิป</th>
             </tr></thead>
@@ -484,7 +492,21 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     </td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: '#5C6770' }}>{baht(p.ot)}</td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: '#C0852C' }}>{baht(p.sso)}</td>
-                    <td className="num" style={{ ...td, textAlign: 'right', color: '#C0852C' }}>{baht(p.tax)}</td>
+                    <td className="num" style={{ ...td, textAlign: 'right' }}>
+                      {payrollMeta?.locked
+                        ? <span style={{ color: '#C0852C' }}>{baht(p.tax)}</span>
+                        : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end' }} title="กรอกภาษีเอง">
+                            <span style={{ color: '#C0852C', fontSize: 12 }}>฿</span>
+                            <input key={p.id + '-tax-' + (p.tax || 0)} type="text" inputMode="numeric" defaultValue={String(p.tax || 0)}
+                              disabled={taxSaving === p.id}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                              onBlur={(e) => { if (unMoney(e.target.value) !== (p.tax || 0)) saveTax(p.id, e.target.value) }}
+                              style={{ width: 62, textAlign: 'right', fontFamily: 'inherit', fontSize: 12.5, padding: '3px 6px', border: '1px solid #D8DFE5', borderRadius: 6, background: '#fff', color: '#C0852C' }} />
+                          </span>
+                        )}
+                    </td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: deduct ? '#C24036' : '#94A0A8' }}>{deduct ? '-' + baht(deduct) : '฿0'}{(p.leave_days || p.absent_days) ? <span style={{ fontSize: 10, color: '#94A0A8' }}> ({p.leave_days ? 'ลา' + p.leave_days : ''}{p.leave_days && p.absent_days ? '+' : ''}{p.absent_days ? 'ขาด' + p.absent_days : ''}ว)</span> : null}</td>
                     <td className="num" style={{ ...td, textAlign: 'right' }}>
                       {payrollMeta?.locked

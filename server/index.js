@@ -71,15 +71,14 @@ function taxMonthlyOf(monthlyBase, ssoMonthly, allowance = 0) {
 function allowanceOf(emp) {
   return (emp.spouse ? 60000 : 0) + (Number(emp.children) || 0) * 30000
 }
-// คำนวณประกันสังคม/ภาษี ของพนักงานทุกคนใหม่ตอนบูต (เผื่อสูตรเปลี่ยน เช่น เพดาน ปกส.)
+// คำนวณประกันสังคมของพนักงานทุกคนใหม่ตอนบูต (เผื่อเพดาน ปกส. เปลี่ยน) — ภาษีเป็นค่ากรอกเอง ไม่แตะ
 try {
-  for (const e of db.prepare('SELECT id,base,pay_type,sso,tax,spouse,children,no_sso FROM employees').all()) {
+  for (const e of db.prepare('SELECT id,base,pay_type,sso,no_sso FROM employees').all()) {
     const mBase = monthlyBaseOf(e.base, e.pay_type)
     const sso = e.no_sso ? 0 : ssoOf(mBase)
-    const tax = taxMonthlyOf(mBase, sso, allowanceOf({ spouse: e.spouse, children: e.children }))
-    if (sso !== e.sso || tax !== e.tax) db.prepare('UPDATE employees SET sso=?, tax=? WHERE id=?').run(sso, tax, e.id)
+    if (sso !== e.sso) db.prepare('UPDATE employees SET sso=? WHERE id=?').run(sso, e.id)
   }
-} catch (e) { console.error('sso/tax recompute failed:', e.message) }
+} catch (e) { console.error('sso recompute failed:', e.message) }
 const DAYMS_ = 86400000
 // วันที่แบบ YYYY-MM-DD ตาม "เวลาท้องถิ่น" (ไทย) — ห้ามใช้ toISOString เพราะจะเพี้ยนเป็น UTC (คลาดวัน 1 วัน)
 function isoDate(d) {
@@ -831,7 +830,8 @@ api.post('/employees', canWrite, (req, res) => {
   const sso = noSso ? 0 : ssoOf(mBase)
   const spouse = b.spouse ? 1 : 0
   const children = Number(b.children) || 0
-  const tax = taxMonthlyOf(mBase, sso, allowanceOf({ spouse, children }))
+  // ภาษีกรอกเอง — ตอนสร้างใหม่ให้ค่าตั้งต้น (รายวัน=0, รายเดือนคิดให้เป็นค่าเริ่ม แก้ได้ในตาราง)
+  const tax = b.tax != null && b.tax !== '' ? Number(b.tax) : (payType === 'รายวัน' ? 0 : taxMonthlyOf(mBase, sso, allowanceOf({ spouse, children })))
   const pinPlain = String(b.pin || Math.floor(1000 + Math.random() * 9000)) // 4-digit PIN; auto if blank
   const sig = typeof b.signature === 'string' && b.signature.startsWith('data:image/') ? b.signature : null
   const info = db
@@ -863,7 +863,7 @@ api.put('/employees/:id', canWrite, (req, res) => {
   const mBase = monthlyBaseOf(base, payType)
   const noSso = b.no_sso != null ? (b.no_sso ? 1 : 0) : (e.no_sso || 0)
   const sso = noSso ? 0 : ssoOf(mBase)
-  const tax = taxMonthlyOf(mBase, sso, allowanceOf({ spouse, children }))
+  const tax = b.tax != null && b.tax !== '' ? Number(b.tax) : e.tax // ภาษีกรอกเอง — ไม่คิดใหม่จากฐานเงินเดือน
   const retention = b.retention != null && b.retention !== '' ? Number(b.retention) : e.retention
   const studentLoan = b.student_loan != null && b.student_loan !== '' ? Number(b.student_loan) : e.student_loan
   const retentionOpening = b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : e.retention_opening
@@ -944,7 +944,7 @@ function computePayroll(period) {
     // ประกันสังคมของรายวัน คิดจาก "รายได้จริงในงวด" (ค่าแรง×วันทำงาน) ไม่ใช่ค่าแรง×26
     // รายวัน "ไม่หักภาษี" (คิดเฉพาะประกันสังคม) — ภาษีเป็น 0
     const sso = e.no_sso ? 0 : (isDaily ? ssoOf(basePay) : e.sso)
-    const tax = isDaily ? 0 : e.tax
+    const tax = e.tax || 0 // ภาษีกรอกเอง (แก้ได้ในตารางเงินเดือน)
     // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนสิ้นเดือน
     const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a
     // หักอื่นๆ (พร้อมเหตุผล) ที่บันทึกในงวดนี้
