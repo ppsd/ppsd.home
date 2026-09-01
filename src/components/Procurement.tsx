@@ -11,6 +11,7 @@ import PoDoc from './PoDoc'
 import WhtDoc from './WhtDoc'
 import PaymentVoucher from './PaymentVoucher'
 import ApprovalBar from './ApprovalBar'
+import GoodsReceipt from './GoodsReceipt'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '10px 14px' }
@@ -83,6 +84,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const [docPo, setDocPo] = useState<ApiPO | null>(null)
   const [docWht, setDocWht] = useState<ApiPayment | null>(null)
   const [docVoucher, setDocVoucher] = useState<ApiPayment | null>(null)
+  const [docReceive, setDocReceive] = useState<ApiPO | null>(null)
   const { data, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor, reloadData } = useApp()
   // อนุมัติ/ปฏิเสธ PR — แสดงข้อความถ้าถูกกติกากันโกงบล็อก (เช่น อนุมัติใบตัวเอง / ต้องอนุมัติ 2 ชั้น)
   const purchaseOrders = data.purchaseOrders || []
@@ -145,12 +147,15 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
       }
     } catch { /* ไม่มีใบเทียบราคา ก็ปล่อยว่างให้เลือกเอง */ }
     setPoForm({ vendor, item: r.item, amount, pr_no: r.no, payment_type: payType, credit_days: creditDays, house_code: code })
+    setPoItems((r.items || []).map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })))
     setPoImg(r.image || ''); setTab('po'); setAddingPo(true)
   }
 
   // inline PO create form
   const [addingPo, setAddingPo] = useState(false)
   const [poForm, setPoForm] = useState({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '' })
+  // รายการที่สั่ง (ชื่อ/จำนวน/ราคา) ติดไปกับ PO — ใช้เทียบใบส่งของตอนตรวจรับ (มาจาก PR ถ้าออก PO จาก PR)
+  const [poItems, setPoItems] = useState<{ desc: string; qty: number; unit: string; price: number }[]>([])
   // picking a vendor auto-fills its default credit terms (จัดซื้อแก้ได้)
   const pickVendor = (name: string) => {
     const v = vendors.find((x) => x.name === name)
@@ -169,8 +174,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     if (!poForm.vendor.trim() || !poForm.item.trim()) { setPoErr('กรุณากรอกผู้ขายและรายการ'); return }
     setPoErr('')
     try {
-      await addPO({ vendor: poForm.vendor, item: poForm.item, amount: Number(poForm.amount.replace(/,/g, '')) || 0, pr_no: poForm.pr_no, image: poImg || undefined, payment_type: poForm.payment_type, credit_days: Number(poForm.credit_days) || 0, house_code: poForm.house_code })
-      setAddingPo(false); setPoForm({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '' }); setPoImg('')
+      await addPO({ vendor: poForm.vendor, item: poForm.item, amount: Number(poForm.amount.replace(/,/g, '')) || 0, pr_no: poForm.pr_no, image: poImg || undefined, payment_type: poForm.payment_type, credit_days: Number(poForm.credit_days) || 0, house_code: poForm.house_code, items: poItems.length ? poItems : undefined })
+      setAddingPo(false); setPoForm({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '' }); setPoImg(''); setPoItems([])
     } catch (e) { setPoErr((e as Error).message) }
   }
 
@@ -477,6 +482,12 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
                       <ApprovalBar docType="po" docId={r.id} approval={r.approval} onDone={() => reloadData('purchaseOrders', '/purchase-orders')} compact />
+                      {r.gr_status === 'ผ่าน'
+                        ? <span title={'ตรวจรับของผ่าน ' + (r.gr_date || '')} style={{ fontSize: 11, fontWeight: 700, color: '#2E7D55', background: '#E2F1EA', padding: '2px 9px', borderRadius: 20 }}>✓ รับของตรง</span>
+                        : r.gr_status === 'ไม่ผ่าน'
+                          ? <span title={'ตรวจรับของไม่ผ่าน ' + (r.gr_date || '')} style={{ fontSize: 11, fontWeight: 700, color: '#C24036', background: '#FBEAE7', padding: '2px 9px', borderRadius: 20 }}>✗ ไม่ตรง</span>
+                          : null}
+                      <button onClick={() => setDocReceive(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#2E7D55', background: '#fff', border: '1px solid #B5DDC8', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>📦 ตรวจรับของ</button>
                       <button onClick={() => setDocPo(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>🖨 พิมพ์ PO</button>
                     </div>
                   </td>
@@ -667,6 +678,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
 
       {docPr && <PrApprovalDoc pr={docPr} onClose={() => setDocPr(null)} />}
       {docPo && <PoDoc po={docPo} houseName={houses.find((h) => h.code === docPo.house_code)?.name || docPo.house_code || ''} onClose={() => setDocPo(null)} />}
+      {docReceive && <GoodsReceipt po={docReceive} onClose={() => setDocReceive(null)} onDone={() => reloadData('purchaseOrders', '/purchase-orders')} />}
       {docWht && (() => { const emp = (data.employees || []).find((e) => e.name === docWht.payee); return <WhtDoc payment={docWht} payeeSignature={emp?.signature} payeeTaxId={emp?.tax_id || undefined} onClose={() => setDocWht(null)} /> })()}
       {docVoucher && <PaymentVoucher payment={docVoucher} note={docVoucher.note || (houses.find((h) => h.code === docVoucher.house_code)?.name ? 'บ้าน ' + houses.find((h) => h.code === docVoucher.house_code)?.name : '')} onClose={() => setDocVoucher(null)} />}
     </div>

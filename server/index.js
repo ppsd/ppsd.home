@@ -297,6 +297,7 @@ const CONTROL_DEFAULTS = {
   block_self_approve: true, // ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ
   approvers_required: 3, // จำนวนผู้อนุมัติที่ต้องกดอนุมัติ (1–3) สำหรับ PR/PO/เบิก-จ่าย
   overprice_warn_pct: 10, // เตือนเมื่อราคาต่อหน่วยสูงกว่าราคากลางเกินกี่ % (0 = ปิดการเตือน)
+  receipt_price_tol_pct: 2, // ตรวจรับของ: ราคา PO กับใบส่งของต่างกันได้ไม่เกินกี่ % ถึงถือว่าตรง (กันปัดเศษ)
   two_step_above: 500000, // PR ยอด ≥ นี้ ต้องอนุมัติ 2 ชั้น (คนละคน)
   quote_min: 3, // จำนวนใบเทียบราคาขั้นต่ำ
   quote_required_above: 100000, // PO ยอด ≥ นี้ ควรมีใบเทียบราคาครบ
@@ -1350,7 +1351,7 @@ api.put('/settings/attendance', adminOnly, (req, res) => {
 })
 
 // ---------- purchase orders (PO) ----------
-api.get('/purchase-orders', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM purchase_orders ORDER BY id DESC').all().map(attachApproval('po'))))
+api.get('/purchase-orders', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM purchase_orders ORDER BY id DESC').all().map((r) => attachApproval('po')(poRow(r)))))
 api.post('/purchase-orders', financeOnly, (req, res) => {
   const b = req.body || {}
   if (!b.vendor || !b.item) return res.status(400).json({ error: 'กรุณากรอกผู้ขายและรายการ' })
@@ -1367,10 +1368,15 @@ api.post('/purchase-orders', financeOnly, (req, res) => {
   if (paymentType === 'credit') {
     const d = new Date(); d.setDate(d.getDate() + creditDays); dueIso = d.toISOString().slice(0, 10)
   }
+  // สำเนารายการที่สั่ง (ชื่อ/จำนวน/ราคา) ไว้ในตัว PO เพื่อใช้เทียบกับใบส่งของตอนตรวจรับ
+  // ถ้าไม่ส่ง items มา → สร้างบรรทัดเดียวจากรายการ+มูลค่ารวม (จำนวนไม่ระบุ = 0 → ตอนตรวจรับข้ามการเช็คจำนวนบรรทัดนั้น)
+  const orderItems = Array.isArray(b.items) && b.items.length
+    ? b.items.map((it) => ({ desc: String(it.desc || '').trim(), qty: Number(it.qty) || 0, unit: String(it.unit || ''), price: Number(it.price) || 0 })).filter((it) => it.desc)
+    : [{ desc: String(b.item || '').trim(), qty: 0, unit: '', price: Number(b.amount) || 0 }]
   const info = db
-    .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso)
-  res.status(201).json(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(info.lastInsertRowid))
+    .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso,items) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems))
+  res.status(201).json(poRow(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(info.lastInsertRowid)))
 })
 // when a PO is received, its cost flows into the house's รายจ่าย (auto expense, linked by po_id)
 function syncPoExpense(po) {
@@ -1395,7 +1401,154 @@ api.post('/purchase-orders/:id/status', financeOnly, (req, res) => {
   const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id)
   syncPoExpense(po)
   audit(req, 'อัปเดตสถานะ PO', `${po.no} → ${st}`)
-  res.json(po)
+  res.json(poRow(po))
+})
+
+// ===== ตรวจรับของ: เทียบ PO กับใบส่งของ (Goods Receipt) =====
+// จับคู่ชื่อสินค้าแบบยืดหยุ่น (เว้นวรรค/สะกดต่างเล็กน้อยก็จับได้)
+function grNameKey(n) { return String(n || '').replace(/\s+/g, '').replace(/["“”#]/g, '').toLowerCase() }
+function grNameScore(a, b) {
+  const an = grNameKey(a), bn = grNameKey(b)
+  if (!an || !bn) return 0
+  if (an === bn) return 1
+  if (an.length >= 4 && bn.length >= 4 && (an.includes(bn) || bn.includes(an))) return 0.85
+  const tok = (s) => new Set(String(s).toLowerCase().split(/[\s()#"'“”]+/).filter((t) => t.length >= 2))
+  const ta = tok(a), tb = tok(b)
+  let inter = 0; ta.forEach((t) => { if (tb.has(t)) inter++ })
+  const uni = new Set([...ta, ...tb]).size
+  return uni ? inter / uni : 0
+}
+// เทียบรายการที่สั่ง (PO.items) กับรายการในใบส่งของ → ผ่าน/ไม่ผ่าน + รายละเอียดต่อบรรทัด
+function matchReceipt(orderItems, deliveryItems, po) {
+  const tolPct = Math.max(0, Number(controls().receipt_price_tol_pct) || 0)
+  const del = (deliveryItems || []).map((d) => ({
+    name: String(d.name || d.desc || '').trim(),
+    qty: Number(d.qty) || 0,
+    unit: String(d.unit || ''),
+    price: Number(d.price) || 0,
+    amount: Number(d.amount) || ((Number(d.qty) || 0) * (Number(d.price) || 0)) || 0,
+    used: false,
+  }))
+  const priceOkFn = (op, dp) => { if (!(op > 0) || !(dp > 0)) return null; const tol = Math.max(op * tolPct / 100, 0.5); return Math.abs(op - dp) <= tol }
+  const lines = (orderItems || []).map((o) => {
+    const desc = String(o.desc || '').trim()
+    // หาบรรทัดใบส่งของที่ชื่อใกล้สุดและยังไม่ถูกจับคู่
+    let best = -1, bestScore = 0
+    del.forEach((d, i) => { if (d.used) return; const s = grNameScore(desc, d.name); if (s > bestScore) { bestScore = s; best = i } })
+    const d = best >= 0 && bestScore >= 0.5 ? del[best] : null
+    if (d) d.used = true
+    const nameOk = !!d
+    const qtyOk = !d ? false : (!(Number(o.qty) > 0) ? null : (Number(o.qty) === d.qty))
+    const priceOk = !d ? false : priceOkFn(Number(o.price), d.price)
+    const pass = nameOk && qtyOk !== false && priceOk !== false
+    return { desc, qty: Number(o.qty) || 0, unit: o.unit || '', price: Number(o.price) || 0,
+      d_name: d?.name || '', d_qty: d?.qty ?? null, d_price: d?.price ?? null,
+      nameOk, qtyOk, priceOk, pass }
+  })
+  const extras = del.filter((d) => !d.used).map((d) => ({ name: d.name, qty: d.qty, unit: d.unit, price: d.price, amount: d.amount }))
+  const totalOrder = (orderItems || []).reduce((s, o) => s + (Number(o.qty) > 0 ? Number(o.qty) * Number(o.price) : Number(o.price) || 0), 0) || Number(po?.amount) || 0
+  const totalDelivery = del.reduce((s, d) => s + (d.amount || 0), 0)
+  const totalTol = Math.max(totalOrder * tolPct / 100, 1)
+  const totalOk = totalDelivery > 0 ? Math.abs(totalOrder - totalDelivery) <= totalTol : null
+  const allLinesPass = lines.length > 0 && lines.every((l) => l.pass)
+  const result = (allLinesPass && extras.length === 0 && totalOk !== false) ? 'ผ่าน' : 'ไม่ผ่าน'
+  return { result, lines, extras, totalOrder, totalDelivery, totalOk, tolPct }
+}
+
+// รายการที่ใช้เทียบ = items ที่เก็บไว้ใน PO (ถ้าว่าง สร้างบรรทัดเดียวจากรายการ+มูลค่ารวม)
+function orderItemsForPo(po) {
+  const items = jparse(po.items)
+  if (Array.isArray(items) && items.length) return items
+  return [{ desc: String(po.item || '').trim(), qty: 0, unit: '', price: Number(po.amount) || 0 }]
+}
+
+const RECEIPT_PROMPT = `คุณเป็นผู้ช่วยตรวจรับสินค้า อ่าน "ใบส่งของ / ใบส่งสินค้า / ใบกำกับภาษี" ในรูปนี้ แล้วดึงรายการสินค้าออกมาเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
+รูปแบบ: {"items":[{"name":"ชื่อสินค้า","qty":10,"unit":"ถุง","price":143,"amount":1430}]}
+กติกา:
+- name = ชื่อสินค้าตามที่เขียนในใบส่งของ
+- qty = จำนวน (ตัวเลขล้วน), unit = หน่วย (ถ้ามี)
+- price = ราคาต่อหน่วย (ตัวเลขล้วน ไม่มีคอมม่า), amount = จำนวนเงินรวมของบรรทัดนั้น
+- ถ้าบรรทัดไหนไม่มีราคาต่อหน่วยแต่มีจำนวนเงินรวม ให้คำนวณ price = amount / qty
+- เอาเฉพาะรายการสินค้า ไม่เอาบรรทัดยอดรวม/ภาษี/ส่วนลด
+- ถ้าอ่านไม่ออกเลย ให้คืน {"items":[]}`
+
+// AI อ่านใบส่งของจากรูป → คืนรายการสินค้า (ยังไม่บันทึก ให้ผู้ใช้ตรวจ/แก้ก่อน)
+api.post('/purchase-orders/:id/extract-receipt', canWrite, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
+  const key = getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY || ''
+  if (!key) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่ากุญแจ AI (ไปที่ ตรวจสอบ → ตั้งค่า AI) — หรือกรอกรายการในใบส่งของเองได้' })
+  const buf = req.body
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
+  const mime = String(req.query.mime || 'image/jpeg')
+  const b64 = buf.toString('base64')
+  const media = mime.includes('pdf')
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+    : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: getSetting('ai_model', 'claude-3-5-sonnet-latest'), max_tokens: 4000, messages: [{ role: 'user', content: [media, { type: 'text', text: RECEIPT_PROMPT }] }] }),
+    })
+    const data = await r.json()
+    if (!r.ok) return res.status(502).json({ error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)) })
+    const text = (data.content || []).map((c) => c.text || '').join('')
+    const parsed = extractJsonBlock(text)
+    const items = (parsed?.items || parsed || []).map((it) => {
+      const qty = Number(String(it.qty).toString().replace(/,/g, '')) || 0
+      const amount = Number(String(it.amount).toString().replace(/,/g, '')) || 0
+      let price = Number(String(it.price).toString().replace(/,/g, '')) || 0
+      if (!price && amount && qty) price = Math.round((amount / qty) * 100) / 100
+      return { name: String(it.name || ''), qty, unit: String(it.unit || ''), price, amount: amount || qty * price }
+    }).filter((it) => it.name)
+    audit(req, 'AI อ่านใบส่งของ', `PO#${req.params.id} ${items.length} รายการ`)
+    res.json({ items })
+  } catch (e) { res.status(502).json({ error: 'เรียก AI ไม่สำเร็จ: ' + e.message }) }
+})
+
+// ตรวจรับของ: เทียบ PO.items กับรายการในใบส่งของ (ที่ผู้ใช้ยืนยันแล้ว) → บันทึกผล + อัปเดตสถานะ PO
+api.post('/purchase-orders/:id/receive', canWrite, (req, res) => {
+  const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id)
+  if (!po) return res.status(404).json({ error: 'ไม่พบใบสั่งซื้อ' })
+  const b = req.body || {}
+  const orderItems = orderItemsForPo(po)
+  const deliveryItems = Array.isArray(b.delivery_items) ? b.delivery_items : []
+  if (!deliveryItems.length) return res.status(400).json({ error: 'ยังไม่มีรายการในใบส่งของ — อัปโหลดรูปให้ AI อ่าน หรือกรอกเอง' })
+  const detail = matchReceipt(orderItems, deliveryItems, po)
+  const files = Array.isArray(b.files) ? b.files : []
+  const now = new Date()
+  const info = db.prepare(`INSERT INTO goods_receipts (po_id,po_no,files,order_items,delivery_items,result,detail,note,by,date,ts)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(po.id, po.no, JSON.stringify(files), JSON.stringify(orderItems), JSON.stringify(deliveryItems), detail.result, JSON.stringify(detail), String(b.note || ''), req.user.name, todayTH(), now.toISOString())
+  // ผ่าน → รับของแล้ว (ต้นทุนไหลเข้าบ้าน) · ไม่ผ่าน → คงสถานะรอส่งของ ให้กลับไปตรวจ
+  db.prepare('UPDATE purchase_orders SET gr_status=?, gr_date=? WHERE id=?').run(detail.result, todayTH(), po.id)
+  if (detail.result === 'ผ่าน') db.prepare("UPDATE purchase_orders SET status='รับของแล้ว' WHERE id=?").run(po.id)
+  // ไม่ผ่าน แต่ก่อนหน้าเคยรับของแล้ว (เคยผ่าน) → ดึงกลับเป็น "รอส่งของ" ให้กลับไปตรวจใหม่ (ต้นทุนที่ลงบ้านจะถูกถอนออกใน syncPoExpense)
+  else if (po.status === 'รับของแล้ว') db.prepare("UPDATE purchase_orders SET status='รอส่งของ' WHERE id=?").run(po.id)
+  const po2 = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(po.id)
+  syncPoExpense(po2)
+  audit(req, 'ตรวจรับของ', `${po.no} → ${detail.result}`)
+  res.status(201).json({ result: detail.result, detail, receipt_id: info.lastInsertRowid, po: poRow(po2) })
+})
+
+api.get('/purchase-orders/:id/receipts', financeOnly, (req, res) =>
+  res.json(db.prepare('SELECT * FROM goods_receipts WHERE po_id=? ORDER BY id DESC').all(req.params.id)
+    .map((r) => ({ ...r, files: jparse(r.files) || [], order_items: jparse(r.order_items) || [], delivery_items: jparse(r.delivery_items) || [], detail: jparse(r.detail) || null }))))
+
+// ผู้จัดการ override ผลตรวจรับ (เช่น ยอมรับทั้งที่ไม่ผ่าน เพราะตกลงกับผู้ขายแล้ว)
+api.post('/goods-receipts/:id/override', requireManager, (req, res) => {
+  const gr = db.prepare('SELECT * FROM goods_receipts WHERE id=?').get(req.params.id)
+  if (!gr) return res.status(404).json({ error: 'ไม่พบใบตรวจรับ' })
+  const result = req.body?.result === 'ผ่าน' ? 'ผ่าน' : 'ไม่ผ่าน'
+  db.prepare('UPDATE goods_receipts SET result=?, overridden=1, override_by=?, note=? WHERE id=?')
+    .run(result, req.user.name, String(req.body?.note || gr.note || ''), gr.id)
+  db.prepare('UPDATE purchase_orders SET gr_status=?, gr_date=? WHERE id=?').run(result, todayTH(), gr.po_id)
+  const poCur = db.prepare('SELECT status FROM purchase_orders WHERE id=?').get(gr.po_id)
+  if (result === 'ผ่าน') db.prepare("UPDATE purchase_orders SET status='รับของแล้ว' WHERE id=?").run(gr.po_id)
+  else if (poCur && poCur.status === 'รับของแล้ว') db.prepare("UPDATE purchase_orders SET status='รอส่งของ' WHERE id=?").run(gr.po_id)
+  const po2 = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(gr.po_id)
+  syncPoExpense(po2)
+  audit(req, 'ปรับผลตรวจรับของ (override)', `${gr.po_no} → ${result}`)
+  res.json({ ok: true, result, po: poRow(po2) })
 })
 
 // ---------- procurement (finance only) ----------
@@ -1419,6 +1572,7 @@ api.put('/vendors/:id', financeOnly, (req, res) => {
 // parse the items/images JSON columns into arrays for the client
 function jparse(s) { if (!s) return null; try { return JSON.parse(s) } catch { return null } }
 function prRow(r) { return r ? { ...r, items: jparse(r.items), images: jparse(r.images) } : r }
+function poRow(r) { return r ? { ...r, items: jparse(r.items) || [] } : r }
 api.get('/purchase-requests', financeOnly, (_req, res) =>
   res.json(db.prepare('SELECT * FROM purchase_requests ORDER BY id DESC').all().map((r) => ({ ...prRow(r), approval: approvalState('pr', r.id) })))
 )

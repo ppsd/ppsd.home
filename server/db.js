@@ -389,6 +389,20 @@ if (db.prepare('SELECT COUNT(*) c FROM material_prices').get().c === 0) {
   db.transaction((rows) => rows.forEach((r) => insMp.run({ ...r, nkey: nkey(r.name), updated: today })))(matPriceSeed || [])
 }
 
+// ===== ตรวจรับของ: เทียบ PO กับใบส่งของ (Goods Receipt / 3-way match) =====
+ensureColumn('purchase_orders', 'items', 'TEXT')     // รายการที่สั่งในใบเดียว (JSON: [{desc,qty,unit,price}]) — สำเนาไว้ในตัว PO เพื่อเทียบใบส่งของ
+ensureColumn('purchase_orders', 'gr_status', 'TEXT') // ผลตรวจรับของ: 'ผ่าน' / 'ไม่ผ่าน' / '' (ยังไม่ตรวจ)
+ensureColumn('purchase_orders', 'gr_date', 'TEXT')   // วันที่ตรวจรับล่าสุด
+db.exec(`CREATE TABLE IF NOT EXISTS goods_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  po_id INTEGER, po_no TEXT,
+  files TEXT, order_items TEXT, delivery_items TEXT,
+  result TEXT, detail TEXT, note TEXT,
+  overridden INTEGER DEFAULT 0, override_by TEXT,
+  by TEXT, date TEXT, ts TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_gr_po ON goods_receipts(po_id)')
+
 // ===== เฟส 4: สินทรัพย์ถาวร + ค่าเสื่อมราคา =====
 db.exec(`CREATE TABLE IF NOT EXISTS fixed_assets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

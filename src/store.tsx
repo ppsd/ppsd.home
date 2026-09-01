@@ -190,6 +190,9 @@ export interface ApiPO {
   due_date?: string
   house_code?: string
   approval?: Approval
+  items?: { desc: string; qty: number; unit: string; price: number }[]
+  gr_status?: string
+  gr_date?: string
 }
 export interface ApiMaterialPrice {
   id: number
