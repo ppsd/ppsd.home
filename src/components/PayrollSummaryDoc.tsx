@@ -15,6 +15,7 @@ const C_NET = '#FCE4D6'    // เงินได้สุทธิ
 const C_TOTAL = '#FFF2A8'  // แถวรวม (เหลือง)
 
 const otherOf = (p: ApiPayroll) => (p.leave_deduct || 0) + (p.other_deduct || 0) // คอลัมน์ "อื่นๆ" = หักลา/ขาด + หักอื่นๆ
+const deductOf = (p: ApiPayroll) => (p.sso || 0) + (p.tax || 0) + (p.advance || 0) + (p.student_loan || 0) + otherOf(p) + (p.retention || 0) // รวมหักทั้งหมด
 const netOf = (p: ApiPayroll) => (p.base || 0) + (p.ot || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 
 export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows: ApiPayroll[]; periodLabel: string; onClose: () => void }) {
@@ -31,11 +32,11 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
   const T = {
     wage: sum(wageOf), other: sum((p) => p.ot || 0), income: sum(incomeOf), sso: sum((p) => p.sso || 0),
     tax: sum((p) => p.tax || 0), advance: sum((p) => p.advance || 0), debt: sum((p) => p.student_loan || 0),
-    misc: sum(otherOf), ret: sum((p) => p.retention || 0), net: sum(netOf),
+    misc: sum(otherOf), ret: sum((p) => p.retention || 0), deduct: sum(deductOf), net: sum(netOf),
   }
 
-  const th: React.CSSProperties = { border: bd, padding: '3px 4px', fontSize: 8.5, fontWeight: 700, textAlign: 'center', lineHeight: 1.15, verticalAlign: 'middle' }
-  const td: React.CSSProperties = { border: bd, padding: '2px 4px', fontSize: 8.5, verticalAlign: 'middle' }
+  const th: React.CSSProperties = { border: bd, padding: '3px 4px', fontSize: 8.5, fontWeight: 700, textAlign: 'center', lineHeight: 1.15, verticalAlign: 'middle', whiteSpace: 'nowrap' }
+  const td: React.CSSProperties = { border: bd, padding: '2px 5px', fontSize: 8.5, verticalAlign: 'middle', whiteSpace: 'nowrap' }
   const tdR: React.CSSProperties = { ...td, textAlign: 'right' }
   const tdC: React.CSSProperties = { ...td, textAlign: 'center' }
 
@@ -59,7 +60,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
         <div style={{ fontSize: 11, marginBottom: 4 }}>สำหรับงวด {periodLabel}</div>
 
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1080 }}>
             {/* แถวป้ายกลุ่มสี */}
             <thead>
               <tr>
@@ -68,7 +69,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <th style={{ ...th, border: 'none' }} />
                 <th style={{ ...th, background: C_GREEN }}>ภงด. 1</th>
                 <th style={{ ...th, background: C_ORANGE }} colSpan={2}>อัตราปกติ 5%</th>
-                <th style={{ ...th, border: 'none' }} colSpan={4} />
+                <th style={{ ...th, border: 'none' }} colSpan={5} />
                 <th style={{ ...th, background: C_ORANGE }}>คีย์ส่งแบงค์</th>
                 <th style={{ ...th, border: 'none' }} colSpan={3} />
               </tr>
@@ -83,6 +84,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <th style={th}>หักหนี้</th>
                 <th style={th}>อื่นๆ</th>
                 <th style={th}>ประกันงาน/เดือน</th>
+                <th style={{ ...th, background: '#F6ECD6' }}>รวมหัก</th>
                 <th style={{ ...th, background: C_NET }}>เงินได้สุทธิ</th>
                 <th style={th}>ชื่อเรียก</th>
                 <th style={th}>เลขที่บัญชี</th>
@@ -112,6 +114,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                     <td style={tdR} className="num">{f2z(p.student_loan || 0)}</td>
                     <td style={tdR} className="num">{f2z(otherOf(p))}</td>
                     <td style={{ ...tdR, color: '#C0392B' }} className="num">{f2z(p.retention || 0)}</td>
+                    <td style={{ ...tdR, background: '#F6ECD6', fontWeight: 600, color: '#C0392B' }} className="num">{f2z(deductOf(p))}</td>
                     <td style={{ ...tdR, background: C_NET, fontWeight: 700 }} className="num">{f2z(netOf(p))}</td>
                     <td style={tdC}>{p.nickname || ''}</td>
                     <td style={tdC} className="num">{p.bank_acct || ''}</td>
@@ -131,6 +134,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <td style={tdR} className="num">{f2(T.debt)}</td>
                 <td style={tdR} className="num">{f2(T.misc)}</td>
                 <td style={tdR} className="num">{f2(T.ret)}</td>
+                <td style={{ ...tdR, color: '#C0392B' }} className="num">{f2(T.deduct)}</td>
                 <td style={tdR} className="num">{f2(T.net)}</td>
                 <td style={td} colSpan={3} />
               </tr>
