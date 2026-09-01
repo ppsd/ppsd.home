@@ -40,6 +40,16 @@ export const fmtMoney = (v: string | number) => {
   return d ? Number(d).toLocaleString('en-US') : ''
 }
 export const unMoney = (v: string) => Number(String(v).replace(/[^\d.]/g, '')) || 0
+// เหมือน fmtMoney แต่ให้ใส่จุดทศนิยมได้ (สูงสุด 2 ตำแหน่ง) เช่น ค่าแรงรายวัน 1,166.67
+export const fmtMoneyDecimal = (v: string | number) => {
+  let s = String(v).replace(/[^\d.]/g, '')
+  const dot = s.indexOf('.')
+  if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, '') // เก็บจุดแรกจุดเดียว
+  const parts = s.split('.')
+  const intRaw = parts[0].replace(/^0+(?=\d)/, '') || (parts.length > 1 ? '0' : '')
+  const intFmt = intRaw ? Number(intRaw).toLocaleString('en-US') : ''
+  return parts.length > 1 ? (intFmt || '0') + '.' + parts[1].slice(0, 2) : intFmt
+}
 
 // แปลงจำนวนเงินเป็นตัวอักษรภาษาไทย เช่น 5278 → "ห้าพันสองร้อยเจ็ดสิบแปดบาทถ้วน"
 export function bahtText(amount: number): string {

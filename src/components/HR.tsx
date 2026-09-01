@@ -308,7 +308,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <input style={field} placeholder="ชื่อเล่น (เช่น พี่แมน)" value={emp.nickname} onChange={(e) => setEmp({ ...emp, nickname: e.target.value })} />
                   <select style={field} value={emp.role} onChange={(e) => setEmp({ ...emp, role: e.target.value })}>{posList.map((p) => <option key={p}>{p}</option>)}</select>
                   <select style={field} value={emp.pay_type} onChange={(e) => setEmp({ ...emp, pay_type: e.target.value })}><option>รายเดือน</option><option>รายวัน</option></select>
-                  <MoneyInput style={field} placeholder={emp.pay_type === 'รายวัน' ? 'ค่าแรง/วัน (บาท)' : 'เงินเดือน (บาท)'} value={emp.base} onChange={(v) => setEmp({ ...emp, base: v })} />
+                  <MoneyInput decimal style={field} placeholder={emp.pay_type === 'รายวัน' ? 'ค่าแรง/วัน (บาท) เช่น 1,166.67' : 'เงินเดือน (บาท)'} value={emp.base} onChange={(v) => setEmp({ ...emp, base: v })} />
                   {emp.pay_type === 'รายวัน' && (
                     <input style={field} type="number" min={0} step={0.5} placeholder="วันทำงาน/เดือน (เช่น แม่บ้าน) — ใส่ครึ่งวันได้ เช่น 17.5" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="รายวัน: เงิน = ค่าแรง/วัน × วันทำงาน (ใส่ครึ่งวันได้ เช่น 17.5)" />
                   )}
