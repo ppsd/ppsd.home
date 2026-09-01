@@ -902,7 +902,7 @@ function splitTitle(raw) {
   for (const t of EMP_TITLES) if (s.startsWith(t)) return { title: t === 'นางสาว' ? 'น.ส.' : t, rest: s.slice(t.length).trim() }
   return { title: '', rest: s }
 }
-api.post('/employees/dedup', adminOnly, (req, res) => {
+function runEmpDedup() {
   const emps = db.prepare('SELECT * FROM employees').all()
   const groups = {}
   for (const e of emps) {
@@ -919,31 +919,28 @@ api.post('/employees/dedup', adminOnly, (req, res) => {
     try { db.prepare('UPDATE time_adjustments SET emp_name=? WHERE emp_name=?').run(keepName, dupName) } catch { /* ignore */ }
     try { db.prepare('UPDATE ot SET name=? WHERE name=?').run(keepName, dupName) } catch { /* ignore */ }
   }
-  let mergedGroups = 0, removed = 0, tidied = 0
+  let mergedGroups = 0, removed = 0, tidied = 0, skippedReal = 0
   const detail = []
   db.transaction(() => {
     for (const [rest, list] of Object.entries(groups)) {
       list.sort((a, b) => score(b) - score(a) || a.id - b.id)
       const keep = list[0]
-      // คำนำหน้าของกลุ่มนี้ — เอาจากช่อง prefix ที่ตั้งไว้ หรือจากชื่อที่ติดคำนำหน้า
-      let title = ''
+      let title = '' // คำนำหน้าของกลุ่ม — จากช่อง prefix หรือจากชื่อที่ติดคำนำหน้า
       for (const e of list) { const p = e.prefix || splitTitle(e.name).title; if (p) { title = p; break } }
-      if (list.length > 1) {
-        const dupWithUser = list.slice(1).find((d) => d.user_id && !keep.user_id)
-        if (dupWithUser) db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(dupWithUser.user_id, keep.id)
-        for (const d of list.slice(1)) {
-          repoint(d.code, d.name, keep.code, keep.name)
-          db.prepare('DELETE FROM employees WHERE id=?').run(d.id)
-          removed++
-        }
-        mergedGroups++
-        detail.push({ name: rest, kept: keep.code, removed: list.slice(1).map((d) => d.code) })
+      const removedCodes = []
+      for (const d of list.slice(1)) {
+        // ปลอดภัย: ไม่ลบตัวซ้ำที่ตั้งค่าครบ (มีเงินเดือน+บัญชี) — กันลบคนจริงโดยไม่ตั้งใจ เก็บไว้ให้ตรวจเอง
+        if (Number(d.base) > 0 && d.bank_acct) { skippedReal++; continue }
+        if (d.user_id && !keep.user_id) db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(d.user_id, keep.id)
+        repoint(d.code, d.name, keep.code, keep.name)
+        db.prepare('DELETE FROM employees WHERE id=?').run(d.id)
+        removed++; removedCodes.push(d.code)
       }
-      // เก็บชื่อให้สะอาด (ตัดคำนำหน้าออก) + ใส่คำนำหน้าในช่อง prefix
+      if (removedCodes.length) { mergedGroups++; detail.push({ name: rest, kept: keep.code, removed: removedCodes }) }
+      // เก็บชื่อให้สะอาด (ตัดคำนำหน้า) + ใส่คำนำหน้าในช่อง prefix
       const newPrefix = keep.prefix || title || ''
       if (rest !== keep.name || newPrefix !== (keep.prefix || '')) {
         db.prepare('UPDATE employees SET name=?, prefix=? WHERE id=?').run(rest, newPrefix, keep.id)
-        // อัปเดตชื่อที่ denormalize ไว้ในตารางอ้างอิงให้ตรงกัน
         for (const [t, cCol, nCol] of [['attendance', 'emp_code', 'emp_name'], ['leaves', 'emp_code', 'emp_name'], ['salary_advances', 'emp_code', 'emp_name'], ['deductions', 'emp_code', 'emp_name'], ['pms_reviews', 'emp_code', 'emp_name']]) {
           try { db.prepare(`UPDATE ${t} SET ${nCol}=? WHERE ${cCol}=?`).run(rest, keep.code) } catch { /* ignore */ }
         }
@@ -951,8 +948,20 @@ api.post('/employees/dedup', adminOnly, (req, res) => {
       }
     }
   })()
-  audit(req, 'ล้างพนักงานซ้ำ', `รวม ${mergedGroups} ชื่อ · ลบ ${removed} · จัดชื่อ ${tidied}`)
-  res.json({ ok: true, mergedGroups, removed, tidied, detail })
+  return { mergedGroups, removed, tidied, skippedReal, detail }
+}
+// รวมพนักงานซ้ำอัตโนมัติครั้งเดียวตอนอัปเดต (แก้ข้อมูลเบิ้ลที่ค้างอยู่) — กดปุ่มซ้ำได้ภายหลัง
+try {
+  if (getSetting('emp_dedup_v2', '') !== '1') {
+    const r = runEmpDedup()
+    setSetting('emp_dedup_v2', '1')
+    if (r.removed || r.tidied) console.log(`  รวมพนักงานซ้ำอัตโนมัติ: ลบ ${r.removed} · จัดชื่อ ${r.tidied}`)
+  }
+} catch (e) { console.error('emp dedup on boot failed:', e.message) }
+api.post('/employees/dedup', adminOnly, (req, res) => {
+  const r = runEmpDedup()
+  audit(req, 'ล้างพนักงานซ้ำ', `รวม ${r.mergedGroups} ชื่อ · ลบ ${r.removed} · จัดชื่อ ${r.tidied}`)
+  res.json({ ok: true, ...r })
 })
 // ---- Retention: หักสะสมเดือนละ (ค่าที่ตั้งไว้) จนครบเพดาน แล้วหยุดหักเอง ----
 const RETENTION_CAP = 5000 // เพดานเงินประกันผลงานต่อคน
