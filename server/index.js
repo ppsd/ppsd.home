@@ -43,7 +43,7 @@ function minutesSince(ts) { const ms = tsToMs(ts); return ms == null ? null : Ma
 
 // ---- payroll calculators (Thai social security + progressive PIT) ----
 function monthlyBaseOf(base, payType) {
-  return payType === 'รายวัน' ? base * 26 : base // ~26 working days (Mon–Sat)
+  return payType === 'รายวัน' ? base * 30 : base // ฐาน 30 วัน/เดือน
 }
 function ssoOf(monthlyBase) {
   // ประกันสังคม 5% เพดานค่าจ้าง 17,500 → เกิน 17,500 หัก 875 · ต่ำกว่านั้น ×5% ปัดตามหลัก (>.5 ขึ้น, <.5 ลง)
@@ -939,7 +939,7 @@ function computePayroll(period) {
     const workDays = e.work_days || 0
     const basePay = isDaily ? dailyRate * workDays : (e.base || 0)
     const absent = (isDaily || exempt) ? 0 : absentDaysInMonth(e, period)
-    const daily = isDaily ? dailyRate : Math.round((e.base || 0) / 26)
+    const daily = isDaily ? dailyRate : Math.round((e.base || 0) / 30) // เงินเดือน ÷ 30 วัน = ค่าจ้าง/วัน (หักขาด/ลา)
     const deductDays = isDaily ? 0 : (rejected + unpaid + absent)
     // ประกันสังคมของรายวัน คิดจาก "รายได้จริงในงวด" (ค่าแรง×วันทำงาน) ไม่ใช่ค่าแรง×26
     // รายวัน "ไม่หักภาษี" (คิดเฉพาะประกันสังคม) — ภาษีเป็น 0
@@ -1007,7 +1007,7 @@ api.get('/payroll/retention', requireSalary, (_req, res) => {
 })
 // ---- เบิกเงินเดือนล่วงหน้า ----
 const ADVANCE_DAILY_DIVISOR = 2 // เบิกได้ไม่เกิน (วันทำงาน ÷ 2) × ค่าจ้างรายวัน
-const ADVANCE_DAY_BASE = 26     // เงินเดือน ÷ 26 (วันทำงาน) = ค่าจ้าง/วัน
+const ADVANCE_DAY_BASE = 30     // เงินเดือน ÷ 30 วัน = ค่าจ้าง/วัน
 // เพดานเบิกล่วงหน้า: (จำนวนวันมาทำงาน "ตั้งแต่วันที่ 1 ถึงวันนี้/วันที่เบิก" × ค่าจ้าง/วัน) ÷ 2
 function advanceLimit(emp, period) {
   const [yy, mm] = period.split('-').map(Number)
@@ -1024,7 +1024,7 @@ function advanceLimit(emp, period) {
     const holi = new Set(db.prepare('SELECT date FROM holidays WHERE date>=? AND date<=?').all(from, upTo).map((h) => h.date))
     let n = 0
     for (const d of eachDay(from, upTo)) { const wd = new Date(d + 'T00:00:00').getDay(); if (wd !== 0 && !holi.has(d)) n++ }
-    worked = Math.min(n, ADVANCE_DAY_BASE) // ไม่เกินมาตรฐาน 26 วัน (เบิกได้ไม่เกินครึ่งเดือน)
+    worked = Math.min(n, ADVANCE_DAY_BASE) // ไม่เกินมาตรฐาน 30 วัน (เบิกได้ไม่เกินครึ่งเดือน)
   } else {
     // วันทำงาน = วันที่มีบัตรตอก + วันที่ปรับปรุงเวลาอนุมัติแล้ว (ลืมตอกแต่มาจริง) — ไม่นับซ้ำ
     const punchDates = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(emp.code, monthStart, upTo).map((r) => r.date))
