@@ -462,7 +462,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                 <button onClick={() => apiClient.download('/payroll/bank-file?period=' + payrollMeta.period).catch((e) => alert((e as Error).message))} title="ดาวน์โหลดไฟล์จ่ายเงินเดือนผ่านธนาคาร (CSV)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ไฟล์จ่ายผ่านธนาคาร</button>
               )}
               {!payrollMeta?.locked && payrollMeta && (
-                <button onClick={() => { if (window.confirm(`ปิดงวดเงินเดือน ${payrollMeta.periodLabel}?\nตัวเลขจะถูกบันทึกล็อกไว้ (แก้ไม่ได้)`)) app.closePayroll(payrollMeta.period) }} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>ปิดงวด / ออกเงินเดือน</button>
+                <button onClick={async () => { const lbl = payrollMeta.periodLabel; if (!window.confirm(`ปิดงวดเงินเดือน ${lbl}?\nตัวเลขจะถูกล็อก (แก้ไม่ได้) และระบบจะลงบัญชีค่าใช้จ่ายเงินเดือนเข้าบัญชีแยกประเภท (GL) ให้อัตโนมัติ`)) return; await app.closePayroll(payrollMeta.period); alert(`ปิดงวด ${lbl} แล้ว · ลงบัญชีค่าใช้จ่ายเงินเดือนเข้าบัญชีแยกประเภท (GL) ให้อัตโนมัติแล้ว`) }} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>ปิดงวด / ออกเงินเดือน</button>
               )}
             </div>
           </div>

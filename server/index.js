@@ -1048,14 +1048,41 @@ api.get('/payroll/runs', requireSalary, (_req, res) =>
   res.json(db.prepare('SELECT period,total,created,by FROM payroll_runs ORDER BY period DESC').all().map((r) => ({ ...r, periodLabel: periodLabelTH(r.period) })))
 )
 // close / lock a period (snapshot the computed payroll)
+// ลงบัญชีแยกประเภทอัตโนมัติเมื่อปิดงวดเงินเดือน (บัญชีคู่ · idempotent ต่องวด)
+// Dr 6010 เงินเดือน (ยอดที่ได้จริง) / Cr 2050 ปกส. · 2040 ภาษี · 2020 เงินประกัน · 2060 กยศ+หักอื่นๆ · ธนาคาร (จ่ายสุทธิ+เบิกล่วงหน้า)
+function postPayrollJournal(period, rows, by) {
+  const r2 = (x) => Math.round((x || 0) * 100) / 100
+  const sum = (f) => rows.reduce((s, p) => s + (Number(f(p)) || 0), 0)
+  const earned = r2(sum((p) => (p.base || 0) + (p.ot || 0) - (p.leave_deduct || 0)))
+  const sid = Number(period.replace('-', ''))
+  if (!(earned > 0)) { acct.removeAutoJournal('payroll', sid); return { posted: false } }
+  const sso = r2(sum((p) => p.sso || 0)), tax = r2(sum((p) => p.tax || 0)), ret = r2(sum((p) => p.retention || 0))
+  const slOther = r2(sum((p) => (p.student_loan || 0) + (p.other_deduct || 0)))
+  const bank = r2(earned - sso - tax - ret - slOther) // = จ่ายสุทธิ + เบิกล่วงหน้าที่จ่ายไปแล้ว
+  const label = periodLabelTH(period)
+  const [yy, mm] = period.split('-').map(Number)
+  const endIso = `${yy}-${String(mm).padStart(2, '0')}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`
+  const lines = [
+    { account: '6010', debit: earned, credit: 0, memo: 'เงินเดือน/ค่าแรง ' + label },
+    { account: '2050', debit: 0, credit: sso, memo: 'ประกันสังคมหักนำส่ง' },
+    { account: '2040', debit: 0, credit: tax, memo: 'ภาษีหัก ณ ที่จ่ายค้างนำส่ง' },
+    { account: '2020', debit: 0, credit: ret, memo: 'เงินประกันผลงานหักไว้' },
+    { account: '2060', debit: 0, credit: slOther, memo: 'กยศ / หักอื่นๆ ค้างจ่าย' },
+    { account: acct.defaultBank(), debit: 0, credit: bank, memo: 'จ่ายเงินเดือนสุทธิ (รวมเบิกล่วงหน้า)' },
+  ]
+  acct.postJournal({ date_iso: endIso, memo: 'ปิดงวดเงินเดือน ' + label, source: 'payroll', source_id: sid, by, lines })
+  return { posted: true, expense: earned }
+}
 api.post('/payroll/close', financeOnly, (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.body?.period) ? req.body.period : currentPeriod()
   const rows = computePayroll(period)
   const total = rows.reduce((s, p) => s + netOf(p), 0)
   db.prepare('INSERT INTO payroll_runs (period,data,total,created,by) VALUES (?,?,?,?,?) ON CONFLICT(period) DO UPDATE SET data=excluded.data,total=excluded.total,created=excluded.created,by=excluded.by')
     .run(period, JSON.stringify(rows), total, todayTH(), req.user.name)
-  audit(req, 'ปิดงวดเงินเดือน', periodLabelTH(period))
-  res.json({ ok: true, period, periodLabel: periodLabelTH(period), locked: true, rows })
+  let journal = null
+  try { journal = postPayrollJournal(period, rows, req.user.name) } catch (e) { journal = { posted: false, error: e.message } }
+  audit(req, 'ปิดงวดเงินเดือน', `${periodLabelTH(period)}${journal?.posted ? ' · ลงบัญชีแล้ว' : ''}`)
+  res.json({ ok: true, period, periodLabel: periodLabelTH(period), locked: true, rows, journal })
 })
 // สรุป Retention สะสมต่อคน — "แต่ละคนหักไปแล้วเท่าไหร่ / ครบ 5,000 หรือยัง"
 // paid = ยอดยกมา + ผลรวมที่หักในทุกงวดที่ปิดแล้ว (ยังไม่นับงวดที่ยังไม่ปิด)
