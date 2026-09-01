@@ -91,7 +91,7 @@ export default function PaymentVoucher({ payment, payeeAddr, note, onClose }: { 
         <div style={{ fontSize: 11 }}>ตัวอักษร: <b>({bahtText(payment.net)})</b></div>
 
         {/* ลายเซ็นผู้อนุมัติ (ตามจำนวนที่ตั้ง) */}
-        <ApproverSigns approval={payment.approval} firstLabel="ผู้ตรวจสอบ/อนุมัติ" />
+        <ApproverSigns approval={payment.approval} makerLabel="ผู้จัดทำ/ผู้จ่าย" />
       </div>
     </div>
   )

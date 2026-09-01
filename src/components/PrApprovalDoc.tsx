@@ -13,15 +13,6 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
   const rejected = pr.status === 'ปฏิเสธ'
   const items = pr.items && pr.items.length ? pr.items : [{ desc: pr.item, qty: 0, unit: '', price: pr.amount }]
   const catLabel = ({ house: 'ตัวบ้าน', carport: 'โรงจอดรถ', road: 'ถนน/รั้ว' } as Record<string, string>)[pr.category || ''] || pr.category || ''
-  const Sig = ({ role, name, sig, date }: { role: string; name?: string | null; sig?: string | null; date?: string | null }) => (
-    <div style={{ flex: 1, textAlign: 'center' }}>
-      <div style={{ height: 40, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>{sig && <img src={sig} alt="" style={{ maxHeight: 38, maxWidth: 150, objectFit: 'contain' }} />}</div>
-      <div style={{ borderBottom: '1px dotted #666', margin: '0 10px 5px' }} />
-      <div style={{ fontSize: 10.5 }}>ลงชื่อ {role}</div>
-      <div style={{ fontSize: 10.5, color: '#5C6770' }}>{name || ''}</div>
-      <div style={{ fontSize: 10, color: '#94A0A8', marginTop: 2 }}>วันที่ {date || '..../..../....'}</div>
-    </div>
-  )
   return (
     <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
       <div className="no-print" style={{ maxWidth: 760, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -104,18 +95,12 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
         </div>
         <div style={{ border: bd, borderTop: 'none', padding: '5px 8px', fontSize: 10.5 }}>หมายเหตุ ................................................................................................................................................</div>
 
-        {/* ลายเซ็น 3 ช่อง */}
-        <div style={{ display: 'flex', gap: 16, marginTop: 14 }}>
-          <Sig role="ผู้ขอซื้อ/ขอจ้าง" name={pr.by} sig={pr.requester_sig} date={pr.date} />
-          <Sig role="ฝ่ายจัดซื้อ/จัดจ้าง" />
-          <Sig role="ผู้ตรวจสอบ" />
-        </div>
-
         {/* ผลการพิจารณา */}
         <div style={{ border: bd, marginTop: 12, padding: '6px 10px', fontSize: 11.5 }}>
           <b>ผลการพิจารณา</b> &nbsp;&nbsp; {chk(approved)} อนุมัติ &nbsp;&nbsp;&nbsp; {chk(rejected)} ไม่อนุมัติ
         </div>
-        <ApproverSigns approval={pr.approval} />
+        {/* ลายเซ็น: ผู้ขอซื้อ 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติ 3 */}
+        <ApproverSigns approval={pr.approval} makerLabel="ผู้ขอซื้อ/ขอจ้าง" makerName={pr.by} makerSig={pr.requester_sig} makerDate={pr.date} />
 
         {!approved && !rejected && (
           <div className="no-print" style={{ marginTop: 14, fontSize: 12, color: '#B7791F', background: '#F6ECD6', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>

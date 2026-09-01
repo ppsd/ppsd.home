@@ -100,7 +100,7 @@ export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName
 
         {/* ลายเซ็น */}
         <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11.5 }}>ในนาม <b>{company.name}</b></div>
-        <ApproverSigns approval={po.approval} firstLabel="ผู้สั่งซื้อ/อนุมัติ" />
+        <ApproverSigns approval={po.approval} makerLabel="ผู้สั่งซื้อ" makerName={po.by} />
       </div>
     </div>
   )

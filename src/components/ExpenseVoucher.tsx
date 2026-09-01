@@ -92,7 +92,7 @@ export default function ExpenseVoucher({ exp, houseName, onClose }: { exp: ApiEx
 
         <div style={{ marginTop: 8, fontSize: 11 }}>ตัวอักษร: <b>({bahtText(total)})</b></div>
 
-        <ApproverSigns approval={exp.approval} firstLabel="ผู้ตรวจสอบ/อนุมัติ" />
+        <ApproverSigns approval={exp.approval} makerLabel="ผู้จัดทำ" />
       </div>
     </div>
   )

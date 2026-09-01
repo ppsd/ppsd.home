@@ -1,19 +1,30 @@
 import type { Approval } from '../store'
 
-// ช่องลายเซ็นผู้อนุมัติหลายคน (ตามจำนวนที่ตั้ง) — ดึงชื่อ/ลายเซ็น/วันที่จริงจากการอนุมัติในระบบ
-export default function ApproverSigns({ approval, firstLabel }: { approval?: Approval; firstLabel?: string }) {
-  const req = approval?.required || 3
+// บล็อกลายเซ็นมาตรฐานของเอกสารอนุมัติทุกใบ: ผู้จัดทำ/ผู้สั่ง 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติ 3 ช่อง (รวม 5)
+// 3 ช่องผู้อนุมัติดึงชื่อ/ลายเซ็น/วันที่จริงจากผู้ที่กดอนุมัติในระบบ (approval.approvals) — ว่างไว้ถ้ายังไม่อนุมัติ
+export default function ApproverSigns({ approval, makerLabel = 'ผู้จัดทำ', makerName, makerSig, makerDate, checker = true }: {
+  approval?: Approval
+  makerLabel?: string
+  makerName?: string | null
+  makerSig?: string | null
+  makerDate?: string | null
+  checker?: boolean
+}) {
   const appr = approval?.approvals || []
-  const slots = Array.from({ length: req }, (_, i) => appr[i])
+  const slots: { label: string; name?: string | null; sig?: string | null; date?: string | null }[] = [
+    { label: makerLabel, name: makerName, sig: makerSig, date: makerDate },
+    ...(checker ? [{ label: 'ผู้ตรวจสอบ', name: '', sig: null, date: '' }] : []),
+    ...[0, 1, 2].map((i) => ({ label: `ผู้อนุมัติคนที่ ${i + 1}`, name: appr[i]?.approver, sig: appr[i]?.sig, date: appr[i]?.date })),
+  ]
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-around', gap: 20, marginTop: 34, fontSize: 11.5 }}>
-      {slots.map((a, i) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 30, fontSize: 10.5 }}>
+      {slots.map((s, i) => (
         <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ height: 40, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>{a?.sig ? <img src={a.sig} alt="" style={{ maxHeight: 38, maxWidth: 150, objectFit: 'contain' }} /> : null}</div>
-          <div style={{ borderTop: '1px dotted #666', margin: '0 8px 5px' }} />
-          <div>{i === 0 && firstLabel ? firstLabel : `ผู้อนุมัติคนที่ ${i + 1}`}</div>
-          <div style={{ color: '#5C6770' }}>{a?.approver || ''}</div>
-          <div style={{ fontSize: 10, color: '#94A0A8', marginTop: 2 }}>{a?.date || 'วันที่ ..../..../....'}</div>
+          <div style={{ height: 38, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>{s.sig ? <img src={s.sig} alt="" style={{ maxHeight: 36, maxWidth: 120, objectFit: 'contain' }} /> : null}</div>
+          <div style={{ borderTop: '1px dotted #666', margin: '0 4px 5px' }} />
+          <div style={{ lineHeight: 1.2 }}>ลงชื่อ {s.label}</div>
+          <div style={{ color: '#5C6770', minHeight: 13 }}>{s.name || ''}</div>
+          <div style={{ fontSize: 9.5, color: '#94A0A8', marginTop: 2 }}>{s.date || 'วันที่ ..../..../....'}</div>
         </div>
       ))}
     </div>
