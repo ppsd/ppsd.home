@@ -569,14 +569,19 @@ for (const e of db.prepare('SELECT id,pin FROM employees').all())
 
 // เชื่อมผู้ใช้เดิม ↔ พนักงาน HR: สร้างพนักงานให้ผู้ใช้ที่ยังไม่มีชื่อตรงกันใน HR (idempotent — ทำครั้งเดียวต่อคน)
 {
-  const usersNoEmp = db.prepare('SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM employees e WHERE e.name = u.name)').all()
+  const usersNoEmp = db.prepare('SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM employees e WHERE TRIM(e.name) = TRIM(u.name))').all()
   if (usersNoEmp.length) {
     let maxNum = db.prepare("SELECT code FROM employees WHERE code LIKE 'EMP-%'").all()
       .reduce((m, r) => Math.max(m, parseInt(String(r.code).slice(4), 10) || 0), 0)
     const ins = db.prepare(`INSERT INTO employees (code,name,role,dept,start,status,base,ot,sso,tax,pay_type,
       sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,user_id)
       VALUES (?,?,?,?,?,?,0,0,0,0,'รายเดือน',30,0,3,0,3,0,?,NULL,0,0,?)`)
+    // กันสร้างซ้ำ: ไม่สร้างพนักงานชื่อที่มีอยู่แล้ว หรือชื่อที่เพิ่งสร้างในรอบนี้ (เช่น ผู้ใช้ 2 คนชื่อเดียวกัน)
+    const seen = new Set(db.prepare('SELECT TRIM(name) n FROM employees').all().map((r) => r.n))
     for (const u of usersNoEmp) {
+      const key = String(u.name || '').trim()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
       maxNum += 1
       ins.run('EMP-' + String(maxNum).padStart(3, '0'), u.name, u.position || '', u.position || '', '', 'ทดลองงาน', u.pin || null, u.id)
     }

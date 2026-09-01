@@ -232,6 +232,15 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const removeEmp = async (id: number, name: string) => {
     if (window.confirm(`ลบพนักงาน "${name}" ออกจากระบบ?\n(จะไม่ถูกคิดในสรุปเงินเดือนอีก)`)) await app.deleteEmployee(id)
   }
+  const dedupEmployees = async () => {
+    if (!window.confirm('รวมพนักงานที่ชื่อซ้ำกันให้เหลือชื่อละ 1 รายการ?\nระบบจะเก็บรายการที่ข้อมูลครบที่สุด แล้วย้ายประวัติ (ลงเวลา/เบิก/หัก ฯลฯ) มารวมไว้ให้')) return
+    try {
+      const r = await apiClient.post<{ mergedGroups: number; removed: number }>('/employees/dedup', {})
+      await app.reloadData('employees', '/employees')
+      if (payrollMeta?.period) app.viewPayrollPeriod(payrollMeta.period)
+      alert(r.removed ? `รวมข้อมูลซ้ำแล้ว: ${r.mergedGroups} ชื่อ · ลบรายการซ้ำ ${r.removed} รายการ` : 'ไม่พบพนักงานที่ชื่อซ้ำกัน')
+    } catch (e) { alert((e as Error).message) }
+  }
   const resetPin = async (id: number, name: string) => {
     const pin = window.prompt(`ตั้ง PIN ลงเวลาใหม่ของ "${name}" (ตัวเลข 4 หลัก)`)
     if (pin == null) return
@@ -300,7 +309,8 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <span style={{ fontSize: 13.5, fontWeight: 600 }}>พนักงานทั้งหมด</span>
               <span className="num" style={{ fontSize: 11.5, color: '#94A0A8' }}>{empList.length}/{employees.length}</span>
               <input value={empQuery} onChange={(e) => { setEmpQuery(e.target.value); setEmpPage(1) }} placeholder="ค้นหาชื่อ/รหัส/ตำแหน่ง" style={{ ...field, padding: '6px 10px', fontSize: 12.5, width: 200 }} />
-              <button onClick={() => { setEditId(null); setEmp(blankEmp); setEmpSig(''); setEmpErr(''); setAddingEmp((v) => !v) }} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มพนักงาน</button>
+              {isAdmin && <button onClick={dedupEmployees} title="รวมพนักงานที่ชื่อซ้ำกันให้เหลือชื่อละ 1 รายการ" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #E8D6AD', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🧹 ล้างข้อมูลซ้ำ</button>}
+              <button onClick={() => { setEditId(null); setEmp(blankEmp); setEmpSig(''); setEmpErr(''); setAddingEmp((v) => !v) }} className="btn-primary" style={{ marginLeft: isAdmin ? 0 : 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มพนักงาน</button>
             </div>
             {empPinShown && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 18px', background: '#E2F1EA', borderBottom: '1px solid #CDE3D6', fontSize: 12.5, color: '#1C5B3A', fontWeight: 500 }}>
