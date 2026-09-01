@@ -112,7 +112,7 @@ function Statements() {
     table{width:100%;border-collapse:collapse;margin-top:6px}td{padding:3px 6px;border-bottom:1px solid #EEF1F4}
     .n{text-align:right;font-variant-numeric:tabular-nums}.h td{font-weight:700;color:#30506A;border-bottom:1px solid #ccc;padding-top:8px}
     .s td{font-weight:700;border-top:2px solid #999;border-bottom:none}.doc{page-break-after:always}
-    @media print{@page{margin:14mm}}</style></head><body>
+    @page{size:A4;margin:14mm}</style></head><body>
     <div style="border-bottom:2px solid #1E2E3B;padding-bottom:8px"><h1>${company.name}</h1><div class="sub">${company.address}<br>${company.taxId}</div></div>
     <div class="doc"><div class="tit">งบกำไรขาดทุน</div><div class="sub">สำหรับงวด ${period}</div><table>
       <tr class="h"><td>รายได้</td><td class="n"></td></tr>${is ? rowsHtml(is.revenue) : ''}<tr class="s"><td>รวมรายได้</td><td class="n">${money(is?.totalRevenue || 0)}</td></tr>

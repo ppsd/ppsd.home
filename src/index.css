@@ -145,6 +145,10 @@ input::placeholder {
 }
 
 /* ---- print: show only the document sheet ---- */
+@page {
+  size: A4;
+  margin: 10mm;
+}
 @media print {
   body * {
     visibility: hidden;
@@ -152,6 +156,11 @@ input::placeholder {
   .print-area,
   .print-area * {
     visibility: visible;
+  }
+  /* พิมพ์สีตามจริง (แถบสี/ยอดรวมสีเหลือง ฯลฯ) */
+  .print-area {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   .printdoc-backdrop {
     position: absolute !important;
