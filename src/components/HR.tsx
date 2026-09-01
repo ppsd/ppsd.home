@@ -117,6 +117,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
       apiClient.get<typeof annual>('/payroll/annual?year=' + new Date().getFullYear()).then(setAnnual).catch(() => setAnnual(null))
       loadAdvances()
       loadRetention()
+      loadDeds()
     } /* eslint-disable-next-line */
   }, [tab, salaryOk, payrollMeta?.period, payrollMeta?.locked])
   useEffect(() => {
@@ -130,6 +131,21 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     catch (e) { setAdvErr((e as Error).message) }
   }
   const delAdvance = async (id: number) => { try { await apiClient.del('/salary-advances/' + id); loadAdvances() } catch (e) { alert((e as Error).message) } }
+  // หักอื่นๆ ต่อคนต่องวด (พร้อมเหตุผล) → หักจากเงินเดือนงวดนั้น
+  interface DedRow { id: number; emp_code: string; emp_name: string; date: string; amount: number; reason: string }
+  const [deds, setDeds] = useState<DedRow[]>([])
+  const [dedForm, setDedForm] = useState({ emp_code: '', amount: '', reason: '' })
+  const [dedErr, setDedErr] = useState('')
+  const loadDeds = () => { const p = payrollMeta?.period; if (p) apiClient.get<DedRow[]>('/deductions?period=' + p).then(setDeds).catch(() => setDeds([])) }
+  const refreshPayroll = () => { if (payrollMeta?.period) app.viewPayrollPeriod(payrollMeta.period) } // ให้ยอดสุทธิในตารางอัปเดตทันที
+  const submitDed = async () => {
+    setDedErr('')
+    if (!dedForm.emp_code || !dedForm.amount) { setDedErr('เลือกพนักงานและกรอกจำนวนเงิน'); return }
+    if (!dedForm.reason.trim()) { setDedErr('กรุณากรอกเหตุผลการหัก'); return }
+    try { await apiClient.post('/deductions', { emp_code: dedForm.emp_code, amount: unMoney(dedForm.amount), reason: dedForm.reason, period: payrollMeta?.period }); setDedForm({ emp_code: '', amount: '', reason: '' }); loadDeds(); refreshPayroll() }
+    catch (e) { setDedErr((e as Error).message) }
+  }
+  const delDed = async (id: number) => { try { await apiClient.del('/deductions/' + id); loadDeds(); refreshPayroll() } catch (e) { alert((e as Error).message) } }
   // วันหยุดบริษัท
   const isAdmin = user?.role === 'admin'
   const [holidays, setHolidays] = useState<{ id: number; date: string; name: string }[]>([])
@@ -433,15 +449,15 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
               <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={{ ...th, textAlign: 'right' }}>ฐานเงิน</th><th style={{ ...th, textAlign: 'right' }}>OT</th>
               <th style={{ ...th, textAlign: 'right' }}>ปกส.</th><th style={{ ...th, textAlign: 'right' }}>ภาษี</th>
-              <th style={{ ...th, textAlign: 'right' }}>หักลา/ขาด</th><th style={{ ...th, textAlign: 'right' }}>Retention <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>กยศ <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>เบิกล่วงหน้า</th><th style={{ ...th, textAlign: 'right' }}>สุทธิ</th>
+              <th style={{ ...th, textAlign: 'right' }}>หักลา/ขาด</th><th style={{ ...th, textAlign: 'right' }}>Retention <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>กยศ <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>เบิกล่วงหน้า</th><th style={{ ...th, textAlign: 'right' }}>หักอื่นๆ</th><th style={{ ...th, textAlign: 'right' }}>สุทธิ</th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>สลิป</th>
             </tr></thead>
             <tbody>
-              {(payroll || []).length === 0 && <tr><td colSpan={11} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีพนักงาน</td></tr>}
+              {(payroll || []).length === 0 && <tr><td colSpan={12} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีพนักงาน</td></tr>}
               {(payroll || []).map((p) => {
                 const deduct = p.leave_deduct || 0
-                const ret = p.retention ?? 0, loan = p.student_loan || 0, adv = p.advance || 0
-                const net = (p.base + p.ot) - p.sso - p.tax - deduct - ret - loan - adv
+                const ret = p.retention ?? 0, loan = p.student_loan || 0, adv = p.advance || 0, otherDed = p.other_deduct || 0
+                const net = (p.base + p.ot) - p.sso - p.tax - deduct - ret - loan - adv - otherDed
                 return (
                   <tr key={p.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                     <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{p.name} <span style={{ fontSize: 11, color: '#94A0A8' }}>({p.pay_type || 'รายเดือน'})</span>{p.exempt_attendance ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#2E7D55', background: '#E7F3EC', padding: '1px 7px', borderRadius: 20 }}>ไม่ต้องลงเวลา</span> : null}</td>
@@ -501,6 +517,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                         )}
                     </td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: adv ? '#C24036' : '#94A0A8' }}>{adv ? '-' + baht(adv) : '฿0'}</td>
+                    <td className="num" style={{ ...td, textAlign: 'right', color: otherDed ? '#C24036' : '#94A0A8' }}>{otherDed ? '-' + baht(otherDed) : '฿0'}</td>
                     <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#2E7D55' }}>{baht(net)}</td>
                     <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                       <button onClick={() => onPrint('slip', { ...p, period: payrollMeta?.periodLabel })} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>พิมพ์</button>
@@ -550,6 +567,47 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   </div>
                 </div>
               ))}
+          </div>
+
+          {/* หักอื่นๆ (พร้อมเหตุผล) — หักจากเงินเดือนงวดนี้ */}
+          <div style={{ borderTop: '8px solid #F3F5F7' }}>
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>หักอื่นๆ (งวด {payrollMeta?.periodLabel}) <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5 }}>· ใส่จำนวนเงิน + เหตุผล → หักออกจากยอดสุทธิของงวดนี้ (เช่น ค่าปรับ ของเสียหาย เบิกของ)</span></div>
+            <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
+              <select style={{ ...field, width: 'auto', minWidth: 180 }} value={dedForm.emp_code} onChange={(e) => setDedForm({ ...dedForm, emp_code: e.target.value })}>
+                <option value="">เลือกพนักงาน</option>
+                {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
+              </select>
+              <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนที่หัก" value={dedForm.amount} onChange={(v) => setDedForm({ ...dedForm, amount: v })} />
+              <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="เหตุผลการหัก *" value={dedForm.reason} onChange={(e) => setDedForm({ ...dedForm, reason: e.target.value })} />
+              <button onClick={submitDed} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#C24036', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึกหัก</button>
+            </div>
+            {dedErr && <div style={{ fontSize: 12.5, color: '#C24036', padding: '8px 18px' }}>{dedErr}</div>}
+            {deds.length === 0
+              ? <div style={{ padding: 20, textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ยังไม่มีการหักอื่นๆ ในงวดนี้</div>
+              : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
+                    <th style={{ ...th, padding: '9px 18px' }}>พนักงาน</th>
+                    <th style={th}>เหตุผล</th>
+                    <th style={{ ...th, textAlign: 'right' }}>วันที่</th>
+                    <th style={{ ...th, textAlign: 'right' }}>จำนวนที่หัก</th>
+                    <th style={{ ...th, textAlign: 'center', padding: '9px 18px' }}></th>
+                  </tr></thead>
+                  <tbody>
+                    {deds.map((d) => (
+                      <tr key={d.id} style={{ borderTop: '1px solid #EEF1F4' }}>
+                        <td style={{ ...td, padding: '9px 18px', fontWeight: 500 }}>{d.emp_name}</td>
+                        <td style={{ ...td, color: '#5C6770' }}>{d.reason}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right', color: '#94A0A8' }}>{d.date}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#C24036' }}>-{baht(d.amount)}</td>
+                        <td style={{ ...td, textAlign: 'center', padding: '9px 18px' }}>
+                          <button onClick={() => delDed(d.id)} title="ยกเลิกรายการหักนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
           </div>
 
           {/* สรุป Retention สะสมต่อคน — หักไปแล้วเท่าไหร่ / ครบ 5,000 หรือยัง */}

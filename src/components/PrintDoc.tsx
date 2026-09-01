@@ -45,6 +45,7 @@ function SlipBody({ slip }: { slip?: ApiPayroll }) {
   const retention = slip?.retention ?? 0
   const loan = slip?.student_loan ?? 0
   const advance = slip?.advance ?? 0
+  const otherDeduct = slip?.other_deduct ?? 0
   // เงินประกันผลงานสะสม (บริษัทเก็บไว้ คืนเมื่อครบเงื่อนไข)
   const retPaid = slip?.retention_paid ?? 0
   const retCap = slip?.retention_cap ?? 5000
@@ -52,7 +53,7 @@ function SlipBody({ slip }: { slip?: ApiPayroll }) {
   const retComplete = retPaid >= retCap
   const retRemain = Math.max(0, retCap - retPaid)
   const gross = base + ot
-  const totalDeduct = sso + tax + leave + retention + loan + advance
+  const totalDeduct = sso + tax + leave + retention + loan + advance + otherDeduct
   const net = gross - totalDeduct
   return (
     <>
@@ -84,6 +85,7 @@ function SlipBody({ slip }: { slip?: ApiPayroll }) {
               {retention > 0 && <tr><td style={lblTd}>หักเงินประกันผลงาน</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(retention)}</td></tr>}
               {loan > 0 && <tr><td style={lblTd}>หัก กยศ</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(loan)}</td></tr>}
               {advance > 0 && <tr><td style={lblTd}>หักเบิกล่วงหน้า</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(advance)}</td></tr>}
+              {otherDeduct > 0 && <tr><td style={lblTd}>หักอื่นๆ</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(otherDeduct)}</td></tr>}
               <tr><td style={{ ...lblTd, fontWeight: 700, color: '#1C2730' }}>รวมรายการหัก</td><td className="num" style={{ ...valTd, textAlign: 'right', fontWeight: 700 }}>{fmt2(totalDeduct)}</td></tr>
             </tbody>
           </table>

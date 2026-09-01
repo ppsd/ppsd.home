@@ -945,6 +945,8 @@ function computePayroll(period) {
     const tax = isDaily ? taxMonthlyOf(basePay, sso, allowanceOf({ spouse: e.spouse, children: e.children })) : e.tax
     // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนสิ้นเดือน
     const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a
+    // หักอื่นๆ (พร้อมเหตุผล) ที่บันทึกในงวดนี้
+    const otherDeduct = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM deductions WHERE emp_code=? AND period=?').get(e.code, period).a
     // retention: หักเดือนละ (e.retention) แต่ไม่เกินเพดานที่เหลือ — ครบ 5,000 แล้วหักเป็น 0 เอง
     const opening = e.retention_opening || 0
     const paidBefore = retentionPaidBefore(e.code, opening, period)
@@ -953,7 +955,7 @@ function computePayroll(period) {
     return {
       ...e, ot, sso, tax, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
       daily_rate: dailyRate, work_days: workDays, exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
-      retention, student_loan: e.student_loan || 0, advance,
+      retention, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct,
       retention_cap: RETENTION_CAP, retention_opening: opening,
       retention_monthly: monthly, // ยอดที่ตั้งให้หักต่อเดือน (แก้ได้) — ต่างจาก retention ที่ถูกจำกัดด้วยเพดาน
       retention_paid: paidBefore + retention, // ยอดสะสมถึงงวดนี้ (รวมงวดนี้)
@@ -961,7 +963,7 @@ function computePayroll(period) {
     }
   })
 }
-const netOf = (p) => p.base + p.ot - p.sso - p.tax - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0)
+const netOf = (p) => p.base + p.ot - p.sso - p.tax - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 
 // payroll is salary data → finance only. Supports a period and locked snapshots.
 api.get('/payroll', requireSalary, (req, res) => {
@@ -1082,6 +1084,33 @@ api.get('/salary-advances/summary', requireSalary, (req, res) => {
   }).sort((a, b) => a.emp_name.localeCompare(b.emp_name, 'th'))
   res.json({ period, rows })
 })
+
+// ===== หักอื่นๆ ต่อคนต่องวด (พร้อมเหตุผล) → หักจากเงินเดือนงวดนั้น =====
+api.get('/deductions', requireSalary, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  res.json(db.prepare('SELECT * FROM deductions WHERE period=? ORDER BY id DESC').all(period))
+})
+api.post('/deductions', financeOnly, (req, res) => {
+  const b = req.body || {}
+  const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
+  if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
+  const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod()
+  const amount = Number(b.amount) || 0
+  if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงินที่หัก' })
+  const reason = String(b.reason || '').trim()
+  if (!reason) return res.status(400).json({ error: 'กรุณากรอกเหตุผลการหัก' })
+  const info = db.prepare('INSERT INTO deductions (emp_code,emp_name,period,date,amount,reason,by,created) VALUES (?,?,?,?,?,?,?,?)')
+    .run(emp.code, emp.name, period, todayTH(), amount, reason, req.user.name, todayTH())
+  audit(req, 'หักเงินอื่นๆ', `${emp.name} ${amount.toLocaleString()} บาท (${reason})`)
+  res.status(201).json(db.prepare('SELECT * FROM deductions WHERE id=?').get(info.lastInsertRowid))
+})
+api.delete('/deductions/:id', financeOnly, (req, res) => {
+  const d = db.prepare('SELECT * FROM deductions WHERE id=?').get(req.params.id)
+  db.prepare('DELETE FROM deductions WHERE id=?').run(req.params.id)
+  if (d) audit(req, 'ยกเลิกการหักอื่นๆ', `${d.emp_name} ${d.amount}`)
+  res.json({ ok: true })
+})
+
 // สรุปเงินเดือนทั้งปี — รวมจ่ายสุทธิ + ประกันสังคมสะสม (จากงวดที่ปิดแล้ว)
 api.get('/payroll/annual', requireSalary, (req, res) => {
   const year = /^\d{4}$/.test(req.query.year) ? req.query.year : String(new Date().getFullYear())

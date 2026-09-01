@@ -14,7 +14,8 @@ const C_ORANGE = '#F8CBAD' // ป้ายกลุ่ม อัตราปก�
 const C_NET = '#FCE4D6'    // เงินได้สุทธิ
 const C_TOTAL = '#FFF2A8'  // แถวรวม (เหลือง)
 
-const netOf = (p: ApiPayroll) => (p.base || 0) + (p.ot || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0)
+const otherOf = (p: ApiPayroll) => (p.leave_deduct || 0) + (p.other_deduct || 0) // คอลัมน์ "อื่นๆ" = หักลา/ขาด + หักอื่นๆ
+const netOf = (p: ApiPayroll) => (p.base || 0) + (p.ot || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 
 export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows: ApiPayroll[]; periodLabel: string; onClose: () => void }) {
   const data = rows.filter((r) => r.status !== 'ลาออก')
@@ -30,7 +31,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
   const T = {
     wage: sum(wageOf), other: sum((p) => p.ot || 0), income: sum(incomeOf), sso: sum((p) => p.sso || 0),
     tax: sum((p) => p.tax || 0), advance: sum((p) => p.advance || 0), debt: sum((p) => p.student_loan || 0),
-    misc: sum((p) => p.leave_deduct || 0), ret: sum((p) => p.retention || 0), net: sum(netOf),
+    misc: sum(otherOf), ret: sum((p) => p.retention || 0), net: sum(netOf),
   }
 
   const th: React.CSSProperties = { border: bd, padding: '3px 4px', fontSize: 8.5, fontWeight: 700, textAlign: 'center', lineHeight: 1.15, verticalAlign: 'middle' }
@@ -109,7 +110,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                     <td style={{ ...tdR, background: C_SSO }} className="num">{f2z(p.tax || 0)}</td>
                     <td style={{ ...tdR, color: '#C0392B' }} className="num">{f2z(p.advance || 0)}</td>
                     <td style={tdR} className="num">{f2z(p.student_loan || 0)}</td>
-                    <td style={tdR} className="num">{f2z(p.leave_deduct || 0)}</td>
+                    <td style={tdR} className="num">{f2z(otherOf(p))}</td>
                     <td style={{ ...tdR, color: '#C0392B' }} className="num">{f2z(p.retention || 0)}</td>
                     <td style={{ ...tdR, background: C_NET, fontWeight: 700 }} className="num">{f2z(netOf(p))}</td>
                     <td style={tdC}>{p.nickname || ''}</td>

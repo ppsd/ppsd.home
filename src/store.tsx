@@ -130,6 +130,7 @@ export interface ApiPayroll extends ApiEmployee {
   retention?: number
   student_loan?: number
   advance?: number
+  other_deduct?: number
   period?: string
   retention_cap?: number
   retention_opening?: number

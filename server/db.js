@@ -187,6 +187,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS salary_advances (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   emp_code TEXT, emp_name TEXT, period TEXT, date TEXT, amount INTEGER, note TEXT, by TEXT, created TEXT
 )`)
+// รายการหักอื่นๆ ต่อคนต่องวด (พร้อมเหตุผล) — หักออกจากเงินเดือนงวดนั้น
+db.exec(`CREATE TABLE IF NOT EXISTS deductions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  emp_code TEXT, emp_name TEXT, period TEXT, date TEXT, amount INTEGER, reason TEXT, by TEXT, created TEXT
+)`)
 ensureColumn('employees', 'bank_name', 'TEXT') // ธนาคารสำหรับโอนเงินเดือน
 ensureColumn('employees', 'bank_acct', 'TEXT') // เลขบัญชีธนาคาร (ไฟล์จ่ายเงินเดือนผ่านธนาคาร)
 ensureColumn('employees', 'tax_id', 'TEXT') // เลขประจำตัวผู้เสียภาษี (ภงด.1)
