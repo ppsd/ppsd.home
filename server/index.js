@@ -939,10 +939,10 @@ function computePayroll(period) {
     const absent = (isDaily || exempt) ? 0 : absentDaysInMonth(e, period)
     const daily = isDaily ? dailyRate : Math.round((e.base || 0) / 26)
     const deductDays = isDaily ? 0 : (rejected + unpaid + absent)
-    // ประกันสังคม + ภาษี ของรายวัน คิดจาก "รายได้จริงในงวด" (ค่าแรง×วันทำงาน) ไม่ใช่ค่าแรง×26
-    // (กันบั๊ก: รายวันค่าแรงสูง/ทำงาน 0 วัน แล้วภาษีพุ่งเพราะคูณ 26)
+    // ประกันสังคมของรายวัน คิดจาก "รายได้จริงในงวด" (ค่าแรง×วันทำงาน) ไม่ใช่ค่าแรง×26
+    // รายวัน "ไม่หักภาษี" (คิดเฉพาะประกันสังคม) — ภาษีเป็น 0
     const sso = isDaily ? ssoOf(basePay) : e.sso
-    const tax = isDaily ? taxMonthlyOf(basePay, sso, allowanceOf({ spouse: e.spouse, children: e.children })) : e.tax
+    const tax = isDaily ? 0 : e.tax
     // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนสิ้นเดือน
     const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a
     // หักอื่นๆ (พร้อมเหตุผล) ที่บันทึกในงวดนี้
