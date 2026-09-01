@@ -12,6 +12,7 @@ import WhtDoc from './WhtDoc'
 import PaymentVoucher from './PaymentVoucher'
 import ApprovalBar from './ApprovalBar'
 import GoodsReceipt from './GoodsReceipt'
+import MaterialAutocomplete from './MaterialAutocomplete'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '10px 14px' }
@@ -391,7 +392,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <option value="">เลือกผู้ขาย *</option>
                   {vendors.map((v) => <option key={v.id} value={v.name}>{v.name}{v.credit_days ? ` (เครดิต ${v.credit_days} วัน)` : ''}</option>)}
                 </select>
-                <input style={prField} placeholder="รายการสินค้า *" value={poForm.item} onChange={(e) => setPoForm({ ...poForm, item: e.target.value })} />
+                <MaterialAutocomplete style={prField} placeholder="รายการสินค้า * (พิมพ์เพื่อค้นหา)" value={poForm.item} materials={materialPrices} onChange={(v) => setPoForm((f) => ({ ...f, item: v }))} onSelect={(m) => setPoForm((f) => ({ ...f, item: m.name }))} />
                 <MoneyInput style={prField} placeholder="มูลค่า (บาท)" value={poForm.amount} onChange={(v) => setPoForm({ ...poForm, amount: v })} />
                 <input style={prField} placeholder="อ้างอิง PR (ถ้ามี)" value={poForm.pr_no} onChange={(e) => setPoForm({ ...poForm, pr_no: e.target.value })} />
               </div>
