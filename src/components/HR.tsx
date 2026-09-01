@@ -102,10 +102,12 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     finally { setLoanSaving(null) }
   }
   // แก้จำนวนวันทำงาน (รายวัน เช่น แม่บ้าน) ตรงตารางเงินเดือน → คิดเงินอัตโนมัติ
+  // รองรับครึ่งวัน เช่น 17.5 วัน (parseFloat เก็บจุดทศนิยม)
+  const parseDays = (v: string) => { const n = parseFloat(String(v).replace(/[^\d.]/g, '')); return isNaN(n) ? 0 : n }
   const [wdSaving, setWdSaving] = useState<number | null>(null)
   const saveWorkDays = async (id: number, raw: string) => {
     setWdSaving(id)
-    try { await app.updateEmployee(id, { work_days: Number(String(raw).replace(/[^\d]/g, '')) || 0 }) }
+    try { await app.updateEmployee(id, { work_days: parseDays(raw) }) }
     catch (e) { alert((e as Error).message) }
     finally { setWdSaving(null) }
   }
@@ -288,7 +290,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <select style={field} value={emp.pay_type} onChange={(e) => setEmp({ ...emp, pay_type: e.target.value })}><option>รายเดือน</option><option>รายวัน</option></select>
                   <MoneyInput style={field} placeholder={emp.pay_type === 'รายวัน' ? 'ค่าแรง/วัน (บาท)' : 'เงินเดือน (บาท)'} value={emp.base} onChange={(v) => setEmp({ ...emp, base: v })} />
                   {emp.pay_type === 'รายวัน' && (
-                    <input style={field} type="number" min={0} placeholder="วันทำงาน/เดือน (เช่น แม่บ้าน)" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="รายวัน: เงิน = ค่าแรง/วัน × วันทำงาน" />
+                    <input style={field} type="number" min={0} step={0.5} placeholder="วันทำงาน/เดือน (เช่น แม่บ้าน) — ใส่ครึ่งวันได้ เช่น 17.5" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="รายวัน: เงิน = ค่าแรง/วัน × วันทำงาน (ใส่ครึ่งวันได้ เช่น 17.5)" />
                   )}
                   <input style={field} type="date" value={emp.start} onChange={(e) => setEmp({ ...emp, start: e.target.value })} />
                   <select style={field} value={emp.status} onChange={(e) => setEmp({ ...emp, status: e.target.value })}>{['ทดลองงาน', 'ทำงาน', 'ลาออก'].map((s) => <option key={s}>{s}</option>)}</select>
@@ -443,12 +445,12 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                             ? `${p.work_days || 0} วัน × ${baht(p.daily_rate || 0)}`
                             : (
                               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }} title="กรอกจำนวนวันทำงาน → คิดเงินอัตโนมัติ">
-                                <input key={p.id + '-wd-' + (p.work_days || 0)} type="text" inputMode="numeric" defaultValue={String(p.work_days || 0)}
+                                <input key={p.id + '-wd-' + (p.work_days || 0)} type="text" inputMode="decimal" defaultValue={String(p.work_days || 0)}
                                   disabled={wdSaving === p.id}
                                   onFocus={(e) => e.currentTarget.select()}
                                   onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                                  onBlur={(e) => { if ((Number(e.target.value.replace(/[^\d]/g, '')) || 0) !== (p.work_days || 0)) saveWorkDays(p.id, e.target.value) }}
-                                  style={{ width: 40, textAlign: 'right', fontFamily: 'inherit', fontSize: 11, padding: '1px 4px', border: '1px solid #D8DFE5', borderRadius: 5, background: '#fff', color: '#1C2730' }} />
+                                  onBlur={(e) => { if (parseDays(e.target.value) !== (p.work_days || 0)) saveWorkDays(p.id, e.target.value) }}
+                                  style={{ width: 46, textAlign: 'right', fontFamily: 'inherit', fontSize: 11, padding: '1px 4px', border: '1px solid #D8DFE5', borderRadius: 5, background: '#fff', color: '#1C2730' }} />
                                 <span>วัน × {baht(p.daily_rate || 0)}</span>
                               </span>
                             )}
