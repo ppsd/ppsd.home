@@ -13,6 +13,7 @@ import { baht, unMoney } from '../data'
 import { useApp } from '../store'
 import MoneyInput from './MoneyInput'
 import Pager from './Pager'
+import PayrollSummaryDoc from './PayrollSummaryDoc'
 import EfilingList from './EfilingList'
 import EmpSignatureCell from './EmpSignatureCell'
 import LocationTrack from './LocationTrack'
@@ -143,6 +144,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const thMonth = (iso: string) => { const m = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']; const [y, mo, d] = iso.split('-'); return `${Number(d)} ${m[Number(mo) - 1]} ${(Number(y) + 543) % 100}` }
 
   // payroll period runs (closed months)
+  const [showSummary, setShowSummary] = useState(false)
   const [runs, setRuns] = useState<{ period: string; periodLabel: string }[]>([])
   useEffect(() => { if (salaryOk) apiClient.get<{ period: string; periodLabel: string }[]>('/payroll/runs').then(setRuns).catch(() => {}) }, [salaryOk, payrollMeta?.locked])
   const periodOptions = (() => {
@@ -162,7 +164,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   })()
 
   // ----- employee form -----
-  const blankEmp = { name: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '' }
+  const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '' }
   const [addingEmp, setAddingEmp] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [emp, setEmp] = useState(blankEmp)
@@ -185,7 +187,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   }
   const startEdit = (e: typeof employees[number]) => {
     setEditId(e.id)
-    setEmp({ ...blankEmp, name: e.name, role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0), backup_code: (e as { backup_code?: string }).backup_code || '' })
+    setEmp({ ...blankEmp, name: e.name, prefix: (e as { prefix?: string }).prefix || '', nickname: (e as { nickname?: string }).nickname || '', role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0), backup_code: (e as { backup_code?: string }).backup_code || '' })
     setEmpSig(''); setAddingEmp(true); setEmpErr('')
   }
   const submitEmp = async () => {
@@ -285,7 +287,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             {addingEmp && (
               <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+                  <select style={field} value={emp.prefix} onChange={(e) => setEmp({ ...emp, prefix: e.target.value })} title="คำนำหน้า (ใช้ในใบสรุปการจ่ายค่าจ้าง)"><option value="">คำนำหน้า</option><option>นาย</option><option>นาง</option><option>นางสาว</option></select>
                   <input style={field} placeholder="ชื่อ-สกุล *" value={emp.name} onChange={(e) => setEmp({ ...emp, name: e.target.value })} />
+                  <input style={field} placeholder="ชื่อเล่น (เช่น พี่แมน)" value={emp.nickname} onChange={(e) => setEmp({ ...emp, nickname: e.target.value })} />
                   <select style={field} value={emp.role} onChange={(e) => setEmp({ ...emp, role: e.target.value })}>{posList.map((p) => <option key={p}>{p}</option>)}</select>
                   <select style={field} value={emp.pay_type} onChange={(e) => setEmp({ ...emp, pay_type: e.target.value })}><option>รายเดือน</option><option>รายวัน</option></select>
                   <MoneyInput style={field} placeholder={emp.pay_type === 'รายวัน' ? 'ค่าแรง/วัน (บาท)' : 'เงินเดือน (บาท)'} value={emp.base} onChange={(v) => setEmp({ ...emp, base: v })} />
@@ -396,6 +400,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
         )}
         {tab === 'payroll' && salaryOk && (
           <>
+          {showSummary && payroll && payrollMeta && <PayrollSummaryDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowSummary(false)} />}
           {annual && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
               <div><div style={{ fontSize: 12, color: '#5C6770' }}>รวมจ่ายเงินเดือนทั้งปี {new Date().getFullYear() + 543}</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#1C2730', marginTop: 3 }}>{baht(annual.net)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>จากงวดที่ปิดแล้ว {annual.months} เดือน</div></div>
@@ -413,6 +418,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               ? <span style={{ fontSize: 11, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', padding: '3px 10px', borderRadius: 20 }}>ปิดงวดแล้ว 🔒</span>
               : <span style={{ fontSize: 11, fontWeight: 600, color: '#B7791F', background: '#F6ECD6', padding: '3px 10px', borderRadius: 20 }}>ยังไม่ปิดงวด (คำนวณสด)</span>}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              {payrollMeta && payroll && (
+                <button onClick={() => setShowSummary(true)} title="พิมพ์ใบสรุปการจ่ายค่าจ้าง/เงินเดือนทั้งบริษัท (แนวนอน)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 ใบสรุปการจ่ายค่าจ้าง</button>
+              )}
               {payrollMeta && (
                 <button onClick={() => apiClient.download('/payroll/bank-file?period=' + payrollMeta.period).catch((e) => alert((e as Error).message))} title="ดาวน์โหลดไฟล์จ่ายเงินเดือนผ่านธนาคาร (CSV)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ไฟล์จ่ายผ่านธนาคาร</button>
               )}

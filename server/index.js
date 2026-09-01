@@ -796,7 +796,7 @@ api.post('/accounting/rebuild', financeOnly, (req, res) => {
 
 // ---------- HR ----------
 // list excludes the PIN; includes signature + computed sso/tax for display
-const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code'
+const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname'
 api.get('/employees', (req, res) => {
   const rows = db.prepare(`SELECT ${EMP_COLS} FROM employees ORDER BY id`).all()
   const showSalary = canSeeSalary(req.user)
@@ -835,8 +835,8 @@ api.post('/employees', canWrite, (req, res) => {
   const sig = typeof b.signature === 'string' && b.signature.startsWith('data:image/') ? b.signature : null
   const info = db
     .prepare(`INSERT INTO employees (code,name,role,dept,start,status,base,ot,sso,tax,pay_type,
-              sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code)
-              VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+              sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname)
+              VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(code, b.name, b.role || '', b.dept || b.role || '', b.start || todayTH(), b.status || 'ทดลองงาน',
       base, sso, tax, payType,
       Number(b.sick_quota) || 30, Number(b.sick_used) || 0,
@@ -845,7 +845,7 @@ api.post('/employees', canWrite, (req, res) => {
       b.bank_name || '', b.bank_acct || '', b.tax_id || '',
       b.retention != null && b.retention !== '' ? Number(b.retention) : 500, Number(b.student_loan) || 0,
       b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : 0,
-      Number(b.work_days) || 0, b.backup_code || '')
+      Number(b.work_days) || 0, b.backup_code || '', b.prefix || '', b.nickname || '')
   audit(req, 'เพิ่มพนักงาน', b.name)
   const out = db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(info.lastInsertRowid)
   res.status(201).json({ ...out, pin: pinPlain }) // return the PIN once so it can be shown to the user
@@ -867,9 +867,9 @@ api.put('/employees/:id', canWrite, (req, res) => {
   const retentionOpening = b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : e.retention_opening
   const workDays = b.work_days != null && b.work_days !== '' ? Number(b.work_days) : e.work_days
   const backupCode = b.backup_code != null ? b.backup_code : e.backup_code
-  db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=? WHERE id=?')
+  db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=?, prefix=?, nickname=? WHERE id=?')
     .run(b.name ?? e.name, b.role ?? e.role, b.dept ?? e.dept, b.status ?? e.status, payType, base, sso, tax, spouse, children,
-      b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, e.id)
+      b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, b.prefix ?? e.prefix, b.nickname ?? e.nickname, e.id)
   audit(req, 'แก้ไขพนักงาน', b.name ?? e.name)
   res.json(db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(e.id))
 })

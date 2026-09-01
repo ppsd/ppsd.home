@@ -116,6 +116,8 @@ export interface ApiEmployee {
   tax_id?: string
   bank_name?: string
   bank_acct?: string
+  prefix?: string
+  nickname?: string
 }
 export interface ApiPayroll extends ApiEmployee {
   base: number
