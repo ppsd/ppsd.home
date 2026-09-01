@@ -23,21 +23,19 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
         </div>
       </div>
 
-      <div className="print-area" style={{ maxWidth: 760, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '26px 32px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
+      <div className="print-area doc-sheet" style={{ maxWidth: 760, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
         {/* หัว */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 46, height: 46, objectFit: 'cover' }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{company.name}</div>
-            <div style={{ fontSize: 10, color: '#333' }}>{company.address}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, borderBottom: '2px solid #1E2E3B', paddingBottom: 10 }}>
+          <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 52, height: 52, objectFit: 'cover' }} />
+          <div style={{ flex: 1, lineHeight: 1.45 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{company.name}</div>
+            <div style={{ fontSize: 10, color: '#5C6770' }}>{company.address}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 10.5, color: '#333' }}>เลขที่ <b className="num">{pr.no}</b></div>
+            <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '.02em' }}>ใบขอซื้อ / ขอจ้าง</div>
+            <div style={{ fontSize: 10, color: '#5C6770' }}>Purchase Requisition</div>
+            <div style={{ fontSize: 10.5, color: '#333', marginTop: 3 }}>เลขที่ <b className="num">{pr.no}</b></div>
           </div>
-        </div>
-        <div style={{ textAlign: 'center', marginTop: 4 }}>
-          <div style={{ fontSize: 17, fontWeight: 700 }}>ใบขอซื้อ / ขอจ้าง</div>
-          <div style={{ fontSize: 11, color: '#333' }}>( PR : Purchase Requisition )</div>
         </div>
 
         {/* ข้อมูลหัว */}
@@ -95,18 +93,20 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
         </div>
         <div style={{ border: bd, borderTop: 'none', padding: '5px 8px', fontSize: 10.5 }}>หมายเหตุ ................................................................................................................................................</div>
 
-        {/* ผลการพิจารณา */}
-        <div style={{ border: bd, marginTop: 12, padding: '6px 10px', fontSize: 11.5 }}>
-          <b>ผลการพิจารณา</b> &nbsp;&nbsp; {chk(approved)} อนุมัติ &nbsp;&nbsp;&nbsp; {chk(rejected)} ไม่อนุมัติ
-        </div>
-        {/* ลายเซ็น: ผู้ขอซื้อ 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติ 3 */}
-        <ApproverSigns approval={pr.approval} makerLabel="ผู้ขอซื้อ/ขอจ้าง" makerName={pr.by} makerSig={pr.requester_sig} makerDate={pr.date} />
-
-        {!approved && !rejected && (
-          <div className="no-print" style={{ marginTop: 14, fontSize: 12, color: '#B7791F', background: '#F6ECD6', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>
-            ใบขอซื้อนี้ยัง “{pr.status}” — ลายเซ็นผู้อนุมัติจะปรากฏเมื่อกดอนุมัติ
+        {/* ท้ายเอกสาร: ผลการพิจารณา + ลายเซ็น (ดันไปอยู่ล่างสุดของหน้า) */}
+        <div className="doc-foot">
+          <div style={{ border: bd, marginTop: 14, padding: '6px 10px', fontSize: 11.5 }}>
+            <b>ผลการพิจารณา</b> &nbsp;&nbsp; {chk(approved)} อนุมัติ &nbsp;&nbsp;&nbsp; {chk(rejected)} ไม่อนุมัติ
           </div>
-        )}
+          {/* ลายเซ็น: ผู้ขอซื้อ 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติ 3 */}
+          <ApproverSigns approval={pr.approval} makerLabel="ผู้ขอซื้อ/ขอจ้าง" makerName={pr.by} makerSig={pr.requester_sig} makerDate={pr.date} />
+          <div style={{ textAlign: 'center', fontSize: 9, color: '#B0B8BF', marginTop: 14, borderTop: '1px solid #EEF1F4', paddingTop: 6 }}>เอกสารจัดทำโดยระบบ PPSD Construction ERP</div>
+          {!approved && !rejected && (
+            <div className="no-print" style={{ marginTop: 12, fontSize: 12, color: '#B7791F', background: '#F6ECD6', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>
+              ใบขอซื้อนี้ยัง “{pr.status}” — ลายเซ็นผู้อนุมัติจะปรากฏเมื่อกดอนุมัติ
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

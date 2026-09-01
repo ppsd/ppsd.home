@@ -26,7 +26,7 @@ export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName
         </div>
       </div>
 
-      <div className="print-area" style={{ maxWidth: 780, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 12 }}>
+      <div className="print-area doc-sheet" style={{ maxWidth: 780, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 12 }}>
         {/* หัวเอกสาร */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 54, height: 54, objectFit: 'cover' }} />
@@ -98,9 +98,12 @@ export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName
           </div>
         </div>
 
-        {/* ลายเซ็น */}
-        <div style={{ marginTop: 10, textAlign: 'center', fontSize: 11.5 }}>ในนาม <b>{company.name}</b></div>
-        <ApproverSigns approval={po.approval} makerLabel="ผู้สั่งซื้อ" makerName={po.by} />
+        {/* ลายเซ็น (ท้ายหน้า) */}
+        <div className="doc-foot">
+          <div style={{ marginTop: 12, textAlign: 'center', fontSize: 11.5 }}>ในนาม <b>{company.name}</b></div>
+          <ApproverSigns approval={po.approval} makerLabel="ผู้สั่งซื้อ" makerName={po.by} />
+          <div style={{ textAlign: 'center', fontSize: 9, color: '#B0B8BF', marginTop: 14, borderTop: '1px solid #EEF1F4', paddingTop: 6 }}>เอกสารจัดทำโดยระบบ PPSD Construction ERP</div>
+        </div>
       </div>
     </div>
   )

@@ -22,7 +22,7 @@ export default function PaymentVoucher({ payment, payeeAddr, note, onClose }: { 
         </div>
       </div>
 
-      <div className="print-area" style={{ maxWidth: 740, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '28px 32px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
+      <div className="print-area doc-sheet" style={{ maxWidth: 740, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
         {/* หัว */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 50, height: 50, objectFit: 'cover' }} />
@@ -90,8 +90,11 @@ export default function PaymentVoucher({ payment, payeeAddr, note, onClose }: { 
         <div style={{ marginTop: 8, fontSize: 11 }}>วันที่จ่ายเงิน <span className="num">{payment.date}</span></div>
         <div style={{ fontSize: 11 }}>ตัวอักษร: <b>({bahtText(payment.net)})</b></div>
 
-        {/* ลายเซ็นผู้อนุมัติ (ตามจำนวนที่ตั้ง) */}
-        <ApproverSigns approval={payment.approval} makerLabel="ผู้จัดทำ/ผู้จ่าย" />
+        {/* ลายเซ็น (ท้ายหน้า) */}
+        <div className="doc-foot">
+          <ApproverSigns approval={payment.approval} makerLabel="ผู้จัดทำ/ผู้จ่าย" />
+          <div style={{ textAlign: 'center', fontSize: 9, color: '#B0B8BF', marginTop: 14, borderTop: '1px solid #EEF1F4', paddingTop: 6 }}>เอกสารจัดทำโดยระบบ PPSD Construction ERP</div>
+        </div>
       </div>
     </div>
   )

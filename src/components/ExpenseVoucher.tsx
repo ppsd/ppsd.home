@@ -25,7 +25,7 @@ export default function ExpenseVoucher({ exp, houseName, onClose }: { exp: ApiEx
         </div>
       </div>
 
-      <div className="print-area" style={{ maxWidth: 740, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '28px 32px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
+      <div className="print-area doc-sheet" style={{ maxWidth: 740, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
         {/* หัว */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 50, height: 50, objectFit: 'cover' }} />
@@ -92,7 +92,10 @@ export default function ExpenseVoucher({ exp, houseName, onClose }: { exp: ApiEx
 
         <div style={{ marginTop: 8, fontSize: 11 }}>ตัวอักษร: <b>({bahtText(total)})</b></div>
 
-        <ApproverSigns approval={exp.approval} makerLabel="ผู้จัดทำ" />
+        <div className="doc-foot">
+          <ApproverSigns approval={exp.approval} makerLabel="ผู้จัดทำ" />
+          <div style={{ textAlign: 'center', fontSize: 9, color: '#B0B8BF', marginTop: 14, borderTop: '1px solid #EEF1F4', paddingTop: 6 }}>เอกสารจัดทำโดยระบบ PPSD Construction ERP</div>
+        </div>
       </div>
     </div>
   )

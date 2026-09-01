@@ -177,6 +177,16 @@ input::placeholder {
   .no-print {
     display: none !important;
   }
+  /* เอกสารทางการ: ให้เต็มหน้า A4 แล้วดันช่องลายเซ็น/ท้ายเอกสารไปอยู่ล่างสุด (สัดส่วนสวย) */
+  .doc-sheet {
+    box-sizing: border-box !important;
+    min-height: 272mm !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .doc-foot {
+    margin-top: auto !important;
+  }
   /* full-page printable (รายงาน) — lift to page top so it prints clean as PDF */
   .page-print {
     position: absolute !important;
