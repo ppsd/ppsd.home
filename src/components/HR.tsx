@@ -120,13 +120,13 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     } /* eslint-disable-next-line */
   }, [tab, salaryOk, payrollMeta?.period, payrollMeta?.locked])
   useEffect(() => {
-    if (advForm.emp_code) apiClient.get<typeof advLimit>('/salary-advances/limit?emp_code=' + advForm.emp_code).then(setAdvLimit).catch(() => setAdvLimit(null))
+    if (advForm.emp_code) apiClient.get<typeof advLimit>('/salary-advances/limit?emp_code=' + advForm.emp_code + (payrollMeta?.period ? '&period=' + payrollMeta.period : '')).then(setAdvLimit).catch(() => setAdvLimit(null))
     else setAdvLimit(null)
-  }, [advForm.emp_code, advances])
+  }, [advForm.emp_code, advances, payrollMeta?.period])
   const submitAdvance = async () => {
     setAdvErr('')
     if (!advForm.emp_code || !advForm.amount) { setAdvErr('เลือกพนักงานและกรอกจำนวนเงิน'); return }
-    try { await apiClient.post('/salary-advances', { emp_code: advForm.emp_code, amount: unMoney(advForm.amount), note: advForm.note }); setAdvForm({ emp_code: '', amount: '', note: '' }); loadAdvances() }
+    try { await apiClient.post('/salary-advances', { emp_code: advForm.emp_code, amount: unMoney(advForm.amount), note: advForm.note, period: payrollMeta?.period }); setAdvForm({ emp_code: '', amount: '', note: '' }); loadAdvances() }
     catch (e) { setAdvErr((e as Error).message) }
   }
   const delAdvance = async (id: number) => { try { await apiClient.del('/salary-advances/' + id); loadAdvances() } catch (e) { alert((e as Error).message) } }

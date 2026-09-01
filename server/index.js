@@ -1011,10 +1011,22 @@ function advanceLimit(emp, period) {
   const monthEnd = isoDate(new Date(yy, mm, 0))
   const today = todayISO()
   const upTo = monthEnd < today ? monthEnd : today // นับได้ไม่เกินวันนี้ (วันที่เบิก)
-  // วันทำงาน = วันที่มีบัตรตอก + วันที่ปรับปรุงเวลาอนุมัติแล้ว (ลืมตอกแต่มาจริง) — ไม่นับซ้ำ
-  const punchDates = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(emp.code, monthStart, upTo).map((r) => r.date))
-  for (const a of db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(emp.name, monthStart, upTo)) punchDates.add(a.date)
-  const worked = punchDates.size
+  let worked
+  if (NO_ATTENDANCE_ROLES.includes(emp.role)) {
+    // ไม่ต้องลงเวลา (CEO/ผู้จัดการ) → ได้เงินเต็มโดยไม่ต้องตอกบัตร → นับวันทำงานตามปฏิทิน (จ.–ส. เว้นวันหยุดบริษัท) ตั้งแต่ต้นงวด/วันเริ่มงาน ถึงวันนี้
+    let from = monthStart
+    const empStart = emp.start && /^\d{4}-\d{2}-\d{2}$/.test(emp.start) ? emp.start : null
+    if (empStart && empStart > from) from = empStart
+    const holi = new Set(db.prepare('SELECT date FROM holidays WHERE date>=? AND date<=?').all(from, upTo).map((h) => h.date))
+    let n = 0
+    for (const d of eachDay(from, upTo)) { const wd = new Date(d + 'T00:00:00').getDay(); if (wd !== 0 && !holi.has(d)) n++ }
+    worked = Math.min(n, ADVANCE_DAY_BASE) // ไม่เกินมาตรฐาน 26 วัน (เบิกได้ไม่เกินครึ่งเดือน)
+  } else {
+    // วันทำงาน = วันที่มีบัตรตอก + วันที่ปรับปรุงเวลาอนุมัติแล้ว (ลืมตอกแต่มาจริง) — ไม่นับซ้ำ
+    const punchDates = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(emp.code, monthStart, upTo).map((r) => r.date))
+    for (const a of db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(emp.name, monthStart, upTo)) punchDates.add(a.date)
+    worked = punchDates.size
+  }
   const daily = emp.pay_type === 'รายวัน' ? emp.base : Math.round((emp.base || 0) / ADVANCE_DAY_BASE)
   return { worked, daily, limit: Math.floor(daily * worked / ADVANCE_DAILY_DIVISOR) }
 }
@@ -1035,7 +1047,7 @@ api.post('/salary-advances', financeOnly, (req, res) => {
   const b = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
-  const period = currentPeriod()
+  const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod() // งวดที่เลือก (เช่น ปิดงวด ส.ค. ต้นเดือน ก.ย.)
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
   const { worked, limit } = advanceLimit(emp, period)
