@@ -180,7 +180,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   })()
 
   // ----- employee form -----
-  const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '' }
+  const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '', no_sso: false }
   const [addingEmp, setAddingEmp] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [emp, setEmp] = useState(blankEmp)
@@ -203,7 +203,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   }
   const startEdit = (e: typeof employees[number]) => {
     setEditId(e.id)
-    setEmp({ ...blankEmp, name: e.name, prefix: (e as { prefix?: string }).prefix || '', nickname: (e as { nickname?: string }).nickname || '', role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0), backup_code: (e as { backup_code?: string }).backup_code || '' })
+    setEmp({ ...blankEmp, name: e.name, prefix: (e as { prefix?: string }).prefix || '', nickname: (e as { nickname?: string }).nickname || '', no_sso: !!(e as { no_sso?: number }).no_sso, role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0), backup_code: (e as { backup_code?: string }).backup_code || '' })
     setEmpSig(''); setAddingEmp(true); setEmpErr('')
   }
   const submitEmp = async () => {
@@ -330,6 +330,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <span style={{ fontSize: 12.5, fontWeight: 600 }}>ลดหย่อนภาษี:</span>
                   <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}><input type="checkbox" checked={emp.spouse} onChange={(e) => setEmp({ ...emp, spouse: e.target.checked })} /> มีคู่สมรส (60,000)</label>
                   <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>บุตร <input type="number" min={0} value={emp.children} onChange={(e) => setEmp({ ...emp, children: e.target.value })} style={{ ...field, width: 56, padding: '6px 8px' }} /> คน (คนละ 30,000)</label>
+                  <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: '#C0852C' }} title="ติ๊กถ้าคนนี้ไม่อยู่ในระบบประกันสังคม (จะไม่หัก ปกส.)"><input type="checkbox" checked={emp.no_sso} onChange={(e) => setEmp({ ...emp, no_sso: e.target.checked })} /> ไม่หักประกันสังคม</label>
                 </div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, margin: '14px 0 3px' }}>ข้อมูลจ่ายเงินเดือน / ภาษี</div>
                 <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>ใช้สร้างไฟล์จ่ายเงินเดือนผ่านธนาคาร และแบบ ภ.ง.ด.1</div>

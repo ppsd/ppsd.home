@@ -195,6 +195,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS deductions (
 ensureColumn('employees', 'bank_name', 'TEXT') // ธนาคารสำหรับโอนเงินเดือน
 ensureColumn('employees', 'bank_acct', 'TEXT') // เลขบัญชีธนาคาร (ไฟล์จ่ายเงินเดือนผ่านธนาคาร)
 ensureColumn('employees', 'tax_id', 'TEXT') // เลขประจำตัวผู้เสียภาษี (ภงด.1)
+ensureColumn('employees', 'no_sso', 'INTEGER') // 1 = ไม่หักประกันสังคม (บางคนไม่อยู่ในระบบ ปกส.)
 ensureColumn('employees', 'prefix', 'TEXT')   // คำนำหน้า (นาย/นาง/นางสาว) — ใช้ในใบสรุปการจ่ายค่าจ้าง
 ensureColumn('employees', 'nickname', 'TEXT') // ชื่อเล่น/ชื่อที่เรียก — ใช้ในใบสรุปการจ่ายค่าจ้าง
 // งวดที่ปิดแล้ว (เก็บแล้ว/จ่ายแล้ว) ให้ paid = เต็มจำนวน · ที่เหลือ = 0

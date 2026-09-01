@@ -73,9 +73,9 @@ function allowanceOf(emp) {
 }
 // คำนวณประกันสังคม/ภาษี ของพนักงานทุกคนใหม่ตอนบูต (เผื่อสูตรเปลี่ยน เช่น เพดาน ปกส.)
 try {
-  for (const e of db.prepare('SELECT id,base,pay_type,sso,tax,spouse,children FROM employees').all()) {
+  for (const e of db.prepare('SELECT id,base,pay_type,sso,tax,spouse,children,no_sso FROM employees').all()) {
     const mBase = monthlyBaseOf(e.base, e.pay_type)
-    const sso = ssoOf(mBase)
+    const sso = e.no_sso ? 0 : ssoOf(mBase)
     const tax = taxMonthlyOf(mBase, sso, allowanceOf({ spouse: e.spouse, children: e.children }))
     if (sso !== e.sso || tax !== e.tax) db.prepare('UPDATE employees SET sso=?, tax=? WHERE id=?').run(sso, tax, e.id)
   }
@@ -796,7 +796,7 @@ api.post('/accounting/rebuild', financeOnly, (req, res) => {
 
 // ---------- HR ----------
 // list excludes the PIN; includes signature + computed sso/tax for display
-const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname'
+const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname,no_sso'
 api.get('/employees', (req, res) => {
   const rows = db.prepare(`SELECT ${EMP_COLS} FROM employees ORDER BY id`).all()
   const showSalary = canSeeSalary(req.user)
@@ -827,7 +827,8 @@ api.post('/employees', canWrite, (req, res) => {
   const q = leaveQuota(b.start)
   const base = Number(b.base) || 0
   const mBase = monthlyBaseOf(base, payType)
-  const sso = ssoOf(mBase)
+  const noSso = b.no_sso ? 1 : 0
+  const sso = noSso ? 0 : ssoOf(mBase)
   const spouse = b.spouse ? 1 : 0
   const children = Number(b.children) || 0
   const tax = taxMonthlyOf(mBase, sso, allowanceOf({ spouse, children }))
@@ -835,8 +836,8 @@ api.post('/employees', canWrite, (req, res) => {
   const sig = typeof b.signature === 'string' && b.signature.startsWith('data:image/') ? b.signature : null
   const info = db
     .prepare(`INSERT INTO employees (code,name,role,dept,start,status,base,ot,sso,tax,pay_type,
-              sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname)
-              VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+              sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname,no_sso)
+              VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(code, b.name, b.role || '', b.dept || b.role || '', b.start || todayTH(), b.status || 'ทดลองงาน',
       base, sso, tax, payType,
       Number(b.sick_quota) || 30, Number(b.sick_used) || 0,
@@ -845,7 +846,7 @@ api.post('/employees', canWrite, (req, res) => {
       b.bank_name || '', b.bank_acct || '', b.tax_id || '',
       b.retention != null && b.retention !== '' ? Number(b.retention) : 500, Number(b.student_loan) || 0,
       b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : 0,
-      Number(b.work_days) || 0, b.backup_code || '', b.prefix || '', b.nickname || '')
+      Number(b.work_days) || 0, b.backup_code || '', b.prefix || '', b.nickname || '', noSso)
   audit(req, 'เพิ่มพนักงาน', b.name)
   const out = db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(info.lastInsertRowid)
   res.status(201).json({ ...out, pin: pinPlain }) // return the PIN once so it can be shown to the user
@@ -860,16 +861,17 @@ api.put('/employees/:id', canWrite, (req, res) => {
   const spouse = b.spouse != null ? (b.spouse ? 1 : 0) : e.spouse
   const children = b.children != null && b.children !== '' ? Number(b.children) : e.children
   const mBase = monthlyBaseOf(base, payType)
-  const sso = ssoOf(mBase)
+  const noSso = b.no_sso != null ? (b.no_sso ? 1 : 0) : (e.no_sso || 0)
+  const sso = noSso ? 0 : ssoOf(mBase)
   const tax = taxMonthlyOf(mBase, sso, allowanceOf({ spouse, children }))
   const retention = b.retention != null && b.retention !== '' ? Number(b.retention) : e.retention
   const studentLoan = b.student_loan != null && b.student_loan !== '' ? Number(b.student_loan) : e.student_loan
   const retentionOpening = b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : e.retention_opening
   const workDays = b.work_days != null && b.work_days !== '' ? Number(b.work_days) : e.work_days
   const backupCode = b.backup_code != null ? b.backup_code : e.backup_code
-  db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=?, prefix=?, nickname=? WHERE id=?')
+  db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=?, prefix=?, nickname=?, no_sso=? WHERE id=?')
     .run(b.name ?? e.name, b.role ?? e.role, b.dept ?? e.dept, b.status ?? e.status, payType, base, sso, tax, spouse, children,
-      b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, b.prefix ?? e.prefix, b.nickname ?? e.nickname, e.id)
+      b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, b.prefix ?? e.prefix, b.nickname ?? e.nickname, noSso, e.id)
   audit(req, 'แก้ไขพนักงาน', b.name ?? e.name)
   res.json(db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(e.id))
 })
@@ -941,7 +943,7 @@ function computePayroll(period) {
     const deductDays = isDaily ? 0 : (rejected + unpaid + absent)
     // ประกันสังคมของรายวัน คิดจาก "รายได้จริงในงวด" (ค่าแรง×วันทำงาน) ไม่ใช่ค่าแรง×26
     // รายวัน "ไม่หักภาษี" (คิดเฉพาะประกันสังคม) — ภาษีเป็น 0
-    const sso = isDaily ? ssoOf(basePay) : e.sso
+    const sso = e.no_sso ? 0 : (isDaily ? ssoOf(basePay) : e.sso)
     const tax = isDaily ? 0 : e.tax
     // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนสิ้นเดือน
     const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a

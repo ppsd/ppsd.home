@@ -118,6 +118,7 @@ export interface ApiEmployee {
   bank_acct?: string
   prefix?: string
   nickname?: string
+  no_sso?: number
 }
 export interface ApiPayroll extends ApiEmployee {
   base: number
