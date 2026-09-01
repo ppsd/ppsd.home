@@ -144,9 +144,18 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const [runs, setRuns] = useState<{ period: string; periodLabel: string }[]>([])
   useEffect(() => { if (salaryOk) apiClient.get<{ period: string; periodLabel: string }[]>('/payroll/runs').then(setRuns).catch(() => {}) }, [salaryOk, payrollMeta?.locked])
   const periodOptions = (() => {
+    const TH_MO = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+    const lbl = (p: string) => { const [y, m] = p.split('-').map(Number); return `${TH_MO[m - 1]} ${String((y + 543) % 100).padStart(2, '0')}` }
     const opts = new Map<string, string>()
+    // เดือนปัจจุบัน + ย้อนหลัง 6 เดือน — ให้ปิดงวดของเดือนก่อน ๆ ได้ (เช่น วันที่ 1–2 ก.ย. ปิดงวด ส.ค.)
+    const now = new Date()
+    for (let i = 0; i <= 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const p = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      opts.set(p, lbl(p))
+    }
     if (payrollMeta) opts.set(payrollMeta.period, payrollMeta.periodLabel)
-    for (const r of runs) opts.set(r.period, r.periodLabel)
+    for (const r of runs) opts.set(r.period, r.periodLabel) // งวดที่ปิดแล้ว (ป้ายจากเซิร์ฟเวอร์)
     return [...opts.entries()].sort((a, b) => b[0].localeCompare(a[0]))
   })()
 
