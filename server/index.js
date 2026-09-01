@@ -894,20 +894,24 @@ api.delete('/employees/:id', canWrite, (req, res) => {
   db.prepare('DELETE FROM employees WHERE id=?').run(req.params.id)
   res.json({ ok: true })
 })
-// ล้างพนักงานซ้ำ: รวมรายการที่ชื่อซ้ำกันให้เหลือชื่อละ 1 (เก็บรายการที่ข้อมูลครบสุด) + ย้ายรายการอ้างอิงมาที่รายการที่เก็บไว้
+// ล้างพนักงานซ้ำ: รวมรายการที่ชื่อซ้ำกัน (จับคู่โดยไม่สน "คำนำหน้า" ที่ติดในชื่อ) ให้เหลือชื่อละ 1
+// เก็บรายการที่ข้อมูลครบสุด + ย้ายรายการอ้างอิงมาให้ + แยกคำนำหน้าออกจากชื่อไปใส่ช่อง "คำนำหน้า"
+const EMP_TITLES = ['นางสาว', 'นาง', 'นาย', 'น.ส.', 'ด.ช.', 'ด.ญ.', 'เด็กชาย', 'เด็กหญิง']
+function splitTitle(raw) {
+  const s = String(raw || '').trim().replace(/\s+/g, ' ')
+  for (const t of EMP_TITLES) if (s.startsWith(t)) return { title: t === 'นางสาว' ? 'น.ส.' : t, rest: s.slice(t.length).trim() }
+  return { title: '', rest: s }
+}
 api.post('/employees/dedup', adminOnly, (req, res) => {
   const emps = db.prepare('SELECT * FROM employees').all()
   const groups = {}
   for (const e of emps) {
-    const key = String(e.name || '').trim().replace(/\s+/g, ' ')
+    const key = splitTitle(e.name).rest // จับกลุ่มด้วยชื่อที่ตัดคำนำหน้าออกแล้ว
     if (!key) continue
     ;(groups[key] = groups[key] || []).push(e)
   }
-  // คะแนนความครบของข้อมูล — เก็บรายการที่คะแนนสูงสุดไว้
   const attCount = db.prepare('SELECT COUNT(*) c FROM attendance WHERE emp_code=?')
   const score = (e) => (Number(e.base) > 0 ? 1e9 : 0) + (e.bank_acct ? 1e6 : 0) + (attCount.get(e.code).c * 1e3) + (e.user_id ? 1e2 : 0) + (e.status !== 'ทดลองงาน' ? 10 : 0)
-  let mergedGroups = 0, removed = 0
-  const detail = []
   const repoint = (dupCode, dupName, keepCode, keepName) => {
     for (const [t, cCol, nCol] of [['attendance', 'emp_code', 'emp_name'], ['leaves', 'emp_code', 'emp_name'], ['salary_advances', 'emp_code', 'emp_name'], ['deductions', 'emp_code', 'emp_name'], ['location_log', 'emp_code', 'emp_name'], ['pms_reviews', 'emp_code', 'emp_name'], ['ot', 'emp_code', 'name'], ['work_orders', 'executor_code', 'executor']]) {
       try { db.prepare(`UPDATE ${t} SET ${cCol}=?, ${nCol}=? WHERE ${cCol}=?`).run(keepCode, keepName, dupCode) } catch { /* บางตารางอาจไม่มีคอลัมน์ */ }
@@ -915,25 +919,40 @@ api.post('/employees/dedup', adminOnly, (req, res) => {
     try { db.prepare('UPDATE time_adjustments SET emp_name=? WHERE emp_name=?').run(keepName, dupName) } catch { /* ignore */ }
     try { db.prepare('UPDATE ot SET name=? WHERE name=?').run(keepName, dupName) } catch { /* ignore */ }
   }
+  let mergedGroups = 0, removed = 0, tidied = 0
+  const detail = []
   db.transaction(() => {
-    for (const [key, list] of Object.entries(groups)) {
-      if (list.length < 2) continue
+    for (const [rest, list] of Object.entries(groups)) {
       list.sort((a, b) => score(b) - score(a) || a.id - b.id)
       const keep = list[0]
-      // ถ้าตัวที่เก็บยังไม่ผูกผู้ใช้ แต่ตัวซ้ำมี → ยกการผูกผู้ใช้มาให้ตัวที่เก็บ
-      const dupWithUser = list.slice(1).find((d) => d.user_id && !keep.user_id)
-      if (dupWithUser) db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(dupWithUser.user_id, keep.id)
-      for (const d of list.slice(1)) {
-        repoint(d.code, d.name, keep.code, keep.name)
-        db.prepare('DELETE FROM employees WHERE id=?').run(d.id)
-        removed++
+      // คำนำหน้าของกลุ่มนี้ — เอาจากช่อง prefix ที่ตั้งไว้ หรือจากชื่อที่ติดคำนำหน้า
+      let title = ''
+      for (const e of list) { const p = e.prefix || splitTitle(e.name).title; if (p) { title = p; break } }
+      if (list.length > 1) {
+        const dupWithUser = list.slice(1).find((d) => d.user_id && !keep.user_id)
+        if (dupWithUser) db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(dupWithUser.user_id, keep.id)
+        for (const d of list.slice(1)) {
+          repoint(d.code, d.name, keep.code, keep.name)
+          db.prepare('DELETE FROM employees WHERE id=?').run(d.id)
+          removed++
+        }
+        mergedGroups++
+        detail.push({ name: rest, kept: keep.code, removed: list.slice(1).map((d) => d.code) })
       }
-      mergedGroups++
-      detail.push({ name: key, kept: keep.code, removed: list.slice(1).map((d) => d.code) })
+      // เก็บชื่อให้สะอาด (ตัดคำนำหน้าออก) + ใส่คำนำหน้าในช่อง prefix
+      const newPrefix = keep.prefix || title || ''
+      if (rest !== keep.name || newPrefix !== (keep.prefix || '')) {
+        db.prepare('UPDATE employees SET name=?, prefix=? WHERE id=?').run(rest, newPrefix, keep.id)
+        // อัปเดตชื่อที่ denormalize ไว้ในตารางอ้างอิงให้ตรงกัน
+        for (const [t, cCol, nCol] of [['attendance', 'emp_code', 'emp_name'], ['leaves', 'emp_code', 'emp_name'], ['salary_advances', 'emp_code', 'emp_name'], ['deductions', 'emp_code', 'emp_name'], ['pms_reviews', 'emp_code', 'emp_name']]) {
+          try { db.prepare(`UPDATE ${t} SET ${nCol}=? WHERE ${cCol}=?`).run(rest, keep.code) } catch { /* ignore */ }
+        }
+        tidied++
+      }
     }
   })()
-  audit(req, 'ล้างพนักงานซ้ำ', `รวม ${mergedGroups} ชื่อ · ลบ ${removed} รายการ`)
-  res.json({ ok: true, mergedGroups, removed, detail })
+  audit(req, 'ล้างพนักงานซ้ำ', `รวม ${mergedGroups} ชื่อ · ลบ ${removed} · จัดชื่อ ${tidied}`)
+  res.json({ ok: true, mergedGroups, removed, tidied, detail })
 })
 // ---- Retention: หักสะสมเดือนละ (ค่าที่ตั้งไว้) จนครบเพดาน แล้วหยุดหักเอง ----
 const RETENTION_CAP = 5000 // เพดานเงินประกันผลงานต่อคน

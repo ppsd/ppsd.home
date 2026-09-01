@@ -235,10 +235,12 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const dedupEmployees = async () => {
     if (!window.confirm('รวมพนักงานที่ชื่อซ้ำกันให้เหลือชื่อละ 1 รายการ?\nระบบจะเก็บรายการที่ข้อมูลครบที่สุด แล้วย้ายประวัติ (ลงเวลา/เบิก/หัก ฯลฯ) มารวมไว้ให้')) return
     try {
-      const r = await apiClient.post<{ mergedGroups: number; removed: number }>('/employees/dedup', {})
+      const r = await apiClient.post<{ mergedGroups: number; removed: number; tidied: number }>('/employees/dedup', {})
       await app.reloadData('employees', '/employees')
       if (payrollMeta?.period) app.viewPayrollPeriod(payrollMeta.period)
-      alert(r.removed ? `รวมข้อมูลซ้ำแล้ว: ${r.mergedGroups} ชื่อ · ลบรายการซ้ำ ${r.removed} รายการ` : 'ไม่พบพนักงานที่ชื่อซ้ำกัน')
+      alert((r.removed || r.tidied)
+        ? `เรียบร้อย: รวมชื่อซ้ำ ${r.mergedGroups} ชื่อ · ลบรายการซ้ำ ${r.removed} รายการ · จัดคำนำหน้า/ชื่อ ${r.tidied} รายการ`
+        : 'ไม่พบพนักงานที่ชื่อซ้ำกัน')
     } catch (e) { alert((e as Error).message) }
   }
   const resetPin = async (id: number, name: string) => {
