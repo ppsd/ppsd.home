@@ -9,6 +9,7 @@
     "server": "node server/index.js",
     "build": "tsc && vite build",
     "start": "npm run build && node server/index.js",
+    "test": "node --test server/tests/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

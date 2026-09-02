@@ -10,7 +10,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const dataDir = join(__dirname, 'data')
 mkdirSync(dataDir, { recursive: true })
 
-export const db = new Database(join(dataDir, 'ppsd.sqlite'))
+// PPSD_DB: พาธฐานข้อมูลสำรอง (ใช้ในชุดทดสอบอัตโนมัติ — ไม่แตะข้อมูลจริง)
+export const dbFile = process.env.PPSD_DB || join(dataDir, 'ppsd.sqlite')
+if (process.env.PPSD_DB) mkdirSync(dirname(dbFile), { recursive: true })
+export const db = new Database(dbFile)
 db.pragma('journal_mode = WAL')
 
 db.exec(`

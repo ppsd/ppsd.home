@@ -6,7 +6,8 @@ import SignatureCell from './SignatureCell'
 
 interface AuditRow { id: number; ts: string; user: string; action: string; detail: string }
 interface ResetReq { id: number; username: string; name: string; created: string }
-interface MirrorStatus { at: string; ok: boolean; dir: string; msg?: string }
+interface MirrorStatus { at: string; ok: boolean; dir: string; msg?: string; files_copied?: number }
+interface BackupLast { day: string; at: string; size: number }
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '11px 14px' }
@@ -94,7 +95,8 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const [mirrorDir, setMirrorDir] = useState('')
   const [mirrorStat, setMirrorStat] = useState<MirrorStatus | null>(null)
   const [mirrorBusy, setMirrorBusy] = useState(false)
-  const loadMirror = () => api.get<{ dir: string; status: MirrorStatus | null }>('/backup-mirror').then((r) => { setMirrorDir(r.dir || ''); setMirrorStat(r.status) }).catch(() => {})
+  const [bkLast, setBkLast] = useState<BackupLast | null>(null)
+  const loadMirror = () => api.get<{ dir: string; status: MirrorStatus | null; last?: BackupLast | null }>('/backup-mirror').then((r) => { setMirrorDir(r.dir || ''); setMirrorStat(r.status); setBkLast(r.last || null) }).catch(() => {})
   useEffect(() => { if (users) loadMirror() /* eslint-disable-next-line */ }, [users])
   const saveMirror = async () => {
     setMirrorBusy(true)
@@ -134,7 +136,8 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
       {autoBk.length > 0 && (
         <div style={{ background: '#F2F8F4', border: '1px solid #D8EBDF', borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ fontSize: 12.5, color: '#2E7D55', padding: '9px 14px', borderBottom: '1px solid #D8EBDF' }}>
-            🛡️ สำรองข้อมูลอัตโนมัติทุกวัน (เก็บ {autoBk.length} ชุดล่าสุด · โฟลเดอร์ <code>server/data/backups</code>) — กด “กู้คืน” เพื่อย้อนข้อมูลกลับไปวันนั้น
+            🛡️ สำรองข้อมูลอัตโนมัติทุกวัน — ฐานข้อมูล + ไฟล์แนบ · เก็บรายวัน 30 วัน + ต้นเดือนย้อนหลัง 12 เดือน (โฟลเดอร์ <code>server/data/backups</code>) — กด “กู้คืน” เพื่อย้อนข้อมูลกลับไปวันนั้น
+            {bkLast && <span style={{ marginLeft: 8, fontWeight: 600 }}>· ล่าสุด {bkLast.day} ({(bkLast.size / 1048576).toFixed(1)} MB)</span>}
           </div>
           <div style={{ maxHeight: 200, overflowY: 'auto' }}>
             {autoBk.map((b) => (

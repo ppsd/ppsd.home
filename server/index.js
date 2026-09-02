@@ -2,16 +2,30 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync, appendFileSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
-import { db } from './db.js'
+import { db, dbFile } from './db.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary } from './auth.js'
 import { hashPin, verifyPin } from './security.js'
 import { randomBytes } from 'node:crypto'
+import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// ---- crash log: เขียนสาเหตุลงไฟล์ก่อนปิดตัว (PM2/Task Scheduler จะเปิดใหม่ให้เอง — ดู SERVICE-SETUP.md) ----
+const logsDir = join(__dirname, 'data', 'logs')
+function crashLog(kind, err) {
+  try {
+    mkdirSync(logsDir, { recursive: true })
+    const day = new Date().toISOString().slice(0, 10)
+    appendFileSync(join(logsDir, `error-${day}.log`), `[${new Date().toISOString()}] ${kind}: ${err?.stack || err?.message || err}\n`)
+  } catch { /* อย่าล่มซ้ำเพราะเขียน log ไม่ได้ */ }
+}
+process.on('uncaughtException', (err) => { crashLog('uncaughtException', err); console.error('FATAL:', err); process.exit(1) })
+process.on('unhandledRejection', (err) => { crashLog('unhandledRejection', err); console.error('unhandledRejection:', err) })
+
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '30mb' })) // allow base64 signatures + file uploads
@@ -3457,6 +3471,20 @@ api.get('/notifications', (req, res) => {
       else if (r.due_iso <= soonIso) out.push({ kind: 'po-due', icon: 'warn', title: `PO ${r.no} ใกล้ครบกำหนดชำระ`, sub: `${r.vendor} · ฿${r.amount.toLocaleString('en-US')} · ครบ ${r.due_date}`, page: 'procurement' })
     }
   }
+  // สำรองข้อมูล: เตือนแอดมินเมื่อ backup ค้างเกิน 2 วัน / สำรองนอกเครื่องล้มเหลว / ยังไม่ได้ตั้งสำรองนอกเครื่อง
+  if (req.user.role === 'admin') {
+    try {
+      const last = JSON.parse(getSetting('backup_last', '') || 'null')
+      const cut = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)
+      if (!last || last.day < cut)
+        out.push({ kind: 'backup', icon: 'danger', title: 'ยังไม่มีสำรองข้อมูลล่าสุด (เกิน 2 วัน)', sub: `สำรองล่าสุด: ${last?.day || 'ไม่เคย'} — ไปที่ ผู้ใช้งาน → สำรองข้อมูล`, page: 'users' })
+      const ms = JSON.parse(getSetting('backup_mirror_status', '') || 'null')
+      if (ms && ms.ok === false)
+        out.push({ kind: 'backup', icon: 'warn', title: 'สำรองนอกเครื่องล้มเหลว', sub: `${ms.dir} · ${ms.msg || ''} — เช็คว่าไดรฟ์เสียบอยู่/พาธถูกต้อง`, page: 'users' })
+      else if (!getSetting('backup_mirror_dir', ''))
+        out.push({ kind: 'backup', icon: 'info', title: 'ยังไม่ได้ตั้งสำรองนอกเครื่อง', sub: 'ถ้าเครื่องนี้พัง ข้อมูลจะหายทั้งหมด — ตั้งโฟลเดอร์สำรอง (External/OneDrive/Google Drive) ที่ ผู้ใช้งาน', page: 'users' })
+    } catch { /* ignore */ }
+  }
   // รายการลงบัญชีไม่สำเร็จ — เตือนฝ่ายการเงิน/แอดมิน (หายเองเมื่อลงสำเร็จ)
   if (['admin', 'accounting'].includes(req.user.role)) {
     const ji = db.prepare('SELECT COUNT(*) c FROM journal_issues').get().c
@@ -3621,7 +3649,7 @@ api.get('/dashboard', (req, res) => {
 api.get('/audit', adminOnly, (_req, res) => res.json(db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 300').all()))
 api.get('/backup', adminOnly, (_req, res) => {
   db.pragma('wal_checkpoint(TRUNCATE)')
-  const file = join(__dirname, 'data', 'ppsd.sqlite')
+  const file = dbFile
   if (!existsSync(file)) return res.status(404).json({ error: 'ไม่พบฐานข้อมูล' })
   res.setHeader('Content-Type', 'application/octet-stream')
   res.setHeader('Content-Disposition', `attachment; filename="ppsd-backup-${new Date().toISOString().slice(0, 10)}.sqlite"`)
@@ -3683,7 +3711,7 @@ api.post('/backups/:name/restore', adminOnly, (req, res) => {
   try {
     mkdirSync(backupDir, { recursive: true })
     db.pragma('wal_checkpoint(TRUNCATE)')
-    writeFileSync(join(backupDir, 'ppsd-before-restore.sqlite'), readFileSync(join(__dirname, 'data', 'ppsd.sqlite')))
+    writeFileSync(join(backupDir, 'ppsd-before-restore.sqlite'), readFileSync(dbFile))
   } catch { /* ignore */ }
   const r = restoreFromFile(file)
   if (r.error) return res.status(500).json({ error: r.error })
@@ -3719,39 +3747,70 @@ function lanUrls(port) {
   return urls
 }
 
-// ---------- auto-backup: snapshot the DB daily, keep the last 14 ----------
-const backupDir = join(__dirname, 'data', 'backups')
-// สำเนาสำรองไปโฟลเดอร์นอกเครื่อง (External drive / Google Drive / OneDrive / \\เครื่องอื่น)
-// กันเครื่องเซิร์ฟเวอร์พังแล้วข้อมูลหาย — ตั้งพาธในหน้าผู้ใช้งาน
-function mirrorBackup(srcFile, day) {
-  const dir = getSetting('backup_mirror_dir', '')
-  if (!dir) return
-  try {
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, `ppsd-auto-${day}.sqlite`), readFileSync(srcFile))
-    const mf = readdirSync(dir).filter((f) => f.startsWith('ppsd-auto-')).sort()
-    while (mf.length > 14) unlinkSync(join(dir, mf.shift()))
-    setSetting('backup_mirror_status', JSON.stringify({ at: todayTH(), ok: true, dir }))
-  } catch (e) {
-    setSetting('backup_mirror_status', JSON.stringify({ at: todayTH(), ok: false, dir, msg: e.message }))
-    console.error('mirror-backup failed:', e.message)
+// ---------- auto-backup: ฐานข้อมูล + ไฟล์แนบ ทุกวัน · เก็บรายวัน 30 วัน + ต้นเดือน 12 เดือน ----------
+const backupDir = process.env.PPSD_DB ? join(dirname(dbFile), 'backups') : join(__dirname, 'data', 'backups')
+// เกณฑ์เก็บไฟล์สำรอง: รายวันเก็บ 30 วัน · ไฟล์ของ "วันที่ 1" เก็บยาว 12 เดือน (ไว้ย้อนดูข้ามเดือน)
+function pruneBackups(dir) {
+  const cutDaily = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
+  const cutMonthly = new Date(Date.now() - 366 * 86400000).toISOString().slice(0, 10)
+  for (const f of readdirSync(dir).filter((f) => /^ppsd-auto-\d{4}-\d{2}-\d{2}\.sqlite$/.test(f))) {
+    const day = f.slice(10, 20)
+    const keepMonthly = day.endsWith('-01') && day >= cutMonthly
+    if (day < cutDaily && !keepMonthly) { try { unlinkSync(join(dir, f)) } catch { /* ignore */ } }
   }
 }
-function autoBackup() {
+// สำรอง "ไฟล์แนบ" (ใบส่งของ/เอกสารบ้าน ฯลฯ ใน data/files) — ไฟล์เขียนครั้งเดียวไม่แก้ จึงก๊อปเฉพาะที่ยังไม่มี
+function copyNewFiles(destRoot) {
+  const dest = join(destRoot, 'files')
+  mkdirSync(dest, { recursive: true })
+  if (!existsSync(uploadsDir)) return 0
+  let copied = 0
+  const have = new Set(readdirSync(dest))
+  for (const f of readdirSync(uploadsDir)) {
+    if (have.has(f)) continue
+    try { writeFileSync(join(dest, f), readFileSync(join(uploadsDir, f))); copied++ } catch { /* ignore */ }
+  }
+  return copied
+}
+// สำเนาสำรองไปโฟลเดอร์นอกเครื่อง (External drive / Google Drive / OneDrive / \\เครื่องอื่น)
+// กันเครื่องเซิร์ฟเวอร์พังแล้วข้อมูลหาย — ตั้งพาธในหน้าผู้ใช้งาน
+// ทำใน "process ลูก" พร้อม timeout: ถ้าปลายทางค้าง (network drive หลุด) เซิร์ฟเวอร์หลักต้องไม่ค้างตาม
+function mirrorBackup(srcFile, day) {
+  return new Promise((resolve) => {
+    const dir = getSetting('backup_mirror_dir', '')
+    if (!dir) return resolve(null)
+    execFile(process.execPath, [join(__dirname, 'mirror-copy.js'), srcFile, uploadsDir, dir, day], { timeout: 120000 }, (err, stdout) => {
+      let st
+      if (err) st = { at: todayTH(), ok: false, dir, msg: err.killed ? 'หมดเวลา — ปลายทางไม่ตอบสนอง (ไดรฟ์หลุด/เครือข่ายล่ม?)' : String(err.message || err).slice(0, 300) }
+      else { try { st = { at: todayTH(), dir, ...JSON.parse(String(stdout)) } } catch { st = { at: todayTH(), ok: true, dir } } }
+      setSetting('backup_mirror_status', JSON.stringify(st))
+      if (!st.ok) console.error('mirror-backup failed:', st.msg)
+      resolve(st)
+    })
+  })
+}
+async function autoBackup() {
   try {
     mkdirSync(backupDir, { recursive: true })
     db.pragma('wal_checkpoint(TRUNCATE)')
     const day = new Date().toISOString().slice(0, 10)
     const file = join(backupDir, `ppsd-auto-${day}.sqlite`)
-    writeFileSync(file, readFileSync(join(__dirname, 'data', 'ppsd.sqlite')))
-    // keep only the latest 14 auto-backups
-    const files = readdirSync(backupDir).filter((f) => f.startsWith('ppsd-auto-')).sort()
-    while (files.length > 14) unlinkSync(join(backupDir, files.shift()))
-    mirrorBackup(file, day) // สำเนาไปนอกเครื่องด้วย (ถ้าตั้งไว้)
-  } catch (e) { console.error('auto-backup failed:', e.message) }
+    writeFileSync(file, readFileSync(dbFile))
+    copyNewFiles(backupDir)
+    pruneBackups(backupDir)
+    setSetting('backup_last', JSON.stringify({ day, at: nowTS(), size: statSync(file).size }))
+    await mirrorBackup(file, day) // สำเนาไปนอกเครื่องด้วย (ถ้าตั้งไว้) — ทำใน process ลูก ไม่บล็อกระบบ
+  } catch (e) {
+    console.error('auto-backup failed:', e.message)
+    setSetting('backup_last_error', JSON.stringify({ at: nowTS(), msg: e.message }))
+  }
 }
 autoBackup() // one on boot
-setInterval(autoBackup, 24 * 60 * 60 * 1000) // then daily
+// เช็คทุกชั่วโมง: ถ้าวันนี้ยังไม่มีไฟล์สำรอง (เครื่องเพิ่งเปิด/ข้ามเที่ยงคืน) ให้สำรองทันที
+setInterval(() => {
+  const day = new Date().toISOString().slice(0, 10)
+  if (!existsSync(join(backupDir, `ppsd-auto-${day}.sqlite`))) autoBackup()
+}, 60 * 60 * 1000)
 // list available auto-backups (admin)
 api.get('/backups', adminOnly, (_req, res) => {
   try {
@@ -3761,20 +3820,25 @@ api.get('/backups', adminOnly, (_req, res) => {
 })
 // ---- สำรองนอกเครื่อง: ดู/ตั้งค่าโฟลเดอร์ + สั่งสำรองทันที (admin) ----
 function mirrorStatus() { try { return JSON.parse(getSetting('backup_mirror_status', '') || 'null') } catch { return null } }
-api.get('/backup-mirror', adminOnly, (_req, res) => res.json({ dir: getSetting('backup_mirror_dir', ''), status: mirrorStatus() }))
+function lastBackupInfo() { try { return JSON.parse(getSetting('backup_last', '') || 'null') } catch { return null } }
+api.get('/backup-mirror', adminOnly, (_req, res) => res.json({
+  dir: getSetting('backup_mirror_dir', ''), status: mirrorStatus(), last: lastBackupInfo(),
+  lastError: (() => { try { return JSON.parse(getSetting('backup_last_error', '') || 'null') } catch { return null } })(),
+}))
 api.put('/backup-mirror', adminOnly, (req, res) => {
   const dir = String((req.body || {}).dir || '').trim()
-  if (dir) {
-    try { mkdirSync(dir, { recursive: true }); const t = join(dir, '.ppsd-write-test'); writeFileSync(t, 'ok'); unlinkSync(t) }
-    catch (e) { return res.status(400).json({ error: 'เขียนโฟลเดอร์นี้ไม่ได้ — ตรวจว่าพาธถูกต้อง/ไดรฟ์เสียบอยู่/มีสิทธิ์เขียน (' + e.message + ')' }) }
-  }
-  setSetting('backup_mirror_dir', dir)
-  audit(req, 'ตั้งโฟลเดอร์สำรองนอกเครื่อง', dir || '(ปิดใช้งาน)')
-  res.json({ ok: true, dir })
+  const save = () => { setSetting('backup_mirror_dir', dir); audit(req, 'ตั้งโฟลเดอร์สำรองนอกเครื่อง', dir || '(ปิดใช้งาน)'); res.json({ ok: true, dir }) }
+  if (!dir) return save()
+  // ทดสอบเขียนใน process ลูกพร้อม timeout — พาธที่ค้าง (network drive หลุด) ต้องไม่ทำให้เซิร์ฟเวอร์ค้างทั้งระบบ
+  const testCode = "const fs=require('fs'),p=process.argv[1],j=require('path').join;fs.mkdirSync(p,{recursive:true});const t=j(p,'.ppsd-write-test');fs.writeFileSync(t,'ok');fs.unlinkSync(t)"
+  execFile(process.execPath, ['-e', testCode, dir], { timeout: 10000 }, (err) => {
+    if (err) return res.status(400).json({ error: 'เขียนโฟลเดอร์นี้ไม่ได้ — ตรวจว่าพาธถูกต้อง/ไดรฟ์เสียบอยู่/มีสิทธิ์เขียน (' + (err.killed ? 'ไม่ตอบสนองภายใน 10 วินาที' : String(err.message).slice(0, 200)) + ')' })
+    save()
+  })
 })
-api.post('/backup-mirror/run', adminOnly, (req, res) => {
+api.post('/backup-mirror/run', adminOnly, async (req, res) => {
   if (!getSetting('backup_mirror_dir', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้งโฟลเดอร์สำรองนอกเครื่อง' })
-  autoBackup()
+  await autoBackup()
   audit(req, 'สั่งสำรองนอกเครื่องทันที', getSetting('backup_mirror_dir', ''))
   res.json({ ok: true, status: mirrorStatus() })
 })
