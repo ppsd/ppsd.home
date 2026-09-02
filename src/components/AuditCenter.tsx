@@ -25,6 +25,7 @@ const CTRL_LABELS: Record<string, string> = {
   enforce_quote: 'บล็อกจริง: PO ยอดสูงต้องมีใบเทียบราคาครบ + เลือกผู้ขายก่อน',
   enforce_split: 'บล็อกจริง: สงสัยแตกใบเลี่ยงเกณฑ์ (ปิดไว้ถ้าซื้อหลายใบจากเจ้าเดียวเป็นปกติ)',
   block_dup_pay: 'บล็อกจริง: จ่ายเงินซ้ำ (ผู้รับ + ยอดเท่ากัน)',
+  enforce_approval_flow: 'บล็อกจริง: ต้องอนุมัติ PR ครบก่อนออก PO และอนุมัติ PO ครบก่อนตรวจรับของ',
 }
 
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }

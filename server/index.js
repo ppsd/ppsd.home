@@ -310,6 +310,7 @@ const CONTROL_DEFAULTS = {
   enforce_quote: true, // บล็อก: PO ยอดสูงต้องมีใบเทียบราคาครบ + เลือกผู้ขายก่อน
   enforce_split: false, // บล็อก: สงสัยแตกใบ (ปิดไว้ก่อน—ซื้อหลายใบจากเจ้าเดียวเป็นเรื่องปกติ)
   block_dup_pay: false, // บล็อก: จ่ายเงินซ้ำ (ผู้รับ+ยอดเท่ากัน)
+  enforce_approval_flow: true, // บล็อก: ต้องอนุมัติ PR ครบก่อนออก PO และอนุมัติ PO ครบก่อนตรวจรับของ
 }
 // งวดลูกค้าต้องมีใบตรวจรับที่ผลเป็น "ผ่าน/ผ่านบางส่วน" จึงจะเก็บเงินได้
 function acceptanceOk(installmentId) {
@@ -375,6 +376,9 @@ const attachApproval = (docType) => (r) => r ? { ...r, approval: approvalState(d
 function poBlockReason(b, ctrl) {
   const amount = Number(b.amount) || 0
   const pr = b.pr_no ? db.prepare('SELECT * FROM purchase_requests WHERE no=?').get(b.pr_no) : null
+  // 0) ต้องอนุมัติ PR ครบก่อน ถึงจะออก PO ได้
+  if (ctrl.enforce_approval_flow && pr && !approvalState('pr', pr.id).done)
+    return `ออก PO ไม่ได้ — ใบขอซื้อ ${pr.no} ยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PR ก่อน)`
   // 1) PO เกินยอดที่อนุมัติใน PR
   if (ctrl.enforce_po_over_pr && pr && amount > (pr.amount || 0))
     return `ออก PO ไม่ได้ — ยอด ${baht(amount)} เกินยอดที่อนุมัติใน ${pr.no} (${baht(pr.amount || 0)}) ให้ลดยอดหรือขออนุมัติ PR ใหม่`
@@ -1522,20 +1526,31 @@ function syncPoExpense(po) {
   const existing = db.prepare('SELECT * FROM expenses WHERE po_id=?').get(po.id)
   const received = po.status === 'รับของแล้ว' || po.status === 'ปิดงาน'
   if (received && po.house_code) {
+    let row
     if (existing) {
       db.prepare('UPDATE expenses SET house_code=?, item=?, vendor=?, amount=? WHERE po_id=?')
         .run(po.house_code, po.item, po.vendor, po.amount, po.id)
+      row = db.prepare('SELECT * FROM expenses WHERE po_id=?').get(po.id)
     } else {
-      db.prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,po_id,date_iso) VALUES (?,?,?,?,?,?,?,?)')
+      const info = db.prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,po_id,date_iso) VALUES (?,?,?,?,?,?,?,?)')
         .run(todayTH(), po.house_code, po.item, 'วัสดุ', po.vendor, po.amount, po.id, todayISO())
+      row = db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid)
     }
+    // ลงบัญชีแยกประเภทให้เหมือนรายจ่ายทั่วไป (เดิมไม่ได้ลง → ต้นทุน PO ไม่เข้า GL)
+    try { if (row) acct.syncExpenseJournal(row) } catch (e) { console.error('journal(po-exp):', e.message) }
+    recomputeHouse(po.house_code)
   } else if (existing) {
-    // not received anymore (or no house) → remove the auto-created expense
+    // not received anymore (or no house) → remove the auto-created expense + รายการบัญชี
+    try { acct.removeAutoJournal('exp', existing.id) } catch (e) { console.error('journal(po-exp-del):', e.message) }
     db.prepare('DELETE FROM expenses WHERE po_id=?').run(po.id)
+    if (existing.house_code) recomputeHouse(existing.house_code)
   }
 }
 api.post('/purchase-orders/:id/status', financeOnly, (req, res) => {
   const st = ['รอส่งของ', 'รับของแล้ว', 'ปิดงาน'].includes(req.body?.status) ? req.body.status : 'รอส่งของ'
+  // ต้องอนุมัติ PO ครบก่อน ถึงจะรับของ/ปิดงานได้
+  if (controls().enforce_approval_flow && (st === 'รับของแล้ว' || st === 'ปิดงาน') && !approvalState('po', req.params.id).done)
+    return res.status(409).json({ error: 'อัปเดตสถานะไม่ได้ — ใบสั่งซื้อยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PO ก่อน)' })
   db.prepare('UPDATE purchase_orders SET status=? WHERE id=?').run(st, req.params.id)
   const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id)
   syncPoExpense(po)
@@ -1648,6 +1663,8 @@ api.post('/purchase-orders/:id/extract-receipt', canWrite, express.raw({ type: '
 api.post('/purchase-orders/:id/receive', canWrite, (req, res) => {
   const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id)
   if (!po) return res.status(404).json({ error: 'ไม่พบใบสั่งซื้อ' })
+  if (controls().enforce_approval_flow && !approvalState('po', po.id).done)
+    return res.status(409).json({ error: `ตรวจรับของไม่ได้ — ใบสั่งซื้อ ${po.no} ยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PO ก่อน)` })
   const b = req.body || {}
   const orderItems = orderItemsForPo(po)
   const deliveryItems = Array.isArray(b.delivery_items) ? b.delivery_items : []
@@ -1688,6 +1705,25 @@ api.post('/goods-receipts/:id/override', requireManager, (req, res) => {
   syncPoExpense(po2)
   audit(req, 'ปรับผลตรวจรับของ (override)', `${gr.po_no} → ${result}`)
   res.json({ ok: true, result, po: poRow(po2) })
+})
+
+// ล้างข้อมูลจัดซื้อทั้งหมด (PR/PO) — เริ่มใช้ระบบใหม่ (ผู้ดูแลเท่านั้น) · ไม่แตะราคากลางวัสดุ/ผู้ขาย/รายจ่ายที่ไม่ได้มาจาก PO
+api.post('/procurement/clear', adminOnly, (req, res) => {
+  const counts = {}
+  db.transaction(() => {
+    // ถอนรายการบัญชี + รายจ่ายที่สร้างอัตโนมัติจาก PO (มี po_id)
+    const houses = db.prepare("SELECT DISTINCT house_code h FROM expenses WHERE po_id IS NOT NULL AND COALESCE(house_code,'')!=''").all().map((r) => r.h)
+    for (const e of db.prepare('SELECT id FROM expenses WHERE po_id IS NOT NULL').all()) { try { acct.removeAutoJournal('exp', e.id) } catch { /* ignore */ } }
+    counts.expenses = db.prepare('DELETE FROM expenses WHERE po_id IS NOT NULL').run().changes
+    counts.goods_receipts = db.prepare('DELETE FROM goods_receipts').run().changes
+    counts.quotes = db.prepare('DELETE FROM pr_quotes').run().changes
+    counts.approvals = db.prepare("DELETE FROM doc_approvals WHERE doc_type IN ('pr','po')").run().changes
+    counts.purchase_orders = db.prepare('DELETE FROM purchase_orders').run().changes
+    counts.purchase_requests = db.prepare('DELETE FROM purchase_requests').run().changes
+    for (const h of houses) recomputeHouse(h)
+  })()
+  audit(req, 'ล้างข้อมูลจัดซื้อ (PR/PO)', `PR ${counts.purchase_requests} · PO ${counts.purchase_orders} · ตรวจรับ ${counts.goods_receipts} · รายจ่าย ${counts.expenses}`)
+  res.json({ ok: true, counts })
 })
 
 // ---------- procurement (finance only) ----------

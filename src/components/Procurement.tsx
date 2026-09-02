@@ -86,7 +86,18 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const [docWht, setDocWht] = useState<ApiPayment | null>(null)
   const [docVoucher, setDocVoucher] = useState<ApiPayment | null>(null)
   const [docReceive, setDocReceive] = useState<ApiPO | null>(null)
-  const { data, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor, reloadData } = useApp()
+  const { data, user, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor, reloadData } = useApp()
+  const isAdmin = user?.role === 'admin'
+  const clearProcurement = async () => {
+    if (!window.confirm('ล้างข้อมูลจัดซื้อทั้งหมด (ใบขอซื้อ PR + ใบสั่งซื้อ PO + ใบเทียบราคา + การตรวจรับ + รายจ่ายที่มาจาก PO)?\nข้อมูลนี้จะถูกลบถาวร (ราคากลางวัสดุ/ผู้ขาย/รายจ่ายอื่นไม่ถูกลบ)')) return
+    if (!window.confirm('ยืนยันอีกครั้ง — ลบข้อมูล PR/PO เดิมทั้งหมดออกจริงหรือไม่?')) return
+    try {
+      const r = await api.post<{ counts: Record<string, number> }>('/procurement/clear', {})
+      await Promise.all([reloadData('prs', '/purchase-requests'), reloadData('purchaseOrders', '/purchase-orders'), reloadData('payments', '/payments'), reloadData('expenses', '/expenses')])
+      const c = r.counts || {}
+      alert(`ล้างข้อมูลจัดซื้อแล้ว\n• ใบขอซื้อ (PR) ${c.purchase_requests || 0}\n• ใบสั่งซื้อ (PO) ${c.purchase_orders || 0}\n• ใบเทียบราคา ${c.quotes || 0}\n• การตรวจรับ ${c.goods_receipts || 0}\n• รายจ่ายจาก PO ${c.expenses || 0}`)
+    } catch (e) { alert('ล้างข้อมูลไม่สำเร็จ: ' + (e as Error).message) }
+  }
   // อนุมัติ/ปฏิเสธ PR — แสดงข้อความถ้าถูกกติกากันโกงบล็อก (เช่น อนุมัติใบตัวเอง / ต้องอนุมัติ 2 ชั้น)
   const purchaseOrders = data.purchaseOrders || []
   const vendors = data.vendors || []
@@ -257,6 +268,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             <div key={t.id} onClick={() => setTab(t.id)} style={{ fontSize: 13, fontWeight: active ? 600 : 500, color: active ? '#fff' : '#5C6770', background: active ? '#30506A' : 'transparent', padding: '7px 14px', borderRadius: 7, cursor: 'pointer' }}>{t.label}</div>
           )
         })}
+        {isAdmin && !houseCode && <button onClick={clearProcurement} title="ลบข้อมูลจัดซื้อเดิมทั้งหมด (PR/PO) เพื่อเริ่มใช้ระบบใหม่" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #EDD3CE', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>🗑 ล้างข้อมูลจัดซื้อ (PR/PO)</button>}
       </div>
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
