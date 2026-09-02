@@ -279,6 +279,33 @@ function trackHandler(req, res) {
 }
 api.get('/track/:token', trackHandler)
 api.post('/track/:token', trackHandler)
+// ดูสลิปเงินเดือน "ของตัวเอง" — พนักงานยืนยันด้วย PIN (เหมือนตอกบัตร) · เฉพาะงวดที่ปิดแล้ว (ตัวเลขจ่ายจริง)
+const slipAttempts = new Map() // emp_code -> { fails, until }
+api.post('/kiosk/my-slip', (req, res) => {
+  const { emp_code, pin, period } = req.body || {}
+  const key = String(emp_code || '')
+  const rec = slipAttempts.get(key) || { fails: 0, until: 0 }
+  if (rec.until > Date.now()) return res.status(429).json({ error: 'ใส่ PIN ผิดหลายครั้ง — ล็อกชั่วคราว ลองใหม่ใน 5 นาที' })
+  const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  if (!emp.pin || hashPin(pin) !== emp.pin) {
+    rec.fails += 1
+    if (rec.fails >= 5) { rec.until = Date.now() + 5 * 60000; rec.fails = 0 }
+    slipAttempts.set(key, rec)
+    return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' })
+  }
+  slipAttempts.delete(key)
+  const periods = db.prepare('SELECT period FROM payroll_runs ORDER BY period DESC LIMIT 12').all().map((r) => r.period)
+  if (!periods.length) return res.json({ periods: [], slip: null })
+  const p = /^\d{4}-\d{2}$/.test(String(period || '')) && periods.includes(period) ? period : periods[0]
+  const run = db.prepare('SELECT data FROM payroll_runs WHERE period=?').get(p)
+  let slip = null
+  try {
+    const row = JSON.parse(run.data).find((x) => x.code === emp.code)
+    if (row) { const { pin: _p, signature: _s, track_token: _t, ...safe } = row; slip = { ...safe, period: p } }
+  } catch { /* ข้อมูลงวดเสีย */ }
+  res.json({ periods: periods.map((x) => ({ period: x, label: periodLabelTH(x) })), period: p, periodLabel: periodLabelTH(p), slip })
+})
 // เวลาที่เกินกว่านี้ = "สาย" (เวลาเข้างาน + นาทีผ่อนผัน) · ค่าเริ่มต้น 08:00 + ผ่อนผัน 5 นาที
 function lateCutoff() {
   const m = /^(\d{1,2}):(\d{2})$/.exec(getSetting('att_start', '08:00'))
@@ -338,7 +365,7 @@ api.use(requireAuth)
 const MODULE_PATHS = [
   ['hr', [/^\/payroll/, /^\/employees/, /^\/salary-advances/, /^\/deductions/, /^\/ot(\/|$)/, /^\/leaves/, /^\/time-adjustments/, /^\/attendance/]],
   ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/payments/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/aging/, /^\/assets/, /^\/export\/express/]],
-  ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/payables/, /^\/vendors/, /^\/material-prices/, /^\/procurement/]],
+  ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/payables/, /^\/vendors/, /^\/material-prices/, /^\/procurement/, /^\/stock/]],
   ['sales', [/^\/sales-docs/, /^\/customers/, /^\/boqs/]],
   ['reports', [/^\/reports/]],
 ]
@@ -1749,6 +1776,77 @@ api.post('/purchase-orders', financeOnly, (req, res) => {
     .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems), poVendorId, poVat, String(b.tax_invoice_no || '').trim())
   res.status(201).json(poRow(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(info.lastInsertRowid)))
 })
+// ===== สต๊อกวัสดุ — นับจำนวน/ที่อยู่ของ (ต้นทุนลงบัญชีตามเดิมตอนรับของ ไม่เปลี่ยน) =====
+// PO ที่ "ไม่ผูกบ้าน" = ซื้อเข้าสต๊อกกลาง → รับของผ่านแล้วรายการวิ่งเข้าสต๊อกอัตโนมัติ
+// PO ที่ผูกบ้าน = ของส่งตรงหน้างาน ไม่เข้าสต๊อก
+const normStock = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+function stockItemFor(name, unit) {
+  const nkey = normStock(name)
+  if (!nkey) return null
+  let it = db.prepare('SELECT * FROM stock_items WHERE nkey=?').get(nkey)
+  if (!it) {
+    const info = db.prepare('INSERT INTO stock_items (name, nkey, unit, qty, min_qty, updated) VALUES (?,?,?,0,0,?)')
+      .run(String(name).trim(), nkey, String(unit || ''), todayTH())
+    it = db.prepare('SELECT * FROM stock_items WHERE id=?').get(info.lastInsertRowid)
+  }
+  return it
+}
+function stockMove({ item_id, kind, qty, house_code, note, by, po_id }) {
+  const q = Math.abs(Number(qty) || 0)
+  if (!q) return null
+  const delta = kind === 'out' ? -q : kind === 'in' ? q : 0
+  db.prepare('INSERT INTO stock_moves (item_id, kind, qty, house_code, note, by, po_id, date_iso, created) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(item_id, kind, q, house_code || '', note || '', by || '', po_id ?? null, todayISO(), nowTS())
+  if (kind === 'adjust') db.prepare('UPDATE stock_items SET qty=?, updated=? WHERE id=?').run(q, todayTH(), item_id)
+  else db.prepare('UPDATE stock_items SET qty = qty + ?, updated=? WHERE id=?').run(delta, todayTH(), item_id)
+  return db.prepare('SELECT * FROM stock_items WHERE id=?').get(item_id)
+}
+function stockInFromPo(po, deliveryItems, by) {
+  if (po.house_code) return 0 // ผูกบ้าน = ส่งตรงหน้างาน ไม่เข้าสต๊อก
+  let n = 0
+  for (const d of deliveryItems || []) {
+    const name = String(d.name || d.desc || '').trim()
+    const qty = Number(d.qty) || 0
+    if (!name || qty <= 0) continue
+    const it = stockItemFor(name, d.unit)
+    if (it) { stockMove({ item_id: it.id, kind: 'in', qty, note: 'รับเข้าจาก ' + po.no, by, po_id: po.id }); n++ }
+  }
+  return n
+}
+api.get('/stock', canWrite, (_req, res) => res.json(
+  db.prepare('SELECT * FROM stock_items ORDER BY name COLLATE NOCASE').all().map((it) => ({ ...it, low: (it.min_qty || 0) > 0 && it.qty < it.min_qty }))
+))
+api.get('/stock/moves', canWrite, (req, res) => {
+  const w = req.query.item_id ? 'WHERE m.item_id=?' : ''
+  const args = req.query.item_id ? [Number(req.query.item_id)] : []
+  res.json(db.prepare(`SELECT m.*, i.name AS item_name, i.unit FROM stock_moves m JOIN stock_items i ON i.id=m.item_id ${w} ORDER BY m.id DESC LIMIT 300`).all(...args))
+})
+api.put('/stock/items/:id', canWrite, (req, res) => {
+  const it = db.prepare('SELECT * FROM stock_items WHERE id=?').get(req.params.id)
+  if (!it) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  const b = req.body || {}
+  db.prepare('UPDATE stock_items SET unit=?, min_qty=? WHERE id=?')
+    .run(b.unit != null ? String(b.unit) : it.unit, b.min_qty != null ? Math.max(0, Number(b.min_qty) || 0) : it.min_qty, it.id)
+  res.json(db.prepare('SELECT * FROM stock_items WHERE id=?').get(it.id))
+})
+api.post('/stock/moves', canWrite, (req, res) => {
+  const b = req.body || {}
+  const kind = ['in', 'out', 'adjust'].includes(b.kind) ? b.kind : null
+  if (!kind) return res.status(400).json({ error: 'ชนิดรายการไม่ถูกต้อง (in/out/adjust)' })
+  const qty = Number(b.qty)
+  if (!(qty >= 0) || (kind !== 'adjust' && !(qty > 0))) return res.status(400).json({ error: 'กรุณากรอกจำนวนให้ถูกต้อง' })
+  let item = b.item_id ? db.prepare('SELECT * FROM stock_items WHERE id=?').get(Number(b.item_id)) : null
+  if (!item && b.name) item = stockItemFor(b.name, b.unit) // รับเข้าของใหม่ที่ยังไม่มีในสต๊อก
+  if (!item) return res.status(404).json({ error: 'ไม่พบรายการวัสดุ — เลือกจากรายการหรือกรอกชื่อ' })
+  if (kind === 'out') {
+    if (qty > item.qty + 1e-9) return res.status(400).json({ error: `เบิกเกินคงเหลือ — ${item.name} เหลือ ${item.qty} ${item.unit || ''}` })
+    if (!String(b.note || '').trim() && !String(b.house_code || '').trim()) return res.status(400).json({ error: 'เบิกออกต้องระบุบ้านที่เอาไปใช้ หรือหมายเหตุ (ใครเบิก/เอาไปทำอะไร)' })
+  }
+  const it2 = stockMove({ item_id: item.id, kind, qty, house_code: b.house_code, note: b.note, by: req.user.name })
+  audit(req, kind === 'in' ? 'รับวัสดุเข้าสต๊อก' : kind === 'out' ? 'เบิกวัสดุออกจากสต๊อก' : 'ปรับยอดสต๊อก (ตรวจนับ)', `${item.name} ${qty} ${item.unit || ''}${b.house_code ? ' → ' + b.house_code : ''}`)
+  res.status(201).json(it2)
+})
+
 // when a PO is received, its cost flows into the house's รายจ่าย (auto expense, linked by po_id)
 function syncPoExpense(po) {
   const existing = db.prepare('SELECT * FROM expenses WHERE po_id=?').get(po.id)
@@ -1780,9 +1878,14 @@ api.post('/purchase-orders/:id/status', financeOnly, (req, res) => {
   // ต้องอนุมัติ PO ครบก่อน ถึงจะรับของ/ปิดงานได้
   if (controls().enforce_approval_flow && (st === 'รับของแล้ว' || st === 'ปิดงาน') && !approvalState('po', req.params.id).done)
     return res.status(409).json({ error: 'อัปเดตสถานะไม่ได้ — ใบสั่งซื้อยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PO ก่อน)' })
+  const prevSt = db.prepare('SELECT status FROM purchase_orders WHERE id=?').get(req.params.id)?.status
   db.prepare('UPDATE purchase_orders SET status=? WHERE id=?').run(st, req.params.id)
   const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id)
   syncPoExpense(po)
+  // รับของแบบไม่ผ่านใบตรวจ (เปลี่ยนสถานะมือ): PO ไม่ผูกบ้าน → รับเข้าสต๊อกจากรายการใน PO (ครั้งแรกเท่านั้น)
+  if (st === 'รับของแล้ว' && prevSt !== 'รับของแล้ว' && prevSt !== 'ปิดงาน') {
+    try { stockInFromPo(po, orderItemsForPo(po).map((it) => ({ name: it.desc, qty: it.qty, unit: it.unit })), req.user.name) } catch (e) { console.error('stock-in:', e.message) }
+  }
   audit(req, 'อัปเดตสถานะ PO', `${po.no} → ${st}`)
   res.json(poRow(po))
 })
@@ -1906,12 +2009,17 @@ api.post('/purchase-orders/:id/receive', canWrite, (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
     .run(po.id, po.no, JSON.stringify(files), JSON.stringify(orderItems), JSON.stringify(deliveryItems), detail.result, JSON.stringify(detail), String(b.note || ''), req.user.name, todayTH(), now.toISOString())
   // ผ่าน → รับของแล้ว (ต้นทุนไหลเข้าบ้าน) · ไม่ผ่าน → คงสถานะรอส่งของ ให้กลับไปตรวจ
+  const prevStatus = po.status
   db.prepare('UPDATE purchase_orders SET gr_status=?, gr_date=? WHERE id=?').run(detail.result, todayTH(), po.id)
   if (detail.result === 'ผ่าน') db.prepare("UPDATE purchase_orders SET status='รับของแล้ว' WHERE id=?").run(po.id)
   // ไม่ผ่าน แต่ก่อนหน้าเคยรับของแล้ว (เคยผ่าน) → ดึงกลับเป็น "รอส่งของ" ให้กลับไปตรวจใหม่ (ต้นทุนที่ลงบ้านจะถูกถอนออกใน syncPoExpense)
   else if (po.status === 'รับของแล้ว') db.prepare("UPDATE purchase_orders SET status='รอส่งของ' WHERE id=?").run(po.id)
   const po2 = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(po.id)
   syncPoExpense(po2)
+  // PO ไม่ผูกบ้าน = ซื้อเข้าสต๊อกกลาง → รับเข้าอัตโนมัติ (ครั้งแรกที่ผ่านเท่านั้น กันรับซ้ำ)
+  if (detail.result === 'ผ่าน' && prevStatus !== 'รับของแล้ว' && prevStatus !== 'ปิดงาน') {
+    try { stockInFromPo(po2, deliveryItems, req.user.name) } catch (e) { console.error('stock-in:', e.message) }
+  }
   audit(req, 'ตรวจรับของ', `${po.no} → ${detail.result}`)
   res.status(201).json({ result: detail.result, detail, receipt_id: info.lastInsertRowid, po: poRow(po2) })
 })
@@ -3618,6 +3726,11 @@ api.get('/notifications', (req, res) => {
         out.push({ kind: 'backup', icon: 'info', title: 'ยังไม่ได้ตั้งสำรองนอกเครื่อง', sub: 'ถ้าเครื่องนี้พัง ข้อมูลจะหายทั้งหมด — ตั้งโฟลเดอร์สำรอง (External/OneDrive/Google Drive) ที่ ผู้ใช้งาน', page: 'users' })
     } catch { /* ignore */ }
   }
+  // วัสดุในสต๊อกใกล้หมด (ต่ำกว่าจุดสั่งซื้อ) — เตือนคนที่เห็นงานจัดซื้อ
+  if (canSeeSalary(req.user) || mgr) {
+    for (const it of db.prepare('SELECT * FROM stock_items WHERE min_qty > 0 AND qty < min_qty ORDER BY qty').all())
+      out.push({ kind: 'stock-low', icon: 'warn', title: `${it.name} ใกล้หมดสต๊อก`, sub: `เหลือ ${it.qty} ${it.unit || ''} (จุดสั่งซื้อ ${it.min_qty})`, page: 'stock' })
+  }
   // รายการลงบัญชีไม่สำเร็จ — เตือนฝ่ายการเงิน/แอดมิน (หายเองเมื่อลงสำเร็จ)
   if (['admin', 'accounting'].includes(req.user.role)) {
     const ji = db.prepare('SELECT COUNT(*) c FROM journal_issues').get().c
@@ -3671,6 +3784,62 @@ api.get('/notifications', (req, res) => {
 })
 
 // ---------- reports (aggregates for charts) ----------
+// ===== รายงานผู้บริหารประจำเดือน — ตัวเลขหลักจากบัญชีแยกประเภท (GL) + ยอดค้างจริง =====
+function monthlyReport(period) {
+  const [yy, mm] = period.split('-').map(Number)
+  const from = `${period}-01`
+  const to = `${period}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`
+  const is = acct.incomeStatement({ from, to })
+  const cf = acct.cashFlow({ from, to })
+  const expMonth = db.prepare("SELECT COALESCE(SUM(amount),0) a, COUNT(*) n FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ' AND date_iso >= ? AND date_iso <= ?").get(from, to)
+  const payrollRun = db.prepare('SELECT total FROM payroll_runs WHERE period=?').get(period)
+  const today = todayISO()
+  let arTotal = 0, arOverdue = 0
+  for (const r of db.prepare("SELECT amount, COALESCE(paid,0) paid, due_iso FROM installments WHERE side != 'contractor' AND status != 'เก็บแล้ว'").all()) {
+    const rem = Math.max(0, (r.amount || 0) - r.paid)
+    arTotal += rem
+    if (rem > 0 && r.due_iso && r.due_iso < today) arOverdue += rem
+  }
+  let apTotal = 0, apOverdue = 0
+  for (const po of db.prepare("SELECT id, amount, due_iso FROM purchase_orders WHERE payment_type='credit' AND status IN ('รับของแล้ว','ปิดงาน')").all()) {
+    const paid = db.prepare("SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").get(po.id).a
+    const rem = Math.max(0, (po.amount || 0) - paid)
+    apTotal += rem
+    if (rem > 0 && po.due_iso && po.due_iso < today) apOverdue += rem
+  }
+  const houseRows = db.prepare('SELECT status, COUNT(*) c FROM houses GROUP BY status').all()
+  return {
+    period, label: periodLabelTH(period), from, to,
+    pnl: { revenue: is.totalRevenue, cost: is.totalCost, expense: is.totalExpense, grossProfit: is.grossProfit, netProfit: is.netProfit },
+    cash: { opening: cf.opening, closing: cf.closing, net: cf.netChange },
+    spend: { expenses: expMonth.a, expenseCount: expMonth.n, payroll: payrollRun ? payrollRun.total : null },
+    ar: { total: arTotal, overdue: arOverdue },
+    ap: { total: apTotal, overdue: apOverdue },
+    houses: Object.fromEntries(houseRows.map((h) => [h.status || 'อื่นๆ', h.c])),
+    issuesOpen: db.prepare("SELECT COUNT(*) c FROM issues WHERE status != 'แก้ไขแล้ว'").get().c,
+    journalIssues: db.prepare('SELECT COUNT(*) c FROM journal_issues').get().c,
+  }
+}
+api.get('/reports/monthly', financeOnly, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  res.json(monthlyReport(period))
+})
+// ส่งสรุปเดือนเข้ากลุ่ม LINE (ใช้การตั้งค่า LINE เดียวกับสรุปเช้า)
+api.post('/reports/monthly/send-line', financeOnly, async (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.body?.period) ? req.body.period : currentPeriod()
+  const r = monthlyReport(period)
+  const txt = `📊 PPSD สรุปประจำเดือน ${r.label}\n\n` +
+    `กำไรสุทธิ (ตามบัญชี): ${baht(r.pnl.netProfit)}\n` +
+    `— รายได้ ${baht(r.pnl.revenue)} · ต้นทุน ${baht(r.pnl.cost)} · ค่าใช้จ่าย ${baht(r.pnl.expense)}\n` +
+    `เงินสดปลายเดือน: ${baht(r.cash.closing)} (${r.cash.net >= 0 ? '+' : ''}${baht(r.cash.net)} ในเดือน)\n` +
+    `รายจ่ายเดือนนี้ ${r.spend.expenseCount} ใบ รวม ${baht(r.spend.expenses)}${r.spend.payroll != null ? ` · เงินเดือน ${baht(r.spend.payroll)}` : ' · เงินเดือน (ยังไม่ปิดงวด)'}\n` +
+    `ลูกหนี้ค้างเก็บ ${baht(r.ar.total)}${r.ar.overdue ? ` (เลยกำหนด ${baht(r.ar.overdue)})` : ''}\n` +
+    `เจ้าหนี้ค้างจ่าย ${baht(r.ap.total)}${r.ap.overdue ? ` (เลยกำหนด ${baht(r.ap.overdue)})` : ''}\n` +
+    `ปัญหาหน้างานค้าง ${r.issuesOpen} เรื่อง${r.journalIssues ? ` · ⚠️ ลงบัญชีไม่สำเร็จ ${r.journalIssues} รายการ` : ''}`
+  try { await sendLine(txt); audit(req, 'ส่งสรุปเดือนเข้า LINE', r.label); res.json({ ok: true }) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+
 api.get('/reports', financeOnly, (_req, res) => {
   const houses = db.prepare('SELECT * FROM houses').all()
   const expenses = db.prepare("SELECT * FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'").all()

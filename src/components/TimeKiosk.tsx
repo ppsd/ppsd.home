@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useApp } from '../store'
+import type { ApiPayroll } from '../store'
 import { api } from '../api'
+import PrintDoc from './PrintDoc'
 
 const TH_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์']
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
@@ -29,6 +31,21 @@ export default function TimeKiosk() {
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
   const [geo, setGeo] = useState<GeoSettings>({ enabled: false, radius: 200, lat: '', lng: '', start: '08:00', grace: 5, cutoff: '08:05' })
+  // สลิปเงินเดือนของตัวเอง — ยืนยันด้วย PIN เดียวกับตอกบัตร (เห็นเฉพาะของตัวเอง งวดที่ปิดแล้ว)
+  interface MySlipResp { periods: { period: string; label: string }[]; period?: string; periodLabel?: string; slip: ApiPayroll | null }
+  const [mySlip, setMySlip] = useState<MySlipResp | null>(null)
+  const [slipDoc, setSlipDoc] = useState<ApiPayroll | null>(null)
+  const loadMySlip = async (period?: string) => {
+    if (!selCode) { setToast({ msg: 'เลือกชื่อก่อน', ok: false }); return }
+    if (pin.length !== 4) { setToast({ msg: 'ใส่ PIN 4 หลักก่อน', ok: false }); return }
+    setBusy(true); setToast(null)
+    try {
+      const r = await api.post<MySlipResp>('/kiosk/my-slip', { emp_code: selCode, pin, period })
+      if (!r.periods.length) setToast({ msg: 'ยังไม่มีงวดเงินเดือนที่ปิดแล้ว', ok: false })
+      else setMySlip(r)
+    } catch (e) { setToast({ msg: (e as Error).message, ok: false }) } finally { setBusy(false) }
+  }
+  const openMySlip = () => loadMySlip()
   const [cfgOpen, setCfgOpen] = useState(false)
   const [savingCfg, setSavingCfg] = useState(false)
 
@@ -179,10 +196,33 @@ export default function TimeKiosk() {
             <button onClick={() => action('in')} disabled={busy} style={{ flex: 1, fontFamily: 'inherit', fontSize: 16, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 11, padding: '14px 0', cursor: 'pointer' }}>เข้างาน</button>
             <button onClick={() => action('out')} disabled={busy} style={{ flex: 1, fontFamily: 'inherit', fontSize: 16, fontWeight: 600, color: '#fff', background: '#C24036', border: 'none', borderRadius: 11, padding: '14px 0', cursor: 'pointer' }}>ออกงาน</button>
           </div>
+          {/* พนักงานดูสลิปเงินเดือนตัวเอง — ใช้ชื่อ + PIN เดียวกับตอกบัตร (เห็นเฉพาะของตัวเอง งวดที่ปิดแล้ว) */}
+          <button onClick={openMySlip} disabled={busy} className="hov-f3f5f7" style={{ width: '100%', marginTop: 10, fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 11, padding: '11px 0', cursor: 'pointer' }}>🧾 ดูสลิปเงินเดือนของฉัน</button>
 
           {toast && <div style={{ marginTop: 12, fontSize: 13, fontWeight: 500, textAlign: 'center', padding: '10px 12px', borderRadius: 9, color: toast.ok ? '#2E7D55' : '#C24036', background: toast.ok ? '#E2F1EA' : '#FBEEEC' }}>{toast.msg}</div>}
         </div>
       </div>
+
+      {mySlip && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 55, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setMySlip(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 420, maxWidth: '96vw', padding: '16px 18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 700 }}>สลิปเงินเดือน — {mySlip.slip?.name || ''}</span>
+              <select value={mySlip.period || ''} onChange={(e) => loadMySlip(e.target.value)} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '5px 8px' }}>
+                {mySlip.periods.map((p) => <option key={p.period} value={p.period}>{p.label}</option>)}
+              </select>
+            </div>
+            {!mySlip.slip && <div style={{ fontSize: 13, color: '#94A0A8', padding: 18, textAlign: 'center' }}>ไม่พบข้อมูลของคุณในงวดนี้</div>}
+            {mySlip.slip && (
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={() => { setSlipDoc(mySlip.slip!); }} className="btn-primary" style={{ flex: 1, fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '11px 0', cursor: 'pointer' }}>🖨 เปิดสลิป / พิมพ์</button>
+                <button onClick={() => setMySlip(null)} style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#F1F4F6', border: 'none', borderRadius: 9, padding: '11px 16px', cursor: 'pointer' }}>ปิด</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {slipDoc && <PrintDoc kind="slip" slip={slipDoc} onClose={() => setSlipDoc(null)} />}
     </div>
   )
 }

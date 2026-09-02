@@ -393,6 +393,22 @@ ensureColumn('purchase_orders', 'tax_invoice_no', 'TEXT')
 ensureColumn('users', 'deny_mods', 'TEXT')              // สิทธิ์รายโมดูล: JSON รายชื่อโมดูลที่ "ปิด" สำหรับผู้ใช้คนนี้
 // ตัวนับเลขเอกสารถาวร — แทน COUNT(*) เดิมที่เลขชนกันได้เมื่อมีการลบ/ล้างข้อมูล
 db.exec('CREATE TABLE IF NOT EXISTS doc_counters (key TEXT PRIMARY KEY, next INTEGER)')
+// ===== สต๊อกวัสดุ (นับจำนวน/ที่อยู่ของ) — ต้นทุนยังลงบัญชีตามเดิมตอนรับของ =====
+db.exec(`CREATE TABLE IF NOT EXISTS stock_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT, nkey TEXT, unit TEXT,
+  qty REAL DEFAULT 0,        -- คงเหลือปัจจุบัน (คำนวณสะสมจาก moves ตอนบันทึก)
+  min_qty REAL DEFAULT 0,    -- จุดสั่งซื้อ — ต่ำกว่านี้ขึ้นเตือน "ใกล้หมด"
+  updated TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_stock_nkey ON stock_items(nkey)')
+db.exec(`CREATE TABLE IF NOT EXISTS stock_moves (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER, kind TEXT,   -- in = รับเข้า · out = เบิกออก · adjust = ปรับยอด (ตรวจนับ)
+  qty REAL, house_code TEXT, note TEXT, by TEXT,
+  po_id INTEGER, date_iso TEXT, created TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_stock_moves_item ON stock_moves(item_id)')
 // รายการที่ "ลงบัญชีไม่สำเร็จ" (เช่น ติดงวดปิด) — โชว์เตือนในหน้าบัญชี จนกว่าจะลงสำเร็จ/แก้ไข
 db.exec(`CREATE TABLE IF NOT EXISTS journal_issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

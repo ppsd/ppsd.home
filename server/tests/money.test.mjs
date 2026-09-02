@@ -257,6 +257,52 @@ test('เอกสารราชการ: ไฟล์ สปส. และ �
   assert.ok(ann.data.rows.length >= 1, 'ต้องมียอดสะสมจากงวดที่ปิดไปแล้ว')
 })
 
+test('สต๊อกวัสดุ: PO ไม่ผูกบ้านรับเข้าอัตโนมัติ · เบิกออกตัดยอด · เบิกเกินถูกบล็อก', async () => {
+  const po = await POST('/purchase-orders', { vendor: 'ร้านสต๊อก', item: 'อิฐมอญ', amount: 2000, payment_type: 'cash', items: [{ desc: 'อิฐมอญ', qty: 500, unit: 'ก้อน', price: 4 }] })
+  assert.equal(po.status, 201)
+  const rc = await POST(`/purchase-orders/${po.data.id}/receive`, { delivery_items: [{ name: 'อิฐมอญ', qty: 500, unit: 'ก้อน', price: 4, amount: 2000 }] })
+  assert.equal(rc.data.result, 'ผ่าน')
+  let stock = (await GET('/stock')).data
+  const brick = stock.find((s) => s.name === 'อิฐมอญ')
+  assert.ok(brick, 'ของจาก PO ไม่ผูกบ้านต้องเข้าสต๊อกอัตโนมัติ')
+  assert.equal(brick.qty, 500)
+  // เบิกเกิน → บล็อก
+  const over = await POST('/stock/moves', { kind: 'out', item_id: brick.id, qty: 600, house_code: 'TS-01' })
+  assert.equal(over.status, 400)
+  // เบิกออกไปบ้าน → ตัดยอด
+  const out = await POST('/stock/moves', { kind: 'out', item_id: brick.id, qty: 200, house_code: 'TS-01', note: 'ก่อกำแพง' })
+  assert.equal(out.status, 201)
+  stock = (await GET('/stock')).data
+  assert.equal(stock.find((s) => s.id === brick.id).qty, 300)
+  // เบิกโดยไม่บอกปลายทาง → บล็อก
+  const noDest = await POST('/stock/moves', { kind: 'out', item_id: brick.id, qty: 10 })
+  assert.equal(noDest.status, 400)
+})
+
+test('สลิปพนักงาน: PIN ถูกเห็นเฉพาะของตัวเอง · PIN ผิดถูกปฏิเสธ', async () => {
+  // พนักงานจากเทสต์เงินเดือนยังไม่มี PIN — ตั้งให้ก่อน
+  const emp = (await GET('/employees')).data.find((e) => e.code === empCode)
+  await PUT(`/employees/${emp.id}/pin`, { pin: '7777' })
+  const bad = await POST('/kiosk/my-slip', { emp_code: empCode, pin: '0000' })
+  assert.equal(bad.status, 401)
+  const ok = await POST('/kiosk/my-slip', { emp_code: empCode, pin: '7777' })
+  assert.equal(ok.status, 200, JSON.stringify(ok.data))
+  assert.ok(ok.data.periods.length >= 1, 'ต้องเห็นงวดที่ปิดแล้ว')
+  assert.equal(ok.data.slip.code, empCode, 'ต้องได้สลิปของตัวเองเท่านั้น')
+  assert.ok(!('pin' in ok.data.slip) && !('signature' in ok.data.slip), 'สลิปต้องไม่พ่วงข้อมูลลับ')
+})
+
+test('รายงานผู้บริหารรายเดือน: ตัวเลขครบและสอดคล้อง', async () => {
+  const r = await GET(`/reports/monthly?period=${period}`)
+  assert.equal(r.status, 200)
+  const d = r.data
+  assert.equal(d.period, period)
+  assert.ok(typeof d.pnl.netProfit === 'number')
+  assert.ok(typeof d.cash.closing === 'number')
+  assert.ok(d.spend.payroll != null, 'เดือนนี้ปิดงวดเงินเดือนแล้ว ต้องมียอด')
+  assert.ok(d.ap.total >= 0 && d.ar.total >= 0)
+})
+
 test('สิทธิ์: role site ต้องไม่เห็นตัวเลขเงินรวมบริษัทบนแดชบอร์ด', async () => {
   await POST('/users', { name: 'ช่างเทสต์', username: 'sitetest', pin: '9999', role: 'site', position: 'ช่าง' })
   const adminToken = token

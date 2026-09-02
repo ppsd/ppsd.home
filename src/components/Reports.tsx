@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { useApp } from '../store'
+import { api } from '../api'
 import { baht } from '../data'
 import { exportXlsx, ExportButton } from '../exportCsv'
+import MonthlyReportDoc, { type MonthlyReport } from './MonthlyReportDoc'
 
 const CAT_COLORS: Record<string, string> = { วัสดุ: '#30506A', ค่าแรง: '#C0852C', ขนส่ง: '#5C6770', อื่นๆ: '#2E7D55' }
 
@@ -15,6 +18,20 @@ function Kpi({ label, value, color }: { label: string; value: string; color: str
 
 export default function Reports() {
   const { reports } = useApp().data
+  // รายงานผู้บริหารประจำเดือน (พิมพ์ A4 / ส่ง LINE)
+  const d0 = new Date()
+  const [mrPeriod, setMrPeriod] = useState(`${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}`)
+  const [mr, setMr] = useState<MonthlyReport | null>(null)
+  const openMonthly = async () => {
+    try { setMr(await api.get<MonthlyReport>('/reports/monthly?period=' + mrPeriod)) }
+    catch (e) { window.alert((e as Error).message) }
+  }
+  const sendMonthlyLine = async () => {
+    if (!mr) return
+    if (!window.confirm(`ส่งสรุปเดือน ${mr.label} เข้ากลุ่ม LINE?`)) return
+    try { await api.post('/reports/monthly/send-line', { period: mr.period }); window.alert('ส่งเข้า LINE แล้ว') }
+    catch (e) { window.alert('ส่งไม่สำเร็จ: ' + (e as Error).message) }
+  }
 
   if (!reports) {
     return (
@@ -43,9 +60,13 @@ export default function Reports() {
 
   return (
     <div className="print-area page-print" style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 12.5, color: '#5C6770' }}>รายงานประจำเดือน</span>
+        <input type="month" value={mrPeriod} onChange={(e) => setMrPeriod(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 9px' }} />
+        <button onClick={openMonthly} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '8px 14px', cursor: 'pointer' }}>📊 เปิดรายงานผู้บริหาร</button>
         <button onClick={() => window.print()} className="hov-f3f5f7" style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 14px', cursor: 'pointer' }}>🖨 พิมพ์ / บันทึก PDF</button>
       </div>
+      {mr && <MonthlyReportDoc r={mr} onClose={() => setMr(null)} onSendLine={sendMonthlyLine} />}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         <Kpi label="มูลค่าสัญญารวม" value={baht(totals.contract)} color="#1C2730" />
         <Kpi label="เก็บเงินแล้ว" value={baht(totals.collected)} color="#2E7D55" />
