@@ -47,7 +47,7 @@ export default function Accounting() {
   const rebuild = async () => {
     if (!confirm('สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากงวดงานที่เก็บ/จ่าย + รายจ่ายทั้งหมด?\n(ทำซ้ำได้ ไม่สร้างรายการซ้ำ)')) return
     setRebuilding(true); setMsg('')
-    try { const r = await api.post<{ count: number }>('/accounting/rebuild', {}); setMsg(`สร้างรายการบัญชีจากข้อมูลเดิมแล้ว ${r.count} รายการ — ไปดูได้ที่ทุกแท็บ`) }
+    try { const r = await api.post<{ count: number; errors?: string[] }>('/accounting/rebuild', {}); setMsg(`สร้างรายการบัญชีจากข้อมูลเดิมแล้ว ${r.count} รายการ${r.errors?.length ? ` · ข้าม ${r.errors.length} รายการ (${r.errors[0]})` : ''} — ไปดูได้ที่ทุกแท็บ`) }
     catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
     finally { setRebuilding(false) }
   }

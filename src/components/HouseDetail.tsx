@@ -93,10 +93,11 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
   const known = new Set(cats.map((c) => c.key))
   for (const k of new Set(houseInst.map((r) => r.category || 'house'))) if (!known.has(k)) cats.push({ key: k, label: k })
   const houseIssues = data.issues.filter((r) => r.house_code === house.code)
-  const houseExp = data.expenses.filter((r) => r.house_code === house.code)
+  const houseExp = data.expenses.filter((r) => r.house_code === house.code && r.status !== 'ปฏิเสธ')
   const expTotal = houseExp.reduce((s, e) => s + e.amount, 0)
   // ใบจ่ายเงิน/หัก ณ ที่จ่าย ที่ผูกกับบ้านนี้ (ค่าเซ็นแบบ/ธรรมเนียม/ค่าป้าย ฯลฯ) — ต้นทุน = ยอดก่อนหัก (gross)
-  const housePays = (data.payments || []).filter((p) => p.house_code === house.code)
+  // ยกเว้นใบจ่ายชำระ PO (po_id): ต้นทุนถูกนับไปแล้วในรายจ่ายตอนรับของ — นับซ้ำ = ต้นทุนเบิ้ล
+  const housePays = (data.payments || []).filter((p) => p.house_code === house.code && !p.po_id && p.status !== 'ปฏิเสธ')
   const payTotal = housePays.reduce((s, p) => s + (p.gross || 0), 0)
   const otherCost = expTotal + payTotal // ค่าใช้จ่ายย่อยจริงทั้งหมดของบ้าน
 

@@ -90,6 +90,10 @@ export function removeAutoJournal(source, source_id) {
 }
 
 // ---- ลงบัญชีอัตโนมัติจากเอกสารการเงินที่มีอยู่ ----
+// วันที่ของรายการบัญชีเดิม (ถ้าเคยลงไว้แล้ว) — เวลาลงซ้ำ (แก้ไข/rebuild) วันที่ต้องไม่เลื่อนมาเป็นวันนี้
+function existingEntryDate(source, source_id) {
+  return db.prepare('SELECT date_iso FROM journal_entries WHERE source=? AND source_id=?').get(source, String(source_id))?.date_iso || undefined
+}
 // งวดงาน: ลูกค้า = รับเงิน (Dr ธนาคาร / Cr รายได้) · ช่าง = จ่าย (Dr ต้นทุนผู้รับเหมาช่วง / Cr ธนาคาร)
 export function syncInstallmentJournal(inst) {
   const amt = r2(inst.paid || 0)
@@ -99,7 +103,7 @@ export function syncInstallmentJournal(inst) {
   const lines = inst.side === 'contractor'
     ? [{ account: '5030', debit: amt, credit: 0, memo }, { account: bank, debit: 0, credit: amt, memo }]
     : [{ account: bank, debit: amt, credit: 0, memo }, { account: '4010', debit: 0, credit: amt, memo }]
-  postJournal({ memo, house_code: inst.house_code, source: 'inst', source_id: inst.id, lines })
+  postJournal({ date_iso: existingEntryDate('inst', inst.id), memo, house_code: inst.house_code, source: 'inst', source_id: inst.id, lines })
 }
 // รายจ่าย: Dr บัญชีต้นทุน/ค่าใช้จ่าย ตามหมวด / Cr เงินสด (หรือ Cr เจ้าหนี้การค้า 2010 ถ้าซื้อเครดิต — จ่ายทีหลังค่อยตัดเจ้าหนี้)
 export function syncExpenseJournal(exp, opts = {}) {
@@ -108,7 +112,7 @@ export function syncExpenseJournal(exp, opts = {}) {
   const acc = expenseAccountFor(exp.cat || exp.category)
   const creditAcc = opts.credit ? '2010' : defaultCash()
   const memo = `${exp.item || 'รายจ่าย'} ${exp.vendor ? '· ' + exp.vendor : ''}`.trim()
-  postJournal({ date_iso: exp.date_iso || undefined, memo, house_code: exp.house_code, source: 'exp', source_id: exp.id, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: creditAcc, debit: 0, credit: amt, memo: opts.credit ? memo + ' (เครดิต)' : memo }] })
+  postJournal({ date_iso: exp.date_iso || existingEntryDate('exp', exp.id), memo, house_code: exp.house_code, source: 'exp', source_id: exp.id, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: creditAcc, debit: 0, credit: amt, memo: opts.credit ? memo + ' (เครดิต)' : memo }] })
 }
 
 // จ่ายเงิน (ใบสำคัญจ่าย): ถ้าจ่ายชำระ PO เครดิต → Dr เจ้าหนี้การค้า / Cr ภาษีหัก ณ ที่จ่ายค้างนำส่ง + ธนาคาร
@@ -125,15 +129,26 @@ export function syncPaymentJournal(pay) {
     { account: '2040', debit: 0, credit: wht, memo: 'ภาษีหัก ณ ที่จ่าย' },
     { account: defaultBank(), debit: 0, credit: net, memo: 'จ่ายสุทธิ' },
   ]
-  postJournal({ date_iso: pay.date_iso || undefined, memo, house_code: pay.house_code, source: 'pay', source_id: pay.id, lines })
+  postJournal({ date_iso: pay.date_iso || existingEntryDate('pay', pay.id), memo, house_code: pay.house_code, source: 'pay', source_id: pay.id, lines })
 }
 
-// backfill จากข้อมูลเดิมทั้งหมด (idempotent) — คืนจำนวนรายการที่ลง
+// backfill จากข้อมูลเดิมทั้งหมด (idempotent) — คืน { n, errors }
+// สำคัญ: รายจ่ายที่มาจาก PO เครดิต ต้องลงเป็นเจ้าหนี้ (Cr 2010) เหมือนตอนรับของ ไม่ใช่เงินสด
 export function retroPostAll() {
   let n = 0
-  for (const inst of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) { syncInstallmentJournal(inst); n++ }
-  for (const exp of db.prepare('SELECT * FROM expenses WHERE COALESCE(amount,0) > 0').all()) { syncExpenseJournal(exp); n++ }
-  return n
+  const errors = []
+  const safe = (fn, label) => { try { fn(); n++ } catch (e) { errors.push(`${label}: ${e.message}`) } }
+  for (const inst of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) safe(() => syncInstallmentJournal(inst), `งวด#${inst.id}`)
+  const poType = db.prepare('SELECT payment_type FROM purchase_orders WHERE id=?')
+  for (const exp of db.prepare('SELECT * FROM expenses WHERE COALESCE(amount,0) > 0').all()) {
+    const credit = exp.po_id ? poType.get(exp.po_id)?.payment_type === 'credit' : false
+    safe(() => syncExpenseJournal(exp, { credit }), `รายจ่าย#${exp.id}`)
+  }
+  for (const pay of db.prepare('SELECT * FROM payments WHERE COALESCE(gross,0) > 0').all()) {
+    if ((pay.status || '') === 'ปฏิเสธ') { removeAutoJournal('pay', pay.id); continue }
+    safe(() => syncPaymentJournal(pay), `ใบจ่าย#${pay.id}`)
+  }
+  return { n, errors }
 }
 
 // ---- รายงาน ----

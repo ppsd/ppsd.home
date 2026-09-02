@@ -566,7 +566,8 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           {/* เบิกเงินเดือนล่วงหน้า */}
           <div style={{ borderTop: '8px solid #F3F5F7' }}>
             <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>เบิกเงินเดือนล่วงหน้า (งวด {payrollMeta?.periodLabel}) <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5 }}>· เบิกได้ไม่เกิน (วันมาทำงาน ÷ 2) × ค่าจ้าง/วัน · สิ้นเดือนหักคืนจากยอดสุทธิ</span></div>
-            <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
+            {payrollMeta?.locked && <div style={{ fontSize: 12.5, color: '#8A6D1F', background: '#FBF4E1', padding: '8px 18px' }}>งวดนี้ปิดแล้ว — บันทึก/ลบการเบิกไม่ได้ (ยอดจะไม่ถูกหักในเงินเดือน) เลือกงวดที่ยังไม่ปิดก่อน</div>}
+            {!payrollMeta?.locked && <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
               <select style={{ ...field, width: 'auto', minWidth: 180 }} value={advForm.emp_code} onChange={(e) => setAdvForm({ ...advForm, emp_code: e.target.value })}>
                 <option value="">เลือกพนักงาน</option>
                 {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
@@ -575,7 +576,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <input style={{ ...field, flex: 1, minWidth: 140 }} placeholder="หมายเหตุ (ถ้ามี)" value={advForm.note} onChange={(e) => setAdvForm({ ...advForm, note: e.target.value })} />
               <button onClick={submitAdvance} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึกเบิก</button>
               {advLimit && advForm.emp_code && <span style={{ fontSize: 12, color: advLimit.remaining > 0 ? '#2E7D55' : '#C24036' }}>มาทำงาน {advLimit.worked} วัน · เบิกได้อีก <b>{baht(advLimit.remaining)}</b> (เพดาน {baht(advLimit.limit)} · เบิกแล้ว {baht(advLimit.taken)})</span>}
-            </div>
+            </div>}
             {advErr && <div style={{ fontSize: 12.5, color: '#C24036', padding: '8px 18px' }}>{advErr}</div>}
             {advances.length === 0
               ? <div style={{ padding: 20, textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ยังไม่มีการเบิกล่วงหน้าในงวดนี้</div>
@@ -596,7 +597,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                         <span className="num" style={{ color: '#94A0A8' }}>{r.date}</span>
                         <span style={{ color: '#5C6770', flex: 1 }}>{r.note || ''}</span>
                         <span className="num" style={{ fontWeight: 600, color: '#C24036' }}>{baht(r.amount)}</span>
-                        <button onClick={() => delAdvance(r.id)} title="ยกเลิกรอบนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
+                        {!payrollMeta?.locked && <button onClick={() => delAdvance(r.id)} title="ยกเลิกรอบนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>}
                       </div>
                     ))}
                   </div>
@@ -607,7 +608,8 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           {/* หักอื่นๆ (พร้อมเหตุผล) — หักจากเงินเดือนงวดนี้ */}
           <div style={{ borderTop: '8px solid #F3F5F7' }}>
             <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>หักอื่นๆ (งวด {payrollMeta?.periodLabel}) <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5 }}>· ใส่จำนวนเงิน + เหตุผล → หักออกจากยอดสุทธิของงวดนี้ (เช่น ค่าปรับ ของเสียหาย เบิกของ)</span></div>
-            <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
+            {payrollMeta?.locked && <div style={{ fontSize: 12.5, color: '#8A6D1F', background: '#FBF4E1', padding: '8px 18px' }}>งวดนี้ปิดแล้ว — บันทึก/ลบการหักไม่ได้ เลือกงวดที่ยังไม่ปิดก่อน</div>}
+            {!payrollMeta?.locked && <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
               <select style={{ ...field, width: 'auto', minWidth: 180 }} value={dedForm.emp_code} onChange={(e) => setDedForm({ ...dedForm, emp_code: e.target.value })}>
                 <option value="">เลือกพนักงาน</option>
                 {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
@@ -615,7 +617,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนที่หัก" value={dedForm.amount} onChange={(v) => setDedForm({ ...dedForm, amount: v })} />
               <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="เหตุผลการหัก *" value={dedForm.reason} onChange={(e) => setDedForm({ ...dedForm, reason: e.target.value })} />
               <button onClick={submitDed} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#C24036', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึกหัก</button>
-            </div>
+            </div>}
             {dedErr && <div style={{ fontSize: 12.5, color: '#C24036', padding: '8px 18px' }}>{dedErr}</div>}
             {deds.length === 0
               ? <div style={{ padding: 20, textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ยังไม่มีการหักอื่นๆ ในงวดนี้</div>
@@ -636,7 +638,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                         <td className="num" style={{ ...td, textAlign: 'right', color: '#94A0A8' }}>{d.date}</td>
                         <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#C24036' }}>-{baht(d.amount)}</td>
                         <td style={{ ...td, textAlign: 'center', padding: '9px 18px' }}>
-                          <button onClick={() => delDed(d.id)} title="ยกเลิกรายการหักนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                          {!payrollMeta?.locked && <button onClick={() => delDed(d.id)} title="ยกเลิกรายการหักนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 14 }}>✕</button>}
                         </td>
                       </tr>
                     ))}

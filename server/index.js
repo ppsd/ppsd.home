@@ -105,7 +105,8 @@ function absentDaysInMonth(emp, period) {
   const empStart = emp.start && /^\d{4}-\d{2}-\d{2}$/.test(emp.start) ? emp.start : null
   if (empStart && empStart > from) from = empStart
   const excused = new Set(punches.map((p) => p.date))
-  for (const l of db.prepare("SELECT start_date,end_date FROM leaves WHERE emp_code=? AND status='อนุมัติ'").all(emp.code))
+  // ลาที่อนุมัติ = มีใบลา (ไม่นับขาด) · ลาที่ไม่อนุมัติ = ถูกหักแยกเป็น "วันลา" ใน computePayroll แล้ว ไม่นับขาดซ้ำอีกชั้น
+  for (const l of db.prepare("SELECT start_date,end_date FROM leaves WHERE emp_code=? AND status IN ('อนุมัติ','ไม่อนุมัติ')").all(emp.code))
     for (const d of eachDay(l.start_date, l.end_date || l.start_date)) excused.add(d)
   for (const t of db.prepare("SELECT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ'").all(emp.name)) excused.add(t.date)
   for (const h of db.prepare('SELECT date FROM holidays WHERE date>=? AND date<=?').all(from, to)) excused.add(h.date) // วันหยุดบริษัท ไม่นับขาด
@@ -120,6 +121,24 @@ function currentPeriod() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
+// แปลงวันที่ (ISO หรือรูปแบบไทย "2 ก.ย. 69") → 'YYYY-MM-DD' · คืน null ถ้าอ่านไม่ออก
+function parseAnyDateISO(s) {
+  if (!s) return null
+  const str = String(s).trim()
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10)
+  const m = str.match(/^(\d{1,2})\s+(\S+)\s+(\d{2,4})$/)
+  if (m) {
+    const mi = TH_MONTHS.indexOf(m[2])
+    if (mi >= 0) {
+      let y = Number(m[3])
+      if (y < 100) y += 2500 // ปี พ.ศ. 2 หลัก
+      if (y > 2400) y -= 543 // พ.ศ. → ค.ศ.
+      return `${y}-${String(mi + 1).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`
+    }
+  }
+  return null
+}
+const dateInPeriod = (dateStr, period) => { const iso = parseAnyDateISO(dateStr); return !!iso && iso.startsWith(period) }
 function periodLabelTH(period) {
   const [yy, mm] = period.split('-').map(Number)
   return `${TH_MONTHS[mm - 1]} ${String((yy + 543) % 100).padStart(2, '0')}`
@@ -368,6 +387,11 @@ function doReject(docType, docId, req) {
   db.prepare('INSERT INTO doc_approvals (doc_type,doc_id,step,decision,approver,approver_sig,role,note,date,ts) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(docType, Number(docId), st.approvals.length + 1, 'reject', me.name, me.signature || null, me.role || '', req.body?.note || '', todayTH(), nowTS())
   setDocStatus(docType, docId, 'ปฏิเสธ')
+  // ปฏิเสธแล้ว = เอกสารเป็นโมฆะ → ถอนรายการบัญชีที่ลงไว้ตอนสร้างออกด้วย ไม่งั้นยอดค้างอยู่ในบัญชีตลอด
+  try {
+    if (docType === 'payment') acct.removeAutoJournal('pay', Number(docId))
+    if (docType === 'expense' && !doc.po_id) acct.removeAutoJournal('exp', Number(docId)) // รายจ่ายจาก PO ให้ยกเลิกที่การรับของแทน
+  } catch (e) { console.error('remove journal on reject failed:', e.message) }
   audit(req, `ปฏิเสธ ${cfg.label}`, doc.no || String(docId))
   return approvalState(docType, docId)
 }
@@ -780,7 +804,12 @@ api.post('/assets/:id/dispose', financeOnly, (req, res) => { try { acct.disposeA
 api.post('/assets/run-depreciation', financeOnly, (req, res) => { try { const r = acct.runDepreciation(req.body?.asOf, req.user.name); audit(req, 'ลงค่าเสื่อมราคา', `${r.assets} รายการ ${r.totalDepreciation}`); res.json(r) } catch (e) { res.status(400).json({ error: e.message }) } })
 // เฟส 4: ปิดงวด / ปิดปี / ยอดยกมา
 api.get('/closing', financeOnly, (_req, res) => res.json({ closedThrough: acct.closedThrough() }))
-api.post('/closing/lock', financeOnly, (req, res) => { acct.setClosedThrough(req.body?.date || ''); audit(req, 'ปิดงวดบัญชี', req.body?.date || 'ยกเลิกล็อก'); res.json({ ok: true, closedThrough: acct.closedThrough() }) })
+api.post('/closing/lock', financeOnly, (req, res) => {
+  const d = req.body?.date || ''
+  // ล็อกได้เฉพาะอดีต — ล็อกถึงวันนี้/อนาคตจะทำให้ทุกการรับของ/จ่ายเงินวันนี้ลงบัญชีไม่ได้แบบเงียบๆ
+  if (d && d >= todayISO()) return res.status(400).json({ error: 'ปิดงวดได้ถึงเมื่อวานเท่านั้น — ล็อกถึงวันนี้/อนาคตจะทำให้รายการใหม่ลงบัญชีไม่ได้' })
+  acct.setClosedThrough(d); audit(req, 'ปิดงวดบัญชี', d || 'ยกเลิกล็อก'); res.json({ ok: true, closedThrough: acct.closedThrough() })
+})
 api.post('/closing/opening', financeOnly, (req, res) => { try { const id = acct.postOpening(req.body?.balances, req.body?.date, req.user.name); audit(req, 'บันทึกยอดยกมา', `#${id}`); res.json({ ok: true, id }) } catch (e) { res.status(400).json({ error: e.message }) } })
 api.post('/closing/year-end', financeOnly, (req, res) => { try { const id = acct.closeYear(req.body?.date, req.user.name); audit(req, 'ปิดบัญชีสิ้นปี', req.body?.date); res.json({ ok: true, id }) } catch (e) { res.status(400).json({ error: e.message }) } })
 // เฟส 4: สรุปภาษี
@@ -793,7 +822,7 @@ api.post('/petty-cash/topup', financeOnly, (req, res) => { try { const r = acct.
 api.get('/petty-cash/statement', financeOnly, (req, res) => res.json(acct.pettyStatement({ from: req.query.from || undefined, to: req.query.to || undefined })))
 // สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากข้อมูลเดิมทั้งหมด (idempotent)
 api.post('/accounting/rebuild', financeOnly, (req, res) => {
-  try { const n = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${n} รายการ`); res.json({ ok: true, count: n }) }
+  try { const r = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${r.n} รายการ${r.errors.length ? ' · ข้าม ' + r.errors.length : ''}`); res.json({ ok: true, count: r.n, errors: r.errors }) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
 
@@ -805,8 +834,8 @@ api.get('/employees', (req, res) => {
   const showSalary = canSeeSalary(req.user)
   res.json(rows.map((e) => {
     const has_pin = !!db.prepare('SELECT pin FROM employees WHERE id=?').get(e.id)?.pin
-    // hide salary figures from users without salary permission
-    if (!showSalary) return { ...e, base: null, ot: null, sso: null, tax: null, has_pin }
+    // ผู้ใช้ที่ไม่มีสิทธิ์เงินเดือน: ซ่อนทั้งตัวเลขเงินเดือนและข้อมูลส่วนตัวอ่อนไหว (เลขบัตร/บัญชีธนาคาร/ลายเซ็น/ยอดหัก)
+    if (!showSalary) return { ...e, base: null, ot: null, sso: null, tax: null, tax_id: null, bank_name: null, bank_acct: null, signature: null, retention: null, student_loan: null, retention_opening: null, has_pin }
     return { ...e, has_pin }
   }))
 })
@@ -819,7 +848,7 @@ function leaveQuota(startDate) {
   return { personal: 3, vacation: years >= 1 ? 6 : 3, tenureYears: years }
 }
 
-api.post('/employees', canWrite, (req, res) => {
+api.post('/employees', requireSalary, (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อพนักงาน' })
   // next code from the highest existing EMP-### (avoids reuse after deletions)
@@ -856,7 +885,7 @@ api.post('/employees', canWrite, (req, res) => {
   res.status(201).json({ ...out, pin: pinPlain }) // return the PIN once so it can be shown to the user
 })
 // edit an employee (recomputes sso/tax from the new base)
-api.put('/employees/:id', canWrite, (req, res) => {
+api.put('/employees/:id', requireSalary, (req, res) => {
   const e = db.prepare('SELECT * FROM employees WHERE id=?').get(req.params.id)
   if (!e) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
   const b = req.body || {}
@@ -880,30 +909,37 @@ api.put('/employees/:id', canWrite, (req, res) => {
   res.json(db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(e.id))
 })
 // upload/replace an employee's signature
-api.put('/employees/:id/signature', canWrite, (req, res) => {
+api.put('/employees/:id/signature', requireSalary, (req, res) => {
   const sig = req.body?.signature
   if (typeof sig !== 'string' || !sig.startsWith('data:image/')) return res.status(400).json({ error: 'ไฟล์ลายเซ็นไม่ถูกต้อง' })
   db.prepare('UPDATE employees SET signature=? WHERE id=?').run(sig, req.params.id)
   res.json({ ok: true })
 })
 // reset / set an employee's kiosk PIN
-api.put('/employees/:id/pin', canWrite, (req, res) => {
+api.put('/employees/:id/pin', requireSalary, (req, res) => {
   const pin = String(req.body?.pin || '').trim()
   if (!/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'PIN ต้องเป็นตัวเลข 4 หลัก' })
   db.prepare('UPDATE employees SET pin=? WHERE id=?').run(hashPin(pin), req.params.id)
   res.json({ ok: true })
 })
 // remove an employee (e.g. resigned) — they drop out of payroll automatically
-api.delete('/employees/:id', canWrite, (req, res) => {
+api.delete('/employees/:id', requireSalary, (req, res) => {
   db.prepare('DELETE FROM employees WHERE id=?').run(req.params.id)
   res.json({ ok: true })
 })
 // ล้างพนักงานซ้ำ: รวมรายการที่ชื่อซ้ำกัน (จับคู่โดยไม่สน "คำนำหน้า" ที่ติดในชื่อ) ให้เหลือชื่อละ 1
 // เก็บรายการที่ข้อมูลครบสุด + ย้ายรายการอ้างอิงมาให้ + แยกคำนำหน้าออกจากชื่อไปใส่ช่อง "คำนำหน้า"
 const EMP_TITLES = ['นางสาว', 'นาง', 'นาย', 'น.ส.', 'ด.ช.', 'ด.ญ.', 'เด็กชาย', 'เด็กหญิง']
+// สระ/วรรณยุกต์ที่เกาะตัวอักษรก่อนหน้า — ถ้าตัดคำนำหน้าแล้วเจอพวกนี้ แปลว่าไปตัดกลางชื่อจริง (เช่น "นายิกา") ห้ามตัด
+const TH_COMBINING = /^[ัำ-ฺๅ็-๎]/
 function splitTitle(raw) {
   const s = String(raw || '').trim().replace(/\s+/g, ' ')
-  for (const t of EMP_TITLES) if (s.startsWith(t)) return { title: t === 'นางสาว' ? 'น.ส.' : t, rest: s.slice(t.length).trim() }
+  for (const t of EMP_TITLES) {
+    if (!s.startsWith(t)) continue
+    const rest = s.slice(t.length).trim()
+    if (!rest || TH_COMBINING.test(rest)) continue // "นายิกา" → ไม่ใช่คำนำหน้า
+    return { title: t === 'นางสาว' ? 'น.ส.' : t, rest }
+  }
   return { title: '', rest: s }
 }
 function runEmpDedup() {
@@ -922,6 +958,14 @@ function runEmpDedup() {
     }
     try { db.prepare('UPDATE time_adjustments SET emp_name=? WHERE emp_name=?').run(keepName, dupName) } catch { /* ignore */ }
     try { db.prepare('UPDATE ot SET name=? WHERE name=?').run(keepName, dupName) } catch { /* ignore */ }
+    // แก้รหัสในประวัติงวดเงินเดือนที่ปิดแล้วด้วย — ไม่งั้นยอด retention สะสมของคนที่ถูกรวมจะหาย
+    try {
+      for (const r of db.prepare('SELECT period, data FROM payroll_runs').all()) {
+        const rows = JSON.parse(r.data); let changed = false
+        for (const p of rows) if (p.code === dupCode) { p.code = keepCode; p.name = keepName; changed = true }
+        if (changed) db.prepare('UPDATE payroll_runs SET data=? WHERE period=?').run(JSON.stringify(rows), r.period)
+      }
+    } catch { /* ignore */ }
   }
   let mergedGroups = 0, removed = 0, tidied = 0, skippedReal = 0
   const detail = []
@@ -972,7 +1016,8 @@ const RETENTION_CAP = 5000 // เพดานเงินประกันผ�
 // ยอด retention ที่หักสะสมแล้ว "ก่อนงวด excludePeriod" = ยอดยกมา (พนักงานเก่า) + ผลรวมที่หักในทุกงวดที่ปิดแล้ว
 // (ไม่รวมงวดที่กำลังคำนวณ เพื่อไม่ให้ปิดงวดซ้ำแล้วนับซ้ำ)
 function retentionPaidBefore(empCode, opening, excludePeriod) {
-  const runs = db.prepare('SELECT period, data FROM payroll_runs WHERE period != ?').all(excludePeriod || '')
+  // นับเฉพาะงวดที่ปิดแล้ว "ก่อน" งวดที่คำนวณ (period เรียงเทียบเป็นข้อความได้ เพราะรูปแบบ YYYY-MM)
+  const runs = db.prepare('SELECT period, data FROM payroll_runs WHERE period < ?').all(excludePeriod || '9999-99')
   let sum = 0
   for (const r of runs) {
     try {
@@ -984,7 +1029,7 @@ function retentionPaidBefore(empCode, opening, excludePeriod) {
 }
 // จำนวน "งวด" ที่หักเงินประกันสะสมมาก่อนงวด excludePeriod = งวดยกมา (ประมาณจากยอดยกมา ÷ ยอดหักต่อเดือน) + งวดที่ปิดแล้วที่มีการหักจริง
 function retentionPeriodsBefore(empCode, opening, monthly, excludePeriod) {
-  const runs = db.prepare('SELECT data FROM payroll_runs WHERE period != ?').all(excludePeriod || '')
+  const runs = db.prepare('SELECT data FROM payroll_runs WHERE period < ?').all(excludePeriod || '9999-99')
   let periods = 0
   for (const r of runs) {
     try {
@@ -1001,9 +1046,13 @@ const NO_ATTENDANCE_ROLES = ['CEO', 'ผู้จัดการ']
 function computePayroll(period) {
   const emps = db.prepare("SELECT * FROM employees WHERE status != 'ลาออก' ORDER BY id").all()
   return emps.map((e) => {
-    const ot = db.prepare("SELECT COALESCE(SUM(amount),0) a FROM ot WHERE emp_code=? AND status='อนุมัติ'").get(e.code).a
-    const rejected = db.prepare("SELECT COALESCE(SUM(days),0) d FROM leaves WHERE emp_code=? AND status='ไม่อนุมัติ'").get(e.code).d
-    const unpaid = db.prepare("SELECT COALESCE(SUM(unpaid_days),0) d FROM leaves WHERE emp_code=? AND status='อนุมัติ'").get(e.code).d
+    // OT/วันลา นับ "เฉพาะของงวดนี้" (ตามวันที่ในรายการ) — ไม่งั้น OT เก่าจะถูกจ่ายซ้ำทุกเดือน
+    const ot = db.prepare("SELECT date, amount FROM ot WHERE emp_code=? AND status='อนุมัติ'").all(e.code)
+      .filter((r) => dateInPeriod(r.date, period)).reduce((s, r) => s + (Number(r.amount) || 0), 0)
+    const lvs = db.prepare("SELECT start_date, days, unpaid_days, status FROM leaves WHERE emp_code=? AND status IN ('อนุมัติ','ไม่อนุมัติ')").all(e.code)
+      .filter((l) => dateInPeriod(l.start_date, period))
+    const rejected = lvs.filter((l) => l.status === 'ไม่อนุมัติ').reduce((s, l) => s + (Number(l.days) || 0), 0)
+    const unpaid = lvs.filter((l) => l.status === 'อนุมัติ').reduce((s, l) => s + (Number(l.unpaid_days) || 0), 0)
     const isDaily = e.pay_type === 'รายวัน'
     const exempt = NO_ATTENDANCE_ROLES.includes(e.role) // CEO / ผู้จัดการ ไม่ต้องลงเวลา
     // รายวัน (เช่น แม่บ้าน): เงิน = ค่าแรง/วัน × วันทำงานที่กรอก · ไม่หักขาด (จ่ายตามวันที่ทำจริง)
@@ -1027,8 +1076,10 @@ function computePayroll(period) {
     const paidBefore = retentionPaidBefore(e.code, opening, period)
     const monthly = e.retention ?? 0
     const retention = Math.max(0, Math.min(monthly, RETENTION_CAP - paidBefore))
+    // อย่าให้ข้อมูลลับ (PIN/ลายเซ็น/โทเคน) หลุดไปติดใน snapshot เงินเดือน
+    const { pin, signature, track_token, ...pub } = e
     return {
-      ...e, ot, sso, tax, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
+      ...pub, ot, sso, tax, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
       daily_rate: dailyRate, work_days: workDays, exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
       retention, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct,
       retention_cap: RETENTION_CAP, retention_opening: opening,
@@ -1080,6 +1131,9 @@ function postPayrollJournal(period, rows, by) {
 api.post('/payroll/close', financeOnly, (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.body?.period) ? req.body.period : currentPeriod()
   const rows = computePayroll(period)
+  // กันปิดงวดที่มีคน "เงินติดลบ" (ยอดหักรวมเกินเงินได้) — ต้องแก้ยอดหักก่อน
+  const negatives = rows.filter((p) => netOf(p) < 0)
+  if (negatives.length) return res.status(400).json({ error: `ปิดงวดไม่ได้ — เงินสุทธิติดลบ: ${negatives.map((p) => `${p.name} (${netOf(p).toLocaleString()})`).join(', ')} กรุณาปรับยอดหัก/เบิกให้ไม่เกินเงินได้ก่อน` })
   const total = rows.reduce((s, p) => s + netOf(p), 0)
   db.prepare('INSERT INTO payroll_runs (period,data,total,created,by) VALUES (?,?,?,?,?) ON CONFLICT(period) DO UPDATE SET data=excluded.data,total=excluded.total,created=excluded.created,by=excluded.by')
     .run(period, JSON.stringify(rows), total, todayTH(), req.user.name)
@@ -1147,11 +1201,14 @@ api.get('/salary-advances/limit', requireSalary, (req, res) => {
   const taken = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(emp.code, period).a
   res.json({ worked, daily, limit, taken, remaining: Math.max(0, limit - taken), period })
 })
+// งวดที่ปิดแล้ว = snapshot ถูกล็อกไว้แล้ว — ห้ามบันทึกเบิก/หักย้อนเข้าไป (ยอดจะไม่ถูกหักจริง)
+const periodClosed = (period) => !!db.prepare('SELECT 1 FROM payroll_runs WHERE period=?').get(period)
 api.post('/salary-advances', financeOnly, (req, res) => {
   const b = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod() // งวดที่เลือก (เช่น ปิดงวด ส.ค. ต้นเดือน ก.ย.)
+  if (periodClosed(period)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว — บันทึกเบิกเข้างวดนี้ไม่ได้ (จะไม่ถูกหักในเงินเดือน) กรุณาเลือกงวดที่ยังไม่ปิด` })
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
   const { worked, limit } = advanceLimit(emp, period)
@@ -1165,6 +1222,7 @@ api.post('/salary-advances', financeOnly, (req, res) => {
 })
 api.delete('/salary-advances/:id', financeOnly, (req, res) => {
   const a = db.prepare('SELECT * FROM salary_advances WHERE id=?').get(req.params.id)
+  if (a && periodClosed(a.period)) return res.status(400).json({ error: `งวด ${periodLabelTH(a.period)} ปิดแล้ว — ลบรายการเบิกของงวดที่ปิดไม่ได้` })
   db.prepare('DELETE FROM salary_advances WHERE id=?').run(req.params.id)
   if (a) audit(req, 'ยกเลิกเบิกล่วงหน้า', `${a.emp_name} ${a.amount}`)
   res.json({ ok: true })
@@ -1197,6 +1255,7 @@ api.post('/deductions', financeOnly, (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod()
+  if (periodClosed(period)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว — บันทึกหักเข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงินที่หัก' })
   const reason = String(b.reason || '').trim()
@@ -1208,6 +1267,7 @@ api.post('/deductions', financeOnly, (req, res) => {
 })
 api.delete('/deductions/:id', financeOnly, (req, res) => {
   const d = db.prepare('SELECT * FROM deductions WHERE id=?').get(req.params.id)
+  if (d && periodClosed(d.period)) return res.status(400).json({ error: `งวด ${periodLabelTH(d.period)} ปิดแล้ว — ลบรายการหักของงวดที่ปิดไม่ได้` })
   db.prepare('DELETE FROM deductions WHERE id=?').run(req.params.id)
   if (d) audit(req, 'ยกเลิกการหักอื่นๆ', `${d.emp_name} ${d.amount}`)
   res.json({ ok: true })
@@ -1219,8 +1279,8 @@ api.get('/payroll/annual', requireSalary, (req, res) => {
   const runs = db.prepare('SELECT period,total,data FROM payroll_runs WHERE period LIKE ? ORDER BY period').all(year + '-%')
   let net = 0, sso = 0, base = 0, tax = 0
   for (const r of runs) {
-    net += r.total || 0
-    try { const rows = JSON.parse(r.data); for (const p of rows) { sso += p.sso || 0; base += p.base || 0; tax += p.tax || 0 } } catch { /* ignore */ }
+    // คำนวณสุทธิใหม่จาก snapshot รายคน (total ที่บันทึกไว้อาจมาจากสูตรเวอร์ชันเก่า)
+    try { const rows = JSON.parse(r.data); for (const p of rows) { net += netOf(p); sso += p.sso || 0; base += p.base || 0; tax += p.tax || 0 } } catch { net += r.total || 0 }
   }
   res.json({ year, months: runs.length, net, sso, ssoEmployer: sso, base, tax, periods: runs.map((r) => r.period) })
 })
@@ -1231,9 +1291,13 @@ api.get('/payroll/bank-file', requireSalary, (req, res) => {
   const run = db.prepare('SELECT * FROM payroll_runs WHERE period=?').get(period)
   const rows = run ? JSON.parse(run.data) : computePayroll(period)
   const head = ['ลำดับ', 'รหัสพนักงาน', 'ชื่อ-สกุล', 'ธนาคาร', 'เลขบัญชี', 'จำนวนเงินสุทธิ', 'อ้างอิง']
-  const body = rows.map((p, i) => [i + 1, p.code || '', p.name || '', p.bank_name || '', p.bank_acct || '', netOf(p).toFixed(2), 'SALARY ' + period])
-  const total = rows.reduce((s, p) => s + netOf(p), 0)
-  const foot = ['', '', '', '', 'รวม', total.toFixed(2), rows.length + ' รายการ']
+  // ไฟล์โอนธนาคาร: เอาเฉพาะแถวที่โอนได้จริง (มีเลขบัญชี + ยอดสุทธิ > 0) — แถวที่เหลือหมายเหตุไว้ท้ายไฟล์
+  const payable = rows.filter((p) => (p.bank_acct || '').trim() && netOf(p) > 0)
+  const skipped = rows.filter((p) => !((p.bank_acct || '').trim() && netOf(p) > 0) && netOf(p) !== 0)
+  const body = payable.map((p, i) => [i + 1, p.code || '', p.name || '', p.bank_name || '', p.bank_acct || '', netOf(p).toFixed(2), 'SALARY ' + period])
+  const total = payable.reduce((s, p) => s + netOf(p), 0)
+  const foot = ['', '', '', '', 'รวม', total.toFixed(2), payable.length + ' รายการ']
+  if (skipped.length) foot.push('ข้าม (ไม่มีเลขบัญชี/ยอดผิดปกติ): ' + skipped.map((p) => p.name).join(' · '))
   const csv = '﻿' + [head, ...body, foot].map((r) => r.map(csvCell).join(',')).join('\r\n')
   audit(req, 'ดาวน์โหลดไฟล์จ่ายเงินเดือนธนาคาร', periodLabelTH(period))
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
@@ -1247,7 +1311,7 @@ api.post('/ot', canWrite, (req, res) => {
   if (!b.emp_code || !b.amount) return res.status(400).json({ error: 'กรุณาเลือกพนักงานและจำนวนเงิน' })
   const emp = db.prepare('SELECT name FROM employees WHERE code=?').get(b.emp_code)
   const info = db.prepare('INSERT INTO ot (emp_code,name,date,hours,rate,amount,status) VALUES (?,?,?,?,?,?,?)')
-    .run(b.emp_code, emp?.name || b.name || '', b.date || todayTH(), b.hours || '', b.rate || '1.5x', Number(b.amount) || 0, 'รออนุมัติ')
+    .run(b.emp_code, emp?.name || b.name || '', b.date || todayISO(), b.hours || '', b.rate || '1.5x', Number(b.amount) || 0, 'รออนุมัติ')
   res.status(201).json(db.prepare('SELECT * FROM ot WHERE id=?').get(info.lastInsertRowid))
 })
 api.post('/ot/:id/approve', requireManager, (req, res) => {
@@ -1526,20 +1590,21 @@ api.post('/purchase-orders', financeOnly, (req, res) => {
 function syncPoExpense(po) {
   const existing = db.prepare('SELECT * FROM expenses WHERE po_id=?').get(po.id)
   const received = po.status === 'รับของแล้ว' || po.status === 'ปิดงาน'
-  if (received && po.house_code) {
+  // PO ไม่ผูกบ้านก็ต้องลงบัญชีเหมือนกัน (house_code ว่าง) — ไม่งั้น PO เครดิตไม่ผูกบ้านจะไม่ตั้งเจ้าหนี้ 2010 เลย
+  if (received) {
     let row
     if (existing) {
       db.prepare('UPDATE expenses SET house_code=?, item=?, vendor=?, amount=? WHERE po_id=?')
-        .run(po.house_code, po.item, po.vendor, po.amount, po.id)
+        .run(po.house_code || '', po.item, po.vendor, po.amount, po.id)
       row = db.prepare('SELECT * FROM expenses WHERE po_id=?').get(po.id)
     } else {
       const info = db.prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,po_id,date_iso) VALUES (?,?,?,?,?,?,?,?)')
-        .run(todayTH(), po.house_code, po.item, 'วัสดุ', po.vendor, po.amount, po.id, todayISO())
+        .run(todayTH(), po.house_code || '', po.item, 'วัสดุ', po.vendor, po.amount, po.id, todayISO())
       row = db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid)
     }
     // ลงบัญชีแยกประเภท: ซื้อสด → Cr เงินสด · ซื้อเครดิต → Cr เจ้าหนี้การค้า (จ่ายทีหลังค่อยตัดเจ้าหนี้)
     try { if (row) acct.syncExpenseJournal(row, { credit: po.payment_type === 'credit' }) } catch (e) { console.error('journal(po-exp):', e.message) }
-    recomputeHouse(po.house_code)
+    if (po.house_code) recomputeHouse(po.house_code)
   } else if (existing) {
     // not received anymore (or no house) → remove the auto-created expense + รายการบัญชี
     try { acct.removeAutoJournal('exp', existing.id) } catch (e) { console.error('journal(po-exp-del):', e.message) }
@@ -1594,7 +1659,8 @@ function matchReceipt(orderItems, deliveryItems, po) {
     if (d) d.used = true
     const nameOk = !!d
     const qtyOk = !d ? false : (!(Number(o.qty) > 0) ? null : (Number(o.qty) === d.qty))
-    const priceOk = !d ? false : priceOkFn(Number(o.price), d.price)
+    // บรรทัดเหมารวม (PO เก่าไม่มีรายการย่อย: qty=0, price=มูลค่ารวม) — เทียบราคาต่อหน่วยไม่ได้ ให้ตัดสินด้วยยอดรวมแทน
+    const priceOk = !d ? false : (!(Number(o.qty) > 0) ? null : priceOkFn(Number(o.price), d.price))
     const pass = nameOk && qtyOk !== false && priceOk !== false
     return { desc, qty: Number(o.qty) || 0, unit: o.unit || '', price: Number(o.price) || 0,
       d_name: d?.name || '', d_qty: d?.qty ?? null, d_price: d?.price ?? null,
@@ -1716,6 +1782,10 @@ api.post('/procurement/clear', adminOnly, (req, res) => {
     const houses = db.prepare("SELECT DISTINCT house_code h FROM expenses WHERE po_id IS NOT NULL AND COALESCE(house_code,'')!=''").all().map((r) => r.h)
     for (const e of db.prepare('SELECT id FROM expenses WHERE po_id IS NOT NULL').all()) { try { acct.removeAutoJournal('exp', e.id) } catch { /* ignore */ } }
     counts.expenses = db.prepare('DELETE FROM expenses WHERE po_id IS NOT NULL').run().changes
+    // ใบจ่ายเงินที่ผูก PO — ถอนรายการบัญชีและลบด้วย ไม่งั้นเหลือรายการตัดเจ้าหนี้ค้างลอย (2010 ติดลบ)
+    for (const p of db.prepare('SELECT id FROM payments WHERE po_id IS NOT NULL').all()) { try { acct.removeAutoJournal('pay', p.id) } catch { /* ignore */ } }
+    counts.payments = db.prepare('DELETE FROM payments WHERE po_id IS NOT NULL').run().changes
+    counts.payment_approvals = db.prepare("DELETE FROM doc_approvals WHERE doc_type='payment' AND doc_id NOT IN (SELECT id FROM payments)").run().changes
     counts.goods_receipts = db.prepare('DELETE FROM goods_receipts').run().changes
     counts.quotes = db.prepare('DELETE FROM pr_quotes').run().changes
     counts.approvals = db.prepare("DELETE FROM doc_approvals WHERE doc_type IN ('pr','po')").run().changes
@@ -1736,7 +1806,7 @@ api.get('/vendors', financeOnly, (_req, res) => {
     for (const po of pos) {
       total += po.amount || 0
       if (po.payment_type === 'credit') {
-        const paid = db.prepare('SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=?').get(po.id).a
+        const paid = db.prepare("SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").get(po.id).a
         out += Math.max(0, (po.amount || 0) - paid)
       }
     }
@@ -1899,7 +1969,10 @@ api.post('/payments', financeOnly, (req, res) => {
   const po = poId ? db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(poId) : null
   if (poId && !po) return res.status(404).json({ error: 'ไม่พบใบสั่งซื้อที่อ้างถึง' })
   if (po) {
-    const paid = db.prepare('SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=?').get(po.id).a
+    // จ่ายผูก PO ได้เฉพาะ PO เครดิตที่รับของแล้ว — PO เงินสดตัดเงินไปแล้วตอนรับของ (จ่ายซ้ำ = จ่าย 2 รอบ)
+    if (po.payment_type !== 'credit') return res.status(400).json({ error: `${po.no} เป็น PO เงินสด — บันทึกตัดเงินไปแล้วตอนรับของ ไม่ต้องทำใบจ่ายซ้ำ` })
+    if (!['รับของแล้ว', 'ปิดงาน'].includes(po.status)) return res.status(400).json({ error: `${po.no} ยังไม่รับของ — รับของให้เรียบร้อยก่อนจึงชำระเจ้าหนี้ได้` })
+    const paid = db.prepare("SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").get(po.id).a
     const remaining = Math.max(0, (po.amount || 0) - paid)
     if (gross > remaining + 0.5) return res.status(400).json({ error: `จ่ายเกินยอดค้างของ ${po.no} — ค้างจ่ายอยู่ ${baht(remaining)}` })
   }
@@ -1921,7 +1994,7 @@ api.post('/payments', financeOnly, (req, res) => {
 api.get('/payables', financeOnly, (_req, res) => {
   const today = todayISO()
   const rows = db.prepare("SELECT * FROM purchase_orders WHERE payment_type='credit' AND COALESCE(amount,0)>0 ORDER BY COALESCE(due_iso,'9999') , id").all().map((po) => {
-    const paid = db.prepare('SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=?').get(po.id).a
+    const paid = db.prepare("SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").get(po.id).a
     const remaining = Math.max(0, (po.amount || 0) - paid)
     const overdue = !!(po.due_iso && po.due_iso < today && remaining > 0)
     return { po_id: po.id, no: po.no, vendor: po.vendor, date: po.date, due_date: po.due_date, due_iso: po.due_iso, house_code: po.house_code, amount: po.amount, paid, remaining, overdue, status: remaining <= 0 ? 'จ่ายครบ' : overdue ? 'เกินกำหนด' : 'ค้างจ่าย' }
@@ -2075,7 +2148,7 @@ const EXPRESS_EXPORTS = {
   wht: 'หัก ณ ที่จ่าย (ภงด.3/53)',
   payroll: 'เงินเดือน / ภงด.1',
 }
-function expressCsv(kind) {
+function expressCsv(kind, reqPeriod) {
   const toCsv = (head, body) => '﻿' + [head, ...body].map((r) => r.map(csvCell).join(',')).join('\r\n')
   if (kind === 'sales') {
     const rows = db.prepare("SELECT * FROM sales_docs WHERE type IN ('invoice','receipt') ORDER BY date, id").all()
@@ -2096,13 +2169,15 @@ function expressCsv(kind) {
     const body = rows.map((r) => [r.date, r.no, r.payee, r.type, (r.gross || 0).toFixed(2), r.wht_rate, (r.wht || 0).toFixed(2), (r.net || 0).toFixed(2)])
     return { filename: 'express_หักณที่จ่าย.csv', content: toCsv(head, body) }
   }
-  // payroll — งวดล่าสุด (snapshot ถ้าปิดงวดแล้ว)
-  const period = currentPeriod()
+  // payroll — เลือกงวดได้ (?period=YYYY-MM) · ใช้ snapshot ถ้าปิดงวดแล้ว
+  const period = /^\d{4}-\d{2}$/.test(reqPeriod || '') ? reqPeriod : currentPeriod()
   const run = db.prepare('SELECT data FROM payroll_runs WHERE period=?').get(period)
   const rows = run ? JSON.parse(run.data) : computePayroll(period)
-  const head = ['รหัสพนักงาน', 'ชื่อ-สกุล', 'เลขผู้เสียภาษี', 'เงินเดือน', 'OT', 'ประกันสังคม', 'ภาษีหัก(ภงด.1)', 'เงินได้สุทธิ', 'ธนาคาร', 'เลขบัญชี']
-  const body = rows.map((p) => [p.code || '', p.name, p.tax_id || '', (p.base || 0).toFixed(2), (p.ot || 0).toFixed(2), (p.sso || 0).toFixed(2), (p.tax || 0).toFixed(2), netOf(p).toFixed(2), p.bank_name || '', p.bank_acct || ''])
-  return { filename: 'express_เงินเดือน.csv', content: toCsv(head, body) }
+  // "เงินได้" สำหรับ ภงด.1 = เงินได้พึงประเมิน (เงินเดือน+OT−หักวันลา) ไม่ใช่ยอดโอนสุทธิหลังหักเบิก/ประกันผลงาน
+  const earnedOf = (p) => (p.base || 0) + (p.ot || 0) - (p.leave_deduct || 0)
+  const head = ['งวด', 'รหัสพนักงาน', 'ชื่อ-สกุล', 'เลขผู้เสียภาษี', 'เงินเดือน', 'OT', 'ประกันสังคม', 'ภาษีหัก(ภงด.1)', 'เงินได้พึงประเมิน', 'จ่ายสุทธิ', 'ธนาคาร', 'เลขบัญชี']
+  const body = rows.map((p) => [period, p.code || '', p.name, p.tax_id || '', (p.base || 0).toFixed(2), (p.ot || 0).toFixed(2), (p.sso || 0).toFixed(2), (p.tax || 0).toFixed(2), earnedOf(p).toFixed(2), netOf(p).toFixed(2), p.bank_name || '', p.bank_acct || ''])
+  return { filename: `express_เงินเดือน_${period}.csv`, content: toCsv(head, body) }
 }
 api.get('/export/express', financeOnly, (_req, res) => {
   const counts = {
@@ -2115,7 +2190,7 @@ api.get('/export/express', financeOnly, (_req, res) => {
 })
 api.get('/export/express/:kind/download', financeOnly, (req, res) => {
   if (!EXPRESS_EXPORTS[req.params.kind]) return res.status(404).json({ error: 'ไม่พบชนิดการส่งออก' })
-  const { filename, content } = expressCsv(req.params.kind)
+  const { filename, content } = expressCsv(req.params.kind, req.query.period)
   audit(req, 'ส่งออกบัญชีเข้า Express', EXPRESS_EXPORTS[req.params.kind])
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`)
@@ -2757,7 +2832,7 @@ api.post('/boqs/:id/push-to-house', auditView, (req, res) => {
   if (mode === 'installment') {
     // สร้างงวดงานลูกค้า 1 งวด = ยอดรวม BOQ (ตั้งราคาขายไปในตัว)
     const nextNo = (db.prepare("SELECT COALESCE(MAX(no),0) m FROM installments WHERE house_code=? AND side='customer'").get(d.house_code).m) + 1
-    db.prepare("INSERT INTO installments (house_code,no,detail,days,due,amount,paid,status,side,category) VALUES (?,?,?,?,?,?,0,'รอเก็บ','customer','house')")
+    db.prepare("INSERT INTO installments (house_code,no,detail,days,due,amount,paid,status,side,category) VALUES (?,?,?,?,?,?,0,'รอเก็บเงิน','customer','house')")
       .run(d.house_code, nextNo, `ตามประมาณราคา ${d.no}`, '', '', grand)
   } else {
     // ตั้งราคาขาย "ตัวบ้าน" ฝั่งลูกค้า = ยอดรวม BOQ
@@ -3387,7 +3462,9 @@ api.get('/notifications', (req, res) => {
 // ---------- reports (aggregates for charts) ----------
 api.get('/reports', financeOnly, (_req, res) => {
   const houses = db.prepare('SELECT * FROM houses').all()
-  const expenses = db.prepare('SELECT * FROM expenses').all()
+  const expenses = db.prepare("SELECT * FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'").all()
+  // ใบจ่ายเงินที่นับเป็น "ต้นทุน" = ใบที่ไม่ใช่การชำระ PO (การชำระ PO นับต้นทุนไปแล้วในรายจ่ายตอนรับของ — นับซ้ำ = เบิ้ล)
+  const costPays = db.prepare("SELECT house_code, gross, net FROM payments WHERE po_id IS NULL AND COALESCE(status,'') != 'ปฏิเสธ'").all()
   // per-project profit (collected - expenses by project)
   const byProject = {}
   for (const h of houses) {
@@ -3408,7 +3485,7 @@ api.get('/reports', financeOnly, (_req, res) => {
   for (const e of expenses) matByHouse[e.house_code] = (matByHouse[e.house_code] || 0) + e.amount
   // ใบจ่ายเงิน/หัก ณ ที่จ่าย ที่ผูกกับบ้าน (ค่าเซ็นแบบ/ธรรมเนียม/ค่าป้าย ฯลฯ) — ต้นทุนจริง = ยอดก่อนหัก (gross)
   const payByHouse = {}
-  for (const p of db.prepare('SELECT house_code, gross FROM payments').all()) if (p.house_code) payByHouse[p.house_code] = (payByHouse[p.house_code] || 0) + (p.gross || 0)
+  for (const p of costPays) if (p.house_code) payByHouse[p.house_code] = (payByHouse[p.house_code] || 0) + (p.gross || 0)
   // รวมค่าใช้จ่ายที่ผูกบ้านเข้ากำไรรายโครงการด้วย
   for (const code in payByHouse) { const p = houseProj[code]; if (p && byProject[p]) byProject[p].expense += payByHouse[code] }
   // ----- งบกระแสเงินสด (สรุปเงินเข้า/ออก) -----
@@ -3416,7 +3493,8 @@ api.get('/reports', financeOnly, (_req, res) => {
   const outContractor = houses.reduce((s, h) => s + (h.paid || 0), 0)
   const outMaterial = expenses.reduce((s, e) => s + e.amount, 0)
   const outPayroll = db.prepare('SELECT COALESCE(SUM(total),0) a FROM payroll_runs').get().a
-  const outOther = db.prepare('SELECT COALESCE(SUM(net),0) a FROM payments').get().a
+  // ไม่รวมใบจ่ายชำระ PO — เงินซื้อของนับไว้แล้วใน outMaterial (นับอีกรอบ = เงินออกเบิ้ล)
+  const outOther = costPays.reduce((s, p) => s + (p.net || 0), 0)
   const cashflow = {
     in: inCustomer,
     outContractor, outMaterial, outPayroll, outOther,
@@ -3450,7 +3528,7 @@ api.get('/dashboard', (_req, res) => {
   const houses = db.prepare('SELECT * FROM houses').all()
   const sum = (k) => houses.reduce((s, h) => s + h[k], 0)
   const collected = sum('collected')
-  const expense = db.prepare('SELECT COALESCE(SUM(amount),0) s FROM expenses').get().s
+  const expense = db.prepare("SELECT COALESCE(SUM(amount),0) s FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'").get().s
   const nameByCode = Object.fromEntries(houses.map((h) => [h.code, h.name]))
   // live alert panels
   const daysOverdue = (due) => {
@@ -3459,7 +3537,7 @@ api.get('/dashboard', (_req, res) => {
     return Math.max(0, Math.round((Date.now() - t) / 86400000))
   }
   const overdueList = db.prepare("SELECT * FROM installments WHERE status='เลยกำหนด' ORDER BY id").all()
-    .map((r) => ({ house: nameByCode[r.house_code] || r.house_code, no: String(r.no), detail: r.detail, amount: '฿' + r.amount.toLocaleString('en-US'), days: daysOverdue(r.due) }))
+    .map((r) => ({ house: nameByCode[r.house_code] || r.house_code, no: String(r.no), detail: r.detail, amount: '฿' + r.amount.toLocaleString('en-US'), days: daysOverdue(r.due_iso || r.due) }))
   const toCollectList = db.prepare("SELECT * FROM installments WHERE status='รอเก็บเงิน' ORDER BY id").all()
     .map((r) => ({ house: nameByCode[r.house_code] || r.house_code, detail: `งวด ${r.no} · ${r.detail}`, amount: '฿' + r.amount.toLocaleString('en-US') }))
   const advanceList = db.prepare('SELECT * FROM contractors WHERE advance > deducted ORDER BY id').all()

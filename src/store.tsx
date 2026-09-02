@@ -272,6 +272,8 @@ export interface ApiPayment {
   net: number
   house_code?: string
   note?: string
+  po_id?: number | null
+  po_no?: string
   approval?: Approval
   status?: string
 }
