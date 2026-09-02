@@ -196,6 +196,67 @@ test('ปิดงวดบัญชี: ห้ามล็อกวันนี
   assert.equal(issues.length, 0, 'ลงสำเร็จแล้วธงต้องหายเอง')
 })
 
+test('เลขเอกสาร: ล้างข้อมูลจัดซื้อแล้ว เลข PO ใหม่ต้องไม่ซ้ำเลขเดิม', async () => {
+  const a = await POST('/purchase-orders', { vendor: 'ร้านเลข', item: 'ของ A', amount: 100, payment_type: 'cash' })
+  const noA = a.data.no
+  await POST('/procurement/clear', {})
+  const b = await POST('/purchase-orders', { vendor: 'ร้านเลข', item: 'ของ B', amount: 100, payment_type: 'cash' })
+  assert.notEqual(b.data.no, noA, `เลข PO ซ้ำหลังล้างข้อมูล: ${b.data.no}`)
+  const nA = Number(noA.match(/(\d+)$/)[1]), nB = Number(b.data.no.match(/(\d+)$/)[1])
+  assert.ok(nB > nA, 'เลขต้องเดินหน้าต่อ ไม่ย้อนกลับ')
+})
+
+test('ภาษีซื้อ: คิดจากใบกำกับจริง ไม่เดา 7/107 จากทุกใบ', async () => {
+  await POST('/expenses', { item: 'ของมี VAT', amount: 1070, vat_amount: 70, tax_invoice_no: 'INV-001' })
+  await POST('/expenses', { item: 'ของไม่มี VAT', amount: 500 })
+  const t = (await GET('/tax-summary')).data
+  // ภาษีซื้อรวมต้องเท่ากับ VAT ที่กรอกจริงเท่านั้น (70) ไม่รวมใบที่ไม่มี VAT
+  assert.equal(Math.round(t.inputVat), 70, `inputVat = ${t.inputVat} (ต้องเป็น 70)`)
+  const bad = await POST('/expenses', { item: 'VAT เกินยอด', amount: 100, vat_amount: 200 })
+  assert.equal(bad.status, 400)
+})
+
+test('เอกสารขาย: ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จ (อ้างอิงต่อกัน · ห้ามออกซ้ำ)', async () => {
+  const q = await POST('/sales-docs', { type: 'quote', customer: 'ลูกค้าเทสต์', items: [{ desc: 'งานสร้าง', qty: 1, price: 100000 }] })
+  assert.equal(q.status, 201)
+  const inv = await POST(`/sales-docs/${q.data.id}/derive`, { to: 'invoice' })
+  assert.equal(inv.status, 201)
+  assert.equal(inv.data.ref, q.data.no)
+  assert.equal(inv.data.total, q.data.total)
+  const dup = await POST(`/sales-docs/${q.data.id}/derive`, { to: 'invoice' })
+  assert.equal(dup.status, 409, 'ออกใบแจ้งหนี้ซ้ำจากใบเดิมต้องถูกบล็อก')
+  const rc = await POST(`/sales-docs/${inv.data.id}/derive`, { to: 'receipt' })
+  assert.equal(rc.status, 201)
+  assert.equal(rc.data.ref, inv.data.no)
+  assert.equal(rc.data.status, 'ชำระแล้ว')
+})
+
+test('สิทธิ์รายโมดูล: ปิด "จัดซื้อ" แล้วผู้ใช้นั้นเข้าเส้นทางจัดซื้อไม่ได้ (403)', async () => {
+  const nu = await POST('/users', { name: 'บัญชีเทสต์', username: 'acctest', pin: '5555', role: 'accounting', position: 'บัญชี' })
+  assert.equal(nu.status, 201, JSON.stringify(nu.data))
+  const upd = await PUT(`/users/${nu.data.id}`, { deny_mods: ['procurement'] })
+  assert.equal(upd.status, 200)
+  const adminToken = token
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  const blocked = await GET('/payables')
+  assert.equal(blocked.status, 403, 'โมดูลจัดซื้อต้องถูกปิด')
+  const ok = await GET('/journal?limit=1')
+  assert.equal(ok.status, 200, 'โมดูลบัญชียังต้องเข้าได้')
+  token = adminToken
+})
+
+test('เอกสารราชการ: ไฟล์ สปส. และ ภงด.1ก ดาวน์โหลดได้', async () => {
+  const sso = await fetch(`${BASE}/payroll/sso-file?period=${period}`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(sso.status, 200)
+  assert.match(await sso.text(), /เงินสมทบ/)
+  const p1k = await fetch(`${BASE}/payroll/pnd1k?year=${period.slice(0, 4)}`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(p1k.status, 200)
+  assert.match(await p1k.text(), /เงินได้พึงประเมิน/)
+  const ann = await GET(`/payroll/annual-emp?year=${period.slice(0, 4)}`)
+  assert.equal(ann.status, 200)
+  assert.ok(ann.data.rows.length >= 1, 'ต้องมียอดสะสมจากงวดที่ปิดไปแล้ว')
+})
+
 test('สิทธิ์: role site ต้องไม่เห็นตัวเลขเงินรวมบริษัทบนแดชบอร์ด', async () => {
   await POST('/users', { name: 'ช่างเทสต์', username: 'sitetest', pin: '9999', role: 'site', position: 'ช่าง' })
   const adminToken = token

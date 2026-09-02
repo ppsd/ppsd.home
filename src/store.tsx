@@ -287,6 +287,7 @@ export interface ApiUser {
   last_active: string
   signature?: string | null
   position?: string
+  deny_mods?: string[]
 }
 export interface Dashboard {
   building: number
@@ -355,6 +356,7 @@ export interface ApiSalesDoc {
   total: number
   status: string
   house_code?: string
+  ref?: string
 }
 export interface ApiFile {
   id: number
@@ -389,6 +391,7 @@ export interface SessionUser {
   position?: string
   isManager?: boolean
   mustChangePin?: boolean
+  deny_mods?: string[] // โมดูลที่แอดมินปิดสำหรับบัญชีนี้
 }
 
 interface AppData {
@@ -462,6 +465,7 @@ interface AppCtx {
   addTask: (b: Record<string, unknown>) => Promise<void>
   updateTask: (id: number, b: Record<string, unknown>) => Promise<void>
   addSalesDoc: (b: Record<string, unknown>) => Promise<ApiSalesDoc>
+  deriveSalesDoc: (id: number, to: 'invoice' | 'receipt') => Promise<ApiSalesDoc>
   convertQuote: (id: number, name: string) => Promise<void>
   refreshNotifications: () => Promise<void>
   reloadData: (key: keyof AppData, path: string) => Promise<void>
@@ -716,6 +720,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         },
         addSalesDoc: async (b) => {
           const doc = await api.post<ApiSalesDoc>('/sales-docs', b)
+          await reload('salesDocs', '/sales-docs')
+          return doc
+        },
+        deriveSalesDoc: async (id, to) => {
+          const doc = await api.post<ApiSalesDoc>('/sales-docs/' + id + '/derive', { to })
           await reload('salesDocs', '/sales-docs')
           return doc
         },

@@ -13,6 +13,7 @@ import { baht, unMoney } from '../data'
 import { useApp } from '../store'
 import MoneyInput from './MoneyInput'
 import Pager from './Pager'
+import WhtCertDoc, { type AnnualEmpRow } from './WhtCertDoc'
 import PayrollSummaryDoc from './PayrollSummaryDoc'
 import EfilingList from './EfilingList'
 import EmpSignatureCell from './EmpSignatureCell'
@@ -169,6 +170,17 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
 
   // payroll period runs (closed months)
   const [showSummary, setShowSummary] = useState(false)
+  // หนังสือรับรอง 50 ทวิ — เลือกพนักงานจากยอดสะสมทั้งปี (งวดที่ปิดแล้ว)
+  const [whtRows, setWhtRows] = useState<AnnualEmpRow[] | null>(null)
+  const [whtPick, setWhtPick] = useState<AnnualEmpRow | null>(null)
+  const whtYear = String(new Date().getFullYear())
+  const openWhtList = async () => {
+    try {
+      const r = await apiClient.get<{ rows: AnnualEmpRow[] }>('/payroll/annual-emp?year=' + whtYear)
+      if (!r.rows.length) { alert('ยังไม่มีงวดที่ปิดแล้วในปีนี้ — ปิดงวดเงินเดือนก่อนจึงออก 50 ทวิ ได้'); return }
+      setWhtRows(r.rows)
+    } catch (e) { alert((e as Error).message) }
+  }
   const [runs, setRuns] = useState<{ period: string; periodLabel: string }[]>([])
   useEffect(() => { if (salaryOk) apiClient.get<{ period: string; periodLabel: string }[]>('/payroll/runs').then(setRuns).catch(() => {}) }, [salaryOk, payrollMeta?.locked])
   const periodOptions = (() => {
@@ -438,6 +450,24 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
         {tab === 'payroll' && salaryOk && (
           <>
           {showSummary && payroll && payrollMeta && <PayrollSummaryDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowSummary(false)} />}
+          {whtPick && <WhtCertDoc row={whtPick} year={whtYear} onClose={() => setWhtPick(null)} />}
+          {whtRows && !whtPick && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 55, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setWhtRows(null)}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 520, maxHeight: '80vh', overflow: 'auto', padding: '18px 20px' }}>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>หนังสือรับรอง 50 ทวิ — ปี {Number(whtYear) + 543}</div>
+                <div style={{ fontSize: 12, color: '#94A0A8', marginBottom: 10 }}>เลือกพนักงานเพื่อพิมพ์ (ยอดจากงวดที่ปิดแล้วทั้งปี)</div>
+                {whtRows.map((r) => (
+                  <div key={r.code || r.name} onClick={() => setWhtPick(r)} className="hov-fafbfc" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderTop: '1px solid #F1F4F6', cursor: 'pointer', fontSize: 13 }}>
+                    <span style={{ fontWeight: 600, flex: 1 }}>{r.prefix ? r.prefix + ' ' : ''}{r.name}</span>
+                    <span style={{ fontSize: 11.5, color: '#94A0A8' }}>{r.months} งวด</span>
+                    <span className="num" style={{ fontWeight: 600, color: '#30506A' }}>{baht(r.income)}</span>
+                    <span className="num" style={{ fontSize: 12, color: '#C24036' }}>ภาษี {baht(r.tax)}</span>
+                  </div>
+                ))}
+                <button onClick={() => setWhtRows(null)} style={{ marginTop: 12, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#5C6770', background: '#F1F4F6', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>ปิด</button>
+              </div>
+            </div>
+          )}
           {annual && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
               <div><div style={{ fontSize: 12, color: '#5C6770' }}>รวมจ่ายเงินเดือนทั้งปี {new Date().getFullYear() + 543}</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#1C2730', marginTop: 3 }}>{baht(annual.net)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>จากงวดที่ปิดแล้ว {annual.months} เดือน</div></div>
@@ -461,6 +491,11 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               {payrollMeta && (
                 <button onClick={() => apiClient.download('/payroll/bank-file?period=' + payrollMeta.period).catch((e) => alert((e as Error).message))} title="ดาวน์โหลดไฟล์จ่ายเงินเดือนผ่านธนาคาร (CSV)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ไฟล์จ่ายผ่านธนาคาร</button>
               )}
+              {payrollMeta && (
+                <button onClick={() => apiClient.download('/payroll/sso-file?period=' + payrollMeta.period).catch((e) => alert((e as Error).message))} title="รายชื่อ + ค่าจ้าง + เงินสมทบของงวด (สำหรับยื่น สปส.1-10)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ไฟล์ สปส.</button>
+              )}
+              <button onClick={() => apiClient.download('/payroll/pnd1k?year=' + new Date().getFullYear()).catch((e) => alert((e as Error).message))} title="สรุปเงินได้ + ภาษีหักนำส่งทั้งปีต่อคน (สำหรับยื่น ภงด.1ก)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#6B4E9E', background: '#fff', border: '1px solid #DDD3EE', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ภงด.1ก</button>
+              <button onClick={openWhtList} title="พิมพ์หนังสือรับรองหักภาษี ณ ที่จ่าย (50 ทวิ) รายพนักงาน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🧾 50 ทวิ</button>
               {!payrollMeta?.locked && payrollMeta && (
                 <button onClick={async () => { const lbl = payrollMeta.periodLabel; if (!window.confirm(`ปิดงวดเงินเดือน ${lbl}?\nตัวเลขจะถูกล็อก (แก้ไม่ได้) และระบบจะลงบัญชีค่าใช้จ่ายเงินเดือนเข้าบัญชีแยกประเภท (GL) ให้อัตโนมัติ`)) return; await app.closePayroll(payrollMeta.period); alert(`ปิดงวด ${lbl} แล้ว · ลงบัญชีค่าใช้จ่ายเงินเดือนเข้าบัญชีแยกประเภท (GL) ให้อัตโนมัติแล้ว`) }} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>ปิดงวด / ออกเงินเดือน</button>
               )}

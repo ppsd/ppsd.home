@@ -173,14 +173,15 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
         if (v && (v.credit_days || 0) > 0) { payType = 'credit'; creditDays = String(v.credit_days) }
       }
     } catch { /* ไม่มีใบเทียบราคา ก็ปล่อยว่างให้เลือกเอง */ }
-    setPoForm({ vendor, item: r.item, amount, pr_no: r.no, payment_type: payType, credit_days: creditDays, house_code: code })
+    setPoForm({ vendor, item: r.item, amount, pr_no: r.no, payment_type: payType, credit_days: creditDays, house_code: code, vat_amount: '', tax_invoice_no: '' })
     setPoItems((r.items || []).map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })))
     setPoImg(r.image || ''); setTab('po'); setAddingPo(true)
   }
 
   // inline PO create form
   const [addingPo, setAddingPo] = useState(false)
-  const [poForm, setPoForm] = useState({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '' })
+  const [poForm, setPoForm] = useState({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '', vat_amount: '', tax_invoice_no: '' })
+  const [poHasVat, setPoHasVat] = useState(false)
   // รายการที่สั่ง (ชื่อ/จำนวน/ราคา) ติดไปกับ PO — ใช้เทียบใบส่งของตอนตรวจรับ (มาจาก PR ถ้าออก PO จาก PR)
   const [poItems, setPoItems] = useState<{ desc: string; qty: number; unit: string; price: number }[]>([])
   // picking a vendor auto-fills its default credit terms (จัดซื้อแก้ได้)
@@ -201,8 +202,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     if (!poForm.vendor.trim() || !poForm.item.trim()) { setPoErr('กรุณากรอกผู้ขายและรายการ'); return }
     setPoErr('')
     try {
-      await addPO({ vendor: poForm.vendor, item: poForm.item, amount: Number(poForm.amount.replace(/,/g, '')) || 0, pr_no: poForm.pr_no, image: poImg || undefined, payment_type: poForm.payment_type, credit_days: Number(poForm.credit_days) || 0, house_code: poForm.house_code, items: poItems.length ? poItems : undefined })
-      setAddingPo(false); setPoForm({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '' }); setPoImg(''); setPoItems([])
+      await addPO({ vendor: poForm.vendor, item: poForm.item, amount: Number(poForm.amount.replace(/,/g, '')) || 0, pr_no: poForm.pr_no, image: poImg || undefined, payment_type: poForm.payment_type, credit_days: Number(poForm.credit_days) || 0, house_code: poForm.house_code, items: poItems.length ? poItems : undefined, vat_amount: poHasVat ? unMoney(poForm.vat_amount) : 0, tax_invoice_no: poHasVat ? poForm.tax_invoice_no : '' })
+      setAddingPo(false); setPoForm({ vendor: '', item: '', amount: '', pr_no: '', payment_type: 'cash', credit_days: '', house_code: houseCode || '', vat_amount: '', tax_invoice_no: '' }); setPoHasVat(false); setPoImg(''); setPoItems([])
     } catch (e) { setPoErr((e as Error).message) }
   }
 
@@ -443,6 +444,21 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <>
                     <input style={{ ...prField, width: 90 }} type="number" placeholder="จำนวนวัน" value={poForm.credit_days} onChange={(e) => setPoForm({ ...poForm, credit_days: e.target.value })} />
                     <span style={{ fontSize: 12.5, color: '#5C6770' }}>วัน</span>
+                  </>
+                )}
+              </div>
+              {/* ภาษีซื้อจากใบกำกับจริง — ติ๊กเมื่อร้านออกใบกำกับภาษี (VAT คำนวณ 7/107 ให้ แก้ได้) */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#5C6770', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={poHasVat} onChange={(e) => { const on = e.target.checked; setPoHasVat(on); setPoForm((f) => ({ ...f, vat_amount: on ? String(Math.round(((Number(f.amount.replace(/,/g, '')) || 0) * 7 / 107) * 100) / 100) : '', tax_invoice_no: on ? f.tax_invoice_no : '' })) }} />
+                  มีใบกำกับภาษี (VAT)
+                </label>
+                {poHasVat && (
+                  <>
+                    <input style={{ ...prField, width: 170 }} placeholder="เลขที่ใบกำกับภาษี" value={poForm.tax_invoice_no} onChange={(e) => setPoForm({ ...poForm, tax_invoice_no: e.target.value })} />
+                    <span style={{ fontSize: 12.5, color: '#5C6770' }}>ยอด VAT</span>
+                    <MoneyInput style={{ ...prField, width: 110 }} decimal placeholder="VAT (บาท)" value={poForm.vat_amount} onChange={(v) => setPoForm({ ...poForm, vat_amount: v })} />
+                    <span style={{ fontSize: 11.5, color: '#94A0A8' }}>(คำนวณ 7/107 จากยอดรวมให้ — แก้ตามใบจริงได้)</span>
                   </>
                 )}
               </div>

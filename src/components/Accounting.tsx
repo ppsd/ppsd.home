@@ -749,7 +749,7 @@ function Assets() {
 }
 
 // ---------- สรุปภาษี (ภ.พ.30 / หัก ณ ที่จ่าย / ภ.ง.ด.50) ----------
-interface TaxData { outputVat: number; inputVat: number; vatPayable: number; wht: number; whtByType: { type: string; gross: number; wht: number; n: number }[]; netProfit: number; corpTax: number }
+interface TaxData { outputVat: number; inputVat: number; inputVatDocs?: number; vatPayable: number; wht: number; whtByType: { type: string; gross: number; wht: number; n: number }[]; netProfit: number; corpTax: number }
 function TaxSummary() {
   const [t, setT] = useState<TaxData | null>(null)
   const [from, setFrom] = useState('')
@@ -789,7 +789,7 @@ function TaxSummary() {
           <div style={{ fontSize: 15, fontWeight: 700, color: '#30506A' }}>ภ.พ.30 — ภาษีมูลค่าเพิ่ม</div>
           <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>VAT Return</div>
           {line('ภาษีขาย (Output VAT)', t.outputVat, '#2E7D55')}
-          {line('ภาษีซื้อ (Input VAT)', t.inputVat, '#C0852C')}
+          {line(`ภาษีซื้อ (จากใบกำกับจริง${t.inputVatDocs ? ` ${t.inputVatDocs} ใบ` : ''})`, t.inputVat, '#C0852C')}
           <div style={{ borderTop: '1px solid #E1E5EA', marginTop: 6, paddingTop: 6 }}>{line(t.vatPayable >= 0 ? 'ภาษีที่ต้องชำระ' : 'ภาษีขอคืน', Math.abs(t.vatPayable), t.vatPayable >= 0 ? '#C24036' : '#2E7D55', true)}</div>
         </div>
         <div style={{ ...card, padding: 18 }}>

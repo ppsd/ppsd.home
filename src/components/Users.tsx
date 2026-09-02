@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { roles, permissionMatrix, type Role } from '../erpData'
+import { MODULES } from '../data'
 import { useApp } from '../store'
+import type { ApiUser } from '../store'
 import { api } from '../api'
 import SignatureCell from './SignatureCell'
 
@@ -29,6 +31,12 @@ function PermCell({ level }: { level: string }) {
 
 export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const { data, updateUser, downloadBackup, resetUserPin, addPosition, restoreBackup } = useApp()
+  // เปิด/ปิดโมดูลรายคน — บันทึกทันที
+  const toggleMod = async (u: ApiUser, key: string) => {
+    const cur = u.deny_mods || []
+    const next = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]
+    try { await updateUser(u.id, { deny_mods: next }) } catch (e) { window.alert((e as Error).message) }
+  }
   const [busy, setBusy] = useState(false)
   const [autoBk, setAutoBk] = useState<{ name: string; date: string }[]>([])
   useEffect(() => { api.get<{ name: string; date: string }[]>('/backups').then(setAutoBk).catch(() => {}) }, [])
@@ -96,6 +104,28 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const [mirrorStat, setMirrorStat] = useState<MirrorStatus | null>(null)
   const [mirrorBusy, setMirrorBusy] = useState(false)
   const [bkLast, setBkLast] = useState<BackupLast | null>(null)
+  // แจ้งเตือน LINE
+  interface LineCfg { token_set: boolean; to: string; hour: number; last_sent: string; status: { at: string; ok: boolean; msg?: string } | null }
+  const [lineCfg, setLineCfg] = useState<LineCfg | null>(null)
+  const [lineToken, setLineToken] = useState('')
+  const [lineTo, setLineTo] = useState('')
+  const [lineHour, setLineHour] = useState(8)
+  const [lineBusy, setLineBusy] = useState(false)
+  const loadLine = () => api.get<LineCfg>('/line-settings').then((r) => { setLineCfg(r); setLineTo(r.to || ''); setLineHour(r.hour ?? 8) }).catch(() => {})
+  useEffect(() => { if (users) loadLine() /* eslint-disable-next-line */ }, [users])
+  const saveLine = async () => {
+    setLineBusy(true)
+    try {
+      const body: Record<string, unknown> = { to: lineTo.trim(), hour: lineHour }
+      if (lineToken.trim()) body.token = lineToken.trim()
+      await api.put('/line-settings', body); setLineToken(''); window.alert('บันทึกการตั้งค่า LINE แล้ว'); loadLine()
+    } catch (e) { window.alert((e as Error).message) } finally { setLineBusy(false) }
+  }
+  const testLine = async () => {
+    setLineBusy(true)
+    try { await api.post('/line-settings/test', {}); window.alert('ส่งสรุปทดสอบเข้า LINE แล้ว — เช็คในกลุ่ม'); loadLine() }
+    catch (e) { window.alert('ส่งไม่สำเร็จ: ' + (e as Error).message); loadLine() } finally { setLineBusy(false) }
+  }
   const loadMirror = () => api.get<{ dir: string; status: MirrorStatus | null; last?: BackupLast | null }>('/backup-mirror').then((r) => { setMirrorDir(r.dir || ''); setMirrorStat(r.status); setBkLast(r.last || null) }).catch(() => {})
   useEffect(() => { if (users) loadMirror() /* eslint-disable-next-line */ }, [users])
   const saveMirror = async () => {
@@ -173,6 +203,36 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
         </div>
       </div>
 
+      {/* แจ้งเตือน LINE — สรุปเรื่องค้างส่งเข้ากลุ่มบริหารทุกเช้า */}
+      <div style={{ background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 18px', borderBottom: '1px solid #DFEEE5', fontSize: 14, fontWeight: 600, color: '#2E7D55', background: '#F2F8F4' }}>💬 แจ้งเตือน LINE (สรุปเช้าอัตโนมัติ)</div>
+        <div style={{ padding: '14px 18px' }}>
+          <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.6, marginBottom: 10 }}>
+            ส่งสรุปเรื่องค้างเข้า LINE ทุกเช้า: งวดเลยกำหนด · หนี้ผู้ขายครบกำหนด · เรื่องรออนุมัติ · ลงบัญชีไม่สำเร็จ · สถานะสำรองข้อมูล<br />
+            วิธีตั้ง: สร้าง Messaging API channel ที่ developers.line.biz → คัดลอก <b>Channel access token</b> → เชิญบอทเข้ากลุ่ม แล้วเอา <b>Group ID</b> มาใส่
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="password" value={lineToken} onChange={(e) => setLineToken(e.target.value)} placeholder={lineCfg?.token_set ? '•••••• (ตั้งไว้แล้ว — พิมพ์ใหม่เพื่อเปลี่ยน)' : 'Channel access token'}
+              style={{ flex: 2, minWidth: 220, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px', outline: 'none' }} />
+            <input value={lineTo} onChange={(e) => setLineTo(e.target.value)} placeholder="Group ID / User ID (ขึ้นต้น C… หรือ U…)"
+              style={{ flex: 1, minWidth: 200, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px', outline: 'none' }} />
+            <label style={{ fontSize: 12.5, color: '#5C6770', display: 'flex', alignItems: 'center', gap: 6 }}>ส่งเวลา
+              <select value={lineHour} onChange={(e) => setLineHour(Number(e.target.value))} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px' }}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+              </select>
+            </label>
+            <button onClick={saveLine} disabled={lineBusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>บันทึก</button>
+            <button onClick={testLine} disabled={lineBusy} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>{lineBusy ? 'กำลังส่ง…' : '📨 ส่งทดสอบ'}</button>
+          </div>
+          {lineCfg?.status && (
+            <div style={{ fontSize: 12, marginTop: 10, color: lineCfg.status.ok ? '#2E7D55' : '#C24036' }}>
+              {lineCfg.status.ok ? '✓ ส่งล่าสุดสำเร็จ' : '✗ ส่งไม่สำเร็จ'} · {lineCfg.status.at}{!lineCfg.status.ok && lineCfg.status.msg ? ` — ${lineCfg.status.msg}` : ''}
+              {lineCfg.last_sent ? ` · สรุปเช้าล่าสุด ${lineCfg.last_sent}` : ''}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* คำขอรีเซ็ต PIN (ลืม PIN) รออนุมัติ */}
       {resets.length > 0 && (
         <div style={{ background: '#fff', border: '1px solid #ECDCB8', borderRadius: 12, overflow: 'hidden' }}>
@@ -216,6 +276,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <th style={{ ...th, textAlign: 'center' }}>บทบาท</th>
               <th style={{ ...th, textAlign: 'center' }}>สถานะ</th>
               <th style={th}>ใช้งานล่าสุด</th>
+              <th style={th}>สิทธิ์รายโมดูล <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10.5 }}>(กดเพื่อเปิด/ปิด)</span></th>
               <th style={{ ...th, textAlign: 'center' }}>ลายเซ็น</th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>จัดการ</th>
             </tr>
@@ -234,6 +295,21 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                   <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: rs.c, background: rs.bg, padding: '3px 11px', borderRadius: 20 }}>{rs.label}</span></td>
                   <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: active ? '#2E7D55' : '#C24036', background: active ? '#E2F1EA' : '#FBEEEC', padding: '3px 11px', borderRadius: 20 }}>{u.status}</span></td>
                   <td style={{ ...td, color: '#5C6770' }}>{u.last_active}</td>
+                  <td style={td}>
+                    {u.role === 'admin'
+                      ? <span style={{ fontSize: 11, color: '#94A0A8' }}>ทุกโมดูล (ผู้ดูแล)</span>
+                      : <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                          {MODULES.map((m) => {
+                            const off = (u.deny_mods || []).includes(m.key)
+                            return (
+                              <span key={m.key} onClick={() => toggleMod(u, m.key)} title={off ? `เปิดการเข้าถึง "${m.label}" ให้ ${u.name}` : `ปิดการเข้าถึง "${m.label}" สำหรับ ${u.name}`}
+                                style={{ fontSize: 10.5, fontWeight: 600, cursor: 'pointer', padding: '2px 9px', borderRadius: 20, border: '1px solid ' + (off ? '#E7CDC9' : '#CDE3D6'), color: off ? '#C24036' : '#2E7D55', background: off ? '#FBEEEC' : '#F2F8F4', textDecoration: off ? 'line-through' : 'none' }}>
+                                {m.label}
+                              </span>
+                            )
+                          })}
+                        </div>}
+                  </td>
                   <td style={{ ...td, textAlign: 'center' }}><SignatureCell userId={u.id} signature={u.signature} /></td>
                   <td style={{ ...td, padding: '11px 18px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>

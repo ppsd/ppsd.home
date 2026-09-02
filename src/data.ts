@@ -147,6 +147,16 @@ export const nav: NavDef[] = [
   { id: 'users', label: 'ผู้ใช้งาน', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z' },
 ]
 
+// ---- สิทธิ์รายโมดูล: แอดมินปิดบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (สอดคล้อง MODULE_PATHS ฝั่ง server) ----
+export const MODULES: { key: string; label: string; pages: string[] }[] = [
+  { key: 'hr', label: 'บุคลากร / เงินเดือน', pages: ['hr', 'time'] },
+  { key: 'accounting', label: 'บัญชี / รายจ่าย', pages: ['accounting', 'expenses', 'costing', 'express', 'docreg'] },
+  { key: 'procurement', label: 'จัดซื้อ / จ่าย', pages: ['procurement', 'matprices'] },
+  { key: 'sales', label: 'เอกสารขาย / ลูกค้า', pages: ['sales', 'customers'] },
+  { key: 'reports', label: 'รายงาน', pages: ['reports'] },
+]
+export const deniedPages = (deny?: string[]) => new Set((deny || []).flatMap((k) => MODULES.find((m) => m.key === k)?.pages || []))
+
 // จัดเมนูเป็นแผนก — dashboard อยู่บนสุด (เดี่ยว) ที่เหลือย่อยตามแผนก กดเปิด/ปิดได้
 export interface NavGroup { id: string; label: string; icon: string; items: string[] }
 // house-first: "บ้าน" เป็นทางเข้าหลัก (แสดงเดี่ยวบนสุด) → กดบ้านแล้วเจอย่อยในบ้าน

@@ -209,9 +209,15 @@ export default function App() {
         { label: 'หมวด (วัสดุ/ค่าแรง/ขนส่ง/อื่นๆ)', value: 'วัสดุ', ph: '' },
         { label: 'ผู้ขาย/ผู้รับ', value: '', ph: '' },
         { label: 'จำนวนเงิน (บาท)', value: '', ph: '0', money: true },
+        { label: 'เลขที่ใบกำกับภาษี (ถ้ามี VAT)', value: '', ph: 'เว้นว่าง = ไม่มี VAT', hint: 'กรอกเมื่อร้านออกใบกำกับภาษี — ยอด VAT จะถูกคิด 7/107 จากยอดรวม (ใช้ทำ ภ.พ.30)' },
+        { label: 'ยอด VAT ตามใบ (บาท)', value: '', ph: 'เว้นว่าง = คำนวณ 7/107 ให้', money: true },
       ],
-      onSubmit: ([date, house_code, item, cat, vendor, amount]) =>
-        app.addExpense({ date, house_code, item, cat, vendor, amount: Number(amount.replace(/,/g, '')) }),
+      onSubmit: ([date, house_code, item, cat, vendor, amount, taxInvNo, vatAmt]) => {
+        const total = Number(amount.replace(/,/g, '')) || 0
+        const hasVat = !!taxInvNo.trim() || !!vatAmt.trim()
+        const vat = hasVat ? (Number(vatAmt.replace(/,/g, '')) || Math.round((total * 7 / 107) * 100) / 100) : 0
+        return app.addExpense({ date, house_code, item, cat, vendor, amount: total, vat_amount: vat, tax_invoice_no: taxInvNo.trim() })
+      },
     })
 
   const openAddUser = () => {

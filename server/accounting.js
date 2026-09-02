@@ -499,15 +499,17 @@ export function taxSummary(range = {}) {
   }
   const rs = rangeWhere('date_iso')
   const outputVat = r2(db.prepare(`SELECT COALESCE(SUM(vat),0) v FROM sales_docs WHERE 1=1${rs.sql}`).get(...rs.args).v)
-  const expenseTotal = r2(db.prepare(`SELECT COALESCE(SUM(amount),0) a FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args).a)
-  const inputVat = r2((expenseTotal * 7) / 107)
+  // ภาษีซื้อจาก "ใบกำกับภาษีจริง" ที่กรอกไว้ต่อใบ (เลิกเดา 7/107 จากรายจ่ายทุกใบ — บางร้านไม่จด VAT)
+  const inRow = db.prepare(`SELECT COALESCE(SUM(vat_amount),0) v, COUNT(CASE WHEN COALESCE(vat_amount,0) > 0 THEN 1 END) n FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args)
+  const inputVat = r2(inRow.v)
+  const inputVatDocs = inRow.n
   const vatPayable = r2(outputVat - inputVat)
   const wht = r2(db.prepare(`SELECT COALESCE(SUM(wht),0) w FROM payments WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args).w)
   const whtByType = db.prepare(`SELECT type, COALESCE(SUM(gross),0) gross, COALESCE(SUM(wht),0) wht, COUNT(*) n FROM payments WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql} GROUP BY type`).all(...rs.args)
   // ภ.ง.ด.50 ประมาณการภาษีเงินได้นิติบุคคล จากกำไรสุทธิทางบัญชี (อัตรา SME)
   const netProfit = incomeStatement(range).netProfit
   const corpTax = estimateCorpTax(netProfit)
-  return { outputVat, inputVat, vatPayable, wht, whtByType, netProfit, corpTax }
+  return { outputVat, inputVat, inputVatDocs, vatPayable, wht, whtByType, netProfit, corpTax }
 }
 // อัตรา SME: 0-300,000 ยกเว้น · 300,001-3,000,000 = 15% · เกิน 3,000,000 = 20%
 export function estimateCorpTax(netProfit) {

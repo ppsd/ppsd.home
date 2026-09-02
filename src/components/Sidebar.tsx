@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Icon from './Icon'
-import { nav, navGroups } from '../data'
+import { nav, navGroups, deniedPages } from '../data'
 import type { NavDef } from '../data'
 import { PPSD_MARK } from '../assets'
 import { useApp } from '../store'
@@ -16,7 +16,8 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   const canManager = !!user?.isManager
   const canHr = canFinance || user?.position === 'บุคคล'
   const canPms = user?.username === 'thawat' || user?.name === 'ธวัช วรรณสุข'
-  const visible = (item?: NavDef) => !!item && (!item.gate || (item.gate === 'finance' ? canFinance : item.gate === 'hr' ? canHr : item.gate === 'pms' ? canPms : canManager))
+  const denied = deniedPages(user?.role === 'admin' ? [] : user?.deny_mods) // โมดูลที่แอดมินปิดสำหรับบัญชีนี้
+  const visible = (item?: NavDef) => !!item && !denied.has(item.id) && (!item.gate || (item.gate === 'finance' ? canFinance : item.gate === 'hr' ? canHr : item.gate === 'pms' ? canPms : canManager))
   const byId = Object.fromEntries(nav.map((n) => [n.id, n]))
 
   // แผนกไหนมีเมนูที่มองเห็นได้บ้าง

@@ -5,7 +5,9 @@ export function login(username, pin) {
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username)
   if (!user || !verifyPin(pin, user.pin)) return null
   if (user.status !== 'ใช้งาน') return { error: 'บัญชีถูกระงับการใช้งาน' }
-  const safe = { id: user.id, name: user.name, username: user.username, role: user.role, position: user.position || '', mustChangePin: !!user.must_change_pin }
+  let deny = []
+  try { deny = JSON.parse(user.deny_mods || '[]') } catch { deny = [] }
+  const safe = { id: user.id, name: user.name, username: user.username, role: user.role, position: user.position || '', mustChangePin: !!user.must_change_pin, deny_mods: Array.isArray(deny) ? deny : [] }
   return { token: signToken({ id: user.id }), user: safe }
 }
 
@@ -17,9 +19,11 @@ export function logout() {
 function userFromToken(token) {
   const payload = verifyToken(token)
   if (!payload) return null
-  const u = db.prepare('SELECT id,name,username,role,status,position FROM users WHERE id = ?').get(payload.id)
+  const u = db.prepare('SELECT id,name,username,role,status,position,deny_mods FROM users WHERE id = ?').get(payload.id)
   if (!u || u.status !== 'ใช้งาน') return null
-  return { id: u.id, name: u.name, username: u.username, role: u.role, position: u.position || '' }
+  let deny = []
+  try { deny = JSON.parse(u.deny_mods || '[]') } catch { deny = [] }
+  return { id: u.id, name: u.name, username: u.username, role: u.role, position: u.position || '', deny_mods: Array.isArray(deny) ? deny : [] }
 }
 
 // Express middleware: attaches req.user or 401s

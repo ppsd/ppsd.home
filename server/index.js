@@ -333,6 +333,50 @@ api.post('/kiosk/punch', (req, res) => {
 // everything below requires a session
 api.use(requireAuth)
 
+// ===== สิทธิ์รายโมดูล: แอดมินปิดการเข้าถึงบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (users.deny_mods) =====
+// ค่าเริ่มต้น = สิทธิ์ตาม role เดิมทุกอย่าง · แอดมินปิดไม่ได้ (กันล็อกตัวเองออก)
+const MODULE_PATHS = [
+  ['hr', [/^\/payroll/, /^\/employees/, /^\/salary-advances/, /^\/deductions/, /^\/ot(\/|$)/, /^\/leaves/, /^\/time-adjustments/, /^\/attendance/]],
+  ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/payments/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/aging/, /^\/assets/, /^\/export\/express/]],
+  ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/payables/, /^\/vendors/, /^\/material-prices/, /^\/procurement/]],
+  ['sales', [/^\/sales-docs/, /^\/customers/, /^\/boqs/]],
+  ['reports', [/^\/reports/]],
+]
+export const MODULE_KEYS = MODULE_PATHS.map(([k]) => k)
+api.use((req, res, next) => {
+  const deny = req.user?.deny_mods
+  if (!deny || !deny.length || req.user.role === 'admin') return next()
+  for (const [key, pats] of MODULE_PATHS) {
+    if (deny.includes(key) && pats.some((p) => p.test(req.path)))
+      return res.status(403).json({ error: 'ผู้ดูแลปิดการเข้าถึงส่วนนี้สำหรับบัญชีของคุณ' })
+  }
+  next()
+})
+
+// ===== เลขรันเอกสารถาวร (กันเลขซ้ำ) — COUNT(*) เดิมชนกันได้เมื่อมีการลบ/ล้างข้อมูล =====
+// initFn ให้ค่าตั้งต้นครั้งแรก (ต่อจากเลขสูงสุดที่มีอยู่จริง) — จากนั้นตัวนับเดินหน้าอย่างเดียว ไม่ย้อนไม่ซ้ำ
+const nextSeq = db.transaction((key, initFn) => {
+  let row = db.prepare('SELECT next FROM doc_counters WHERE key=?').get(key)
+  if (!row) {
+    const start = Math.max(0, Number(initFn?.() || 0)) + 1
+    db.prepare('INSERT INTO doc_counters (key, next) VALUES (?,?)').run(key, start)
+    row = { next: start }
+  }
+  db.prepare('UPDATE doc_counters SET next = next + 1 WHERE key=?').run(key)
+  return row.next
+})
+// เลขท้ายสูงสุดของเอกสารที่มีอยู่ (ใช้ตั้งต้นตัวนับครั้งแรก)
+function maxNoSuffix(table) {
+  let max = 0
+  try {
+    for (const r of db.prepare(`SELECT no FROM ${table}`).all()) {
+      const m = String(r.no || '').match(/(\d+)$/)
+      if (m) max = Math.max(max, Number(m[1]))
+    }
+  } catch { /* ignore */ }
+  return max
+}
+
 // roles allowed to create/edit operational records (everyone except read-only viewer)
 const canWrite = requireRole('admin', 'accounting', 'site')
 const financeOnly = requireRole('admin', 'accounting')
@@ -772,12 +816,15 @@ api.get('/expenses', (_req, res) => {
   )
 })
 api.post('/expenses', canWrite, (req, res) => {
-  const { house_code, item, cat, vendor, amount, date } = req.body || {}
+  const { house_code, item, cat, vendor, amount, date, vat_amount, tax_invoice_no } = req.body || {}
   if (!item) return res.status(400).json({ error: 'กรุณากรอกรายการ' })
   const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? date : todayISO()
+  // ภาษีซื้อจากใบกำกับจริง — ต้องไม่เกินยอดรวม (ยอดรวมถือเป็นราคารวม VAT แล้ว)
+  const vat = Math.max(0, Number(vat_amount) || 0)
+  if (vat > (Number(amount) || 0)) return res.status(400).json({ error: 'ยอด VAT มากกว่ายอดรวม — ตรวจตัวเลขอีกครั้ง' })
   const info = db
-    .prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,date_iso) VALUES (?,?,?,?,?,?,?)')
-    .run(thDateFromISO(iso), house_code || '', item, cat || 'อื่นๆ', vendor || '', Number(amount) || 0, iso)
+    .prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,date_iso,vat_amount,tax_invoice_no) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(thDateFromISO(iso), house_code || '', item, cat || 'อื่นๆ', vendor || '', Number(amount) || 0, iso, vat, String(tax_invoice_no || '').trim())
   const row = db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid)
   try { acct.syncExpenseJournal(row) } catch (e) { console.error('journal(expense):', e.message); logJournalIssue('exp', row.id, row.item || 'รายจ่าย', e) }
   res.status(201).json(row)
@@ -1360,6 +1407,64 @@ api.get('/payroll/bank-file', requireSalary, (req, res) => {
   res.send(csv)
 })
 
+// ===== เอกสารราชการจากงวดที่ปิดแล้ว: สปส.1-10 · ภงด.1ก · ข้อมูล 50 ทวิ =====
+// รวมยอดต่อคนของทั้งปี (จาก snapshot งวดที่ปิดแล้ว — ตัวเลขนิ่ง ไม่เปลี่ยนตามข้อมูลสด)
+function annualByEmployee(year) {
+  const runs = db.prepare('SELECT period, data FROM payroll_runs WHERE period LIKE ? ORDER BY period').all(year + '-%')
+  const by = {}
+  for (const r of runs) {
+    try {
+      for (const p of JSON.parse(r.data)) {
+        const k = p.code || p.name
+        if (!by[k]) by[k] = { code: p.code || '', prefix: '', name: p.name || '', tax_id: '', income: 0, tax: 0, sso: 0, months: 0 }
+        by[k].income += (p.base || 0) + (p.ot || 0) - (p.leave_deduct || 0)
+        by[k].tax += p.tax || 0
+        by[k].sso += p.sso || 0
+        by[k].months += 1
+        if (p.prefix) by[k].prefix = p.prefix
+        if (p.tax_id) by[k].tax_id = p.tax_id
+      }
+    } catch { /* ข้ามงวดที่ข้อมูลเสีย */ }
+  }
+  return Object.values(by).sort((a, b) => a.name.localeCompare(b.name, 'th'))
+}
+api.get('/payroll/annual-emp', requireSalary, (req, res) => {
+  const year = /^\d{4}$/.test(req.query.year) ? req.query.year : String(new Date().getFullYear())
+  res.json({ year, rows: annualByEmployee(year) })
+})
+// ไฟล์นำส่งประกันสังคม (แนว สปส.1-10 ส่วนที่ 2) — รายชื่อ + ค่าจ้าง + เงินสมทบของงวด
+api.get('/payroll/sso-file', requireSalary, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  const run = db.prepare('SELECT data FROM payroll_runs WHERE period=?').get(period)
+  const rows = (run ? JSON.parse(run.data) : computePayroll(period)).filter((p) => (p.sso || 0) > 0)
+  const split = (full) => { const t = String(full || '').trim().split(/\s+/); return { first: t[0] || '', last: t.slice(1).join(' ') } }
+  const head = ['ลำดับ', 'เลขบัตรประชาชน', 'คำนำหน้า', 'ชื่อ', 'นามสกุล', 'ค่าจ้างงวดนี้', 'เงินสมทบผู้ประกันตน (5%)']
+  const body = rows.map((p, i) => {
+    const n = split(p.name)
+    const earned = (p.base || 0) + (p.ot || 0) - (p.leave_deduct || 0)
+    return [i + 1, p.tax_id || '', p.prefix || '', n.first, n.last, earned.toFixed(2), (p.sso || 0).toFixed(2)]
+  })
+  const foot = ['', '', '', '', 'รวม', body.reduce((s, r) => s + Number(r[5]), 0).toFixed(2), body.reduce((s, r) => s + Number(r[6]), 0).toFixed(2)]
+  const csv = '﻿' + [head, ...body, foot].map((r) => r.map(csvCell).join(',')).join('\r\n')
+  audit(req, 'ดาวน์โหลดไฟล์นำส่งประกันสังคม', periodLabelTH(period))
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="sso_${period}.csv"`)
+  res.send(csv)
+})
+// ภงด.1ก (สรุปทั้งปีต่อคน): เงินได้พึงประเมิน + ภาษีที่หักนำส่งทั้งปี
+api.get('/payroll/pnd1k', requireSalary, (req, res) => {
+  const year = /^\d{4}$/.test(req.query.year) ? req.query.year : String(new Date().getFullYear())
+  const rows = annualByEmployee(year)
+  const head = ['ลำดับ', 'เลขประจำตัวผู้เสียภาษี/บัตรประชาชน', 'คำนำหน้า', 'ชื่อ-สกุล', 'จำนวนเดือน', 'เงินได้พึงประเมินทั้งปี', 'ภาษีที่หักนำส่งทั้งปี', 'ประกันสังคมทั้งปี']
+  const body = rows.map((p, i) => [i + 1, p.tax_id, p.prefix, p.name, p.months, p.income.toFixed(2), p.tax.toFixed(2), p.sso.toFixed(2)])
+  const foot = ['', '', '', 'รวม', '', body.reduce((s, r) => s + Number(r[5]), 0).toFixed(2), body.reduce((s, r) => s + Number(r[6]), 0).toFixed(2), body.reduce((s, r) => s + Number(r[7]), 0).toFixed(2)]
+  const csv = '﻿' + [head, ...body, foot].map((r) => r.map(csvCell).join(',')).join('\r\n')
+  audit(req, 'ดาวน์โหลด ภงด.1ก', year)
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="pnd1k_${year}.csv"`)
+  res.send(csv)
+})
+
 api.get('/ot', (_req, res) => res.json(db.prepare('SELECT * FROM ot ORDER BY id DESC').all()))
 api.post('/ot', canWrite, (req, res) => {
   const b = req.body || {}
@@ -1621,7 +1726,7 @@ api.post('/purchase-orders', financeOnly, (req, res) => {
   const blocked = poBlockReason(b, controls())
   if (blocked) return res.status(409).json({ error: blocked })
   const img = typeof b.image === 'string' && b.image.startsWith('data:image/') ? b.image : null
-  const seq = db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c + 95
+  const seq = nextSeq('po', () => Math.max(maxNoSuffix('purchase_orders'), db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c + 95))
   const no = `PO-${docYear()}-${String(seq).padStart(4, '0')}`
   const paymentType = b.payment_type === 'credit' ? 'credit' : 'cash'
   const creditDays = paymentType === 'credit' ? Math.max(0, Number(b.credit_days) || 0) : 0
@@ -1636,9 +1741,12 @@ api.post('/purchase-orders', financeOnly, (req, res) => {
     ? b.items.map((it) => ({ desc: String(it.desc || '').trim(), qty: Number(it.qty) || 0, unit: String(it.unit || ''), price: Number(it.price) || 0 })).filter((it) => it.desc)
     : [{ desc: String(b.item || '').trim(), qty: 0, unit: '', price: Number(b.amount) || 0 }]
   const poVendorId = db.prepare('SELECT id FROM vendors WHERE name=?').get(String(b.vendor))?.id ?? null // ผูกทะเบียนผู้ขาย (ชื่อตรง)
+  // ภาษีซื้อจากใบกำกับจริง (ยอดรวมถือเป็นราคารวม VAT)
+  const poVat = Math.max(0, Number(b.vat_amount) || 0)
+  if (poVat > (Number(b.amount) || 0)) return res.status(400).json({ error: 'ยอด VAT มากกว่ามูลค่า PO — ตรวจตัวเลขอีกครั้ง' })
   const info = db
-    .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso,items,vendor_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems), poVendorId)
+    .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso,items,vendor_id,vat_amount,tax_invoice_no) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems), poVendorId, poVat, String(b.tax_invoice_no || '').trim())
   res.status(201).json(poRow(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(info.lastInsertRowid)))
 })
 // when a PO is received, its cost flows into the house's รายจ่าย (auto expense, linked by po_id)
@@ -1649,12 +1757,12 @@ function syncPoExpense(po) {
   if (received) {
     let row
     if (existing) {
-      db.prepare('UPDATE expenses SET house_code=?, item=?, vendor=?, amount=? WHERE po_id=?')
-        .run(po.house_code || '', po.item, po.vendor, po.amount, po.id)
+      db.prepare('UPDATE expenses SET house_code=?, item=?, vendor=?, amount=?, vat_amount=?, tax_invoice_no=? WHERE po_id=?')
+        .run(po.house_code || '', po.item, po.vendor, po.amount, po.vat_amount || 0, po.tax_invoice_no || '', po.id)
       row = db.prepare('SELECT * FROM expenses WHERE po_id=?').get(po.id)
     } else {
-      const info = db.prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,po_id,date_iso) VALUES (?,?,?,?,?,?,?,?)')
-        .run(todayTH(), po.house_code || '', po.item, 'วัสดุ', po.vendor, po.amount, po.id, todayISO())
+      const info = db.prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,po_id,date_iso,vat_amount,tax_invoice_no) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(todayTH(), po.house_code || '', po.item, 'วัสดุ', po.vendor, po.amount, po.id, todayISO(), po.vat_amount || 0, po.tax_invoice_no || '')
       row = db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid)
     }
     // ลงบัญชีแยกประเภท: ซื้อสด → Cr เงินสด · ซื้อเครดิต → Cr เจ้าหนี้การค้า (จ่ายทีหลังค่อยตัดเจ้าหนี้)
@@ -1911,7 +2019,7 @@ api.post('/purchase-requests', financeOnly, (req, res) => {
     total = Number(amount) || 0; summary = item; lineItems = null
   }
   const me = db.prepare('SELECT name, signature FROM users WHERE id = ?').get(req.user.id)
-  const seq = (db.prepare("SELECT COUNT(*) c FROM purchase_requests").get().c + 142)
+  const seq = nextSeq('pr', () => Math.max(maxNoSuffix('purchase_requests'), db.prepare('SELECT COUNT(*) c FROM purchase_requests').get().c + 142))
   const no = `PR-${docYear()}-${String(seq).padStart(4, '0')}`
   const hName = house_code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(house_code)?.name || house_code) : (house || '')
   const cat = ['house', 'carport', 'road'].includes(category) ? category : ''
@@ -2033,7 +2141,7 @@ api.post('/payments', financeOnly, (req, res) => {
   }
   const rate = type === '-' ? 0 : (Number(b.wht_rate) || 0)
   const wht = Math.round((gross * rate) / 100)
-  const seq = db.prepare('SELECT COUNT(*) c FROM payments').get().c + 208
+  const seq = nextSeq('pv', () => Math.max(maxNoSuffix('payments'), db.prepare('SELECT COUNT(*) c FROM payments').get().c + 208))
   const no = `PV-${docYear()}-${String(seq).padStart(4, '0')}`
   const vendorId = db.prepare('SELECT id FROM vendors WHERE name=?').get(String(b.payee))?.id ?? null
   const info = db.prepare('INSERT INTO payments (date,no,payee,type,gross,wht_rate,wht,net,house_code,note,po_id,date_iso,vendor_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
@@ -2059,7 +2167,7 @@ api.get('/payables', financeOnly, (_req, res) => {
 
 // ---------- users (admin only) ----------
 api.get('/users', adminOnly, (_req, res) =>
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position FROM users ORDER BY id').all())
+  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods FROM users ORDER BY id').all().map((u) => ({ ...u, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })() })))
 )
 // upload/replace a signature image (admin can set anyone's; users can set their own)
 api.put('/users/:id/signature', (req, res) => {
@@ -2112,9 +2220,15 @@ api.post('/users', adminOnly, (req, res) => {
 api.put('/users/:id', adminOnly, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
   if (!u) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
-  const { role, status } = req.body || {}
+  const { role, status, deny_mods } = req.body || {}
   db.prepare('UPDATE users SET role=?, status=? WHERE id=?').run(role ?? u.role, status ?? u.status, u.id)
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active FROM users WHERE id=?').get(u.id))
+  // สิทธิ์รายโมดูล: รายชื่อโมดูลที่ "ปิด" สำหรับคนนี้ (แอดมินปิดไม่ได้ — กันล็อกตัวเองออก)
+  if (Array.isArray(deny_mods)) {
+    const clean = (role ?? u.role) === 'admin' ? [] : deny_mods.filter((k) => MODULE_KEYS.includes(String(k)))
+    db.prepare('UPDATE users SET deny_mods=? WHERE id=?').run(JSON.stringify(clean), u.id)
+    audit(req, 'ตั้งสิทธิ์รายโมดูล', `${u.name}: ปิด [${clean.join(', ') || 'ไม่มี'}]`)
+  }
+  res.json(db.prepare('SELECT id,name,username,role,status,last_active,deny_mods FROM users WHERE id=?').get(u.id))
 })
 // ---------- job positions (ตำแหน่งงาน) — shared by users + employees ----------
 api.get('/positions', (_req, res) =>
@@ -2214,8 +2328,9 @@ function expressCsv(kind, reqPeriod) {
   if (kind === 'purchase') {
     const vmap = new Map(db.prepare('SELECT name,tax_id FROM vendors').all().map((v) => [v.name, v.tax_id]))
     const rows = db.prepare('SELECT * FROM purchase_orders ORDER BY date, id').all()
-    const head = ['วันที่', 'เลขที่ PO', 'ชื่อผู้ขาย', 'เลขผู้เสียภาษี', 'รายการ', 'มูลค่าก่อนภาษี', 'ภาษีซื้อ(7%)', 'รวมทั้งสิ้น']
-    const body = rows.map((r) => { const total = r.amount || 0; const base = Math.round(total * 100 / 107); return [r.date, r.no, r.vendor, vmap.get(r.vendor) || '', r.item, base.toFixed(2), (total - base).toFixed(2), total.toFixed(2)] })
+    const head = ['วันที่', 'เลขที่ PO', 'ชื่อผู้ขาย', 'เลขผู้เสียภาษี', 'รายการ', 'มูลค่าก่อนภาษี', 'ภาษีซื้อ', 'รวมทั้งสิ้น', 'เลขใบกำกับภาษี']
+    // ภาษีซื้อจากใบกำกับจริง (vat_amount) — PO ที่ไม่มี VAT รายงาน 0 ไม่ใช่เดา 7/107
+    const body = rows.map((r) => { const total = r.amount || 0; const vat = r.vat_amount || 0; return [r.date, r.no, r.vendor, vmap.get(r.vendor) || '', r.item, (total - vat).toFixed(2), vat.toFixed(2), total.toFixed(2), r.tax_invoice_no || ''] })
     return { filename: 'express_ภาษีซื้อ.csv', content: toCsv(head, body) }
   }
   if (kind === 'wht') {
@@ -3311,7 +3426,7 @@ api.post('/sales-docs', canWrite, (req, res) => {
   const subtotal = list.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0)
   const vat = Math.round(subtotal * 0.07)
   const prefix = { quote: 'QT', invoice: 'INV', receipt: 'RC' }[kind]
-  const seq = db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(kind).c + 1
+  const seq = nextSeq('sales-' + kind, () => db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(kind).c)
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
   const info = db
     .prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
@@ -3329,6 +3444,24 @@ const SIGN_MILESTONES = [
   { detail: 'งวดส่งมอบบ้าน', pct: 5 },
 ]
 // เซ็นสัญญา: เปลี่ยนใบเสนอราคาเป็นโครงการบ้าน + สร้างงวดงานลูกค้าตามแผนมาตรฐาน
+// ต่อสายเอกสารขาย: ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จรับเงิน (สำเนารายการ + อ้างอิงใบต้นทาง)
+api.post('/sales-docs/:id/derive', canWrite, (req, res) => {
+  const src = db.prepare('SELECT * FROM sales_docs WHERE id=?').get(req.params.id)
+  if (!src) return res.status(404).json({ error: 'ไม่พบเอกสาร' })
+  const to = String(req.body?.to || '')
+  const allowed = { quote: 'invoice', invoice: 'receipt' }
+  if (allowed[src.type] !== to) return res.status(400).json({ error: 'แปลงได้เฉพาะ ใบเสนอราคา→ใบแจ้งหนี้ และ ใบแจ้งหนี้→ใบเสร็จรับเงิน' })
+  const dup = db.prepare('SELECT no FROM sales_docs WHERE type=? AND ref=?').get(to, src.no)
+  if (dup) return res.status(409).json({ error: `ออก${to === 'invoice' ? 'ใบแจ้งหนี้' : 'ใบเสร็จ'}จากใบนี้ไปแล้ว (${dup.no})` })
+  const prefix = { invoice: 'INV', receipt: 'RC' }[to]
+  const seq = nextSeq('sales-' + to, () => db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(to).c)
+  const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
+  const info = db.prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(to, no, src.customer, todayTH(), todayISO(), src.items, src.subtotal, src.vat, src.total, to === 'receipt' ? 'ชำระแล้ว' : 'รอชำระ', src.house_code || '', src.no)
+  db.prepare('UPDATE sales_docs SET status=? WHERE id=?').run(to === 'invoice' ? 'ออกใบแจ้งหนี้แล้ว' : 'ชำระแล้ว', src.id)
+  audit(req, to === 'invoice' ? 'ออกใบแจ้งหนี้จากใบเสนอราคา' : 'ออกใบเสร็จจากใบแจ้งหนี้', `${src.no} → ${no}`)
+  res.status(201).json(db.prepare('SELECT * FROM sales_docs WHERE id=?').get(info.lastInsertRowid))
+})
 api.post('/sales-docs/:id/convert', canWrite, (req, res) => {
   const doc = db.prepare('SELECT * FROM sales_docs WHERE id=?').get(req.params.id)
   if (!doc) return res.status(404).json({ error: 'ไม่พบเอกสาร' })
@@ -3836,6 +3969,77 @@ api.put('/backup-mirror', adminOnly, (req, res) => {
     save()
   })
 })
+// ===== แจ้งเตือน LINE (Messaging API) — สรุปเรื่องค้างส่งเข้ากลุ่มบริหารทุกเช้า =====
+// ตั้งค่า: Channel access token (จาก LINE Developers) + ID กลุ่ม/ผู้รับ + เวลาส่ง
+function buildLineDigest() {
+  const today = todayISO()
+  const L = []
+  // งวดลูกค้าเลยกำหนด
+  const over = db.prepare("SELECT COUNT(*) n, COALESCE(SUM(amount - COALESCE(paid,0)),0) a FROM installments WHERE side != 'contractor' AND status != 'เก็บแล้ว' AND due_iso IS NOT NULL AND due_iso != '' AND due_iso < ? AND COALESCE(paid,0) < amount").get(today)
+  if (over.n) L.push(`🔴 งวดลูกค้าเลยกำหนด ${over.n} งวด รวม ${baht(over.a)}`)
+  // เจ้าหนี้ PO เครดิต
+  let apDue = 0, apDueAmt = 0
+  for (const po of db.prepare("SELECT id, amount, due_iso FROM purchase_orders WHERE payment_type='credit' AND status IN ('รับของแล้ว','ปิดงาน')").all()) {
+    const paid = db.prepare("SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").get(po.id).a
+    const rem = Math.max(0, (po.amount || 0) - paid)
+    if (rem > 0 && po.due_iso && po.due_iso < today) { apDue++; apDueAmt += rem }
+  }
+  if (apDue) L.push(`🟠 หนี้ผู้ขายเลยกำหนดชำระ ${apDue} ใบ รวม ${baht(apDueAmt)}`)
+  // เรื่องค้างอนุมัติ
+  const prWait = db.prepare("SELECT COUNT(*) c FROM purchase_requests WHERE status='รออนุมัติ'").get().c
+  const lvWait = db.prepare("SELECT COUNT(*) c FROM leaves WHERE status='รออนุมัติ'").get().c
+  if (prWait || lvWait) L.push(`🟡 รออนุมัติ: PR ${prWait} ใบ · ใบลา ${lvWait} ใบ`)
+  // ระบบ
+  const ji = db.prepare('SELECT COUNT(*) c FROM journal_issues').get().c
+  if (ji) L.push(`⚠️ ลงบัญชีไม่สำเร็จ ${ji} รายการ — เข้าไปดูที่หน้า บัญชี`)
+  try {
+    const last = JSON.parse(getSetting('backup_last', '') || 'null')
+    const cut = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)
+    if (!last || last.day < cut) L.push(`⚠️ สำรองข้อมูลล่าสุด: ${last?.day || 'ไม่เคย'} (เกิน 2 วัน)`)
+  } catch { /* ignore */ }
+  if (!L.length) L.push('✅ ไม่มีเรื่องค้างเร่งด่วนวันนี้')
+  return `📋 PPSD ERP สรุปเช้า ${todayTH()}\n\n` + L.join('\n')
+}
+async function sendLine(text) {
+  const token = getSetting('line_token', ''), to = getSetting('line_to', '')
+  if (!token || !to) throw new Error('ยังไม่ได้ตั้งค่า LINE (token / ID ผู้รับ)')
+  const res = await fetch('https://api.line.me/v2/bot/message/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ to, messages: [{ type: 'text', text: String(text).slice(0, 4900) }] }),
+  })
+  if (!res.ok) throw new Error(`LINE ตอบ ${res.status}: ${(await res.text()).slice(0, 200)}`)
+}
+// ส่งสรุปเช้าอัตโนมัติ: เช็คทุก 10 นาที ถึงเวลาที่ตั้ง (ค่าเริ่มต้น 08:00) และวันนี้ยังไม่ส่ง → ส่ง
+setInterval(async () => {
+  try {
+    if (!getSetting('line_token', '') || !getSetting('line_to', '')) return
+    const hour = Math.max(0, Math.min(23, Number(getSetting('line_hour', '8')) || 8))
+    const today = todayISO()
+    if (new Date().getHours() < hour || getSetting('line_last_sent', '') === today) return
+    await sendLine(buildLineDigest())
+    setSetting('line_last_sent', today)
+    setSetting('line_status', JSON.stringify({ at: nowTS(), ok: true }))
+  } catch (e) { setSetting('line_status', JSON.stringify({ at: nowTS(), ok: false, msg: e.message })) }
+}, 10 * 60 * 1000)
+api.get('/line-settings', adminOnly, (_req, res) => res.json({
+  token_set: !!getSetting('line_token', ''), to: getSetting('line_to', ''), hour: Number(getSetting('line_hour', '8')) || 8,
+  last_sent: getSetting('line_last_sent', ''),
+  status: (() => { try { return JSON.parse(getSetting('line_status', '') || 'null') } catch { return null } })(),
+}))
+api.put('/line-settings', adminOnly, (req, res) => {
+  const b = req.body || {}
+  if (b.token !== undefined) setSetting('line_token', String(b.token || '').trim())
+  if (b.to !== undefined) setSetting('line_to', String(b.to || '').trim())
+  if (b.hour !== undefined) setSetting('line_hour', String(Math.max(0, Math.min(23, Number(b.hour) || 8))))
+  audit(req, 'ตั้งค่าแจ้งเตือน LINE', getSetting('line_to', '') || '(ปิด)')
+  res.json({ ok: true })
+})
+api.post('/line-settings/test', adminOnly, async (req, res) => {
+  try { await sendLine(buildLineDigest()); setSetting('line_status', JSON.stringify({ at: nowTS(), ok: true })); res.json({ ok: true }) }
+  catch (e) { setSetting('line_status', JSON.stringify({ at: nowTS(), ok: false, msg: e.message })); res.status(400).json({ error: e.message }) }
+})
+
 api.post('/backup-mirror/run', adminOnly, async (req, res) => {
   if (!getSetting('backup_mirror_dir', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้งโฟลเดอร์สำรองนอกเครื่อง' })
   await autoBackup()

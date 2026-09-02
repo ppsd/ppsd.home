@@ -16,8 +16,15 @@ function typeStyle(t: string) {
 }
 
 export default function Sales() {
-  const { data, addSalesDoc, convertQuote } = useApp()
+  const { data, addSalesDoc, convertQuote, deriveSalesDoc } = useApp()
   const docs = data.salesDocs
+  // ต่อสายเอกสาร: ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จรับเงิน (เลขใหม่ อ้างอิงใบเดิม)
+  const derive = async (d: ApiSalesDoc, to: 'invoice' | 'receipt') => {
+    const label = to === 'invoice' ? 'ใบแจ้งหนี้' : 'ใบเสร็จรับเงิน'
+    if (!window.confirm(`ออก${label}จาก ${d.no}?\nรายการ/ยอดเงินจะถูกคัดลอก และอ้างอิงเลขใบเดิมให้อัตโนมัติ`)) return
+    try { const doc = await deriveSalesDoc(d.id, to); window.alert(`ออก${label} ${doc.no} แล้ว`) }
+    catch (e) { window.alert((e as Error).message || 'ทำรายการไม่สำเร็จ') }
+  }
   const signContract = async (d: ApiSalesDoc) => {
     const name = window.prompt(`เซ็นสัญญาจากใบเสนอราคา ${d.no}\nระบบจะสร้างบ้าน + งวดงานลูกค้า (ตามแผนมาตรฐาน) ให้อัตโนมัติ\n\nตั้งชื่อบ้าน:`, `บ้าน ${d.customer}`)
     if (name == null) return
@@ -136,7 +143,10 @@ export default function Sales() {
               return (
                 <tr key={d.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ ...td, padding: '11px 18px' }}><span style={{ fontSize: 11, fontWeight: 600, color: ts.c, background: ts.bg, padding: '3px 11px', borderRadius: 20 }}>{TYPE_LABEL[d.type]}</span></td>
-                  <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{d.no}</td>
+                  <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>
+                    <div>{d.no}</div>
+                    {d.ref && <div style={{ fontSize: 10.5, color: '#94A0A8' }}>อ้างอิง {d.ref}</div>}
+                  </td>
                   <td style={{ ...td, fontWeight: 500 }}>
                     <div>{d.customer}</div>
                     {d.house_code && <div style={{ fontSize: 11, color: '#94A0A8' }}>🏠 {houses.find((h) => h.code === d.house_code)?.name || d.house_code}</div>}
@@ -148,6 +158,12 @@ export default function Sales() {
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
                       {d.type === 'quote' && d.status !== 'เซ็นสัญญาแล้ว' && (
                         <button onClick={() => signContract(d)} title="เซ็นสัญญา → สร้างบ้าน + งวดงานลูกค้าอัตโนมัติ" className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>เซ็นสัญญา</button>
+                      )}
+                      {d.type === 'quote' && d.status !== 'ออกใบแจ้งหนี้แล้ว' && (
+                        <button onClick={() => derive(d, 'invoice')} title="ออกใบแจ้งหนี้จากใบเสนอราคานี้ (คัดลอกรายการ + อ้างอิงเลขใบเดิม)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#B7791F', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>→ ใบแจ้งหนี้</button>
+                      )}
+                      {d.type === 'invoice' && d.status !== 'ชำระแล้ว' && (
+                        <button onClick={() => derive(d, 'receipt')} title="รับเงินแล้ว → ออกใบเสร็จรับเงินจากใบแจ้งหนี้นี้" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>→ ใบเสร็จ</button>
                       )}
                       <button onClick={() => setPrintDoc(d)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>พิมพ์</button>
                     </div>

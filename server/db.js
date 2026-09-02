@@ -384,6 +384,15 @@ ensureColumn('payments', 'date_iso', 'TEXT')           // วันที่จ�
 ensureColumn('payments', 'vendor_id', 'INTEGER')       // ผูกผู้รับเงินกับทะเบียนผู้ขาย (ถ้าชื่อตรง)
 ensureColumn('purchase_orders', 'vendor_id', 'INTEGER') // ผูก PO กับทะเบียนผู้ขาย (ถ้าชื่อตรง)
 ensureColumn('sales_docs', 'date_iso', 'TEXT')          // วันที่เอกสารขาย (ISO) — ใช้กรองสรุปภาษีตามช่วงเวลา
+ensureColumn('sales_docs', 'ref', 'TEXT')               // อ้างอิงเอกสารต้นทาง (ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จ)
+// ภาษีซื้อจากใบกำกับจริง — เลิกเดา 7/107 จากรายจ่ายทุกใบ (บางร้านไม่จด VAT)
+ensureColumn('expenses', 'vat_amount', 'REAL')          // ยอด VAT ตามใบกำกับภาษี (0/ว่าง = ไม่มี VAT)
+ensureColumn('expenses', 'tax_invoice_no', 'TEXT')      // เลขที่ใบกำกับภาษี
+ensureColumn('purchase_orders', 'vat_amount', 'REAL')
+ensureColumn('purchase_orders', 'tax_invoice_no', 'TEXT')
+ensureColumn('users', 'deny_mods', 'TEXT')              // สิทธิ์รายโมดูล: JSON รายชื่อโมดูลที่ "ปิด" สำหรับผู้ใช้คนนี้
+// ตัวนับเลขเอกสารถาวร — แทน COUNT(*) เดิมที่เลขชนกันได้เมื่อมีการลบ/ล้างข้อมูล
+db.exec('CREATE TABLE IF NOT EXISTS doc_counters (key TEXT PRIMARY KEY, next INTEGER)')
 // รายการที่ "ลงบัญชีไม่สำเร็จ" (เช่น ติดงวดปิด) — โชว์เตือนในหน้าบัญชี จนกว่าจะลงสำเร็จ/แก้ไข
 db.exec(`CREATE TABLE IF NOT EXISTS journal_issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
