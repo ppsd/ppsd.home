@@ -124,7 +124,13 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   // ยอดค้างจ่ายจริงจาก PO เครดิต (มูลค่า − ที่จ่ายผูกใบแล้ว)
   interface PayableRow { po_id: number; no: string; vendor: string; date: string; due_date?: string; house_code?: string; amount: number; paid: number; remaining: number; overdue: boolean; status: string }
   const [payableRows, setPayableRows] = useState<PayableRow[] | null>(null)
-  const loadPayables = () => api.get<PayableRow[]>('/payables').then(setPayableRows).catch(() => setPayableRows([]))
+  // เช็คยอดอัตโนมัติ: เจ้าหนี้ตามบัญชี (2010) ต้องเท่ากับยอดค้างจ่ายรวมจากใบ PO
+  interface PayableCheck { gl_2010: number; payable_remaining: number; diff: number; ok: boolean }
+  const [apCheck, setApCheck] = useState<PayableCheck | null>(null)
+  const loadPayables = () => {
+    api.get<PayableRow[]>('/payables').then(setPayableRows).catch(() => setPayableRows([]))
+    api.get<PayableCheck>('/payables/check').then(setApCheck).catch(() => setApCheck(null))
+  }
   useEffect(() => { if (tab === 'payable') loadPayables() }, [tab])
   // กดจ่ายจากแถวยอดค้าง → เปิดฟอร์มจ่ายเงินพร้อมข้อมูลครบ (ซื้อของไม่หัก ณ ที่จ่าย)
   const payPo = (r: PayableRow) => {
@@ -611,6 +617,11 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
         )}
 
         {/* Payables — ยอดค้างจ่ายจริงจาก PO เครดิต */}
+        {tab === 'payable' && apCheck && (
+          apCheck.ok
+            ? <div style={{ fontSize: 12.5, color: '#2E7D55', background: '#E2F1EA', borderBottom: '1px solid #CDE3D6', padding: '9px 18px' }}>✓ ยอดเจ้าหนี้ตรงกับบัญชี — เจ้าหนี้การค้า (บัญชี 2010) {baht(apCheck.gl_2010)} = ยอดค้างจ่ายรวม {baht(apCheck.payable_remaining)}</div>
+            : <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderBottom: '1px solid #E7CDC9', padding: '9px 18px' }}>⚠️ ยอดเจ้าหนี้ไม่ตรงกับบัญชี! ตามบัญชี (2010) {baht(apCheck.gl_2010)} · ตามใบ PO {baht(apCheck.payable_remaining)} · ต่างกัน {baht(Math.abs(apCheck.diff))} — ตรวจที่หน้า บัญชี → สมุดรายวัน หรือกด “สร้างบัญชีจากข้อมูลเดิม” เพื่อซ่อม</div>
+        )}
         {tab === 'payable' && (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>

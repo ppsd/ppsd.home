@@ -139,6 +139,21 @@ function parseAnyDateISO(s) {
   return null
 }
 const dateInPeriod = (dateStr, period) => { const iso = parseAnyDateISO(dateStr); return !!iso && iso.startsWith(period) }
+// เติม date_iso ให้เอกสารขายเก่าที่บันทึกไว้เป็นวันที่ไทย (ครั้งเดียว — แถวใหม่มี date_iso ตั้งแต่สร้าง)
+try {
+  for (const r of db.prepare("SELECT id, date FROM sales_docs WHERE COALESCE(date_iso,'') = ''").all()) {
+    const iso = parseAnyDateISO(r.date)
+    if (iso) db.prepare('UPDATE sales_docs SET date_iso=? WHERE id=?').run(iso, r.id)
+  }
+} catch (e) { console.error('backfill sales_docs date_iso:', e.message) }
+// บันทึกธง "ลงบัญชีไม่สำเร็จ" (เช่น ติดงวดปิด) — โชว์เตือนหน้าบัญชีจนกว่าจะลงสำเร็จ
+function logJournalIssue(source, source_id, ref, err) {
+  try {
+    db.prepare('DELETE FROM journal_issues WHERE source=? AND source_id=?').run(source, String(source_id))
+    db.prepare('INSERT INTO journal_issues (source, source_id, ref, message, created) VALUES (?,?,?,?,?)')
+      .run(source, String(source_id), String(ref || ''), String(err?.message || err || ''), todayISO())
+  } catch (e2) { console.error('logJournalIssue:', e2.message) }
+}
 function periodLabelTH(period) {
   const [yy, mm] = period.split('-').map(Number)
   return `${TH_MONTHS[mm - 1]} ${String((yy + 543) % 100).padStart(2, '0')}`
@@ -640,7 +655,7 @@ api.put('/installments/:id', canWrite, (req, res) => {
   db.prepare('UPDATE installments SET no=?, detail=?, days=?, due=?, due_iso=?, amount=?, status=?, contractor=? WHERE id=?')
     .run(f('no', true), f('detail'), String(f('days')), dueDisp, dueIso, f('amount', true), f('status'), f('contractor'), inst.id)
   recomputeHouse(inst.house_code)
-  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(inst-edit):', e.message) }
+  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(inst-edit):', e.message); logJournalIssue('inst', inst.id, `งวด ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, 'แก้ไขงวดงาน', `${inst.house_code} งวด ${inst.no}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
 })
@@ -675,7 +690,7 @@ api.post('/installments/:id/collect', canWrite, (req, res) => {
   db.prepare('UPDATE installments SET status=?, paid=?, ontime=? WHERE id=?')
     .run(status, paid, done && !isContractor ? 'ตรงเวลา' : inst.ontime, inst.id)
   recomputeHouse(inst.house_code)
-  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(collect):', e.message) }
+  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(collect):', e.message); logJournalIssue('inst', inst.id, `งวด ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, done ? (isContractor ? 'จ่ายช่าง' : 'เก็บเงินงวด') : 'ยกเลิก', `${inst.house_code} งวด ${inst.no}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
 })
@@ -691,7 +706,7 @@ api.post('/installments/:id/pay', canWrite, (req, res) => {
   const status = instStatus(inst.side, inst.amount, paid)
   db.prepare('UPDATE installments SET paid=?, status=? WHERE id=?').run(paid, status, inst.id)
   recomputeHouse(inst.house_code)
-  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(pay):', e.message) }
+  try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(pay):', e.message); logJournalIssue('inst', inst.id, `งวดช่าง ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, inst.side === 'contractor' ? 'จ่ายช่างบางส่วน' : 'เก็บเงินบางส่วน', `${inst.house_code} งวด ${inst.no} +${add}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
 })
@@ -703,7 +718,12 @@ api.get('/installments', (_req, res) => {
        LEFT JOIN houses h ON h.code = i.house_code ORDER BY i.id`
     )
     .all()
-  res.json(rows)
+  // "เลยกำหนด" คิดสดจาก due_iso — ยังไม่เก็บ/จ่ายครบ + เลยวันครบกำหนด
+  const today = todayISO()
+  res.json(rows.map((r) => ({
+    ...r,
+    overdue: r.status !== 'เก็บแล้ว' && !!r.due_iso && r.due_iso < today && (r.paid || 0) < (r.amount || 0),
+  })))
 })
 
 // ---------- issues ----------
@@ -745,7 +765,7 @@ api.post('/expenses', canWrite, (req, res) => {
     .prepare('INSERT INTO expenses (date,house_code,item,cat,vendor,amount,date_iso) VALUES (?,?,?,?,?,?,?)')
     .run(thDateFromISO(iso), house_code || '', item, cat || 'อื่นๆ', vendor || '', Number(amount) || 0, iso)
   const row = db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid)
-  try { acct.syncExpenseJournal(row) } catch (e) { console.error('journal(expense):', e.message) }
+  try { acct.syncExpenseJournal(row) } catch (e) { console.error('journal(expense):', e.message); logJournalIssue('exp', row.id, row.item || 'รายจ่าย', e) }
   res.status(201).json(row)
 })
 
@@ -825,6 +845,27 @@ api.post('/accounting/rebuild', financeOnly, (req, res) => {
   try { const r = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${r.n} รายการ${r.errors.length ? ' · ข้าม ' + r.errors.length : ''}`); res.json({ ok: true, count: r.n, errors: r.errors }) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+// รายการที่ลงบัญชีไม่สำเร็จ (เช่น ติดงวดปิด) — โชว์แบนเนอร์เตือนหน้าบัญชี · หายเองเมื่อลงสำเร็จ
+api.get('/accounting/journal-issues', financeOnly, (_req, res) =>
+  res.json(db.prepare('SELECT * FROM journal_issues ORDER BY id DESC').all()))
+api.delete('/accounting/journal-issues/:id', financeOnly, (req, res) => {
+  db.prepare('DELETE FROM journal_issues WHERE id=?').run(req.params.id)
+  res.json({ ok: true })
+})
+// เช็คยอดเจ้าหนี้อัตโนมัติ: บัญชีแยกประเภท 2010 ต้องเท่ากับ ยอดค้างจ่ายรวมจาก PO เครดิต (ที่รับของแล้ว)
+// ถ้าไม่ตรง = มีรายการเพี้ยน (ลงซ้ำ/หาย) — โชว์เตือนทันทีในแท็บค้างจ่าย + หน้าตรวจสอบ
+function payablesCheck() {
+  const gl = db.prepare("SELECT COALESCE(SUM(l.credit - l.debit),0) v FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id WHERE e.void=0 AND l.account='2010'").get().v
+  let sub = 0
+  for (const po of db.prepare("SELECT id, amount FROM purchase_orders WHERE payment_type='credit' AND status IN ('รับของแล้ว','ปิดงาน') AND COALESCE(amount,0)>0").all()) {
+    const paid = db.prepare("SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").get(po.id).a
+    sub += Math.max(0, (po.amount || 0) - paid)
+  }
+  const glR = Math.round(gl * 100) / 100, subR = Math.round(sub * 100) / 100
+  const diff = Math.round((glR - subR) * 100) / 100
+  return { gl_2010: glR, payable_remaining: subR, diff, ok: Math.abs(diff) < 1 }
+}
+api.get('/payables/check', financeOnly, (_req, res) => res.json(payablesCheck()))
 
 // ---------- HR ----------
 // list excludes the PIN; includes signature + computed sso/tax for display
@@ -1138,7 +1179,7 @@ api.post('/payroll/close', financeOnly, (req, res) => {
   db.prepare('INSERT INTO payroll_runs (period,data,total,created,by) VALUES (?,?,?,?,?) ON CONFLICT(period) DO UPDATE SET data=excluded.data,total=excluded.total,created=excluded.created,by=excluded.by')
     .run(period, JSON.stringify(rows), total, todayTH(), req.user.name)
   let journal = null
-  try { journal = postPayrollJournal(period, rows, req.user.name) } catch (e) { journal = { posted: false, error: e.message } }
+  try { journal = postPayrollJournal(period, rows, req.user.name) } catch (e) { journal = { posted: false, error: e.message }; logJournalIssue('payroll', Number(period.replace('-', '')), 'ปิดงวดเงินเดือน ' + periodLabelTH(period), e) }
   audit(req, 'ปิดงวดเงินเดือน', `${periodLabelTH(period)}${journal?.posted ? ' · ลงบัญชีแล้ว' : ''}`)
   res.json({ ok: true, period, periodLabel: periodLabelTH(period), locked: true, rows, journal })
 })
@@ -1603,11 +1644,11 @@ function syncPoExpense(po) {
       row = db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid)
     }
     // ลงบัญชีแยกประเภท: ซื้อสด → Cr เงินสด · ซื้อเครดิต → Cr เจ้าหนี้การค้า (จ่ายทีหลังค่อยตัดเจ้าหนี้)
-    try { if (row) acct.syncExpenseJournal(row, { credit: po.payment_type === 'credit' }) } catch (e) { console.error('journal(po-exp):', e.message) }
+    try { if (row) acct.syncExpenseJournal(row, { credit: po.payment_type === 'credit' }) } catch (e) { console.error('journal(po-exp):', e.message); if (row) logJournalIssue('exp', row.id, `รับของ ${po.no}`, e) }
     if (po.house_code) recomputeHouse(po.house_code)
   } else if (existing) {
     // not received anymore (or no house) → remove the auto-created expense + รายการบัญชี
-    try { acct.removeAutoJournal('exp', existing.id) } catch (e) { console.error('journal(po-exp-del):', e.message) }
+    try { acct.removeAutoJournal('exp', existing.id) } catch (e) { console.error('journal(po-exp-del):', e.message); logJournalIssue('exp', existing.id, `ยกเลิกรับของ ${po.no}`, e) }
     db.prepare('DELETE FROM expenses WHERE po_id=?').run(po.id)
     if (existing.house_code) recomputeHouse(existing.house_code)
   }
@@ -1985,7 +2026,7 @@ api.post('/payments', financeOnly, (req, res) => {
     .run(todayTH(), no, b.payee, type, gross, rate, wht, gross - wht, String(b.house_code || po?.house_code || ''), String(b.note || (po ? 'ชำระ ' + po.no : '')), poId, todayISO(), vendorId)
   const row = db.prepare('SELECT * FROM payments WHERE id=?').get(info.lastInsertRowid)
   // ลงบัญชีแยกประเภท: ชำระ PO เครดิต → ตัดเจ้าหนี้การค้า · จ่ายทั่วไป → ค่าแรง/ค่าใช้จ่าย + ภาษีหัก ณ ที่จ่ายค้างนำส่ง
-  try { acct.syncPaymentJournal(row) } catch (e) { console.error('journal(payment):', e.message) }
+  try { acct.syncPaymentJournal(row) } catch (e) { console.error('journal(payment):', e.message); logJournalIssue('pay', row.id, row.no, e) }
   audit(req, 'บันทึกจ่ายเงิน', `${b.payee} ฿${gross}${po ? ' (ชำระ ' + po.no + ')' : ''}`)
   res.status(201).json(row)
 })
@@ -2416,7 +2457,8 @@ api.get('/audit-center', requireManager, (_req, res) => {
     { label: 'เก็บเงินลูกค้า', a: 'ยอดในบ้าน', av: collectedH, b: 'ยอดในงวดงาน', bv: collectedI },
     { label: 'จ่ายเงินช่าง', a: 'ยอดในบ้าน', av: paidH, b: 'ยอดในงวดงาน', bv: paidI },
     { label: 'PO รับของแล้ว → รายจ่าย', a: 'ยอด PO', av: poRecv, b: 'ลงรายจ่าย', bv: expFromPo },
-  ].map((r) => ({ ...r, diff: r.av - r.bv, ok: r.av === r.bv }))
+    (() => { const c = payablesCheck(); return { label: 'เจ้าหนี้การค้า (บัญชี 2010) ↔ ยอดค้างจ่าย PO', a: 'ตามบัญชี', av: c.gl_2010, b: 'ตามใบ PO', bv: c.payable_remaining } })(),
+  ].map((r) => ({ ...r, diff: Math.round((r.av - r.bv) * 100) / 100, ok: Math.abs(r.av - r.bv) < 1 }))
 
   res.json({ flags: out, reconcile, counts: { high: out.filter((f) => f.sev === 'high' && !f.acked).length, med: out.filter((f) => f.sev === 'med' && !f.acked).length } })
 })
@@ -3258,8 +3300,8 @@ api.post('/sales-docs', canWrite, (req, res) => {
   const seq = db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(kind).c + 1
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
   const info = db
-    .prepare('INSERT INTO sales_docs (type,no,customer,date,items,subtotal,vat,total,status,house_code) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(kind, no, customer, todayTH(), JSON.stringify(list), subtotal, vat, subtotal + vat, kind === 'receipt' ? 'ชำระแล้ว' : 'รออนุมัติ', house_code || '')
+    .prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(kind, no, customer, todayTH(), todayISO(), JSON.stringify(list), subtotal, vat, subtotal + vat, kind === 'receipt' ? 'ชำระแล้ว' : 'รออนุมัติ', house_code || '')
   res.status(201).json(db.prepare('SELECT * FROM sales_docs WHERE id=?').get(info.lastInsertRowid))
 })
 // standard customer payment milestones (% of contract) used when signing a quote
@@ -3399,11 +3441,11 @@ api.get('/notifications', (req, res) => {
     if (r.due_date < todayISO && !woDone(r.status) && (r.executor === req.user.name || r.reviewer === req.user.name))
       out.push({ kind: 'wo-overdue', icon: 'danger', title: `ใบสั่งงาน ${r.no} เลยกำหนดส่งงาน`, sub: `${r.project || r.scope || ''} · ครบ ${r.due_date} · ${r.executor || '-'}`, page: 'workorders' })
   }
-  for (const r of db.prepare("SELECT * FROM installments WHERE status='เลยกำหนด'").all()) {
-    out.push({ kind: 'overdue', icon: 'danger', title: `งวด ${r.no} เลยกำหนด`, sub: `${r.house_code} · ฿${r.amount.toLocaleString('en-US')}`, page: 'installments' })
-  }
-  for (const r of db.prepare("SELECT * FROM installments WHERE status='รอเก็บเงิน'").all()) {
-    out.push({ kind: 'collect', icon: 'warn', title: `รอเก็บงวด ${r.no}`, sub: `${r.house_code} · ครบ ${r.due}`, page: 'installments' })
+  // งวดลูกค้า: "เลยกำหนด" คิดสดจาก due_iso (รวมของเก่าที่มาร์กสถานะไว้ด้วย)
+  for (const r of db.prepare("SELECT * FROM installments WHERE side != 'contractor' AND status != 'เก็บแล้ว'").all()) {
+    const over = r.status === 'เลยกำหนด' || (r.due_iso && r.due_iso < todayISO && (r.paid || 0) < (r.amount || 0))
+    if (over) out.push({ kind: 'overdue', icon: 'danger', title: `งวด ${r.no} เลยกำหนด`, sub: `${r.house_code} · ฿${r.amount.toLocaleString('en-US')}${r.due ? ' · ครบ ' + r.due : ''}`, page: 'installments' })
+    else if (r.status === 'รอเก็บเงิน') out.push({ kind: 'collect', icon: 'warn', title: `รอเก็บงวด ${r.no}`, sub: `${r.house_code} · ครบ ${r.due}`, page: 'installments' })
   }
   // PO เครดิตใกล้/เลยครบกำหนดชำระ — เตือนคนที่เห็นงานเงิน (บัญชี/ผู้จัดการ/ผู้ดูแล)
   if (canSeeSalary(req.user) || mgr) {
@@ -3413,6 +3455,14 @@ api.get('/notifications', (req, res) => {
     for (const r of db.prepare("SELECT * FROM purchase_orders WHERE payment_type='credit' AND status!='ปิดงาน' AND due_iso!='' AND due_iso IS NOT NULL").all()) {
       if (r.due_iso < today) out.push({ kind: 'po-due', icon: 'danger', title: `PO ${r.no} เลยกำหนดชำระ`, sub: `${r.vendor} · ฿${r.amount.toLocaleString('en-US')} · ครบ ${r.due_date}`, page: 'procurement' })
       else if (r.due_iso <= soonIso) out.push({ kind: 'po-due', icon: 'warn', title: `PO ${r.no} ใกล้ครบกำหนดชำระ`, sub: `${r.vendor} · ฿${r.amount.toLocaleString('en-US')} · ครบ ${r.due_date}`, page: 'procurement' })
+    }
+  }
+  // รายการลงบัญชีไม่สำเร็จ — เตือนฝ่ายการเงิน/แอดมิน (หายเองเมื่อลงสำเร็จ)
+  if (['admin', 'accounting'].includes(req.user.role)) {
+    const ji = db.prepare('SELECT COUNT(*) c FROM journal_issues').get().c
+    if (ji > 0) {
+      const first = db.prepare('SELECT * FROM journal_issues ORDER BY id DESC LIMIT 1').get()
+      out.push({ kind: 'journal-issue', icon: 'danger', title: `ลงบัญชีไม่สำเร็จ ${ji} รายการ — ต้องตรวจ`, sub: `ล่าสุด: ${first.ref || first.source} · ${first.message}`.slice(0, 120), page: 'accounting' })
     }
   }
   // approval items go to managers (ตำแหน่งผู้จัดการ) only
@@ -3524,38 +3574,46 @@ api.get('/reports', financeOnly, (_req, res) => {
 })
 
 // ---------- dashboard aggregates ----------
-api.get('/dashboard', (_req, res) => {
+api.get('/dashboard', (req, res) => {
   const houses = db.prepare('SELECT * FROM houses').all()
   const sum = (k) => houses.reduce((s, h) => s + h[k], 0)
   const collected = sum('collected')
   const expense = db.prepare("SELECT COALESCE(SUM(amount),0) s FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'").get().s
   const nameByCode = Object.fromEntries(houses.map((h) => [h.code, h.name]))
-  // live alert panels
-  const daysOverdue = (due) => {
-    const t = Date.parse(due)
+  // live alert panels — "เลยกำหนด" คิดสดจากวันครบกำหนด (due_iso) ไม่ต้องรอใครไปแก้สถานะ
+  const today = todayISO()
+  const daysOverdue = (dueIso) => {
+    const t = Date.parse(dueIso)
     if (Number.isNaN(t)) return 0
     return Math.max(0, Math.round((Date.now() - t) / 86400000))
   }
-  const overdueList = db.prepare("SELECT * FROM installments WHERE status='เลยกำหนด' ORDER BY id").all()
-    .map((r) => ({ house: nameByCode[r.house_code] || r.house_code, no: String(r.no), detail: r.detail, amount: '฿' + r.amount.toLocaleString('en-US'), days: daysOverdue(r.due_iso || r.due) }))
-  const toCollectList = db.prepare("SELECT * FROM installments WHERE status='รอเก็บเงิน' ORDER BY id").all()
+  const custInst = db.prepare("SELECT * FROM installments WHERE side != 'contractor' AND status != 'เก็บแล้ว' ORDER BY id").all()
+  const isOver = (r) => r.status === 'เลยกำหนด' || (r.due_iso && r.due_iso < today && (r.paid || 0) < (r.amount || 0))
+  const overdueList = custInst.filter(isOver)
+    .map((r) => ({ house: nameByCode[r.house_code] || r.house_code, no: String(r.no), detail: r.detail, amount: '฿' + r.amount.toLocaleString('en-US'), days: daysOverdue(r.due_iso || parseAnyDateISO(r.due) || '') }))
+  const toCollectList = custInst.filter((r) => r.status === 'รอเก็บเงิน' && !isOver(r))
     .map((r) => ({ house: nameByCode[r.house_code] || r.house_code, detail: `งวด ${r.no} · ${r.detail}`, amount: '฿' + r.amount.toLocaleString('en-US') }))
   const advanceList = db.prepare('SELECT * FROM contractors WHERE advance > deducted ORDER BY id').all()
     .map((c) => ({ name: c.name, house: nameByCode[c.house_code] || c.house_code, remain: '฿' + (c.advance - c.deducted).toLocaleString('en-US') }))
+  // ตัวเลขเงินรวมบริษัท เห็นเฉพาะคนที่มีสิทธิ์ด้านการเงิน/ผู้จัดการ (role อื่นเห็นเฉพาะสถานะงาน)
+  const seeMoney = canSeeSalary(req.user) || isManager(req.user)
+  // เงินสดสุทธิ = ยอดคงเหลือบัญชีเงินสด+ธนาคารตามบัญชีแยกประเภท (ไม่ใช่ เก็บ−รายจ่าย ซึ่งไม่รวมค่าช่าง/เงินเดือน)
+  let cashNet = null
+  if (seeMoney) { try { cashNet = acct.cashBalance() } catch { cashNet = null } }
   res.json({
     building: houses.filter((h) => h.status === 'กำลังสร้าง').length,
     delivered: houses.filter((h) => h.status === 'ส่งมอบแล้ว').length,
     afterService: houses.filter((h) => h.status === 'after-service').length,
-    collected,
-    remain: sum('remain'),
-    contractValue: sum('value'),
-    expense,
-    net: collected - expense,
+    collected: seeMoney ? collected : null,
+    remain: seeMoney ? sum('remain') : null,
+    contractValue: seeMoney ? sum('value') : null,
+    expense: seeMoney ? expense : null,
+    net: seeMoney ? cashNet : null,
     overdue: overdueList.length,
     openIssues: db.prepare("SELECT COUNT(*) c FROM issues WHERE status!='แก้ไขแล้ว'").get().c,
     overdueList,
     toCollectList,
-    advanceList,
+    advanceList: seeMoney ? advanceList : [],
   })
 })
 

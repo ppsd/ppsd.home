@@ -380,6 +380,13 @@ ensureColumn('payments', 'po_id', 'INTEGER')           // จ่ายชำร�
 ensureColumn('payments', 'date_iso', 'TEXT')           // วันที่จ่าย (ISO) สำหรับลงบัญชี
 ensureColumn('payments', 'vendor_id', 'INTEGER')       // ผูกผู้รับเงินกับทะเบียนผู้ขาย (ถ้าชื่อตรง)
 ensureColumn('purchase_orders', 'vendor_id', 'INTEGER') // ผูก PO กับทะเบียนผู้ขาย (ถ้าชื่อตรง)
+ensureColumn('sales_docs', 'date_iso', 'TEXT')          // วันที่เอกสารขาย (ISO) — ใช้กรองสรุปภาษีตามช่วงเวลา
+// รายการที่ "ลงบัญชีไม่สำเร็จ" (เช่น ติดงวดปิด) — โชว์เตือนในหน้าบัญชี จนกว่าจะลงสำเร็จ/แก้ไข
+db.exec(`CREATE TABLE IF NOT EXISTS journal_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT, source_id TEXT, ref TEXT, message TEXT, created TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_jissues ON journal_issues(source, source_id)')
 ensureColumn('houses', 'photo', 'TEXT')                // รูปหน้าปกบ้าน (data URL ย่อขนาดแล้ว)
 
 // ===== ราคากลางวัสดุ (Material Standard Prices) — อ้างอิงจากประวัติสั่งซื้อจริง =====

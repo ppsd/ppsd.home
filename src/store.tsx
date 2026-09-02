@@ -55,6 +55,7 @@ export interface ApiInstallment {
   amount: number
   paid?: number
   status: string
+  overdue?: boolean // เลยกำหนด (คิดสดจาก due_iso ที่ server)
   side?: string
   category?: string
   contractor?: string
@@ -291,11 +292,11 @@ export interface Dashboard {
   building: number
   delivered: number
   afterService: number
-  collected: number
-  remain: number
-  contractValue: number
-  expense: number
-  net: number
+  collected: number | null
+  remain: number | null
+  contractValue: number | null
+  expense: number | null
+  net: number | null // เงินสดสุทธิตามบัญชี (ยอดบัญชีเงินสด+ธนาคาร) — null = ไม่มีสิทธิ์เห็น
   overdue: number
   openIssues: number
   overdueList?: { house: string; no: string; detail: string; amount: string; days: number }[]

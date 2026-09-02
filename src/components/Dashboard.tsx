@@ -60,12 +60,13 @@ export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }
     if (c.label === 'ส่งมอบแล้ว') return { ...c, value: String(dashboard.delivered) }
     if (c.label === 'After-service') return { ...c, value: String(dashboard.afterService) }
     if (c.label === 'งวดเลยกำหนด') return { ...c, value: String(dashboard.overdue) }
-    if (c.label === 'รายรับสะสม') return { ...c, value: baht(dashboard.collected) }
-    if (c.label === 'เงินรอเก็บ') return { ...c, value: baht(dashboard.remain) }
-    if (c.label === 'รายจ่าย') return { ...c, value: baht(dashboard.expense) }
-    if (c.label === 'เงินสดสุทธิ') return { ...c, value: baht(dashboard.net) }
+    if (c.label === 'รายรับสะสม') return { ...c, value: dashboard.collected == null ? '—' : baht(dashboard.collected) }
+    if (c.label === 'เงินรอเก็บ') return { ...c, value: dashboard.remain == null ? '—' : baht(dashboard.remain) }
+    if (c.label === 'รายจ่าย') return { ...c, value: dashboard.expense == null ? '—' : baht(dashboard.expense) }
+    if (c.label === 'เงินสดสุทธิ') return { ...c, value: dashboard.net == null ? '—' : baht(dashboard.net), sub: 'ยอดเงินสด+ธนาคารตามบัญชี' }
     return c
   })
+  const seeMoney = dashboard == null || dashboard.collected != null // ไม่มีสิทธิ์เห็นเงินรวม → ซ่อนกราฟการเงิน
 
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -93,7 +94,8 @@ export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
           <div style={{ padding: '13px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>ภาพรวมการเงิน</div>
           <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 13 }}>
-            {(() => {
+            {!seeMoney && <div style={{ fontSize: 12.5, color: '#94A0A8', textAlign: 'center', padding: 12 }}>ข้อมูลการเงินรวมของบริษัท — เห็นเฉพาะฝ่ายบัญชี/ผู้จัดการ</div>}
+            {seeMoney && (() => {
               const inc = dashboard?.collected || 0, exp = dashboard?.expense || 0, net = dashboard?.net || 0
               const mx = Math.max(1, inc, exp, Math.abs(net))
               const rows: [string, number, string][] = [['รายรับสะสม', inc, '#2E7D55'], ['รายจ่าย', exp, '#C24036'], ['เงินสดสุทธิ', net, net >= 0 ? '#30506A' : '#C24036']]

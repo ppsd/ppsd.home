@@ -13,16 +13,18 @@ const KIND_META: Record<string, { icon: string; note: string; menu: string }> = 
 export default function ExpressExport() {
   const [kinds, setKinds] = useState<ExportKind[]>([])
   const [busy, setBusy] = useState('')
+  const d = new Date()
+  const [period, setPeriod] = useState(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) // งวดเงินเดือน (ภงด.1)
 
   useEffect(() => { api.get<ExportKind[]>('/export/express').then(setKinds).catch(() => setKinds([])) }, [])
 
   const download = async (id: string) => {
     setBusy(id)
-    try { await api.download('/export/express/' + id + '/download') }
+    try { await api.download('/export/express/' + id + '/download' + (id === 'payroll' && period ? '?period=' + period : '')) }
     catch (e) { alert((e as Error).message) } finally { setBusy('') }
   }
   const downloadAll = async () => {
-    for (const k of kinds) { setBusy(k.id); try { await api.download('/export/express/' + k.id + '/download') } catch { /* skip */ } }
+    for (const k of kinds) { setBusy(k.id); try { await api.download('/export/express/' + k.id + '/download' + (k.id === 'payroll' && period ? '?period=' + period : '')) } catch { /* skip */ } }
     setBusy('')
   }
 
@@ -53,6 +55,13 @@ export default function ExpressExport() {
                 <span className="num" style={{ fontSize: 12, fontWeight: 600, color: k.count ? '#30506A' : '#94A0A8', background: k.count ? '#E9EFF3' : '#F3F5F7', padding: '3px 10px', borderRadius: 20 }}>{k.count} รายการ</span>
               </div>
               <div style={{ fontSize: 11, color: '#B7791F', background: '#FBF6EC', borderRadius: 7, padding: '6px 9px' }}>นำเข้าที่ → {m.menu}</div>
+              {k.id === 'payroll' && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#5C6770' }}>
+                  งวดเดือน
+                  <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D5DAE0', borderRadius: 7, padding: '5px 8px' }} />
+                  <span style={{ fontSize: 11, color: '#94A0A8' }}>ใช้ snapshot ถ้าปิดงวดแล้ว</span>
+                </label>
+              )}
               <button onClick={() => download(k.id)} disabled={busy === k.id || k.count === 0} className="hov-f3f5f7" style={{ alignSelf: 'flex-start', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: k.count === 0 ? '#B4BCC3' : '#30506A', background: '#fff', border: '1px solid ' + (k.count === 0 ? '#E1E5EA' : '#D2DAE1'), borderRadius: 8, padding: '7px 14px', cursor: k.count === 0 ? 'not-allowed' : 'pointer' }}>{busy === k.id ? 'กำลังดาวน์โหลด…' : '⬇ ดาวน์โหลด CSV'}</button>
             </div>
           )

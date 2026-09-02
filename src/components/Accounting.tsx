@@ -35,22 +35,27 @@ const TABS = [
   { id: 'closing', label: 'ปิดบัญชี/ยอดยกมา' },
 ]
 
+interface JournalIssue { id: number; source: string; source_id: string; ref: string; message: string; created: string }
+
 export default function Accounting() {
   const [tab, setTab] = useState('statements')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [msg, setMsg] = useState('')
   const [rebuilding, setRebuilding] = useState(false)
+  const [issues, setIssues] = useState<JournalIssue[]>([])
 
   const loadAccounts = () => api.get<Account[]>('/accounts').then(setAccounts).catch(() => setAccounts([]))
-  useEffect(() => { loadAccounts() }, [])
+  const loadIssues = () => api.get<JournalIssue[]>('/accounting/journal-issues').then(setIssues).catch(() => setIssues([]))
+  useEffect(() => { loadAccounts(); loadIssues() }, [])
 
   const rebuild = async () => {
     if (!confirm('สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากงวดงานที่เก็บ/จ่าย + รายจ่ายทั้งหมด?\n(ทำซ้ำได้ ไม่สร้างรายการซ้ำ)')) return
     setRebuilding(true); setMsg('')
-    try { const r = await api.post<{ count: number; errors?: string[] }>('/accounting/rebuild', {}); setMsg(`สร้างรายการบัญชีจากข้อมูลเดิมแล้ว ${r.count} รายการ${r.errors?.length ? ` · ข้าม ${r.errors.length} รายการ (${r.errors[0]})` : ''} — ไปดูได้ที่ทุกแท็บ`) }
+    try { const r = await api.post<{ count: number; errors?: string[] }>('/accounting/rebuild', {}); setMsg(`สร้างรายการบัญชีจากข้อมูลเดิมแล้ว ${r.count} รายการ${r.errors?.length ? ` · ข้าม ${r.errors.length} รายการ (${r.errors[0]})` : ''} — ไปดูได้ที่ทุกแท็บ`); loadIssues() }
     catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
     finally { setRebuilding(false) }
   }
+  const dismissIssue = async (id: number) => { try { await api.del('/accounting/journal-issues/' + id); loadIssues() } catch { /* ignore */ } }
 
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -62,6 +67,21 @@ export default function Accounting() {
         <button onClick={rebuild} disabled={rebuilding} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>{rebuilding ? 'กำลังสร้าง…' : '↻ สร้างบัญชีจากข้อมูลเดิม'}</button>
       </div>
       {msg && <div style={{ fontSize: 12.5, color: msg.startsWith('ผิดพลาด') ? '#C24036' : '#2E7D55', background: msg.startsWith('ผิดพลาด') ? '#FBEEEC' : '#E2F1EA', border: '1px solid ' + (msg.startsWith('ผิดพลาด') ? '#E7CDC9' : '#CDE3D6'), borderRadius: 9, padding: '9px 13px' }}>{msg}</div>}
+      {issues.length > 0 && (
+        <div style={{ background: '#FBEEEC', border: '1px solid #E7CDC9', borderRadius: 11, padding: '11px 14px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#C24036' }}>⚠️ มีรายการที่ลงบัญชีไม่สำเร็จ {issues.length} รายการ — ตัวเลขในงบยังไม่ครบจนกว่าจะลงสำเร็จ</div>
+          <div style={{ fontSize: 11.5, color: '#8A5A54', margin: '4px 0 6px' }}>ส่วนใหญ่เกิดจากติดงวดบัญชีที่ปิดแล้ว — แก้ต้นเหตุ (เช่น เลื่อนวันปิดงวด) แล้วกด “↻ สร้างบัญชีจากข้อมูลเดิม” เพื่อลงใหม่</div>
+          {issues.slice(0, 5).map((it) => (
+            <div key={it.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: '#7A4A44', padding: '3px 0', borderTop: '1px dashed #E7CDC9' }}>
+              <span style={{ fontWeight: 600, minWidth: 120 }}>{it.ref || `${it.source}#${it.source_id}`}</span>
+              <span style={{ flex: 1 }}>{it.message}</span>
+              <span style={{ color: '#B08A84' }}>{it.created}</span>
+              <button onClick={() => dismissIssue(it.id)} title="ปิดการเตือนรายการนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
+            </div>
+          ))}
+          {issues.length > 5 && <div style={{ fontSize: 11.5, color: '#B08A84', paddingTop: 4 }}>…และอีก {issues.length - 5} รายการ</div>}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px', flexWrap: 'wrap' }}>
         {TABS.map((t) => (
@@ -732,14 +752,38 @@ function Assets() {
 interface TaxData { outputVat: number; inputVat: number; vatPayable: number; wht: number; whtByType: { type: string; gross: number; wht: number; n: number }[]; netProfit: number; corpTax: number }
 function TaxSummary() {
   const [t, setT] = useState<TaxData | null>(null)
-  useEffect(() => { api.get<TaxData>('/tax-summary').then(setT).catch(() => setT(null)) }, [])
-  if (!t) return <div style={{ color: '#94A0A8', padding: 20 }}>ยังไม่มีข้อมูล</div>
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  useEffect(() => {
+    const q = [from && 'from=' + from, to && 'to=' + to].filter(Boolean).join('&')
+    api.get<TaxData>('/tax-summary' + (q ? '?' + q : '')).then(setT).catch(() => setT(null))
+  }, [from, to])
+  const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const pickMonth = () => { const d = new Date(); setFrom(isoOf(new Date(d.getFullYear(), d.getMonth(), 1))); setTo(isoOf(new Date(d.getFullYear(), d.getMonth() + 1, 0))) }
+  const pickQuarter = () => { const d = new Date(); const q = Math.floor(d.getMonth() / 3); setFrom(isoOf(new Date(d.getFullYear(), q * 3, 1))); setTo(isoOf(new Date(d.getFullYear(), q * 3 + 3, 0))) }
+  const pickYear = () => { const d = new Date(); setFrom(`${d.getFullYear()}-01-01`); setTo(`${d.getFullYear()}-12-31`) }
+  const rangeField = { fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D5DAE0', borderRadius: 8, padding: '6px 9px', background: '#fff' }
+  const quickBtn = { fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#30506A', background: '#E9EFF3', border: 'none', borderRadius: 7, padding: '6px 12px', cursor: 'pointer' }
+  const rangePicker = (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 12.5, color: '#5C6770', fontWeight: 600 }}>ช่วงเวลา</span>
+      <input type="date" style={rangeField} value={from} onChange={(e) => setFrom(e.target.value)} />
+      <span style={{ color: '#94A0A8' }}>–</span>
+      <input type="date" style={rangeField} value={to} onChange={(e) => setTo(e.target.value)} />
+      <button style={quickBtn} onClick={pickMonth}>เดือนนี้</button>
+      <button style={quickBtn} onClick={pickQuarter}>ไตรมาสนี้</button>
+      <button style={quickBtn} onClick={pickYear}>ปีนี้</button>
+      {(from || to) && <button style={{ ...quickBtn, color: '#C24036', background: '#FBEEEC' }} onClick={() => { setFrom(''); setTo('') }}>ทั้งหมด ✕</button>}
+    </div>
+  )
+  if (!t) return <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>{rangePicker}<div style={{ color: '#94A0A8', padding: 20 }}>ยังไม่มีข้อมูล</div></div>
   const line = (l: string, v: number, c = '#3C4750', bold = false) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontWeight: bold ? 700 : 500, fontSize: bold ? 15 : 13, color: c }}><span>{l}</span><span className="num">{baht(v)}</span></div>
   )
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>สรุปเพื่อการบริหาร/เตรียมยื่น — ยอดภาษีจริงและการยื่นทำผ่านเมนู “ส่งออกบัญชี” และสำนักงานบัญชี/ผู้สอบบัญชี</div>
+      {rangePicker}
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>สรุปเพื่อการบริหาร/เตรียมยื่น{from || to ? ` · ช่วง ${from || 'ต้นข้อมูล'} ถึง ${to || 'ปัจจุบัน'}` : ' · ทั้งหมด'} — ยอดภาษีจริงและการยื่นทำผ่านเมนู “ส่งออกบัญชี” และสำนักงานบัญชี/ผู้สอบบัญชี</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 14 }}>
         <div style={{ ...card, padding: 18 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: '#30506A' }}>ภ.พ.30 — ภาษีมูลค่าเพิ่ม</div>

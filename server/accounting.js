@@ -80,13 +80,30 @@ export const postJournal = db.transaction((entry) => {
   db.prepare('UPDATE journal_entries SET no=? WHERE id=?').run(entry.no || jvNo(id), id)
   const li = db.prepare('INSERT INTO journal_lines (entry_id,account,debit,credit,memo) VALUES (?,?,?,?,?)')
   for (const l of lines) li.run(id, l.account, r2(l.debit), r2(l.credit), l.memo || '')
+  // ลงสำเร็จ → เคลียร์ธงเตือน "ลงบัญชีไม่สำเร็จ" ของเอกสารนี้ (ถ้ามี)
+  if (entry.source && entry.source_id != null)
+    try { db.prepare('DELETE FROM journal_issues WHERE source=? AND source_id=?').run(entry.source, String(entry.source_id)) } catch { /* ignore */ }
   return id
 })
 
 // ลบรายการบัญชีอัตโนมัติของเอกสารต้นทาง (เมื่อยอด = 0 หรือยกเลิก)
+// รายการที่อยู่ในงวดที่ปิดแล้ว: ห้ามลบ — ลง "กลับรายการ" (สลับเดบิต/เครดิต) วันที่วันนี้แทน
+// เพื่อให้ยอดสุทธิถูกต้องโดยไม่แก้ประวัติงวดที่ปิดไปแล้ว
 export function removeAutoJournal(source, source_id) {
-  const old = db.prepare('SELECT id FROM journal_entries WHERE source=? AND source_id=?').all(source, String(source_id))
-  for (const o of old) { db.prepare('DELETE FROM journal_lines WHERE entry_id=?').run(o.id); db.prepare('DELETE FROM journal_entries WHERE id=?').run(o.id) }
+  const old = db.prepare('SELECT * FROM journal_entries WHERE source=? AND source_id=?').all(source, String(source_id))
+  for (const o of old) {
+    if (isDateLocked(o.date_iso, source)) {
+      const lines = db.prepare('SELECT account, debit, credit, memo FROM journal_lines WHERE entry_id=?').all(o.id)
+        .map((l) => ({ account: l.account, debit: l.credit, credit: l.debit, memo: l.memo }))
+      postJournal({ memo: `กลับรายการ (ต้นทางถูกยกเลิก แต่งวดบัญชีปิดแล้ว): ${o.memo || o.no}`, house_code: o.house_code, source: 'rev', source_id: `${source}:${source_id}:${o.id}`, ref: o.no, lines })
+      // ตัดการอ้างอิงเอกสารต้นทาง เพื่อไม่ให้ถูกลบ/ทับตอน sync ครั้งถัดไป (ตัวรายการเดิมคงอยู่ในงวดปิด)
+      db.prepare('UPDATE journal_entries SET source_id=NULL WHERE id=?').run(o.id)
+    } else {
+      db.prepare('DELETE FROM journal_lines WHERE entry_id=?').run(o.id)
+      db.prepare('DELETE FROM journal_entries WHERE id=?').run(o.id)
+    }
+  }
+  try { db.prepare('DELETE FROM journal_issues WHERE source=? AND source_id=?').run(source, String(source_id)) } catch { /* ignore */ }
 }
 
 // ---- ลงบัญชีอัตโนมัติจากเอกสารการเงินที่มีอยู่ ----
@@ -141,6 +158,7 @@ export function retroPostAll() {
   for (const inst of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) safe(() => syncInstallmentJournal(inst), `งวด#${inst.id}`)
   const poType = db.prepare('SELECT payment_type FROM purchase_orders WHERE id=?')
   for (const exp of db.prepare('SELECT * FROM expenses WHERE COALESCE(amount,0) > 0').all()) {
+    if ((exp.status || '') === 'ปฏิเสธ') { removeAutoJournal('exp', exp.id); continue }
     const credit = exp.po_id ? poType.get(exp.po_id)?.payment_type === 'credit' : false
     safe(() => syncExpenseJournal(exp, { credit }), `รายจ่าย#${exp.id}`)
   }
@@ -217,7 +235,18 @@ export function balanceSheet({ to } = {}) {
     balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.5 }
 }
 // ---- เฟส 2: งบกระแสเงินสด (Cash Flow — วิธีตรง) ----
-const CASH_ACCOUNTS = ['1010', '1020', '1030']
+// บัญชีเงินสด/ธนาคารทั้งหมดแบบไดนามิก (รองรับบัญชีธนาคารที่ผู้ใช้เพิ่มเอง 10xx)
+function cashCodes() {
+  try { const c = cashAccounts().map((a) => a.code); if (c.length) return c } catch { /* ignore */ }
+  return ['1010', '1020', '1030']
+}
+// ยอดเงินสด+ธนาคารคงเหลือรวม (ตามบัญชี) — ใช้โชว์ "เงินสดสุทธิ" หน้าแรก
+export function cashBalance() {
+  const codes = cashCodes()
+  const r = db.prepare(`SELECT SUM(l.debit - l.credit) v FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
+    WHERE e.void=0 AND l.account IN (${codes.map(() => '?').join(',')})`).get(...codes)
+  return r2(r?.v || 0)
+}
 // จัดหมวดกระแสเงินสดจากบัญชีคู่ (ฝั่งที่ไม่ใช่เงินสด)
 function cashCategory(otherCode) {
   const c = String(otherCode || '')
@@ -234,8 +263,9 @@ function cashCategory(otherCode) {
 // ยอดเงินสดคงเหลือก่อนวันที่ (iso) — ยอดยกมา
 function cashBalanceBefore(iso) {
   if (!iso) return 0
+  const codes = cashCodes()
   const r = db.prepare(`SELECT SUM(l.debit - l.credit) v FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id
-    WHERE e.void=0 AND e.date_iso < ? AND l.account IN (${CASH_ACCOUNTS.map(() => '?').join(',')})`).get(iso, ...CASH_ACCOUNTS)
+    WHERE e.void=0 AND e.date_iso < ? AND l.account IN (${codes.map(() => '?').join(',')})`).get(iso, ...codes)
   return r2(r?.v || 0)
 }
 export function cashFlow({ from, to } = {}) {
@@ -244,15 +274,16 @@ export function cashFlow({ from, to } = {}) {
   if (from) { where.push('e.date_iso >= ?'); args.push(from) }
   if (to) { where.push('e.date_iso <= ?'); args.push(to) }
   // ทุก entry ที่แตะเงินสด: หายอดเงินสดสุทธิของ entry + ฝั่งตรงข้ามที่ใหญ่สุดเพื่อจัดหมวด
+  const codes = cashCodes()
   const entries = db.prepare(`SELECT DISTINCT e.id FROM journal_entries e JOIN journal_lines l ON l.entry_id=e.id
-    WHERE ${where.join(' AND ')} AND l.account IN (${CASH_ACCOUNTS.map(() => '?').join(',')})`).all(...args, ...CASH_ACCOUNTS)
+    WHERE ${where.join(' AND ')} AND l.account IN (${codes.map(() => '?').join(',')})`).all(...args, ...codes)
   const buckets = {} // key act|label -> amount
   const lineStmt = db.prepare('SELECT account, debit, credit FROM journal_lines WHERE entry_id=?')
   for (const { id } of entries) {
     const ls = lineStmt.all(id)
-    const cashDelta = r2(ls.filter((l) => CASH_ACCOUNTS.includes(l.account)).reduce((s, l) => s + (l.debit - l.credit), 0))
+    const cashDelta = r2(ls.filter((l) => codes.includes(l.account)).reduce((s, l) => s + (l.debit - l.credit), 0))
     if (cashDelta === 0) continue
-    const others = ls.filter((l) => !CASH_ACCOUNTS.includes(l.account))
+    const others = ls.filter((l) => !codes.includes(l.account))
     const main = others.sort((a, b) => Math.abs(b.debit - b.credit) - Math.abs(a.debit - a.credit))[0]
     const cat = cashCategory(main?.account)
     const key = cat.act + '|' + cat.label
@@ -458,12 +489,21 @@ export function closeYear(fyEndIso, by) {
 
 // ---- สรุปภาษี: ภ.พ.30 (VAT) / หัก ณ ที่จ่าย / ภ.ง.ด.50 (ประมาณการ) ----
 export function taxSummary(range = {}) {
-  const outputVat = r2(db.prepare('SELECT COALESCE(SUM(vat),0) v FROM sales_docs').get().v)
-  const expenseTotal = r2(db.prepare('SELECT COALESCE(SUM(amount),0) a FROM expenses').get().a)
+  const { from, to } = range
+  // กรองตามช่วงเวลา (คอลัมน์ date_iso) — ไม่ระบุช่วง = ทั้งหมด · แถวเก่าที่ไม่มี date_iso จะติดมาเฉพาะตอนดูทั้งหมด
+  const rangeWhere = (col) => {
+    const w = []; const a = []
+    if (from) { w.push(`${col} >= ?`); a.push(from) }
+    if (to) { w.push(`${col} <= ?`); a.push(to) }
+    return { sql: w.length ? ' AND ' + w.join(' AND ') : '', args: a }
+  }
+  const rs = rangeWhere('date_iso')
+  const outputVat = r2(db.prepare(`SELECT COALESCE(SUM(vat),0) v FROM sales_docs WHERE 1=1${rs.sql}`).get(...rs.args).v)
+  const expenseTotal = r2(db.prepare(`SELECT COALESCE(SUM(amount),0) a FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args).a)
   const inputVat = r2((expenseTotal * 7) / 107)
   const vatPayable = r2(outputVat - inputVat)
-  const wht = r2(db.prepare('SELECT COALESCE(SUM(wht),0) w FROM payments').get().w)
-  const whtByType = db.prepare("SELECT type, COALESCE(SUM(gross),0) gross, COALESCE(SUM(wht),0) wht, COUNT(*) n FROM payments GROUP BY type").all()
+  const wht = r2(db.prepare(`SELECT COALESCE(SUM(wht),0) w FROM payments WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args).w)
+  const whtByType = db.prepare(`SELECT type, COALESCE(SUM(gross),0) gross, COALESCE(SUM(wht),0) wht, COUNT(*) n FROM payments WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql} GROUP BY type`).all(...rs.args)
   // ภ.ง.ด.50 ประมาณการภาษีเงินได้นิติบุคคล จากกำไรสุทธิทางบัญชี (อัตรา SME)
   const netProfit = incomeStatement(range).netProfit
   const corpTax = estimateCorpTax(netProfit)
