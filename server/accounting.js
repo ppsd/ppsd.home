@@ -101,13 +101,31 @@ export function syncInstallmentJournal(inst) {
     : [{ account: bank, debit: amt, credit: 0, memo }, { account: '4010', debit: 0, credit: amt, memo }]
   postJournal({ memo, house_code: inst.house_code, source: 'inst', source_id: inst.id, lines })
 }
-// รายจ่าย: Dr บัญชีต้นทุน/ค่าใช้จ่าย ตามหมวด / Cr เงินสด
-export function syncExpenseJournal(exp) {
+// รายจ่าย: Dr บัญชีต้นทุน/ค่าใช้จ่าย ตามหมวด / Cr เงินสด (หรือ Cr เจ้าหนี้การค้า 2010 ถ้าซื้อเครดิต — จ่ายทีหลังค่อยตัดเจ้าหนี้)
+export function syncExpenseJournal(exp, opts = {}) {
   const amt = r2(exp.amount || 0)
   if (amt <= 0) { removeAutoJournal('exp', exp.id); return }
   const acc = expenseAccountFor(exp.cat || exp.category)
+  const creditAcc = opts.credit ? '2010' : defaultCash()
   const memo = `${exp.item || 'รายจ่าย'} ${exp.vendor ? '· ' + exp.vendor : ''}`.trim()
-  postJournal({ date_iso: exp.date_iso || undefined, memo, house_code: exp.house_code, source: 'exp', source_id: exp.id, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: defaultCash(), debit: 0, credit: amt, memo }] })
+  postJournal({ date_iso: exp.date_iso || undefined, memo, house_code: exp.house_code, source: 'exp', source_id: exp.id, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: creditAcc, debit: 0, credit: amt, memo: opts.credit ? memo + ' (เครดิต)' : memo }] })
+}
+
+// จ่ายเงิน (ใบสำคัญจ่าย): ถ้าจ่ายชำระ PO เครดิต → Dr เจ้าหนี้การค้า / Cr ภาษีหัก ณ ที่จ่ายค้างนำส่ง + ธนาคาร
+// จ่ายทั่วไป (ค่าจ้าง/บริการ) → Dr ต้นทุนค่าแรง (ผูกบ้าน) หรือ ค่าใช้จ่ายอื่น / Cr เดียวกัน
+export function syncPaymentJournal(pay) {
+  const gross = r2(pay.gross || 0)
+  if (gross <= 0) { removeAutoJournal('pay', pay.id); return }
+  const wht = r2(pay.wht || 0)
+  const net = r2(gross - wht)
+  const drAcc = pay.po_id ? '2010' : (pay.house_code ? '5020' : '6090')
+  const memo = `จ่ายเงิน ${pay.payee || ''}${pay.note ? ' · ' + pay.note : ''}`.trim()
+  const lines = [
+    { account: drAcc, debit: gross, credit: 0, memo },
+    { account: '2040', debit: 0, credit: wht, memo: 'ภาษีหัก ณ ที่จ่าย' },
+    { account: defaultBank(), debit: 0, credit: net, memo: 'จ่ายสุทธิ' },
+  ]
+  postJournal({ date_iso: pay.date_iso || undefined, memo, house_code: pay.house_code, source: 'pay', source_id: pay.id, lines })
 }
 
 // backfill จากข้อมูลเดิมทั้งหมด (idempotent) — คืนจำนวนรายการที่ลง

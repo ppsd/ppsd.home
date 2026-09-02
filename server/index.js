@@ -1516,9 +1516,10 @@ api.post('/purchase-orders', financeOnly, (req, res) => {
   const orderItems = Array.isArray(b.items) && b.items.length
     ? b.items.map((it) => ({ desc: String(it.desc || '').trim(), qty: Number(it.qty) || 0, unit: String(it.unit || ''), price: Number(it.price) || 0 })).filter((it) => it.desc)
     : [{ desc: String(b.item || '').trim(), qty: 0, unit: '', price: Number(b.amount) || 0 }]
+  const poVendorId = db.prepare('SELECT id FROM vendors WHERE name=?').get(String(b.vendor))?.id ?? null // ผูกทะเบียนผู้ขาย (ชื่อตรง)
   const info = db
-    .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso,items) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems))
+    .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso,items,vendor_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems), poVendorId)
   res.status(201).json(poRow(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(info.lastInsertRowid)))
 })
 // when a PO is received, its cost flows into the house's รายจ่าย (auto expense, linked by po_id)
@@ -1536,8 +1537,8 @@ function syncPoExpense(po) {
         .run(todayTH(), po.house_code, po.item, 'วัสดุ', po.vendor, po.amount, po.id, todayISO())
       row = db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid)
     }
-    // ลงบัญชีแยกประเภทให้เหมือนรายจ่ายทั่วไป (เดิมไม่ได้ลง → ต้นทุน PO ไม่เข้า GL)
-    try { if (row) acct.syncExpenseJournal(row) } catch (e) { console.error('journal(po-exp):', e.message) }
+    // ลงบัญชีแยกประเภท: ซื้อสด → Cr เงินสด · ซื้อเครดิต → Cr เจ้าหนี้การค้า (จ่ายทีหลังค่อยตัดเจ้าหนี้)
+    try { if (row) acct.syncExpenseJournal(row, { credit: po.payment_type === 'credit' }) } catch (e) { console.error('journal(po-exp):', e.message) }
     recomputeHouse(po.house_code)
   } else if (existing) {
     // not received anymore (or no house) → remove the auto-created expense + รายการบัญชี
@@ -1727,7 +1728,22 @@ api.post('/procurement/clear', adminOnly, (req, res) => {
 })
 
 // ---------- procurement (finance only) ----------
-api.get('/vendors', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM vendors ORDER BY id').all()))
+// ผู้ขาย + ยอดค้างจ่ายจริง (คิดสดจาก PO เครดิต − ที่จ่ายแล้ว) และยอดซื้อสะสมจริง
+api.get('/vendors', financeOnly, (_req, res) => {
+  const rows = db.prepare('SELECT * FROM vendors ORDER BY id').all().map((v) => {
+    const pos = db.prepare("SELECT id, amount, payment_type FROM purchase_orders WHERE vendor=? OR vendor_id=?").all(v.name, v.id)
+    let out = 0, total = 0
+    for (const po of pos) {
+      total += po.amount || 0
+      if (po.payment_type === 'credit') {
+        const paid = db.prepare('SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=?').get(po.id).a
+        out += Math.max(0, (po.amount || 0) - paid)
+      }
+    }
+    return { ...v, outstanding_live: out, total_live: total }
+  })
+  res.json(rows)
+})
 api.post('/vendors', financeOnly, (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ขาย' })
@@ -1825,19 +1841,19 @@ api.delete('/material-prices/:id', financeOnly, (req, res) => {
   if (cur) audit(req, 'ลบราคากลางวัสดุ', cur.name)
   res.json({ ok: true })
 })
-// อัปเดตราคากลางจากประวัติสั่งซื้อจริงในระบบ (รายการใน PR ที่มีราคาต่อหน่วย) — เว้นรายการที่ตั้งราคาเอง
+// อัปเดตราคากลางจากประวัติสั่งซื้อจริงในระบบ (รายการในใบสั่งซื้อ PO = ราคาที่ซื้อจริง) — เว้นรายการที่ตั้งราคาเอง
 api.post('/material-prices/recompute', financeOnly, (req, res) => {
-  const prs = db.prepare('SELECT id, items FROM purchase_requests ORDER BY id').all()
+  const pos = db.prepare('SELECT id, items FROM purchase_orders ORDER BY id').all()
   const g = {}
-  for (const pr of prs) {
-    let items = []; try { items = JSON.parse(pr.items || '[]') } catch { items = [] }
+  for (const po of pos) {
+    let items = []; try { items = JSON.parse(po.items || '[]') } catch { items = [] }
     for (const it of items) {
       const name = String(it.desc || '').trim(); const up = Number(it.price) || 0; const qty = Number(it.qty) || 0
       if (!name || up <= 0) continue
       const unit = String(it.unit || '').trim()
       const k = nkeyOf(name) + '|' + unit
       const o = g[k] = g[k] || { name, unit, prices: [], qs: 0, amts: 0, pos: new Set(), latest: up }
-      o.prices.push(up); o.qs += qty; o.amts += qty > 0 ? qty * up : up; o.pos.add(pr.id); o.latest = up
+      o.prices.push(up); o.qs += qty; o.amts += qty > 0 ? qty * up : up; o.pos.add(po.id); o.latest = up
     }
   }
   const today = new Date().toISOString().slice(0, 10)
@@ -1878,14 +1894,39 @@ api.post('/payments', financeOnly, (req, res) => {
     const dup = db.prepare('SELECT COUNT(*) c FROM payments WHERE payee=? AND gross=?').get(b.payee, gross).c
     if (dup > 0) return res.status(409).json({ error: `มีรายการจ่ายให้ ${b.payee} ยอด ${baht(gross)} อยู่แล้ว — ตรวจสอบว่าไม่ใช่การจ่ายซ้ำ (ปิดกติกานี้ได้ในหน้าตรวจสอบถ้าเป็นการจ่ายประจำ)` })
   }
+  // จ่ายชำระใบสั่งซื้อ (PO เครดิต): ผูก po_id เพื่อตัดยอดค้างจ่าย + กันจ่ายเกินยอดค้าง
+  const poId = b.po_id ? Number(b.po_id) : null
+  const po = poId ? db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(poId) : null
+  if (poId && !po) return res.status(404).json({ error: 'ไม่พบใบสั่งซื้อที่อ้างถึง' })
+  if (po) {
+    const paid = db.prepare('SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=?').get(po.id).a
+    const remaining = Math.max(0, (po.amount || 0) - paid)
+    if (gross > remaining + 0.5) return res.status(400).json({ error: `จ่ายเกินยอดค้างของ ${po.no} — ค้างจ่ายอยู่ ${baht(remaining)}` })
+  }
   const rate = type === '-' ? 0 : (Number(b.wht_rate) || 0)
   const wht = Math.round((gross * rate) / 100)
   const seq = db.prepare('SELECT COUNT(*) c FROM payments').get().c + 208
   const no = `PV-${docYear()}-${String(seq).padStart(4, '0')}`
-  const info = db.prepare('INSERT INTO payments (date,no,payee,type,gross,wht_rate,wht,net,house_code,note) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(todayTH(), no, b.payee, type, gross, rate, wht, gross - wht, String(b.house_code || ''), String(b.note || ''))
-  audit(req, 'บันทึกจ่ายเงิน', `${b.payee} ฿${gross}`)
-  res.status(201).json(db.prepare('SELECT * FROM payments WHERE id=?').get(info.lastInsertRowid))
+  const vendorId = db.prepare('SELECT id FROM vendors WHERE name=?').get(String(b.payee))?.id ?? null
+  const info = db.prepare('INSERT INTO payments (date,no,payee,type,gross,wht_rate,wht,net,house_code,note,po_id,date_iso,vendor_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(todayTH(), no, b.payee, type, gross, rate, wht, gross - wht, String(b.house_code || po?.house_code || ''), String(b.note || (po ? 'ชำระ ' + po.no : '')), poId, todayISO(), vendorId)
+  const row = db.prepare('SELECT * FROM payments WHERE id=?').get(info.lastInsertRowid)
+  // ลงบัญชีแยกประเภท: ชำระ PO เครดิต → ตัดเจ้าหนี้การค้า · จ่ายทั่วไป → ค่าแรง/ค่าใช้จ่าย + ภาษีหัก ณ ที่จ่ายค้างนำส่ง
+  try { acct.syncPaymentJournal(row) } catch (e) { console.error('journal(payment):', e.message) }
+  audit(req, 'บันทึกจ่ายเงิน', `${b.payee} ฿${gross}${po ? ' (ชำระ ' + po.no + ')' : ''}`)
+  res.status(201).json(row)
+})
+
+// ยอดค้างจ่ายผู้ขาย (จาก PO เครดิต): คงเหลือ = มูลค่า PO − ที่จ่ายผูกใบนั้นแล้ว
+api.get('/payables', financeOnly, (_req, res) => {
+  const today = todayISO()
+  const rows = db.prepare("SELECT * FROM purchase_orders WHERE payment_type='credit' AND COALESCE(amount,0)>0 ORDER BY COALESCE(due_iso,'9999') , id").all().map((po) => {
+    const paid = db.prepare('SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=?').get(po.id).a
+    const remaining = Math.max(0, (po.amount || 0) - paid)
+    const overdue = !!(po.due_iso && po.due_iso < today && remaining > 0)
+    return { po_id: po.id, no: po.no, vendor: po.vendor, date: po.date, due_date: po.due_date, due_iso: po.due_iso, house_code: po.house_code, amount: po.amount, paid, remaining, overdue, status: remaining <= 0 ? 'จ่ายครบ' : overdue ? 'เกินกำหนด' : 'ค้างจ่าย' }
+  })
+  res.json(rows)
 })
 
 // ---------- users (admin only) ----------

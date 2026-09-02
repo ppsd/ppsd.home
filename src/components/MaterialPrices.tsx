@@ -41,7 +41,7 @@ export default function MaterialPrices() {
   const reload = () => app.reloadData('materialPrices', '/material-prices')
 
   const recompute = async () => {
-    if (!confirm('อัปเดตราคากลางจากประวัติการสั่งซื้อจริงในระบบ (ใบขอซื้อ PR ที่มีราคาต่อหน่วย)?\nรายการที่ตั้งราคาเองจะไม่ถูกทับ')) return
+    if (!confirm('อัปเดตราคากลางจากประวัติการสั่งซื้อจริงในระบบ (รายการในใบสั่งซื้อ PO = ราคาที่ซื้อจริง)?\nรายการที่ตั้งราคาเองจะไม่ถูกทับ')) return
     setBusy(true)
     try {
       const r = await api.post<{ updated: number; added: number; groups: number }>('/material-prices/recompute', {})

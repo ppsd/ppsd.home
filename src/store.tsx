@@ -237,6 +237,8 @@ export interface ApiVendor {
   total: number
   outstanding: number
   credit_days?: number
+  outstanding_live?: number
+  total_live?: number
 }
 export interface ApiPR {
   id: number

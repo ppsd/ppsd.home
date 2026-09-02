@@ -376,6 +376,10 @@ ensureColumn('files', 'category', 'TEXT')              // หมวดไฟล�
 ensureColumn('files', 'path', 'TEXT')                  // ชื่อไฟล์บนดิสก์ (เก็บไฟล์จริงแทน base64 ในฐานข้อมูล)
 ensureColumn('payments', 'house_code', 'TEXT')         // ผูกใบจ่ายเงิน/หัก ณ ที่จ่าย กับบ้าน (รวมเข้าต้นทุนบ้าน)
 ensureColumn('payments', 'note', 'TEXT')               // หมายเหตุ/รายละเอียดค่าใช้จ่าย
+ensureColumn('payments', 'po_id', 'INTEGER')           // จ่ายชำระใบสั่งซื้อ (PO เครดิต) ใบไหน — ใช้คิดยอดค้างจ่าย
+ensureColumn('payments', 'date_iso', 'TEXT')           // วันที่จ่าย (ISO) สำหรับลงบัญชี
+ensureColumn('payments', 'vendor_id', 'INTEGER')       // ผูกผู้รับเงินกับทะเบียนผู้ขาย (ถ้าชื่อตรง)
+ensureColumn('purchase_orders', 'vendor_id', 'INTEGER') // ผูก PO กับทะเบียนผู้ขาย (ถ้าชื่อตรง)
 ensureColumn('houses', 'photo', 'TEXT')                // รูปหน้าปกบ้าน (data URL ย่อขนาดแล้ว)
 
 // ===== ราคากลางวัสดุ (Material Standard Prices) — อ้างอิงจากประวัติสั่งซื้อจริง =====

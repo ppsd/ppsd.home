@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import { procurementTabs, payables, approvalStyle } from '../erpData'
+import { procurementTabs } from '../erpData'
 import { baht, unMoney, matchMaterial } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
@@ -16,11 +16,6 @@ import MaterialAutocomplete from './MaterialAutocomplete'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '10px 14px' }
-
-function Pill({ s }: { s: string }) {
-  const c = approvalStyle(s)
-  return <span style={{ fontSize: 11, fontWeight: 600, color: c.c, background: c.bg, padding: '2px 10px', borderRadius: 20 }}>{s}</span>
-}
 
 const prField: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', outline: 'none' }
 const PR_CATS = [
@@ -125,12 +120,26 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
 
   // payment + vendor inline forms
   const [addingPay, setAddingPay] = useState(false)
-  const [payForm, setPayForm] = useState({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3', house_code: '', note: '' })
+  const [payForm, setPayForm] = useState({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3', house_code: '', note: '', po_id: '', po_no: '' })
+  // ยอดค้างจ่ายจริงจาก PO เครดิต (มูลค่า − ที่จ่ายผูกใบแล้ว)
+  interface PayableRow { po_id: number; no: string; vendor: string; date: string; due_date?: string; house_code?: string; amount: number; paid: number; remaining: number; overdue: boolean; status: string }
+  const [payableRows, setPayableRows] = useState<PayableRow[] | null>(null)
+  const loadPayables = () => api.get<PayableRow[]>('/payables').then(setPayableRows).catch(() => setPayableRows([]))
+  useEffect(() => { if (tab === 'payable') loadPayables() }, [tab])
+  // กดจ่ายจากแถวยอดค้าง → เปิดฟอร์มจ่ายเงินพร้อมข้อมูลครบ (ซื้อของไม่หัก ณ ที่จ่าย)
+  const payPo = (r: PayableRow) => {
+    setPayForm({ payee: r.vendor, type: '-', gross: String(r.remaining), wht_rate: '0', house_code: r.house_code || '', note: 'ชำระ ' + r.no, po_id: String(r.po_id), po_no: r.no })
+    setTab('pay'); setAddingPay(true)
+  }
   const [payErr, setPayErr] = useState('')
   const submitPay = async () => {
     if (!payForm.payee.trim() || !payForm.gross) { setPayErr('กรอกผู้รับเงินและจำนวนเงิน'); return }
     setPayErr('')
-    try { await addPayment({ ...payForm, gross: unMoney(payForm.gross), wht_rate: Number(payForm.wht_rate) }); setAddingPay(false); setPayForm({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3', house_code: '', note: '' }) } catch (e) { setPayErr((e as Error).message) }
+    try {
+      await addPayment({ payee: payForm.payee, type: payForm.type, gross: unMoney(payForm.gross), wht_rate: Number(payForm.wht_rate), house_code: payForm.house_code, note: payForm.note, po_id: payForm.po_id ? Number(payForm.po_id) : undefined })
+      setAddingPay(false); setPayForm({ payee: '', type: 'ภงด.53', gross: '', wht_rate: '3', house_code: '', note: '', po_id: '', po_no: '' })
+      if (payableRows) loadPayables()
+    } catch (e) { setPayErr((e as Error).message) }
   }
   const [addingVendor, setAddingVendor] = useState(false)
   const [vendorForm, setVendorForm] = useState({ name: '', type: 'นิติบุคคล', tax_id: '', credit_days: '' })
@@ -524,8 +533,17 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
           {addingPay && (
             <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1fr 0.8fr', gap: 10 }}>
-                <input style={prField} list="payee-emps" placeholder="ผู้รับเงิน * (พิมพ์/เลือกพนักงาน)" value={payForm.payee} onChange={(e) => setPayForm({ ...payForm, payee: e.target.value })} />
-                <datalist id="payee-emps">{(data.employees || []).map((e) => <option key={e.code} value={e.name} />)}</datalist>
+                <input style={prField} list="payee-emps" placeholder="ผู้รับเงิน * (พิมพ์/เลือกพนักงานหรือผู้ขาย)" value={payForm.payee} onChange={(e) => setPayForm({ ...payForm, payee: e.target.value })} />
+                <datalist id="payee-emps">
+                  {(data.employees || []).map((e) => <option key={'e' + e.code} value={e.name} />)}
+                  {vendors.map((v) => <option key={'v' + v.id} value={v.name} />)}
+                </datalist>
+                {payForm.po_no && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#E2E9EF', padding: '4px 10px', borderRadius: 20 }}>ชำระ {payForm.po_no}</span>
+                    <button onClick={() => setPayForm({ ...payForm, po_id: '', po_no: '', note: '' })} title="ยกเลิกการผูกกับ PO" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
+                  </div>
+                )}
                 <select style={prField} value={payForm.type} onChange={(e) => setPayForm({ ...payForm, type: e.target.value })}><option>ภงด.53</option><option>ภงด.3</option><option value="-">ไม่หัก</option></select>
                 <MoneyInput style={prField} placeholder="ยอดก่อนหัก (บาท)" value={payForm.gross} onChange={(v) => setPayForm({ ...payForm, gross: v })} />
                 <input style={prField} type="number" placeholder="อัตรา %" value={payForm.wht_rate} onChange={(e) => setPayForm({ ...payForm, wht_rate: e.target.value })} />
@@ -592,26 +610,37 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
           </>
         )}
 
-        {/* Payables */}
+        {/* Payables — ยอดค้างจ่ายจริงจาก PO เครดิต */}
         {tab === 'payable' && (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
-                <th style={{ ...th, padding: '9px 18px' }}>ผู้ขาย / ผู้รับเหมา</th>
-                <th style={th}>เอกสารค้าง</th>
+                <th style={{ ...th, padding: '9px 18px' }}>ผู้ขาย</th>
+                <th style={th}>ใบสั่งซื้อ</th>
                 <th style={th}>ครบกำหนด</th>
-                <th style={{ ...th, textAlign: 'right' }}>จำนวนเงิน</th>
-                <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>สถานะ</th>
+                <th style={{ ...th, textAlign: 'right' }}>มูลค่า</th>
+                <th style={{ ...th, textAlign: 'right' }}>จ่ายแล้ว</th>
+                <th style={{ ...th, textAlign: 'right' }}>คงเหลือ</th>
+                <th style={{ ...th, textAlign: 'center' }}>สถานะ</th>
+                <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}></th>
               </tr>
             </thead>
             <tbody>
-              {payables.map((r, i) => (
-                <tr key={i} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
+              {(payableRows || []).length === 0 && <tr><td colSpan={8} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>{payableRows === null ? 'กำลังโหลด…' : 'ไม่มียอดค้างจ่าย (PO เครดิต)'}</td></tr>}
+              {(payableRows || []).map((r) => (
+                <tr key={r.po_id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.vendor}</td>
-                  <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{r.doc}</td>
-                  <td className="num" style={{ ...td, color: '#5C6770' }}>{r.due}</td>
-                  <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{r.amount}</td>
-                  <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}><Pill s={r.status} /></td>
+                  <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{r.no}</td>
+                  <td className="num" style={{ ...td, color: r.overdue ? '#C24036' : '#5C6770', fontWeight: r.overdue ? 700 : 400 }}>{r.due_date || '-'}</td>
+                  <td className="num" style={{ ...td, textAlign: 'right' }}>{baht(r.amount)}</td>
+                  <td className="num" style={{ ...td, textAlign: 'right', color: r.paid ? '#2E7D55' : '#94A0A8' }}>{baht(r.paid)}</td>
+                  <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 700, color: r.remaining > 0 ? '#C0852C' : '#94A0A8' }}>{baht(r.remaining)}</td>
+                  <td style={{ ...td, textAlign: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: r.status === 'จ่ายครบ' ? '#2E7D55' : r.status === 'เกินกำหนด' ? '#C24036' : '#B7791F', background: r.status === 'จ่ายครบ' ? '#E2F1EA' : r.status === 'เกินกำหนด' ? '#FBEAE7' : '#F6ECD6' }}>{r.status}</span>
+                  </td>
+                  <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
+                    {r.remaining > 0 && <button onClick={() => payPo(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #B5DDC8', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>💸 จ่าย</button>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -663,8 +692,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                       style={{ width: 64, fontFamily: 'inherit', fontSize: 12.5, textAlign: 'center', color: '#1C2730', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 6px', outline: 'none' }}
                     />
                   </td>
-                  <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.total)}</td>
-                  <td className="num" style={{ ...td, padding: '10px 18px', textAlign: 'right', fontWeight: 600, color: r.outstanding === 0 ? '#94A0A8' : '#C0852C' }}>{baht(r.outstanding)}</td>
+                  <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.total_live ?? r.total)}</td>
+                  <td className="num" style={{ ...td, padding: '10px 18px', textAlign: 'right', fontWeight: 600, color: (r.outstanding_live ?? r.outstanding) === 0 ? '#94A0A8' : '#C0852C' }}>{baht(r.outstanding_live ?? r.outstanding)}</td>
                 </tr>
               ))}
             </tbody>
