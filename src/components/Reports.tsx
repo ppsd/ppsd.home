@@ -59,6 +59,8 @@ export default function Reports() {
       (budget || []).map((b) => [b.name, b.plan, b.actualContractor, b.actualMaterial, b.actual, b.variance]), 'งบประมาณ vs จริง')
 
   return (
+    <>
+    {mr && <MonthlyReportDoc r={mr} onClose={() => setMr(null)} onSendLine={sendMonthlyLine} />}
     <div className="print-area page-print" style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
         <span style={{ fontSize: 12.5, color: '#5C6770' }}>รายงานประจำเดือน</span>
@@ -66,7 +68,6 @@ export default function Reports() {
         <button onClick={openMonthly} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '8px 14px', cursor: 'pointer' }}>📊 เปิดรายงานผู้บริหาร</button>
         <button onClick={() => window.print()} className="hov-f3f5f7" style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 14px', cursor: 'pointer' }}>🖨 พิมพ์ / บันทึก PDF</button>
       </div>
-      {mr && <MonthlyReportDoc r={mr} onClose={() => setMr(null)} onSendLine={sendMonthlyLine} />}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         <Kpi label="มูลค่าสัญญารวม" value={baht(totals.contract)} color="#1C2730" />
         <Kpi label="เก็บเงินแล้ว" value={baht(totals.collected)} color="#2E7D55" />
@@ -192,6 +193,7 @@ export default function Reports() {
         </div>
       </div>
     </div>
+    </>
   )
 }
 

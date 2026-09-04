@@ -260,11 +260,12 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const payments = data.payments || []
   // การ์ดภาษี คำนวณจากข้อมูลจ่ายเงินจริง (ไม่ใช่ค่าตัวอย่างที่ค้างในระบบอีกต่อไป)
   const whtByType = (t: string) => payments.filter((p) => p.type === t).reduce((s, p) => s + (p.wht || 0), 0)
-  const inputVat = Math.round((data.expenses || []).reduce((s, e) => s + (e.amount || 0), 0) * 7 / 107)
+  // ภาษีซื้อจากใบกำกับจริงที่กรอกไว้ต่อใบ (ให้ตรงกับหน้า สรุปภาษี) — ไม่เดา 7/107 จากทุกใบอีก
+  const inputVat = Math.round((data.expenses || []).reduce((s, e) => s + (e.vat_amount || 0), 0))
   const taxCardsLive = [
     { label: 'ภงด.3 (หัก ณ ที่จ่าย-บุคคล)', value: baht(whtByType('ภงด.3')), sub: 'ยอดหัก ณ ที่จ่ายสะสม · นำส่งภายในวันที่ 7 ของเดือนถัดไป', accent: '#30506A' },
     { label: 'ภงด.53 (หัก ณ ที่จ่าย-นิติบุคคล)', value: baht(whtByType('ภงด.53')), sub: 'ยอดหัก ณ ที่จ่ายสะสม · นำส่งภายในวันที่ 7 ของเดือนถัดไป', accent: '#30506A' },
-    { label: 'ภาษีซื้อ (VAT 7%)', value: baht(inputVat), sub: 'จากรายจ่ายที่มีภาษีมูลค่าเพิ่ม · เครดิตภาษีได้', accent: '#2E7D55' },
+    { label: 'ภาษีซื้อ (ตามใบกำกับ)', value: baht(inputVat), sub: 'จากใบกำกับภาษีที่กรอกไว้จริง · เครดิตภาษีได้', accent: '#2E7D55' },
   ]
   const [q, setQ] = useState('')
   const ql = q.trim().toLowerCase()

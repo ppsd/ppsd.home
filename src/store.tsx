@@ -87,6 +87,8 @@ export interface ApiExpense {
   amount: number
   house?: string
   date_iso?: string
+  vat_amount?: number
+  tax_invoice_no?: string
   approval?: Approval
   status?: string
 }

@@ -24,7 +24,7 @@ export default function Installments() {
 
   const q = search.trim().toLowerCase()
   const rows = installments.filter((r) => {
-    const okF = filter === 'all' || r.status === filter
+    const okF = filter === 'all' || (filter === 'เลยกำหนด' ? (r.overdue || r.status === 'เลยกำหนด') : r.status === filter)
     const okQ = !q || (r.house || '').toLowerCase().includes(q)
     return okF && okQ
   })
@@ -39,7 +39,7 @@ export default function Installments() {
           ['เก็บแล้ว', 'เก็บแล้ว', '#2E7D55'],
           ['ยังไม่ถึงกำหนด', 'ยังไม่ถึง', '#1C2730'],
         ] as const).map(([label, status, color]) => {
-          const grp = installments.filter((r) => r.status === status)
+          const grp = installments.filter((r) => (status === 'เลยกำหนด' ? (r.overdue || r.status === status) : r.status === status))
           const total = grp.reduce((s, r) => s + r.amount, 0)
           return <StatCard key={label} label={label} value={baht(total)} color={color} sub={`${grp.length} งวด`} />
         })}

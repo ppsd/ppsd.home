@@ -257,11 +257,27 @@ function logLocation(emp, lat, lng, accuracy, note) {
   db.prepare('INSERT INTO location_log (emp_code,emp_name,lat,lng,accuracy,ts,date,note) VALUES (?,?,?,?,?,?,?,?)')
     .run(emp.code, emp.name, lat, lng, Number(accuracy) || 0, now.toISOString(), now.toISOString().slice(0, 10), note || '')
 }
+// กันเดา PIN บนช่องทางสาธารณะ (kiosk ทุกตัว): ผิด 5 ครั้งต่อรหัสพนักงาน → ล็อก 5 นาที
+const kioskAttempts = new Map() // emp_code -> { fails, until }
+function kioskPinCheck(empCode, pin, emp) {
+  const key = String(empCode || '')
+  const rec = kioskAttempts.get(key) || { fails: 0, until: 0 }
+  if (rec.until > Date.now()) return { error: 'ใส่ PIN ผิดหลายครั้ง — ล็อกชั่วคราว ลองใหม่ใน 5 นาที', code: 429 }
+  if (!emp?.pin || hashPin(pin) !== emp.pin) {
+    rec.fails += 1
+    if (rec.fails >= 5) { rec.until = Date.now() + 5 * 60000; rec.fails = 0 }
+    kioskAttempts.set(key, rec)
+    return { error: 'PIN ไม่ถูกต้อง', code: 401 }
+  }
+  kioskAttempts.delete(key)
+  return null
+}
 api.post('/kiosk/location', (req, res) => {
   const { emp_code, pin, lat, lng, accuracy, note } = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
-  if (!emp.pin || hashPin(pin) !== emp.pin) return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' })
+  const bad = kioskPinCheck(emp_code, pin, emp)
+  if (bad) return res.status(bad.code).json({ error: bad.error })
   logLocation(emp, lat, lng, accuracy, note)
   res.json({ ok: true })
 })
@@ -280,29 +296,22 @@ function trackHandler(req, res) {
 api.get('/track/:token', trackHandler)
 api.post('/track/:token', trackHandler)
 // ดูสลิปเงินเดือน "ของตัวเอง" — พนักงานยืนยันด้วย PIN (เหมือนตอกบัตร) · เฉพาะงวดที่ปิดแล้ว (ตัวเลขจ่ายจริง)
-const slipAttempts = new Map() // emp_code -> { fails, until }
 api.post('/kiosk/my-slip', (req, res) => {
   const { emp_code, pin, period } = req.body || {}
-  const key = String(emp_code || '')
-  const rec = slipAttempts.get(key) || { fails: 0, until: 0 }
-  if (rec.until > Date.now()) return res.status(429).json({ error: 'ใส่ PIN ผิดหลายครั้ง — ล็อกชั่วคราว ลองใหม่ใน 5 นาที' })
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
-  if (!emp.pin || hashPin(pin) !== emp.pin) {
-    rec.fails += 1
-    if (rec.fails >= 5) { rec.until = Date.now() + 5 * 60000; rec.fails = 0 }
-    slipAttempts.set(key, rec)
-    return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' })
-  }
-  slipAttempts.delete(key)
+  if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว — ติดต่อฝ่ายบุคคลเพื่อขอสลิปย้อนหลัง' })
+  const bad = kioskPinCheck(emp_code, pin, emp)
+  if (bad) return res.status(bad.code).json({ error: bad.error })
   const periods = db.prepare('SELECT period FROM payroll_runs ORDER BY period DESC LIMIT 12').all().map((r) => r.period)
   if (!periods.length) return res.json({ periods: [], slip: null })
   const p = /^\d{4}-\d{2}$/.test(String(period || '')) && periods.includes(period) ? period : periods[0]
   const run = db.prepare('SELECT data FROM payroll_runs WHERE period=?').get(p)
   let slip = null
   try {
-    const row = JSON.parse(run.data).find((x) => x.code === emp.code)
-    if (row) { const { pin: _p, signature: _s, track_token: _t, ...safe } = row; slip = { ...safe, period: p } }
+    const rows = JSON.parse(run.data).filter((x) => x.code === emp.code)
+    const row = rows.length > 1 ? (rows.find((x) => x.name === emp.name) || null) : rows[0]
+    if (row) { const { pin: _p, signature: _s, track_token: _t, ...safe } = row; slip = { ...safe, period: periodLabelTH(p) } }
   } catch { /* ข้อมูลงวดเสีย */ }
   res.json({ periods: periods.map((x) => ({ period: x, label: periodLabelTH(x) })), period: p, periodLabel: periodLabelTH(p), slip })
 })
@@ -327,7 +336,8 @@ api.post('/kiosk/punch', (req, res) => {
   const { emp_code, pin, kind } = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
-  if (!emp.pin || hashPin(pin) !== emp.pin) return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' })
+  const bad = kioskPinCheck(emp_code, pin, emp)
+  if (bad) return res.status(bad.code).json({ error: bad.error })
   // geofence: เช็คอินได้เฉพาะในรัศมีออฟฟิศ (ถ้าเปิดใช้)
   if (getSetting('att_geofence', '0') === '1') {
     const oLat = parseFloat(getSetting('att_lat', '')), oLng = parseFloat(getSetting('att_lng', ''))
@@ -363,12 +373,16 @@ api.use(requireAuth)
 // ===== สิทธิ์รายโมดูล: แอดมินปิดการเข้าถึงบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (users.deny_mods) =====
 // ค่าเริ่มต้น = สิทธิ์ตาม role เดิมทุกอย่าง · แอดมินปิดไม่ได้ (กันล็อกตัวเองออก)
 const MODULE_PATHS = [
-  ['hr', [/^\/payroll/, /^\/employees/, /^\/salary-advances/, /^\/deductions/, /^\/ot(\/|$)/, /^\/leaves/, /^\/time-adjustments/, /^\/attendance/]],
-  ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/payments/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/aging/, /^\/assets/, /^\/export\/express/]],
-  ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/payables/, /^\/vendors/, /^\/material-prices/, /^\/procurement/, /^\/stock/]],
-  ['sales', [/^\/sales-docs/, /^\/customers/, /^\/boqs/]],
+  // หมายเหตุ: หน้า 'ลงเวลา' (ตอกบัตร/attendance) ไม่อยู่ใต้ hr — ต้องใช้ได้เสมอ · BOQ อยู่ในหน้าบ้าน ไม่ใช่โมดูลขาย
+  ['hr', [/^\/payroll/, /^\/employees/, /^\/salary-advances/, /^\/deductions/, /^\/ot(\/|$)/, /^\/leaves/, /^\/time-adjustments/]],
+  ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/ar-aging/, /^\/ap-aging/, /^\/reconcile/, /^\/cash-accounts/, /^\/acct-defaults/, /^\/assets/, /^\/export\/express/, /^\/efiling/]],
+  // ใบจ่ายเงิน (payments) ใช้งานในหน้าจัดซื้อ → คุมด้วยโมดูลจัดซื้อ
+  ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/pr-quotes/, /^\/goods-receipts/, /^\/payables/, /^\/payments/, /^\/vendors/, /^\/material-prices/, /^\/procurement/, /^\/stock/]],
+  ['sales', [/^\/sales-docs/, /^\/customers/]],
   ['reports', [/^\/reports/]],
 ]
+// เส้นทางอนุมัติ/ปฏิเสธ ระบุโมดูลตามชนิดเอกสาร (ไม่งั้นคนถูกปิดโมดูลยังอนุมัติเอกสารของโมดูลนั้นได้)
+const APPROVAL_DOC_MODULE = { pr: 'procurement', po: 'procurement', payment: 'procurement', expense: 'accounting' }
 export const MODULE_KEYS = MODULE_PATHS.map(([k]) => k)
 api.use((req, res, next) => {
   const deny = req.user?.deny_mods
@@ -377,6 +391,9 @@ api.use((req, res, next) => {
     if (deny.includes(key) && pats.some((p) => p.test(req.path)))
       return res.status(403).json({ error: 'ผู้ดูแลปิดการเข้าถึงส่วนนี้สำหรับบัญชีของคุณ' })
   }
+  const ap = req.path.match(/^\/(approve|reject|approvals)\/([a-z]+)/)
+  if (ap && deny.includes(APPROVAL_DOC_MODULE[ap[2]] || ''))
+    return res.status(403).json({ error: 'ผู้ดูแลปิดการเข้าถึงส่วนนี้สำหรับบัญชีของคุณ' })
   next()
 })
 
@@ -491,7 +508,10 @@ function doReject(docType, docId, req) {
   try {
     if (docType === 'payment') acct.removeAutoJournal('pay', Number(docId))
     if (docType === 'expense' && !doc.po_id) acct.removeAutoJournal('exp', Number(docId)) // รายจ่ายจาก PO ให้ยกเลิกที่การรับของแทน
-  } catch (e) { console.error('remove journal on reject failed:', e.message) }
+  } catch (e) {
+    console.error('remove journal on reject failed:', e.message)
+    logJournalIssue(docType === 'payment' ? 'pay' : 'exp', Number(docId), `ปฏิเสธ ${doc.no || docId} แต่ถอนบัญชีไม่สำเร็จ`, e)
+  }
   audit(req, `ปฏิเสธ ${cfg.label}`, doc.no || String(docId))
   return approvalState(docType, docId)
 }
@@ -747,9 +767,11 @@ api.put('/installments/:id', canWrite, (req, res) => {
 api.delete('/installments/:id', canWrite, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
+  // ถอนรายการบัญชีให้สำเร็จก่อน แล้วค่อยลบงวด — กันบัญชีค้างโดยไม่มีเอกสารต้นทาง
+  try { acct.removeAutoJournal('inst', inst.id) }
+  catch (e) { return res.status(400).json({ error: 'ลบไม่ได้ — ถอนรายการบัญชีของงวดนี้ไม่สำเร็จ (' + e.message + ')' }) }
   db.prepare('DELETE FROM installments WHERE id=?').run(inst.id)
   recomputeHouse(inst.house_code)
-  try { acct.removeAutoJournal('inst', inst.id) } catch (e) { console.error('journal(inst-del):', e.message) }
   audit(req, 'ลบงวดงาน', `${inst.house_code} งวด ${inst.no}`)
   res.json({ ok: true })
 })
@@ -1218,7 +1240,7 @@ function computePayroll(period) {
     }
   })
 }
-const netOf = (p) => p.base + p.ot - p.sso - p.tax - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
+const netOf = (p) => (p.base || 0) + (p.ot || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 
 // payroll is salary data → finance only. Supports a period and locked snapshots.
 api.get('/payroll', requireSalary, (req, res) => {
@@ -1793,7 +1815,7 @@ function stockItemFor(name, unit) {
 }
 function stockMove({ item_id, kind, qty, house_code, note, by, po_id }) {
   const q = Math.abs(Number(qty) || 0)
-  if (!q) return null
+  if (!q && kind !== 'adjust') return null // ตรวจนับเป็น 0 ได้ (ของหมด) — บันทึกและตั้งยอดเป็น 0 จริง
   const delta = kind === 'out' ? -q : kind === 'in' ? q : 0
   db.prepare('INSERT INTO stock_moves (item_id, kind, qty, house_code, note, by, po_id, date_iso, created) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(item_id, kind, q, house_code || '', note || '', by || '', po_id ?? null, todayISO(), nowTS())
@@ -1838,7 +1860,7 @@ api.post('/stock/moves', canWrite, (req, res) => {
   const qty = Number(b.qty)
   if (!(qty >= 0) || (kind !== 'adjust' && !(qty > 0))) return res.status(400).json({ error: 'กรุณากรอกจำนวนให้ถูกต้อง' })
   let item = b.item_id ? db.prepare('SELECT * FROM stock_items WHERE id=?').get(Number(b.item_id)) : null
-  if (!item && b.name) item = stockItemFor(b.name, b.unit) // รับเข้าของใหม่ที่ยังไม่มีในสต๊อก
+  if (!item && b.name && kind === 'in') item = stockItemFor(b.name, b.unit) // สร้างรายการใหม่ได้เฉพาะตอน "รับเข้า"
   if (!item) return res.status(404).json({ error: 'ไม่พบรายการวัสดุ — เลือกจากรายการหรือกรอกชื่อ' })
   if (kind === 'out') {
     if (qty > item.qty + 1e-9) return res.status(400).json({ error: `เบิกเกินคงเหลือ — ${item.name} เหลือ ${item.qty} ${item.unit || ''}` })
@@ -1869,10 +1891,15 @@ function syncPoExpense(po) {
     try { if (row) acct.syncExpenseJournal(row, { credit: po.payment_type === 'credit' }) } catch (e) { console.error('journal(po-exp):', e.message); if (row) logJournalIssue('exp', row.id, `รับของ ${po.no}`, e) }
     if (po.house_code) recomputeHouse(po.house_code)
   } else if (existing) {
-    // not received anymore (or no house) → remove the auto-created expense + รายการบัญชี
-    try { acct.removeAutoJournal('exp', existing.id) } catch (e) { console.error('journal(po-exp-del):', e.message); logJournalIssue('exp', existing.id, `ยกเลิกรับของ ${po.no}`, e) }
-    db.prepare('DELETE FROM expenses WHERE po_id=?').run(po.id)
-    if (existing.house_code) recomputeHouse(existing.house_code)
+    // not received anymore → ถอนรายการบัญชีก่อน สำเร็จแล้วค่อยลบรายจ่าย (กันบัญชีค้างโดยไม่มีเอกสารต้นทาง)
+    try {
+      acct.removeAutoJournal('exp', existing.id)
+      db.prepare('DELETE FROM expenses WHERE po_id=?').run(po.id)
+      if (existing.house_code) recomputeHouse(existing.house_code)
+    } catch (e) {
+      console.error('journal(po-exp-del):', e.message)
+      logJournalIssue('exp', existing.id, `ยกเลิกรับของ ${po.no} — ถอนบัญชีไม่สำเร็จ รายจ่ายยังค้างอยู่`, e)
+    }
   }
 }
 api.post('/purchase-orders/:id/status', financeOnly, (req, res) => {
@@ -2043,6 +2070,10 @@ api.post('/goods-receipts/:id/override', requireManager, (req, res) => {
   else if (poCur && poCur.status === 'รับของแล้ว') db.prepare("UPDATE purchase_orders SET status='รอส่งของ' WHERE id=?").run(gr.po_id)
   const po2 = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(gr.po_id)
   syncPoExpense(po2)
+  // override เป็น "ผ่าน" ก็ต้องรับของเข้าสต๊อกเหมือนตรวจผ่านปกติ (PO ไม่ผูกบ้าน · กันรับซ้ำใน stockInFromPo)
+  if (result === 'ผ่าน') {
+    try { stockInFromPo(po2, jparse(gr.delivery_items) || [], req.user.name) } catch (e) { console.error('stock-in(override):', e.message) }
+  }
   audit(req, 'ปรับผลตรวจรับของ (override)', `${gr.po_no} → ${result}`)
   res.json({ ok: true, result, po: poRow(po2) })
 })
@@ -2266,7 +2297,8 @@ api.post('/payments', financeOnly, (req, res) => {
 // ยอดค้างจ่ายผู้ขาย (จาก PO เครดิต): คงเหลือ = มูลค่า PO − ที่จ่ายผูกใบนั้นแล้ว
 api.get('/payables', financeOnly, (_req, res) => {
   const today = todayISO()
-  const rows = db.prepare("SELECT * FROM purchase_orders WHERE payment_type='credit' AND COALESCE(amount,0)>0 ORDER BY COALESCE(due_iso,'9999') , id").all().map((po) => {
+  // นับเป็นเจ้าหนี้เมื่อ "รับของแล้ว" เท่านั้น — ให้ตรงกับบัญชี 2010 / เช็คยอด / รายงานเดือน / LINE
+  const rows = db.prepare("SELECT * FROM purchase_orders WHERE payment_type='credit' AND status IN ('รับของแล้ว','ปิดงาน') AND COALESCE(amount,0)>0 ORDER BY COALESCE(due_iso,'9999') , id").all().map((po) => {
     const paid = db.prepare("SELECT COALESCE(SUM(gross),0) a FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").get(po.id).a
     const remaining = Math.max(0, (po.amount || 0) - paid)
     const overdue = !!(po.due_iso && po.due_iso < today && remaining > 0)
@@ -2331,7 +2363,14 @@ api.put('/users/:id', adminOnly, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
   if (!u) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
   const { role, status, deny_mods } = req.body || {}
-  db.prepare('UPDATE users SET role=?, status=? WHERE id=?').run(role ?? u.role, status ?? u.status, u.id)
+  const newRole = ['admin', 'accounting', 'site', 'viewer'].includes(role) ? role : u.role
+  const newStatus = status ?? u.status
+  // กันล็อกทั้งบริษัทออกจากระบบ: ต้องเหลือผู้ดูแลที่ใช้งานได้อย่างน้อย 1 คนเสมอ
+  if (u.role === 'admin' && (newRole !== 'admin' || newStatus !== 'ใช้งาน')) {
+    const admins = db.prepare("SELECT COUNT(*) c FROM users WHERE role='admin' AND status='ใช้งาน' AND id != ?").get(u.id).c
+    if (admins === 0) return res.status(400).json({ error: 'เปลี่ยนไม่ได้ — ต้องเหลือผู้ดูแลระบบที่ใช้งานได้อย่างน้อย 1 คน' })
+  }
+  db.prepare('UPDATE users SET role=?, status=? WHERE id=?').run(newRole, newStatus, u.id)
   // สิทธิ์รายโมดูล: รายชื่อโมดูลที่ "ปิด" สำหรับคนนี้ (แอดมินปิดไม่ได้ — กันล็อกตัวเองออก)
   if (Array.isArray(deny_mods)) {
     const clean = (role ?? u.role) === 'admin' ? [] : deny_mods.filter((k) => MODULE_KEYS.includes(String(k)))
@@ -2431,8 +2470,11 @@ function expressCsv(kind, reqPeriod) {
   const toCsv = (head, body) => '﻿' + [head, ...body].map((r) => r.map(csvCell).join(',')).join('\r\n')
   if (kind === 'sales') {
     const rows = db.prepare("SELECT * FROM sales_docs WHERE type IN ('invoice','receipt') ORDER BY date, id").all()
-    const head = ['วันที่', 'เลขที่เอกสาร', 'ประเภท', 'ชื่อลูกค้า', 'เลขผู้เสียภาษี', 'มูลค่าก่อนภาษี', 'ภาษีขาย(7%)', 'รวมทั้งสิ้น']
-    const body = rows.map((r) => [r.date, r.no, r.type === 'invoice' ? 'ใบแจ้งหนี้' : 'ใบเสร็จรับเงิน', r.customer, '', (r.subtotal || 0).toFixed(2), (r.vat || 0).toFixed(2), (r.total || 0).toFixed(2)])
+    // ใบเสร็จที่ออกต่อจากใบแจ้งหนี้ = การขายเดียวกัน — ตัดออกจากรายงานภาษีขาย กันนำเข้าซ้ำ
+    const invNos = new Set(rows.filter((r) => r.type === 'invoice').map((r) => r.no))
+    const list = rows.filter((r) => !(r.type === 'receipt' && r.ref && invNos.has(r.ref)))
+    const head = ['วันที่', 'เลขที่เอกสาร', 'ประเภท', 'ชื่อลูกค้า', 'เลขผู้เสียภาษี', 'มูลค่าก่อนภาษี', 'ภาษีขาย(7%)', 'รวมทั้งสิ้น', 'อ้างอิง']
+    const body = list.map((r) => [r.date, r.no, r.type === 'invoice' ? 'ใบแจ้งหนี้' : 'ใบเสร็จรับเงิน', r.customer, '', (r.subtotal || 0).toFixed(2), (r.vat || 0).toFixed(2), (r.total || 0).toFixed(2), r.ref || ''])
     return { filename: 'express_ภาษีขาย.csv', content: toCsv(head, body) }
   }
   if (kind === 'purchase') {
@@ -3568,7 +3610,8 @@ api.post('/sales-docs/:id/derive', canWrite, (req, res) => {
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
   const info = db.prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(to, no, src.customer, todayTH(), todayISO(), src.items, src.subtotal, src.vat, src.total, to === 'receipt' ? 'ชำระแล้ว' : 'รอชำระ', src.house_code || '', src.no)
-  db.prepare('UPDATE sales_docs SET status=? WHERE id=?').run(to === 'invoice' ? 'ออกใบแจ้งหนี้แล้ว' : 'ชำระแล้ว', src.id)
+  // ใบเสนอราคาที่เซ็นสัญญาแล้ว คงสถานะสัญญาไว้ (สำคัญกว่า) — ใบอื่นอัปเดตตามขั้น
+  if (src.status !== 'เซ็นสัญญาแล้ว') db.prepare('UPDATE sales_docs SET status=? WHERE id=?').run(to === 'invoice' ? 'ออกใบแจ้งหนี้แล้ว' : 'ชำระแล้ว', src.id)
   audit(req, to === 'invoice' ? 'ออกใบแจ้งหนี้จากใบเสนอราคา' : 'ออกใบเสร็จจากใบแจ้งหนี้', `${src.no} → ${no}`)
   res.status(201).json(db.prepare('SELECT * FROM sales_docs WHERE id=?').get(info.lastInsertRowid))
 })
@@ -4102,7 +4145,7 @@ async function autoBackup() {
   try {
     mkdirSync(backupDir, { recursive: true })
     db.pragma('wal_checkpoint(TRUNCATE)')
-    const day = new Date().toISOString().slice(0, 10)
+    const day = todayISO() // วันตามเวลาเครื่อง (ไทย) — ไม่ใช่ UTC ที่จะข้ามวันตอน 7 โมงเช้า
     const file = join(backupDir, `ppsd-auto-${day}.sqlite`)
     writeFileSync(file, readFileSync(dbFile))
     copyNewFiles(backupDir)
@@ -4117,7 +4160,7 @@ async function autoBackup() {
 autoBackup() // one on boot
 // เช็คทุกชั่วโมง: ถ้าวันนี้ยังไม่มีไฟล์สำรอง (เครื่องเพิ่งเปิด/ข้ามเที่ยงคืน) ให้สำรองทันที
 setInterval(() => {
-  const day = new Date().toISOString().slice(0, 10)
+  const day = todayISO()
   if (!existsSync(join(backupDir, `ppsd-auto-${day}.sqlite`))) autoBackup()
 }, 60 * 60 * 1000)
 // list available auto-backups (admin)
@@ -4190,7 +4233,8 @@ async function sendLine(text) {
 setInterval(async () => {
   try {
     if (!getSetting('line_token', '') || !getSetting('line_to', '')) return
-    const hour = Math.max(0, Math.min(23, Number(getSetting('line_hour', '8')) || 8))
+    const hv = Number(getSetting('line_hour', '8'))
+    const hour = Number.isFinite(hv) ? Math.max(0, Math.min(23, hv)) : 8
     const today = todayISO()
     if (new Date().getHours() < hour || getSetting('line_last_sent', '') === today) return
     await sendLine(buildLineDigest())
@@ -4207,7 +4251,7 @@ api.put('/line-settings', adminOnly, (req, res) => {
   const b = req.body || {}
   if (b.token !== undefined) setSetting('line_token', String(b.token || '').trim())
   if (b.to !== undefined) setSetting('line_to', String(b.to || '').trim())
-  if (b.hour !== undefined) setSetting('line_hour', String(Math.max(0, Math.min(23, Number(b.hour) || 8))))
+  if (b.hour !== undefined) { const hv = Number(b.hour); setSetting('line_hour', String(Number.isFinite(hv) ? Math.max(0, Math.min(23, hv)) : 8)) }
   audit(req, 'ตั้งค่าแจ้งเตือน LINE', getSetting('line_to', '') || '(ปิด)')
   res.json({ ok: true })
 })

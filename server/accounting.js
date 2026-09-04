@@ -158,12 +158,12 @@ export function retroPostAll() {
   for (const inst of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) safe(() => syncInstallmentJournal(inst), `งวด#${inst.id}`)
   const poType = db.prepare('SELECT payment_type FROM purchase_orders WHERE id=?')
   for (const exp of db.prepare('SELECT * FROM expenses WHERE COALESCE(amount,0) > 0').all()) {
-    if ((exp.status || '') === 'ปฏิเสธ') { removeAutoJournal('exp', exp.id); continue }
+    if ((exp.status || '') === 'ปฏิเสธ') { safe(() => removeAutoJournal('exp', exp.id), `ถอนรายจ่าย#${exp.id}`); continue }
     const credit = exp.po_id ? poType.get(exp.po_id)?.payment_type === 'credit' : false
     safe(() => syncExpenseJournal(exp, { credit }), `รายจ่าย#${exp.id}`)
   }
   for (const pay of db.prepare('SELECT * FROM payments WHERE COALESCE(gross,0) > 0').all()) {
-    if ((pay.status || '') === 'ปฏิเสธ') { removeAutoJournal('pay', pay.id); continue }
+    if ((pay.status || '') === 'ปฏิเสธ') { safe(() => removeAutoJournal('pay', pay.id), `ถอนใบจ่าย#${pay.id}`); continue }
     safe(() => syncPaymentJournal(pay), `ใบจ่าย#${pay.id}`)
   }
   return { n, errors }
@@ -498,7 +498,11 @@ export function taxSummary(range = {}) {
     return { sql: w.length ? ' AND ' + w.join(' AND ') : '', args: a }
   }
   const rs = rangeWhere('date_iso')
-  const outputVat = r2(db.prepare(`SELECT COALESCE(SUM(vat),0) v FROM sales_docs WHERE 1=1${rs.sql}`).get(...rs.args).v)
+  // ภาษีขาย: นับ ใบแจ้งหนี้ + ใบเสร็จที่ออกเดี่ยวๆ เท่านั้น — ใบเสนอราคาไม่ใช่การขาย และ
+  // ใบเสร็จที่ออกต่อจากใบแจ้งหนี้ (ref ชี้ใบแจ้งหนี้) คือการขายเดียวกัน ห้ามนับ VAT ซ้ำ
+  const invNos = new Set(db.prepare("SELECT no FROM sales_docs WHERE type='invoice'").all().map((r) => r.no))
+  const salesRows = db.prepare(`SELECT type, vat, ref FROM sales_docs WHERE type != 'quote'${rs.sql}`).all(...rs.args)
+  const outputVat = r2(salesRows.reduce((sm, r) => sm + ((r.type === 'receipt' && r.ref && invNos.has(r.ref)) ? 0 : (Number(r.vat) || 0)), 0))
   // ภาษีซื้อจาก "ใบกำกับภาษีจริง" ที่กรอกไว้ต่อใบ (เลิกเดา 7/107 จากรายจ่ายทุกใบ — บางร้านไม่จด VAT)
   const inRow = db.prepare(`SELECT COALESCE(SUM(vat_amount),0) v, COUNT(CASE WHEN COALESCE(vat_amount,0) > 0 THEN 1 END) n FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args)
   const inputVat = r2(inRow.v)

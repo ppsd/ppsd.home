@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ModalDef } from '../data'
-import { fmtMoney } from '../data'
+import { fmtMoneyDecimal } from '../data'
 
 interface ModalProps {
   modal: ModalDef
@@ -8,12 +8,12 @@ interface ModalProps {
 }
 
 export default function Modal({ modal, onClose }: ModalProps) {
-  const [vals, setVals] = useState<string[]>(modal.fields.map((f) => (f.money ? fmtMoney(f.value) : f.value)))
+  const [vals, setVals] = useState<string[]>(modal.fields.map((f) => (f.money ? fmtMoneyDecimal(f.value) : f.value)))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const set = (i: number, v: string) => {
     const f = modal.fields[i]
-    const nv = f.money ? fmtMoney(v) : v
+    const nv = f.money ? fmtMoneyDecimal(v) : v // ทศนิยมได้ (เช่น ยอด VAT 654.32) — เดิมตัดจุดทิ้งทำให้ตัวเลขคูณ 100
     setVals((prev) => prev.map((x, j) => (j === i ? nv : x)))
   }
 
@@ -77,7 +77,7 @@ export default function Modal({ modal, onClose }: ModalProps) {
                   className="field"
                   type={f.type || 'text'}
                   value={vals[i]}
-                  inputMode={f.money ? 'numeric' : undefined}
+                  inputMode={f.money ? 'decimal' : undefined}
                   onChange={(e) => set(i, e.target.value)}
                   placeholder={f.ph}
                   style={{ width: '100%', fontFamily: 'inherit', fontSize: 13.5, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '10px 13px', outline: 'none' }}

@@ -303,6 +303,40 @@ test('รายงานผู้บริหารรายเดือน: ต
   assert.ok(d.ap.total >= 0 && d.ar.total >= 0)
 })
 
+test('ภาษีขาย: สายใบเสนอราคา→แจ้งหนี้→ใบเสร็จ นับ VAT ครั้งเดียว (ไม่ใช่ 3 เท่า)', async () => {
+  const before = (await GET('/tax-summary')).data.outputVat
+  const q = await POST('/sales-docs', { type: 'quote', customer: 'ลูกค้า VAT', items: [{ desc: 'งาน', qty: 1, price: 100000 }] })
+  const inv = await POST(`/sales-docs/${q.data.id}/derive`, { to: 'invoice' })
+  await POST(`/sales-docs/${inv.data.id}/derive`, { to: 'receipt' })
+  const after = (await GET('/tax-summary')).data.outputVat
+  assert.equal(Math.round(after - before), 7000, `VAT ขายต้องเพิ่ม 7,000 (ครั้งเดียว) แต่เพิ่ม ${after - before}`)
+})
+
+test('สต๊อก: ตรวจนับเป็น 0 ต้องบันทึกจริง (ของหมด)', async () => {
+  const brick = (await GET('/stock')).data.find((s) => s.name === 'อิฐมอญ')
+  const r = await POST('/stock/moves', { kind: 'adjust', item_id: brick.id, qty: 0, note: 'นับแล้วหมด' })
+  assert.equal(r.status, 201)
+  const after = (await GET('/stock')).data.find((s) => s.id === brick.id)
+  assert.equal(after.qty, 0, 'ตรวจนับ 0 ต้องตั้งยอดเป็น 0 จริง')
+})
+
+test('kiosk: เดา PIN ผิด 5 ครั้งถูกล็อก (ทุกช่องทาง)', async () => {
+  for (let i = 0; i < 5; i++) await POST('/kiosk/punch', { emp_code: empCode, pin: '1111', kind: 'in' })
+  const locked = await POST('/kiosk/punch', { emp_code: empCode, pin: '1111', kind: 'in' })
+  assert.equal(locked.status, 429, 'ครั้งที่ 6 ต้องถูกล็อก')
+  const slipLocked = await POST('/kiosk/my-slip', { emp_code: empCode, pin: '7777' })
+  assert.equal(slipLocked.status, 429, 'การล็อกต้องคุมทุกช่องทาง kiosk ร่วมกัน')
+})
+
+test('สิทธิ์รายโมดูล: ปิดจัดซื้อแล้ว อนุมัติ PO/PR ไม่ได้ด้วย', async () => {
+  const po = await POST('/purchase-orders', { vendor: 'ร้านอนุมัติ', item: 'ของ', amount: 100, payment_type: 'cash' })
+  const adminToken = token
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  const blocked = await POST(`/approve/po/${po.data.id}`, {})
+  assert.equal(blocked.status, 403, 'คนถูกปิดโมดูลจัดซื้อต้องอนุมัติ PO ไม่ได้')
+  token = adminToken
+})
+
 test('สิทธิ์: role site ต้องไม่เห็นตัวเลขเงินรวมบริษัทบนแดชบอร์ด', async () => {
   await POST('/users', { name: 'ช่างเทสต์', username: 'sitetest', pin: '9999', role: 'site', position: 'ช่าง' })
   const adminToken = token
