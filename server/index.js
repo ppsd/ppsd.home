@@ -1803,6 +1803,8 @@ function stockMove({ item_id, kind, qty, house_code, note, by, po_id }) {
 }
 function stockInFromPo(po, deliveryItems, by) {
   if (po.house_code) return 0 // ผูกบ้าน = ส่งตรงหน้างาน ไม่เข้าสต๊อก
+  // เคยรับเข้าจากใบนี้แล้ว (เช่น ยกเลิกรับของแล้วตรวจใหม่) → ไม่รับซ้ำ กันยอดเบิ้ล
+  if (db.prepare('SELECT 1 FROM stock_moves WHERE po_id=? LIMIT 1').get(po.id)) return 0
   let n = 0
   for (const d of deliveryItems || []) {
     const name = String(d.name || d.desc || '').trim()
@@ -1813,10 +1815,10 @@ function stockInFromPo(po, deliveryItems, by) {
   }
   return n
 }
-api.get('/stock', canWrite, (_req, res) => res.json(
+api.get('/stock', (_req, res) => res.json(
   db.prepare('SELECT * FROM stock_items ORDER BY name COLLATE NOCASE').all().map((it) => ({ ...it, low: (it.min_qty || 0) > 0 && it.qty < it.min_qty }))
 ))
-api.get('/stock/moves', canWrite, (req, res) => {
+api.get('/stock/moves', (req, res) => {
   const w = req.query.item_id ? 'WHERE m.item_id=?' : ''
   const args = req.query.item_id ? [Number(req.query.item_id)] : []
   res.json(db.prepare(`SELECT m.*, i.name AS item_name, i.unit FROM stock_moves m JOIN stock_items i ON i.id=m.item_id ${w} ORDER BY m.id DESC LIMIT 300`).all(...args))
@@ -3792,7 +3794,12 @@ function monthlyReport(period) {
   const is = acct.incomeStatement({ from, to })
   const cf = acct.cashFlow({ from, to })
   const expMonth = db.prepare("SELECT COALESCE(SUM(amount),0) a, COUNT(*) n FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ' AND date_iso >= ? AND date_iso <= ?").get(from, to)
-  const payrollRun = db.prepare('SELECT total FROM payroll_runs WHERE period=?').get(period)
+  // เงินเดือนของงวด: คำนวณสุทธิใหม่จาก snapshot รายคน (total ที่เก็บไว้อาจมาจากสูตรเวอร์ชันเก่า)
+  const payrollRun = (() => {
+    const run = db.prepare('SELECT total, data FROM payroll_runs WHERE period=?').get(period)
+    if (!run) return null
+    try { return { total: JSON.parse(run.data).reduce((s, p) => s + netOf(p), 0) } } catch { return { total: run.total } }
+  })()
   const today = todayISO()
   let arTotal = 0, arOverdue = 0
   for (const r of db.prepare("SELECT amount, COALESCE(paid,0) paid, due_iso FROM installments WHERE side != 'contractor' AND status != 'เก็บแล้ว'").all()) {

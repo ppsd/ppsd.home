@@ -150,7 +150,7 @@ export const nav: NavDef[] = [
 
 // ---- สิทธิ์รายโมดูล: แอดมินปิดบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (สอดคล้อง MODULE_PATHS ฝั่ง server) ----
 export const MODULES: { key: string; label: string; pages: string[] }[] = [
-  { key: 'hr', label: 'บุคลากร / เงินเดือน', pages: ['hr', 'time'] },
+  { key: 'hr', label: 'บุคลากร / เงินเดือน', pages: ['hr'] }, // ไม่รวมหน้า 'ลงเวลา' — ตอกบัตร/ดูสลิปต้องใช้ได้เสมอ
   { key: 'accounting', label: 'บัญชี / รายจ่าย', pages: ['accounting', 'expenses', 'costing', 'express', 'docreg'] },
   { key: 'procurement', label: 'จัดซื้อ / จ่าย', pages: ['procurement', 'matprices', 'stock'] },
   { key: 'sales', label: 'เอกสารขาย / ลูกค้า', pages: ['sales', 'customers'] },
