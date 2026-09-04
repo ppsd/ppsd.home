@@ -29,8 +29,10 @@ export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }
   const isMgr = !!app.user?.isManager
   const profitRows = isMgr
     ? houses.map((h) => {
-        const material = expenses.filter((e) => e.house_code === h.code).reduce((s, e) => s + e.amount, 0)
-        return { code: h.code, name: h.name, value: h.value || 0, contractor: h.contractor_value || 0, material, net: (h.value || 0) - (h.contractor_value || 0) - material }
+        const material = expenses.filter((e) => e.house_code === h.code && e.status !== 'ปฏิเสธ').reduce((s, e) => s + e.amount, 0)
+        // รวมใบจ่ายเงินที่ผูกบ้าน (ยกเว้นใบชำระ PO — นับไปแล้วในรายจ่าย) ให้ตรงกับหน้ารายละเอียดบ้าน
+        const otherPay = (app.data.payments || []).filter((p) => p.house_code === h.code && !p.po_id && p.status !== 'ปฏิเสธ').reduce((s, p) => s + (p.gross || 0), 0)
+        return { code: h.code, name: h.name, value: h.value || 0, contractor: h.contractor_value || 0, material: material + otherPay, net: (h.value || 0) - (h.contractor_value || 0) - material - otherPay }
       })
     : []
   const pT = profitRows.reduce((a, r) => ({ value: a.value + r.value, contractor: a.contractor + r.contractor, material: a.material + r.material, net: a.net + r.net }), { value: 0, contractor: 0, material: 0, net: 0 })

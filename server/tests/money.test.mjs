@@ -337,6 +337,36 @@ test('สิทธิ์รายโมดูล: ปิดจัดซื้อ
   token = adminToken
 })
 
+test('โหมดจัดซื้อเต็มรูปแบบ: PO ไม่อ้าง PR ถูกบล็อก (เดิมไม่กรอก = ข้ามกติกา)', async () => {
+  await PUT('/controls', { enforce_approval_flow: true })
+  const noPr = await POST('/purchase-orders', { vendor: 'ร้านลัด', item: 'ของ', amount: 500, payment_type: 'cash' })
+  assert.equal(noPr.status, 409, 'เปิดโหมดเต็มรูปแบบแล้ว PO ต้องอ้าง PR เสมอ')
+  assert.match(noPr.data.error, /ใบขอซื้อ/)
+  await PUT('/controls', { enforce_approval_flow: false })
+})
+
+test('เบิกล่วงหน้า: รายวันที่กรอกวันทำงานมือ (ไม่ตอกบัตร) ต้องมีเพดานเบิก', async () => {
+  const e = await POST('/employees', { name: 'แม่บ้าน ทดสอบ', role: 'แม่บ้าน', pay_type: 'รายวัน', base: 400, work_days: 20 })
+  assert.equal(e.status, 201)
+  const lim = await GET(`/salary-advances/limit?emp_code=${e.data.code}&period=${period}`)
+  assert.ok(lim.data.limit > 0, `รายวันกรอกวันมือ เพดานต้องไม่เป็น 0 (ได้ ${lim.data.limit})`)
+  assert.equal(lim.data.limit, Math.floor(400 * 20 / 2), 'เพดาน = ค่าแรง × วันทำงาน ÷ 2')
+})
+
+test('งวดงาน: แก้มูลค่าต่ำกว่ายอดที่เก็บแล้วถูกบล็อก · ตั้งสถานะ "เก็บแล้ว" มือไม่ได้', async () => {
+  const ins = await POST('/houses/TS-01/installments', { no: 5, detail: 'งวดทดสอบแก้ไข', amount: 10000, side: 'customer' })
+  assert.equal(ins.status, 201)
+  // ตั้งสถานะเงินด้วยมือ (ยังไม่เก็บจริง) → สถานะต้องไม่เปลี่ยนเป็นเก็บแล้ว
+  const st = await PUT(`/installments/${ins.data.id}`, { status: 'เก็บแล้ว' })
+  assert.notEqual(st.data.status, 'เก็บแล้ว', 'ห้ามตั้ง "เก็บแล้ว" โดยไม่เก็บเงินจริง')
+  // เก็บเงินจริง (ปิดกติกาตรวจรับงวดชั่วคราว) แล้วลดมูลค่าต่ำกว่ายอดเก็บ → บล็อก
+  await PUT('/controls', { require_acceptance: false })
+  const col = await POST(`/installments/${ins.data.id}/collect`, {})
+  assert.equal(col.status, 200, JSON.stringify(col.data))
+  const cut = await PUT(`/installments/${ins.data.id}`, { amount: 5000 })
+  assert.equal(cut.status, 400, 'ลดมูลค่าต่ำกว่ายอดเก็บแล้วต้องถูกบล็อก')
+})
+
 test('สิทธิ์: role site ต้องไม่เห็นตัวเลขเงินรวมบริษัทบนแดชบอร์ด', async () => {
   await POST('/users', { name: 'ช่างเทสต์', username: 'sitetest', pin: '9999', role: 'site', position: 'ช่าง' })
   const adminToken = token

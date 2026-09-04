@@ -22,8 +22,9 @@ if (uploadsDir && existsSync(uploadsDir)) {
 }
 
 // เกณฑ์เก็บเหมือนในเครื่อง: รายวัน 30 วัน + ไฟล์วันที่ 1 เก็บ 12 เดือน
-const cutDaily = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
-const cutMonthly = new Date(Date.now() - 366 * 86400000).toISOString().slice(0, 10)
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const cutDaily = localISO(new Date(Date.now() - 30 * 86400000))
+const cutMonthly = localISO(new Date(Date.now() - 366 * 86400000))
 for (const f of readdirSync(destDir).filter((f) => /^ppsd-auto-\d{4}-\d{2}-\d{2}\.sqlite$/.test(f))) {
   const d = f.slice(10, 20)
   const keepMonthly = d.endsWith('-01') && d >= cutMonthly

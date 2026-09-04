@@ -160,6 +160,13 @@ try {
     if (iso) db.prepare('UPDATE sales_docs SET date_iso=? WHERE id=?').run(iso, r.id)
   }
 } catch (e) { console.error('backfill sales_docs date_iso:', e.message) }
+// เติม date_iso ให้ใบจ่ายเงินเก่า (ก่อนมีคอลัมน์) — ไม่งั้นหายจากสรุปภาษีแบบเลือกช่วงเวลา
+try {
+  for (const r of db.prepare("SELECT id, date FROM payments WHERE COALESCE(date_iso,'') = ''").all()) {
+    const iso = parseAnyDateISO(r.date)
+    if (iso) db.prepare('UPDATE payments SET date_iso=? WHERE id=?').run(iso, r.id)
+  }
+} catch (e) { console.error('backfill payments date_iso:', e.message) }
 // บันทึกธง "ลงบัญชีไม่สำเร็จ" (เช่น ติดงวดปิด) — โชว์เตือนหน้าบัญชีจนกว่าจะลงสำเร็จ
 function logJournalIssue(source, source_id, ref, err) {
   try {
@@ -520,7 +527,11 @@ const attachApproval = (docType) => (r) => r ? { ...r, approval: approvalState(d
 function poBlockReason(b, ctrl) {
   const amount = Number(b.amount) || 0
   const pr = b.pr_no ? db.prepare('SELECT * FROM purchase_requests WHERE no=?').get(b.pr_no) : null
-  // 0) ต้องอนุมัติ PR ครบก่อน ถึงจะออก PO ได้
+  // 0) โหมดเต็มรูปแบบ: PO ทุกใบต้องอ้างอิง PR ที่อนุมัติครบ (เดิมไม่กรอก pr_no = ข้ามกติกาได้เลย)
+  if (ctrl.enforce_approval_flow && !pr)
+    return b.pr_no
+      ? `ออก PO ไม่ได้ — ไม่พบใบขอซื้อ ${b.pr_no}`
+      : 'ออก PO ไม่ได้ — โหมดจัดซื้อเต็มรูปแบบต้องอ้างอิงใบขอซื้อ (PR) ที่อนุมัติแล้วทุกใบ (ปิดกติกานี้ได้ที่หน้า ตรวจสอบ → กติกา)'
   if (ctrl.enforce_approval_flow && pr && !approvalState('pr', pr.id).done)
     return `ออก PO ไม่ได้ — ใบขอซื้อ ${pr.no} ยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PR ก่อน)`
   // 1) PO เกินยอดที่อนุมัติใน PR
@@ -677,6 +688,7 @@ api.post('/houses/:code/installments', canWrite, (req, res) => {
     .prepare('INSERT INTO installments (house_code,no,detail,days,due,due_iso,ontime,amount,status,side,category,contractor,paid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)')
     .run(req.params.code, Number(b.no) || 0, b.detail || '', String(b.days || '-'), dueDisp, dueIso, '-', Number(b.amount) || 0, b.status || defStatus, side, category, b.contractor || '')
   recomputeHouse(req.params.code)
+  audit(req, 'เพิ่มงวดงาน', `${req.params.code} งวด ${b.no || '-'} ${baht(Number(b.amount) || 0)} (${side === 'contractor' ? 'ช่าง' : 'ลูกค้า'})`)
   res.status(201).json(db.prepare('SELECT * FROM installments WHERE id = ?').get(info.lastInsertRowid))
 })
 // นำเข้างวดงานเป็นชุด (bulk) — จาก Excel/วางข้อความ หรือจากที่ AI อ่านสัญญามา
@@ -757,8 +769,17 @@ api.put('/installments/:id', canWrite, (req, res) => {
   const f = (k, num) => (b[k] != null && b[k] !== '' ? (num ? Number(b[k]) : b[k]) : inst[k])
   const dueIso = /^\d{4}-\d{2}-\d{2}$/.test(String(b.due_iso || '')) ? b.due_iso : inst.due_iso
   const dueDisp = b.due != null && b.due !== '' ? b.due : (dueIso && (!inst.due || inst.due === 'กำหนดใหม่' || b.due_iso) ? thDateFromISO(dueIso) : inst.due)
+  // กันข้อมูลแย้งกันเอง: ลดมูลค่างวดต่ำกว่ายอดที่เก็บ/จ่ายแล้วไม่ได้ · สถานะต้องตรงกับยอดจริง
+  const newAmount = f('amount', true)
+  const paid = inst.paid || 0
+  if (newAmount < paid) return res.status(400).json({ error: `มูลค่างวดต่ำกว่ายอดที่${inst.side === 'contractor' ? 'จ่าย' : 'เก็บ'}ไปแล้ว (${baht(paid)}) — ยกเลิกการเก็บก่อนจึงลดมูลค่าได้` })
+  // สถานะไม่ให้แก้มือสวนยอดเงิน (เดิมตั้ง "เก็บแล้ว" ได้ทั้งที่ยังไม่เก็บ → ยอดบ้าน/บัญชีไม่ลง)
+  // มีการเก็บ/จ่ายแล้ว → สถานะคิดจากยอดเสมอ · ยังไม่เก็บ → แก้สถานะอื่นได้ ยกเว้นสถานะที่แปลว่ามีเงินแล้ว (ต้องกดเก็บเงินจริง)
+  const MONEY_STATUSES = ['เก็บแล้ว', 'จ่ายแล้ว', 'เก็บบางส่วน', 'จ่ายบางส่วน']
+  const wanted = f('status')
+  const newStatus = paid > 0 ? instStatus(inst.side, newAmount, paid) : (MONEY_STATUSES.includes(wanted) ? inst.status : wanted)
   db.prepare('UPDATE installments SET no=?, detail=?, days=?, due=?, due_iso=?, amount=?, status=?, contractor=? WHERE id=?')
-    .run(f('no', true), f('detail'), String(f('days')), dueDisp, dueIso, f('amount', true), f('status'), f('contractor'), inst.id)
+    .run(f('no', true), f('detail'), String(f('days')), dueDisp, dueIso, newAmount, newStatus, f('contractor'), inst.id)
   recomputeHouse(inst.house_code)
   try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(inst-edit):', e.message); logJournalIssue('inst', inst.id, `งวด ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, 'แก้ไขงวดงาน', `${inst.house_code} งวด ${inst.no}`)
@@ -876,6 +897,7 @@ api.post('/expenses', canWrite, (req, res) => {
     .run(thDateFromISO(iso), house_code || '', item, cat || 'อื่นๆ', vendor || '', Number(amount) || 0, iso, vat, String(tax_invoice_no || '').trim())
   const row = db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid)
   try { acct.syncExpenseJournal(row) } catch (e) { console.error('journal(expense):', e.message); logJournalIssue('exp', row.id, row.item || 'รายจ่าย', e) }
+  audit(req, 'บันทึกรายจ่าย', `${row.item} ${baht(row.amount)}${row.house_code ? ' (' + row.house_code + ')' : ''}`)
   res.status(201).json(row)
 })
 
@@ -1335,6 +1357,9 @@ function advanceLimit(emp, period) {
     const punchDates = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(emp.code, monthStart, upTo).map((r) => r.date))
     for (const a of db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(emp.name, monthStart, upTo)) punchDates.add(a.date)
     worked = punchDates.size
+    // รายวันที่ไม่ใช้เครื่องตอกบัตร (เช่น แม่บ้าน กรอกวันทำงานมือ) → ใช้วันทำงานที่กรอกไว้เป็นฐานเบิก
+    if (worked === 0 && emp.pay_type === 'รายวัน' && (Number(emp.work_days) || 0) > 0)
+      worked = Math.min(Number(emp.work_days) || 0, ADVANCE_DAY_BASE)
   }
   const daily = emp.pay_type === 'รายวัน' ? emp.base : Math.round((emp.base || 0) / ADVANCE_DAY_BASE)
   return { worked, daily, limit: Math.floor(daily * worked / ADVANCE_DAILY_DIVISOR) }
@@ -2576,7 +2601,9 @@ api.post('/contractors/:id/advances', canWrite, (req, res) => {
   res.status(201).json({ ok: true })
 })
 api.delete('/contractor-advances/:id', canWrite, (req, res) => {
+  const a = db.prepare('SELECT * FROM contractor_advances WHERE id=?').get(req.params.id)
   db.prepare('DELETE FROM contractor_advances WHERE id=?').run(req.params.id)
+  if (a) audit(req, 'ลบเงินเบิกล่วงหน้าช่าง', `${a.contractor || ''} ${baht(a.amount || 0)}`)
   res.json({ ok: true })
 })
 
@@ -3578,7 +3605,7 @@ api.post('/sales-docs', canWrite, (req, res) => {
   const subtotal = list.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0)
   const vat = Math.round(subtotal * 0.07)
   const prefix = { quote: 'QT', invoice: 'INV', receipt: 'RC' }[kind]
-  const seq = nextSeq('sales-' + kind, () => db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(kind).c)
+  const seq = nextSeq('sales-' + kind, () => Math.max(maxNoSuffix('sales_docs'), db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(kind).c))
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
   const info = db
     .prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
@@ -3606,7 +3633,7 @@ api.post('/sales-docs/:id/derive', canWrite, (req, res) => {
   const dup = db.prepare('SELECT no FROM sales_docs WHERE type=? AND ref=?').get(to, src.no)
   if (dup) return res.status(409).json({ error: `ออก${to === 'invoice' ? 'ใบแจ้งหนี้' : 'ใบเสร็จ'}จากใบนี้ไปแล้ว (${dup.no})` })
   const prefix = { invoice: 'INV', receipt: 'RC' }[to]
-  const seq = nextSeq('sales-' + to, () => db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(to).c)
+  const seq = nextSeq('sales-' + to, () => Math.max(maxNoSuffix('sales_docs'), db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(to).c))
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
   const info = db.prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(to, no, src.customer, todayTH(), todayISO(), src.items, src.subtotal, src.vat, src.total, to === 'receipt' ? 'ชำระแล้ว' : 'รอชำระ', src.house_code || '', src.no)
@@ -3761,7 +3788,7 @@ api.get('/notifications', (req, res) => {
   if (req.user.role === 'admin') {
     try {
       const last = JSON.parse(getSetting('backup_last', '') || 'null')
-      const cut = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)
+      const cut = isoDate(new Date(Date.now() - 2 * 86400000))
       if (!last || last.day < cut)
         out.push({ kind: 'backup', icon: 'danger', title: 'ยังไม่มีสำรองข้อมูลล่าสุด (เกิน 2 วัน)', sub: `สำรองล่าสุด: ${last?.day || 'ไม่เคย'} — ไปที่ ผู้ใช้งาน → สำรองข้อมูล`, page: 'users' })
       const ms = JSON.parse(getSetting('backup_mirror_status', '') || 'null')

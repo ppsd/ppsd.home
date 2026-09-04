@@ -101,7 +101,9 @@ export default function Installments() {
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center' }}>
                       <span style={{ fontSize: 11, fontWeight: 600, color: s.c, background: s.bg, padding: '2px 10px', borderRadius: 20 }}>{r.status}</span>
                       {r.overdue && r.status !== 'เลยกำหนด' && <span style={{ fontSize: 11, fontWeight: 700, color: '#C24036', background: '#FBEEEC', padding: '2px 10px', borderRadius: 20 }}>เลยกำหนด</span>}
-                      {r.status !== 'เก็บแล้ว' && <button onClick={() => collectInstallment(r.id, r.house_code)} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>เก็บเงิน</button>}
+                      {r.status !== 'เก็บแล้ว' && r.status !== 'จ่ายแล้ว' && (
+                        <button onClick={() => collectInstallment(r.id, r.house_code)} title={r.side === 'contractor' ? 'บันทึกจ่ายเงินช่างงวดนี้' : 'บันทึกเก็บเงินลูกค้างวดนี้'} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: r.side === 'contractor' ? '#C0852C' : '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>{r.side === 'contractor' ? 'จ่ายช่าง' : 'เก็บเงิน'}</button>
+                      )}
                     </div>
                   </td>
                 </tr>
