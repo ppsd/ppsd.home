@@ -12,6 +12,22 @@ const confColor = (c: string) =>
         : { c: '#6B4E9E', bg: '#EEE8F6' } // กำหนดเอง
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13.5, border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 11px', outline: 'none', width: '100%', boxSizing: 'border-box' }
 
+// เดา "จำนวนชิ้นต่อแพ็ค" จากหน่วยหรือชื่อ เช่น "3 ชิ้น" · "2อัน" · "แพ็ค 3" · "x2" — ใช้เตือน + เติมตัวหารให้
+export function packOf(m: ApiMaterialPrice): number | null {
+  // นับเฉพาะหน่วยนับชิ้น — ไม่รวมสเปคขนาด (กก/เมตร/มม เช่น "ปูน 50 กก" ไม่ใช่แพ็ค 50)
+  const UNITS = 'ชิ้น|อัน|ตัว|เส้น|แผ่น|ใบ|ก้อน|คู่|เม็ด|ดอก|ขวด|ม้วน|แท่ง|หลอด|มัด'
+  const dims = /\d+\s*[xX×]\s*\d+/ // ขนาด เช่น กระเบื้อง 60x60 ไม่ใช่แพ็ค
+  for (const src of [m.unit || '', m.name || '']) {
+    if (!src) continue
+    let mm = src.match(new RegExp(`(\\d+)\\s*(?:${UNITS})`))
+    if (!mm) mm = src.match(/(?:แพ็ค|แพค|ชุด|โหล)\s*(\d+)/)
+    if (!mm && !dims.test(src)) mm = src.match(/[xX×]\s*(\d+)/)
+    const n = mm ? Number(mm[1]) : 0
+    if (n >= 2 && n <= 144) return n
+  }
+  return null
+}
+
 type Form = { name: string; unit: string; central: string; min: string; max: string; latest: string; note: string }
 const emptyForm: Form = { name: '', unit: '', central: '', min: '', max: '', latest: '', note: '' }
 
@@ -70,6 +86,22 @@ export default function MaterialPrices() {
     setBusy(false)
   }
 
+  // แปลงราคาแพ็ค → ราคาต่อ 1 ชิ้น (หารทุกช่องราคา + แก้หน่วย)
+  const perPiece = async (m: ApiMaterialPrice) => {
+    const guess = packOf(m)
+    const v = window.prompt(`"${m.name}"\nราคาตอนนี้ ฿${money(m.central)} ต่อ "${m.unit || '-'}"\n\nราคานี้เป็นราคาต่อกี่ชิ้น? (ระบบจะหารให้เป็นราคาต่อ 1 ชิ้น)`, String(guess || 2))
+    if (v == null) return
+    const pack = Number(v.replace(/[^\d]/g, ''))
+    if (!(pack >= 2)) { alert('ต้องเป็นตัวเลข 2 ขึ้นไป'); return }
+    const newPrice = Math.round((m.central / pack) * 100) / 100
+    if (!confirm(`฿${money(m.central)} ÷ ${pack} = ฿${money(newPrice)} ต่อ 1 ชิ้น\nยืนยันแปลง? (ต่ำสุด/สูงสุด/ล่าสุด จะถูกหารด้วย)`)) return
+    setBusy(true)
+    try { await api.post('/material-prices/' + m.id + '/per-piece', { pack }); await reload() }
+    catch (e) { alert('แปลงไม่สำเร็จ: ' + (e as Error).message) }
+    setBusy(false)
+  }
+  const suspected = useMemo(() => list.filter((m) => packOf(m) != null).length, [list])
+
   const remove = async (m: ApiMaterialPrice) => {
     if (!confirm(`ลบราคากลาง "${m.name}" ?`)) return
     setBusy(true)
@@ -95,6 +127,12 @@ export default function MaterialPrices() {
           </div>
         )}
       </div>
+
+      {suspected > 0 && canEdit && (
+        <div style={{ fontSize: 12.5, color: '#8A6A1F', background: '#FBF4E1', border: '1px solid #ECDCB8', borderRadius: 10, padding: '9px 13px', marginBottom: 10 }}>
+          💡 พบ {suspected} รายการที่หน่วย/ชื่อดูเป็น "ราคาต่อหลายชิ้น" (มีป้ายเหลืองในตาราง) — กดปุ่ม <b>÷ ต่อชิ้น</b> ท้ายแถวเพื่อแปลงเป็นราคาต่อ 1 ชิ้น (ระบบเดาตัวหารให้ แก้ได้ก่อนยืนยัน)
+        </div>
+      )}
 
       {/* ตัวกรองความเชื่อมั่น */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -126,13 +164,17 @@ export default function MaterialPrices() {
             <tbody>
               {rows.map((m) => {
                 const cc = confColor(m.confidence)
+                const packGuess = packOf(m)
                 return (
                   <tr key={m.id}>
                     <td style={td}>
                       <div style={{ fontWeight: 500 }}>{m.name}</div>
                       {m.source && m.source !== 'ประวัติ' && <span style={{ fontSize: 10.5, color: '#6B4E9E', background: '#EEE8F6', borderRadius: 6, padding: '1px 6px' }}>{m.source === 'กำหนดเอง' ? 'ตั้งราคาเอง' : m.source}</span>}
                     </td>
-                    <td style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{m.unit || '–'}</td>
+                    <td style={{ ...td, textAlign: 'center', color: '#5C6770', whiteSpace: 'nowrap' }}>
+                      {m.unit || '–'}
+                      {packGuess != null && <div style={{ fontSize: 10, fontWeight: 700, color: '#B7791F', background: '#F6ECD6', borderRadius: 6, padding: '1px 6px', marginTop: 2 }}>ราคาต่อ {packGuess} ชิ้น?</div>}
+                    </td>
                     <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#1E2E3B' }} className="num">฿{money(m.central)}</td>
                     <td style={{ ...td, textAlign: 'right', color: '#5C6770', whiteSpace: 'nowrap' }} className="num">{money(m.min)}–{money(m.max)}</td>
                     <td style={{ ...td, textAlign: 'right', color: '#5C6770' }} className="num">{money(m.latest)}</td>
@@ -142,6 +184,7 @@ export default function MaterialPrices() {
                     </td>
                     {canEdit && (
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <button onClick={() => perPiece(m)} title="ราคานี้เป็นราคาต่อหลายชิ้น? หารให้เป็นราคาต่อ 1 ชิ้น" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: packGuess != null ? 700 : 400, color: '#B7791F', background: packGuess != null ? '#F6ECD6' : 'none', border: '1px solid #ECDCB8', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', marginRight: 5 }}>÷ ต่อชิ้น</button>
                         <button onClick={() => openEdit(m)} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: 'none', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', marginRight: 5 }}>แก้</button>
                         <button onClick={() => remove(m)} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#C24036', background: 'none', border: '1px solid #EDD3CE', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ลบ</button>
                       </td>

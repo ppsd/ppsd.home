@@ -402,6 +402,21 @@ test('ซ่อมข้อมูล: งวดงานสถานะแย้
   assert.ok(!list.some((r) => r.id === a.data.id) && !list.some((r) => r.id === b.data.id), 'ซ่อมแล้วต้องหายจากรายการ')
 })
 
+test('ราคากลาง: แปลงราคาแพ็คเป็นราคาต่อ 1 ชิ้น (หารทุกช่อง + ไม่ถูก recompute ทับ)', async () => {
+  const mk = await POST('/material-prices', { name: 'ลูกบิดทดสอบ', unit: '3 ชิ้น', central: 450, min: 420, max: 480, latest: 450 })
+  assert.equal(mk.status, 201)
+  const bad = await POST(`/material-prices/${mk.data.id}/per-piece`, { pack: 1 })
+  assert.equal(bad.status, 400, 'ตัวหารต้อง >= 2')
+  const r = await POST(`/material-prices/${mk.data.id}/per-piece`, { pack: 3 })
+  assert.equal(r.status, 200)
+  assert.equal(r.data.central, 150, `450 ÷ 3 = 150 (ได้ ${r.data.central})`)
+  assert.equal(r.data.min, 140)
+  assert.equal(r.data.max, 160)
+  assert.equal(r.data.unit, 'ชิ้น', 'หน่วยต้องถูกตัดตัวเลขออก')
+  assert.equal(r.data.source, 'กำหนดเอง', 'ต้องกันไม่ให้ recompute จากประวัติทับราคาที่แปลงแล้ว')
+  assert.match(r.data.note, /หาร 3/)
+})
+
 test('สิทธิ์: role site ต้องไม่เห็นตัวเลขเงินรวมบริษัทบนแดชบอร์ด', async () => {
   await POST('/users', { name: 'ช่างเทสต์', username: 'sitetest', pin: '9999', role: 'site', position: 'ช่าง' })
   const adminToken = token

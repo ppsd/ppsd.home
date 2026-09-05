@@ -2312,6 +2312,22 @@ api.put('/material-prices/:id', financeOnly, (req, res) => {
   audit(req, 'แก้ราคากลางวัสดุ', name)
   res.json(db.prepare('SELECT * FROM material_prices WHERE id=?').get(req.params.id))
 })
+// แปลงราคาแพ็ค → ราคาต่อ 1 ชิ้น (ข้อมูลจาก Excel บางรายการตั้งราคามาต่อ 2–3 ชิ้น)
+// หารทุกช่องราคา (กลาง/ต่ำสุด/สูงสุด/ล่าสุด) ด้วยจำนวนชิ้น + แก้หน่วย + บันทึกที่มาไว้ในหมายเหตุ
+api.post('/material-prices/:id/per-piece', financeOnly, (req, res) => {
+  const m = db.prepare('SELECT * FROM material_prices WHERE id=?').get(req.params.id)
+  if (!m) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  const pack = Number(req.body?.pack)
+  if (!Number.isFinite(pack) || pack < 2 || pack > 1000) return res.status(400).json({ error: 'จำนวนชิ้นต่อแพ็คต้องเป็นตัวเลข 2 ขึ้นไป' })
+  const d = (x) => (Number(x) > 0 ? Math.round((Number(x) / pack) * 100) / 100 : x)
+  // หน่วยใหม่: ตัดตัวเลขออกจากหน่วยเดิม (เช่น "3 ชิ้น" → "ชิ้น") หรือใช้ที่ส่งมา
+  const unit = String(req.body?.unit || '').trim() || (String(m.unit || '').replace(/[\d\s]+/g, ' ').trim() || 'ชิ้น')
+  const note = `${m.note ? m.note + ' · ' : ''}แปลงเป็นราคาต่อ 1 ${unit} (หาร ${pack} จากราคาเดิม ${m.central})`
+  db.prepare("UPDATE material_prices SET central=?, min=?, max=?, latest=?, unit=?, note=?, source='กำหนดเอง', updated=? WHERE id=?")
+    .run(d(m.central), d(m.min), d(m.max), d(m.latest), unit, note, new Date().toISOString().slice(0, 10), m.id)
+  audit(req, 'แปลงราคากลางเป็นต่อ 1 ชิ้น', `${m.name}: ${m.central} ÷ ${pack} = ${d(m.central)}`)
+  res.json(db.prepare('SELECT * FROM material_prices WHERE id=?').get(m.id))
+})
 api.delete('/material-prices/:id', financeOnly, (req, res) => {
   const cur = db.prepare('SELECT * FROM material_prices WHERE id=?').get(req.params.id)
   db.prepare('DELETE FROM material_prices WHERE id=?').run(req.params.id)
