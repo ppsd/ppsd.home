@@ -189,6 +189,11 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     const v = vendors.find((x) => x.name === name)
     if (v && (v.credit_days || 0) > 0) setPoForm((f) => ({ ...f, vendor: name, payment_type: 'credit', credit_days: String(v.credit_days) }))
     else setPoForm((f) => ({ ...f, vendor: name }))
+    // ผู้ขายจด VAT → ติ๊ก "มีใบกำกับภาษี" + คำนวณ VAT 7/107 จากยอดให้อัตโนมัติ (แก้ตามใบจริงได้)
+    if (v?.vat_registered) {
+      setPoHasVat(true)
+      setPoForm((f) => ({ ...f, vat_amount: String(Math.round(((Number(f.amount.replace(/,/g, '')) || 0) * 7 / 107) * 100) / 100) }))
+    }
   }
   const [poImg, setPoImg] = useState('')
   const [poErr, setPoErr] = useState('')
@@ -698,12 +703,13 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 <th style={{ ...th, textAlign: 'center' }}>ประเภท</th>
                 <th style={th}>เลขผู้เสียภาษี</th>
                 <th style={{ ...th, textAlign: 'center' }}>เครดิต (วัน)</th>
+                <th style={{ ...th, textAlign: 'center' }}>จด VAT</th>
                 <th style={{ ...th, textAlign: 'right' }}>ยอดซื้อสะสม</th>
                 <th style={{ ...th, padding: '9px 18px', textAlign: 'right' }}>ค้างจ่าย</th>
               </tr>
             </thead>
             <tbody>
-              {vendors.length === 0 && <tr><td colSpan={6} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีผู้ขาย — กด “เพิ่มผู้ขาย”</td></tr>}
+              {vendors.length === 0 && <tr><td colSpan={7} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีผู้ขาย — กด “เพิ่มผู้ขาย”</td></tr>}
               {vendors.map((r) => (
                 <tr key={r.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name}</td>
@@ -719,6 +725,9 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                       onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== (r.credit_days || 0)) updateVendor(r.id, { credit_days: v }) }}
                       style={{ width: 64, fontFamily: 'inherit', fontSize: 12.5, textAlign: 'center', color: '#1C2730', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 6px', outline: 'none' }}
                     />
+                  </td>
+                  <td style={{ ...td, textAlign: 'center' }}>
+                    <input type="checkbox" checked={!!r.vat_registered} title="ผู้ขายรายนี้ออกใบกำกับภาษี — PO ใหม่จะติ๊ก VAT ให้อัตโนมัติ" onChange={(e) => updateVendor(r.id, { vat_registered: e.target.checked ? 1 : 0 })} style={{ cursor: 'pointer', width: 15, height: 15 }} />
                   </td>
                   <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.total_live ?? r.total)}</td>
                   <td className="num" style={{ ...td, padding: '10px 18px', textAlign: 'right', fontWeight: 600, color: (r.outstanding_live ?? r.outstanding) === 0 ? '#94A0A8' : '#C0852C' }}>{baht(r.outstanding_live ?? r.outstanding)}</td>

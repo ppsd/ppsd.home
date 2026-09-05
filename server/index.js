@@ -382,7 +382,7 @@ api.use(requireAuth)
 const MODULE_PATHS = [
   // หมายเหตุ: หน้า 'ลงเวลา' (ตอกบัตร/attendance) ไม่อยู่ใต้ hr — ต้องใช้ได้เสมอ · BOQ อยู่ในหน้าบ้าน ไม่ใช่โมดูลขาย
   ['hr', [/^\/payroll/, /^\/employees/, /^\/salary-advances/, /^\/deductions/, /^\/ot(\/|$)/, /^\/leaves/, /^\/time-adjustments/]],
-  ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/ar-aging/, /^\/ap-aging/, /^\/reconcile/, /^\/cash-accounts/, /^\/acct-defaults/, /^\/assets/, /^\/export\/express/, /^\/efiling/]],
+  ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/ar-aging/, /^\/ap-aging/, /^\/reconcile/, /^\/cash-accounts/, /^\/acct-defaults/, /^\/assets/, /^\/export\/express/, /^\/efiling/, /^\/repair/]],
   // ใบจ่ายเงิน (payments) ใช้งานในหน้าจัดซื้อ → คุมด้วยโมดูลจัดซื้อ
   ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/pr-quotes/, /^\/goods-receipts/, /^\/payables/, /^\/payments/, /^\/vendors/, /^\/material-prices/, /^\/procurement/, /^\/stock/]],
   ['sales', [/^\/sales-docs/, /^\/customers/]],
@@ -796,6 +796,18 @@ api.delete('/installments/:id', canWrite, (req, res) => {
   audit(req, 'ลบงวดงาน', `${inst.house_code} งวด ${inst.no}`)
   res.json({ ok: true })
 })
+// ซ่อมครั้งเดียว: งวดที่มียอดเก็บ/จ่ายจริง (paid > 0) แต่สถานะไม่ตรงยอด → ตั้งตามยอด (ยอดเงินคือความจริง)
+try {
+  if (getSetting('inst_status_sync_v1', '') !== '1') {
+    let fixed = 0
+    for (const i of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) {
+      const want = instStatus(i.side, i.amount, i.paid)
+      if (i.status !== want) { db.prepare('UPDATE installments SET status=? WHERE id=?').run(want, i.id); fixed++ }
+    }
+    setSetting('inst_status_sync_v1', '1')
+    if (fixed) console.log(`  ซ่อมสถานะงวดงานตามยอดเงินจริง: ${fixed} งวด`)
+  }
+} catch (e) { console.error('inst status sync:', e.message) }
 // status label for an installment based on side + how much is paid
 function instStatus(side, amount, paid) {
   const isCon = side === 'contractor'
@@ -977,6 +989,54 @@ api.post('/accounting/rebuild', financeOnly, (req, res) => {
   try { const r = acct.retroPostAll(); audit(req, 'สร้างบัญชีจากข้อมูลเดิม', `${r.n} รายการ${r.errors.length ? ' · ข้าม ' + r.errors.length : ''}`); res.json({ ok: true, count: r.n, errors: r.errors }) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+// ===== เครื่องมือซ่อมข้อมูลเก่า (เลขเพี้ยนจากยุคก่อนแก้บั๊ก) =====
+// เติมภาษีซื้อย้อนหลัง: รายจ่าย/PO เก่าที่ยังไม่มียอด VAT และซื้อจาก "ผู้ขายที่จด VAT" → คิด 7/107 จากยอดรวมให้
+// (ติ๊กว่าใครจด VAT ได้ที่แท็บผู้ขาย — ตัวเลขที่เติมเป็นการประมาณตามราคารวม VAT ตรวจกับใบจริงได้ภายหลัง)
+api.post('/accounting/backfill-vat', financeOnly, (req, res) => {
+  const vatVendors = db.prepare('SELECT name FROM vendors WHERE vat_registered=1').all().map((v) => v.name)
+  if (!vatVendors.length) return res.status(400).json({ error: 'ยังไม่ได้ติ๊กผู้ขายที่จด VAT — ไปที่ จัดซื้อ → แท็บผู้ขาย ติ๊กคอลัมน์ "จด VAT" ก่อน' })
+  const r2v = (x) => Math.round(x * 100) / 100
+  let expN = 0, poN = 0
+  db.transaction(() => {
+    for (const e of db.prepare(`SELECT id, amount FROM expenses WHERE COALESCE(vat_amount,0)=0 AND COALESCE(amount,0)>0 AND vendor IN (${vatVendors.map(() => '?').join(',')})`).all(...vatVendors)) {
+      db.prepare('UPDATE expenses SET vat_amount=? WHERE id=?').run(r2v(e.amount * 7 / 107), e.id)
+      expN++
+    }
+    for (const p of db.prepare(`SELECT id, amount FROM purchase_orders WHERE COALESCE(vat_amount,0)=0 AND COALESCE(amount,0)>0 AND vendor IN (${vatVendors.map(() => '?').join(',')})`).all(...vatVendors)) {
+      db.prepare('UPDATE purchase_orders SET vat_amount=? WHERE id=?').run(r2v(p.amount * 7 / 107), p.id)
+      poN++
+    }
+  })()
+  audit(req, 'เติมภาษีซื้อย้อนหลัง (7/107 ตามผู้ขายที่จด VAT)', `รายจ่าย ${expN} ใบ · PO ${poN} ใบ`)
+  res.json({ ok: true, expenses: expN, pos: poN, vendors: vatVendors.length })
+})
+// งวดงานที่ "สถานะกับยอดเงินแย้งกัน" (ข้อมูลยุคเก่า): สถานะบอกเก็บแล้วแต่ paid ไม่ครบ
+// ให้คนตัดสิน: ยืนยันว่าเก็บจริง (ตั้งยอด+ลงบัญชี) หรือ ยังไม่เก็บ (แก้สถานะตามยอดจริง)
+const MONEY_STATUSES_SRV = ['เก็บแล้ว', 'จ่ายแล้ว', 'เก็บบางส่วน', 'จ่ายบางส่วน']
+api.get('/repair/installments', financeOnly, (_req, res) => {
+  const rows = db.prepare(`SELECT i.*, h.name AS house FROM installments i LEFT JOIN houses h ON h.code=i.house_code
+    WHERE i.status IN (${MONEY_STATUSES_SRV.map(() => '?').join(',')}) AND COALESCE(i.paid,0) < COALESCE(i.amount,0) ORDER BY i.house_code, i.no`).all(...MONEY_STATUSES_SRV)
+  res.json(rows)
+})
+api.post('/repair/installments/:id', financeOnly, (req, res) => {
+  const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
+  if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
+  const action = req.body?.action
+  if (action === 'confirm') {
+    // เก็บ/จ่ายจริงแล้ว → ตั้งยอดเต็ม + ลงบัญชี (วันที่วันนี้ — เงินเก่าไม่มีวันที่จริงบันทึกไว้)
+    db.prepare('UPDATE installments SET paid=?, status=? WHERE id=?').run(inst.amount, instStatus(inst.side, inst.amount, inst.amount), inst.id)
+    recomputeHouse(inst.house_code)
+    try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { logJournalIssue('inst', inst.id, `ซ่อมงวด ${inst.no} ${inst.house_code || ''}`, e) }
+    audit(req, 'ซ่อมงวดงาน: ยืนยันเก็บ/จ่ายแล้วจริง', `${inst.house_code} งวด ${inst.no} ${baht(inst.amount)}`)
+  } else if (action === 'reset') {
+    // ยังไม่เก็บจริง → สถานะกลับไปตามยอดเงินจริง (ตอนนี้)
+    db.prepare('UPDATE installments SET status=? WHERE id=?').run(instStatus(inst.side, inst.amount, inst.paid || 0), inst.id)
+    recomputeHouse(inst.house_code)
+    audit(req, 'ซ่อมงวดงาน: แก้สถานะตามยอดจริง', `${inst.house_code} งวด ${inst.no}`)
+  } else return res.status(400).json({ error: 'action ต้องเป็น confirm หรือ reset' })
+  res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
+})
+
 // รายการที่ลงบัญชีไม่สำเร็จ (เช่น ติดงวดปิด) — โชว์แบนเนอร์เตือนหน้าบัญชี · หายเองเมื่อลงสำเร็จ
 api.get('/accounting/journal-issues', financeOnly, (_req, res) =>
   res.json(db.prepare('SELECT * FROM journal_issues ORDER BY id DESC').all()))
@@ -2155,8 +2215,8 @@ api.put('/vendors/:id', financeOnly, (req, res) => {
   const v = db.prepare('SELECT * FROM vendors WHERE id=?').get(req.params.id)
   if (!v) return res.status(404).json({ error: 'ไม่พบผู้ขาย' })
   const b = req.body || {}
-  db.prepare('UPDATE vendors SET name=?, type=?, tax_id=?, credit_days=? WHERE id=?')
-    .run(b.name ?? v.name, b.type ?? v.type, b.tax_id ?? v.tax_id, b.credit_days != null ? Math.max(0, Number(b.credit_days) || 0) : v.credit_days, v.id)
+  db.prepare('UPDATE vendors SET name=?, type=?, tax_id=?, credit_days=?, vat_registered=? WHERE id=?')
+    .run(b.name ?? v.name, b.type ?? v.type, b.tax_id ?? v.tax_id, b.credit_days != null ? Math.max(0, Number(b.credit_days) || 0) : v.credit_days, b.vat_registered != null ? (b.vat_registered ? 1 : 0) : v.vat_registered, v.id)
   res.json(db.prepare('SELECT * FROM vendors WHERE id=?').get(v.id))
 })
 // parse the items/images JSON columns into arrays for the client

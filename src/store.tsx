@@ -240,6 +240,7 @@ export interface ApiVendor {
   total: number
   outstanding: number
   credit_days?: number
+  vat_registered?: number
   outstanding_live?: number
   total_live?: number
 }

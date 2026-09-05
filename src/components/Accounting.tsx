@@ -764,6 +764,19 @@ function TaxSummary() {
   const pickYear = () => { const d = new Date(); setFrom(`${d.getFullYear()}-01-01`); setTo(`${d.getFullYear()}-12-31`) }
   const rangeField = { fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D5DAE0', borderRadius: 8, padding: '6px 9px', background: '#fff' }
   const quickBtn = { fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#30506A', background: '#E9EFF3', border: 'none', borderRadius: 7, padding: '6px 12px', cursor: 'pointer' }
+  // เติมภาษีซื้อย้อนหลัง: รายจ่าย/PO เก่าที่ยังไม่มี VAT และซื้อจากผู้ขายที่ติ๊ก "จด VAT" → คิด 7/107 ให้
+  const [bfBusy, setBfBusy] = useState(false)
+  const backfillVat = async () => {
+    if (!window.confirm('เติมภาษีซื้อย้อนหลังให้รายจ่าย/PO เก่าที่ยังไม่มียอด VAT?\nระบบจะคิด 7/107 จากยอดรวม เฉพาะใบที่ซื้อจาก "ผู้ขายที่ติ๊กจด VAT" (ตั้งได้ที่ จัดซื้อ → แท็บผู้ขาย)')) return
+    setBfBusy(true)
+    try {
+      const r = await api.post<{ expenses: number; pos: number; vendors: number }>('/accounting/backfill-vat', {})
+      window.alert(`เติมภาษีซื้อแล้ว: รายจ่าย ${r.expenses} ใบ · PO ${r.pos} ใบ (จากผู้ขายจด VAT ${r.vendors} ราย)`)
+      setFrom((f) => f) // trigger reload
+      const q = [from && 'from=' + from, to && 'to=' + to].filter(Boolean).join('&')
+      api.get<TaxData>('/tax-summary' + (q ? '?' + q : '')).then(setT).catch(() => {})
+    } catch (e) { window.alert((e as Error).message) } finally { setBfBusy(false) }
+  }
   const rangePicker = (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <span style={{ fontSize: 12.5, color: '#5C6770', fontWeight: 600 }}>ช่วงเวลา</span>
@@ -774,6 +787,7 @@ function TaxSummary() {
       <button style={quickBtn} onClick={pickQuarter}>ไตรมาสนี้</button>
       <button style={quickBtn} onClick={pickYear}>ปีนี้</button>
       {(from || to) && <button style={{ ...quickBtn, color: '#C24036', background: '#FBEEEC' }} onClick={() => { setFrom(''); setTo('') }}>ทั้งหมด ✕</button>}
+      <button style={{ ...quickBtn, marginLeft: 'auto', color: '#fff', background: '#C0852C' }} disabled={bfBusy} onClick={backfillVat} title="รายจ่าย/PO เก่าที่ยังไม่มียอด VAT และซื้อจากผู้ขายที่ติ๊กจด VAT → คิด 7/107 ให้อัตโนมัติ">{bfBusy ? 'กำลังเติม…' : '🔧 เติมภาษีซื้อย้อนหลัง'}</button>
     </div>
   )
   if (!t) return <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>{rangePicker}<div style={{ color: '#94A0A8', padding: 20 }}>ยังไม่มีข้อมูล</div></div>

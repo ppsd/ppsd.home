@@ -50,12 +50,23 @@ export default function AuditCenter() {
   const [pinErr, setPinErr] = useState('')
   const [checking, setChecking] = useState(false)
 
+  // งวดงานข้อมูลแย้ง (สถานะเก็บแล้วแต่ยอดไม่ครบ) — ให้คนยืนยันความจริงแล้วระบบซ่อมให้
+  interface FixRow { id: number; house_code: string; house?: string; no: number; detail: string; amount: number; paid?: number; status: string; side?: string }
+  const [fixRows, setFixRows] = useState<FixRow[]>([])
+  const fixInst = async (r: FixRow, action: 'confirm' | 'reset') => {
+    const q = action === 'confirm'
+      ? `ยืนยันว่างวดนี้เก็บ/จ่ายเงินจริงแล้ว ${baht(r.amount)}?\nระบบจะตั้งยอดเต็ม + ลงบัญชีให้ (วันที่วันนี้)`
+      : 'ยืนยันว่ายังไม่ได้เก็บ/จ่ายจริง? สถานะจะถูกแก้กลับตามยอดเงินในระบบ'
+    if (!window.confirm(q)) return
+    try { await api.post(`/repair/installments/${r.id}`, { action }); load() } catch (e) { window.alert((e as Error).message) }
+  }
   const load = () => {
     api.get<{ flags: Flag[]; reconcile: Recon[]; counts: { high: number; med: number } }>('/audit-center')
       .then((r) => { setFlags(r.flags); setRecon(r.reconcile); setCounts(r.counts) })
       .catch(() => setDenied(true))
     api.get<Controls>('/controls').then(setCtrl).catch(() => {})
     api.get<AuditRow[]>('/audit-log').then(setLog).catch(() => {})
+    api.get<FixRow[]>('/repair/installments').then(setFixRows).catch(() => setFixRows([]))
   }
   useEffect(() => { if (unlocked) load() /* eslint-disable-next-line */ }, [unlocked])
 
@@ -167,6 +178,26 @@ export default function AuditCenter() {
             </tbody>
           </table>
           <div style={{ padding: '10px 18px', fontSize: 11.5, color: '#94A0A8' }}>ยอดควรตรงกันทั้งสองฝั่ง ถ้าไม่ตรงแปลว่ามีการแก้ข้อมูลนอกระบบงวดงาน/PO ควรตรวจสอบ</div>
+
+          {/* ซ่อมข้อมูลแย้ง: งวดงานที่สถานะบอก "เก็บ/จ่ายแล้ว" แต่ยอดเงินจริงยังไม่ครบ (ข้อมูลยุคเก่า) */}
+          {fixRows.length > 0 && (
+            <div style={{ borderTop: '8px solid #F3F5F7' }}>
+              <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600, color: '#C24036' }}>
+                🔧 งวดงานข้อมูลแย้ง {fixRows.length} งวด — สถานะบอกเก็บ/จ่ายแล้ว แต่ยอดเงินในระบบยังไม่ครบ
+                <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5, marginLeft: 8 }}>เลือกให้ระบบว่าความจริงคืออะไร แล้วยอดบ้าน/บัญชีจะถูกซ่อมตาม</span>
+              </div>
+              {fixRows.map((r) => (
+                <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 18px', borderTop: '1px solid #F1F4F6', fontSize: 12.5, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 600, minWidth: 160 }}>{r.house || r.house_code} · งวด {r.no}</span>
+                  <span style={{ color: '#5C6770', flex: 1, minWidth: 120 }}>{r.detail}</span>
+                  <span style={{ fontSize: 11, color: '#C24036', background: '#FBEEEC', padding: '2px 9px', borderRadius: 20 }}>{r.status}</span>
+                  <span className="num" style={{ color: '#5C6770' }}>ยอด {baht(r.amount)} · ในระบบ {baht(r.paid || 0)}</span>
+                  <button onClick={() => fixInst(r, 'confirm')} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }} title="เงินเข้า/ออกจริงแล้ว — ตั้งยอดเต็ม + ลงบัญชีให้">✓ เก็บ/จ่ายจริงแล้ว</button>
+                  <button onClick={() => fixInst(r, 'reset')} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #E7CDC9', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }} title="ยังไม่มีเงินจริง — แก้สถานะกลับตามยอด">ยังไม่เก็บ</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

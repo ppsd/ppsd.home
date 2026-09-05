@@ -383,6 +383,7 @@ ensureColumn('payments', 'po_id', 'INTEGER')           // จ่ายชำร�
 ensureColumn('payments', 'date_iso', 'TEXT')           // วันที่จ่าย (ISO) สำหรับลงบัญชี
 ensureColumn('payments', 'vendor_id', 'INTEGER')       // ผูกผู้รับเงินกับทะเบียนผู้ขาย (ถ้าชื่อตรง)
 ensureColumn('purchase_orders', 'vendor_id', 'INTEGER') // ผูก PO กับทะเบียนผู้ขาย (ถ้าชื่อตรง)
+ensureColumn('vendors', 'vat_registered', 'INTEGER')    // ผู้ขายจดทะเบียน VAT (ออกใบกำกับภาษี) — ใช้ติ๊ก VAT ให้อัตโนมัติ + เติมย้อนหลัง
 ensureColumn('sales_docs', 'date_iso', 'TEXT')          // วันที่เอกสารขาย (ISO) — ใช้กรองสรุปภาษีตามช่วงเวลา
 ensureColumn('sales_docs', 'ref', 'TEXT')               // อ้างอิงเอกสารต้นทาง (ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จ)
 // ภาษีซื้อจากใบกำกับจริง — เลิกเดา 7/107 จากรายจ่ายทุกใบ (บางร้านไม่จด VAT)

@@ -367,6 +367,41 @@ test('งวดงาน: แก้มูลค่าต่ำกว่ายอ
   assert.equal(cut.status, 400, 'ลดมูลค่าต่ำกว่ายอดเก็บแล้วต้องถูกบล็อก')
 })
 
+test('ซ่อมข้อมูล: เติมภาษีซื้อย้อนหลังตามผู้ขายที่จด VAT', async () => {
+  const noVendor = await POST('/accounting/backfill-vat', {})
+  assert.equal(noVendor.status, 400, 'ยังไม่ติ๊กผู้ขายจด VAT ต้องเตือน')
+  const v = await POST('/vendors', { name: 'ร้านจดแวต', type: 'นิติบุคคล', tax_id: '0105500000000' })
+  assert.equal(v.status, 201)
+  await PUT(`/vendors/${v.data.id}`, { vat_registered: 1 })
+  await POST('/expenses', { item: 'ของเก่าไม่มี VAT', amount: 2140, vendor: 'ร้านจดแวต' })
+  const before = (await GET('/tax-summary')).data.inputVat
+  const r = await POST('/accounting/backfill-vat', {})
+  assert.equal(r.status, 200)
+  assert.ok(r.data.expenses >= 1, 'ต้องเติมให้อย่างน้อย 1 ใบ')
+  const after = (await GET('/tax-summary')).data.inputVat
+  assert.equal(Math.round(after - before), 140, `2,140 × 7/107 = 140 (ได้ ${after - before})`)
+})
+
+test('ซ่อมข้อมูล: งวดงานสถานะแย้งยอด — ยืนยันเก็บจริง/แก้สถานะกลับ', async () => {
+  // ข้อมูลยุคเก่า: สร้างงวดที่สถานะบอก "เก็บแล้ว" แต่ยอดในระบบเป็น 0
+  const a = await POST('/houses/TS-01/installments', { no: 90, detail: 'งวดเก่าแย้ง A', amount: 20000, side: 'customer', status: 'เก็บแล้ว' })
+  const b = await POST('/houses/TS-01/installments', { no: 91, detail: 'งวดเก่าแย้ง B', amount: 30000, side: 'customer', status: 'เก็บแล้ว' })
+  let list = (await GET('/repair/installments')).data
+  assert.ok(list.some((r) => r.id === a.data.id) && list.some((r) => r.id === b.data.id), 'ทั้งสองงวดต้องโผล่ในรายการข้อมูลแย้ง')
+  // A: ยืนยันเก็บจริง → ยอดเต็ม + ลงบัญชี
+  const ca = await POST(`/repair/installments/${a.data.id}`, { action: 'confirm' })
+  assert.equal(ca.data.paid, 20000)
+  assert.equal(ca.data.status, 'เก็บแล้ว')
+  const j = await GET('/journal?source=inst')
+  const rows = Array.isArray(j.data) ? j.data : j.data.rows || []
+  assert.ok(rows.some((e) => e.source_id === String(a.data.id)), 'ยืนยันเก็บจริงต้องลงบัญชีรายได้')
+  // B: ยังไม่เก็บ → สถานะกลับตามยอดจริง
+  const cb = await POST(`/repair/installments/${b.data.id}`, { action: 'reset' })
+  assert.equal(cb.data.status, 'รอเก็บเงิน')
+  list = (await GET('/repair/installments')).data
+  assert.ok(!list.some((r) => r.id === a.data.id) && !list.some((r) => r.id === b.data.id), 'ซ่อมแล้วต้องหายจากรายการ')
+})
+
 test('สิทธิ์: role site ต้องไม่เห็นตัวเลขเงินรวมบริษัทบนแดชบอร์ด', async () => {
   await POST('/users', { name: 'ช่างเทสต์', username: 'sitetest', pin: '9999', role: 'site', position: 'ช่าง' })
   const adminToken = token
