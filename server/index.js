@@ -1058,6 +1058,24 @@ function payablesCheck() {
   return { gl_2010: glR, payable_remaining: subR, diff, ok: Math.abs(diff) < 1 }
 }
 api.get('/payables/check', financeOnly, (_req, res) => res.json(payablesCheck()))
+// สุขภาพระบบรวมจุดเดียว (แถบบนหน้าสรุป): บัญชีตรงไหม · มีอะไรค้าง · สำรองล่าสุดเมื่อไหร่
+api.get('/health', (req, res) => {
+  if (!(canSeeSalary(req.user) || isManager(req.user))) return res.status(403).json({ error: 'เฉพาะฝ่ายบัญชี/ผู้จัดการ' })
+  const ap = payablesCheck()
+  let backup = null
+  try { backup = JSON.parse(getSetting('backup_last', '') || 'null') } catch { /* ignore */ }
+  const backupOk = !!backup && backup.day >= isoDate(new Date(Date.now() - 2 * 86400000))
+  let mirror = null
+  try { mirror = JSON.parse(getSetting('backup_mirror_status', '') || 'null') } catch { /* ignore */ }
+  res.json({
+    ap_ok: ap.ok, ap_diff: ap.diff,
+    journal_issues: db.prepare('SELECT COUNT(*) c FROM journal_issues').get().c,
+    backup_day: backup?.day || null, backup_ok: backupOk,
+    mirror_set: !!getSetting('backup_mirror_dir', ''), mirror_ok: mirror ? mirror.ok !== false : null,
+    inst_mismatch: db.prepare(`SELECT COUNT(*) c FROM installments WHERE status IN (${MONEY_STATUSES_SRV.map(() => '?').join(',')}) AND COALESCE(paid,0) < COALESCE(amount,0)`).get(...MONEY_STATUSES_SRV).c,
+    stock_low: db.prepare('SELECT COUNT(*) c FROM stock_items WHERE min_qty > 0 AND qty < min_qty').get().c,
+  })
+})
 
 // ---------- HR ----------
 // list excludes the PIN; includes signature + computed sso/tax for display
@@ -4304,6 +4322,7 @@ function buildLineDigest() {
     if (!last || last.day < cut) L.push(`⚠️ สำรองข้อมูลล่าสุด: ${last?.day || 'ไม่เคย'} (เกิน 2 วัน)`)
   } catch { /* ignore */ }
   if (!L.length) L.push('✅ ไม่มีเรื่องค้างเร่งด่วนวันนี้')
+  try { L.push(`💰 เงินสด+ธนาคารตามบัญชี: ${baht(acct.cashBalance())}`) } catch { /* ignore */ }
   return `📋 PPSD ERP สรุปเช้า ${todayTH()}\n\n` + L.join('\n')
 }
 async function sendLine(text) {

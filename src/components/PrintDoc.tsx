@@ -36,7 +36,7 @@ function Header({ docTitle, docNo }: { docTitle: string; docNo: string }) {
 const lblTd: React.CSSProperties = { padding: '7px 10px', fontSize: 12, color: '#5C6770', border: '1px solid #E1E5EA' }
 const valTd: React.CSSProperties = { padding: '7px 10px', fontSize: 12.5, color: '#1C2730', border: '1px solid #E1E5EA', fontWeight: 500 }
 
-function SlipBody({ slip }: { slip?: ApiPayroll }) {
+export function SlipBody({ slip }: { slip?: ApiPayroll }) { // ใช้ซ้ำในสลิปรวมทั้งบริษัท (AllSlipsDoc)
   const base = slip?.base ?? 0
   const ot = slip?.ot ?? 0
   const sso = slip?.sso ?? 0

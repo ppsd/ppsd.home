@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import Icon from './Icon'
+import { api } from '../api'
 import {
   statCards,
   statusStyle,
@@ -17,9 +19,19 @@ interface DashboardProps {
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 
+interface Health { ap_ok: boolean; ap_diff: number; journal_issues: number; backup_day: string | null; backup_ok: boolean; mirror_set: boolean; mirror_ok: boolean | null; inst_mismatch: number; stock_low: number }
+
 export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }: DashboardProps) {
   const app = useApp()
   const { houses, dashboard, issues, expenses } = app.data
+  // แถบสุขภาพระบบ (บัญชี/ผู้จัดการ) — เห็นทันทีว่ามีอะไรต้องจัดการ
+  const [health, setHealth] = useState<Health | null>(null)
+  useEffect(() => { api.get<Health>('/health').then(setHealth).catch(() => setHealth(null)) }, [])
+  const chip = (ok: boolean | null, okText: string, badText: string) => (
+    <span style={{ fontSize: 11.5, fontWeight: 600, padding: '3px 11px', borderRadius: 20, color: ok === false ? '#C24036' : ok ? '#2E7D55' : '#5C6770', background: ok === false ? '#FBEEEC' : ok ? '#E2F1EA' : '#F1F4F6' }}>
+      {ok === false ? '✕ ' + badText : '✓ ' + okText}
+    </span>
+  )
   const progressHouses = houses.slice(0, 6)
   const overdue = dashboard?.overdueList ?? []
   const toCollect = dashboard?.toCollectList ?? []
@@ -72,6 +84,19 @@ export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }
 
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* แถบสุขภาพระบบ — สรุปสิ่งที่ต้องรู้ก่อนเริ่มวัน */}
+      {health && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '9px 14px' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#5C6770' }}>สุขภาพระบบ:</span>
+          {chip(health.ap_ok, 'เจ้าหนี้ตรงบัญชี', `เจ้าหนี้เพี้ยน ${baht(Math.abs(health.ap_diff))}`)}
+          {chip(health.journal_issues === 0, 'ลงบัญชีครบ', `ลงบัญชีค้าง ${health.journal_issues} รายการ`)}
+          {chip(health.backup_ok, `สำรองล่าสุด ${health.backup_day || ''}`, `สำรองค้าง (ล่าสุด ${health.backup_day || 'ไม่เคย'})`)}
+          {health.mirror_set ? chip(health.mirror_ok, 'สำรองนอกเครื่องปกติ', 'สำรองนอกเครื่องล้มเหลว') : chip(false, '', 'ยังไม่ตั้งสำรองนอกเครื่อง')}
+          {health.inst_mismatch > 0 && chip(false, '', `งวดข้อมูลแย้ง ${health.inst_mismatch} งวด`)}
+          {health.stock_low > 0 && chip(false, '', `วัสดุใกล้หมด ${health.stock_low} รายการ`)}
+        </div>
+      )}
+
       {/* stat cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         {cards.map((s, i) => (

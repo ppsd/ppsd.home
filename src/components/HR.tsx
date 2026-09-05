@@ -14,6 +14,7 @@ import { useApp } from '../store'
 import MoneyInput from './MoneyInput'
 import Pager from './Pager'
 import WhtCertDoc, { type AnnualEmpRow } from './WhtCertDoc'
+import AllSlipsDoc from './AllSlipsDoc'
 import PayrollSummaryDoc from './PayrollSummaryDoc'
 import EfilingList from './EfilingList'
 import EmpSignatureCell from './EmpSignatureCell'
@@ -170,6 +171,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
 
   // payroll period runs (closed months)
   const [showSummary, setShowSummary] = useState(false)
+  const [showAllSlips, setShowAllSlips] = useState(false)
   // หนังสือรับรอง 50 ทวิ — เลือกพนักงานจากยอดสะสมทั้งปี (งวดที่ปิดแล้ว)
   const [whtRows, setWhtRows] = useState<AnnualEmpRow[] | null>(null)
   const [whtPick, setWhtPick] = useState<AnnualEmpRow | null>(null)
@@ -450,6 +452,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
         {tab === 'payroll' && salaryOk && (
           <>
           {showSummary && payroll && payrollMeta && <PayrollSummaryDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowSummary(false)} />}
+          {showAllSlips && payroll && payrollMeta && <AllSlipsDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowAllSlips(false)} />}
           {whtPick && <WhtCertDoc row={whtPick} year={whtYear} onClose={() => setWhtPick(null)} />}
           {whtRows && !whtPick && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 55, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setWhtRows(null)}>
@@ -485,6 +488,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               ? <span style={{ fontSize: 11, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', padding: '3px 10px', borderRadius: 20 }}>ปิดงวดแล้ว 🔒</span>
               : <span style={{ fontSize: 11, fontWeight: 600, color: '#B7791F', background: '#F6ECD6', padding: '3px 10px', borderRadius: 20 }}>ยังไม่ปิดงวด (คำนวณสด)</span>}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              {payrollMeta && payroll && (
+                <button onClick={() => setShowAllSlips(true)} title="พิมพ์สลิปเงินเดือนทุกคนครั้งเดียว (คนละหน้า A4)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 สลิปทุกคน</button>
+              )}
               {payrollMeta && payroll && (
                 <button onClick={() => setShowSummary(true)} title="พิมพ์ใบสรุปการจ่ายค่าจ้าง/เงินเดือนทั้งบริษัท (แนวนอน)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 ใบสรุปการจ่ายค่าจ้าง</button>
               )}
