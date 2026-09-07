@@ -581,3 +581,36 @@ test('ใบขอซื้อ (PR): อนุมัติคนเดียว�
   assert.equal(b.data.required, 2); assert.equal(b.data.done, false)
   await PUT('/controls', { approvers_pr: 1, block_self_approve: true })
 })
+
+test('ลายเซ็นผู้ขอซื้อ: ประทับจากบัญชีผู้ใช้ ถ้าไม่มีใช้ของพนักงาน (HR) และเติมย้อนหลังให้ใบเก่าเมื่ออัปโหลดทีหลัง', async () => {
+  const SIG = 'data:image/png;base64,iVBORw0KGgo='
+  const SIG2 = 'data:image/png;base64,QUJDRA=='
+  // ผู้ใช้ที่ยังไม่มีลายเซ็น → ออก PR ได้ แต่ช่องลายเซ็นว่าง
+  const u = await POST('/users', { name: 'โฟร์แมน ลายเซ็น', username: 'sigtest', pin: '5555', role: 'site', position: 'โฟร์แมน' })
+  assert.equal(u.status, 201, JSON.stringify(u.data))
+  const adminToken = token
+  token = (await POST('/login', { username: 'sigtest', pin: '5555' })).data.token
+  const pr1 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ปูน 10 ถุง', amount: 1500 })
+  assert.equal(pr1.status, 201)
+  assert.equal(pr1.data.requester_sig, null, 'ยังไม่มีลายเซ็น = ว่าง')
+  // ผู้ใช้อัปโหลดลายเซ็นของตัวเอง → ใบเก่าถูกเติมให้ทันที + ใบใหม่มีตั้งแต่ออก
+  const up = await PUT(`/users/${u.data.id}/signature`, { signature: SIG })
+  assert.equal(up.status, 200, JSON.stringify(up.data))
+  assert.ok(up.data.filled >= 1, 'ต้องเติมลายเซ็นย้อนหลังให้ใบเก่า')
+  const old = (await GET('/purchase-requests')).data.find((r) => r.id === pr1.data.id)
+  assert.equal(old.requester_sig, SIG, 'ใบเก่าต้องมีลายเซ็นแล้ว')
+  const pr2 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ทราย 2 คิว', amount: 1200 })
+  assert.equal(pr2.data.requester_sig, SIG)
+  assert.equal((await GET('/me')).data.signature, SIG)
+  token = adminToken
+  // ผู้ใช้อีกคนไม่มีลายเซ็นในบัญชี แต่มีในทะเบียนพนักงาน (HR) ชื่อเดียวกัน → ใช้ของพนักงาน
+  const u2 = await POST('/users', { name: 'ธุรการ ลายเซ็นHR', username: 'sighr', pin: '6666', role: 'accounting', position: 'ธุรการ' })
+  assert.equal(u2.status, 201)
+  const emp = await POST('/employees', { name: 'ธุรการ ลายเซ็นHR', role: 'ธุรการ', pay_type: 'รายเดือน', base: 15000 })
+  assert.equal(emp.status, 201)
+  assert.equal((await PUT(`/employees/${emp.data.id}/signature`, { signature: SIG2 })).status, 200)
+  token = (await POST('/login', { username: 'sighr', pin: '6666' })).data.token
+  const pr3 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'กระดาษ A4', amount: 300 })
+  assert.equal(pr3.data.requester_sig, SIG2, 'ต้องดึงลายเซ็นจากทะเบียนพนักงานมาใช้')
+  token = adminToken
+})

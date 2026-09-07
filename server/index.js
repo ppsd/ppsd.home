@@ -230,9 +230,35 @@ api.post('/logout', requireAuth, (req, res) => {
   logout((req.headers.authorization || '').replace(/^Bearer\s+/i, ''))
   res.json({ ok: true })
 })
+// ลายเซ็นของผู้ใช้สำหรับประทับลงเอกสาร (PR/อนุมัติ): ใช้ของบัญชีผู้ใช้ก่อน ถ้ายังไม่อัปโหลด → ใช้ลายเซ็นในทะเบียนพนักงาน (HR) ที่ผูกกัน
+function sigOfUser(userId) {
+  const u = db.prepare('SELECT name, signature FROM users WHERE id=?').get(userId)
+  if (!u) return null
+  if (u.signature) return u.signature
+  const e = db.prepare("SELECT signature FROM employees WHERE signature IS NOT NULL AND signature != '' AND (user_id=? OR name=?) ORDER BY CASE WHEN user_id=? THEN 0 ELSE 1 END LIMIT 1").get(userId, u.name, userId)
+  return e?.signature || null
+}
+// เติมลายเซ็นย้อนหลังให้เอกสารที่ออกไปตอนผู้ใช้ยังไม่มีลายเซ็น (ตอนนี้มีแล้ว) — ไม่ทับของที่มีอยู่
+// เรียกตอนบูต และทุกครั้งที่มีการอัปโหลดลายเซ็น (ผู้ใช้/พนักงาน) → ใบขอซื้อเก่าได้ลายเซ็นทันทีโดยไม่ต้องรีสตาร์ท
+function backfillSignatures() {
+  try {
+    const fillPr = db.prepare("UPDATE purchase_requests SET requester_sig=? WHERE id=? AND (requester_sig IS NULL OR requester_sig='')")
+    const fillAp = db.prepare("UPDATE doc_approvals SET approver_sig=? WHERE id=? AND (approver_sig IS NULL OR approver_sig='')")
+    const sigByName = new Map()
+    const sigOfName = (name) => {
+      if (!sigByName.has(name)) { const u = db.prepare('SELECT id FROM users WHERE name=?').get(name); sigByName.set(name, u ? sigOfUser(u.id) : null) }
+      return sigByName.get(name)
+    }
+    let n = 0
+    for (const r of db.prepare("SELECT id, by FROM purchase_requests WHERE requester_sig IS NULL OR requester_sig=''").all()) { const s = sigOfName(r.by); if (s) n += fillPr.run(s, r.id).changes }
+    for (const r of db.prepare("SELECT id, approver FROM doc_approvals WHERE approver_sig IS NULL OR approver_sig=''").all()) { const s = sigOfName(r.approver); if (s) n += fillAp.run(s, r.id).changes }
+    if (n) console.log(`[signatures] เติมลายเซ็นย้อนหลัง ${n} รายการ`)
+    return n
+  } catch (e) { console.error('backfill signatures failed:', e.message); return 0 }
+}
 api.get('/me', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT signature, must_change_pin FROM users WHERE id = ?').get(req.user.id)
-  res.json({ ...req.user, signature: row?.signature || null, isManager: isManager(req.user), mustChangePin: !!row?.must_change_pin })
+  const row = db.prepare('SELECT must_change_pin FROM users WHERE id = ?').get(req.user.id)
+  res.json({ ...req.user, signature: sigOfUser(req.user.id), isManager: isManager(req.user), mustChangePin: !!row?.must_change_pin })
 })
 // ลืม PIN — ผู้ใช้ที่ล็อกอินไม่ได้ส่งคำขอรีเซ็ต (สาธารณะ) แอดมินยืนยันตัวตนแล้วรีเซ็ตให้
 // คืนข้อความกลาง ๆ เสมอ (ไม่บอกว่ามี username นี้จริงไหม เพื่อกันการเดาชื่อผู้ใช้)
@@ -496,7 +522,7 @@ function setDocStatus(docType, docId, status) {
 function doApprove(docType, docId, req) {
   const cfg = APPROVE_DOCS[docType]; if (!cfg) throw { code: 400, msg: 'ประเภทเอกสารไม่ถูกต้อง' }
   const doc = db.prepare(`SELECT * FROM ${cfg.table} WHERE id=?`).get(Number(docId)); if (!doc) throw { code: 404, msg: 'ไม่พบเอกสาร' }
-  const me = db.prepare('SELECT name, signature, role FROM users WHERE id=?').get(req.user.id)
+  const me = { ...db.prepare('SELECT name, role FROM users WHERE id=?').get(req.user.id), signature: sigOfUser(req.user.id) }
   const ctrl = controls()
   const st = approvalState(docType, docId)
   if (st.rejected) throw { code: 409, msg: 'เอกสารนี้ถูกปฏิเสธแล้ว' }
@@ -514,7 +540,7 @@ function doApprove(docType, docId, req) {
 function doReject(docType, docId, req) {
   const cfg = APPROVE_DOCS[docType]; if (!cfg) throw { code: 400, msg: 'ประเภทเอกสารไม่ถูกต้อง' }
   const doc = db.prepare(`SELECT * FROM ${cfg.table} WHERE id=?`).get(Number(docId)); if (!doc) throw { code: 404, msg: 'ไม่พบเอกสาร' }
-  const me = db.prepare('SELECT name, signature, role FROM users WHERE id=?').get(req.user.id)
+  const me = { ...db.prepare('SELECT name, role FROM users WHERE id=?').get(req.user.id), signature: sigOfUser(req.user.id) }
   const st = approvalState(docType, docId)
   if (st.rejected) throw { code: 409, msg: 'ถูกปฏิเสธแล้ว' }
   db.prepare('INSERT INTO doc_approvals (doc_type,doc_id,step,decision,approver,approver_sig,role,note,date,ts) VALUES (?,?,?,?,?,?,?,?,?,?)')
@@ -807,6 +833,7 @@ api.delete('/installments/:id', canWrite, (req, res) => {
 })
 // ซ่อมครั้งเดียว: งวดที่มียอดเก็บ/จ่ายจริง (paid > 0) แต่สถานะไม่ตรงยอด → ตั้งตามยอด (ยอดเงินคือความจริง)
 try {
+  backfillSignatures()
   if (getSetting('inst_status_sync_v1', '') !== '1') {
     let fixed = 0
     for (const i of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) {
@@ -1173,6 +1200,7 @@ api.put('/employees/:id/signature', requireSalary, (req, res) => {
   const sig = req.body?.signature
   if (typeof sig !== 'string' || !sig.startsWith('data:image/')) return res.status(400).json({ error: 'ไฟล์ลายเซ็นไม่ถูกต้อง' })
   db.prepare('UPDATE employees SET signature=? WHERE id=?').run(sig, req.params.id)
+  backfillSignatures()
   res.json({ ok: true })
 })
 // reset / set an employee's kiosk PIN
@@ -2276,7 +2304,7 @@ api.post('/purchase-requests', canWrite, (req, res) => {
     if (!item) return res.status(400).json({ error: 'กรุณากรอกรายการ' })
     total = Number(amount) || 0; summary = item; lineItems = null
   }
-  const me = db.prepare('SELECT name, signature FROM users WHERE id = ?').get(req.user.id)
+  const me = { ...db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id), signature: sigOfUser(req.user.id) }
   const seq = nextSeq('pr', () => Math.max(maxNoSuffix('purchase_requests'), db.prepare('SELECT COUNT(*) c FROM purchase_requests').get().c + 142))
   const no = `PR-${docYear()}-${String(seq).padStart(4, '0')}`
   const hName = house_code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(house_code)?.name || house_code) : (house || '')
@@ -2508,7 +2536,8 @@ api.put('/users/:id/signature', (req, res) => {
     return res.status(400).json({ error: 'ไฟล์ลายเซ็นไม่ถูกต้อง (ต้องเป็นรูปภาพ)' })
   }
   db.prepare('UPDATE users SET signature=? WHERE id=?').run(sig, id)
-  res.json({ ok: true })
+  const filled = backfillSignatures()
+  res.json({ ok: true, filled })
 })
 api.post('/users', adminOnly, (req, res) => {
   const { name, username, pin, role, position } = req.body || {}
