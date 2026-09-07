@@ -314,6 +314,7 @@ export interface ApiUser {
   signature?: string | null
   position?: string
   deny_mods?: string[]
+  line_uid?: string | null // ผูก LINE แล้ว (สั่งงาน/รับงานผ่านบอท)
 }
 export interface Dashboard {
   building: number
@@ -417,6 +418,7 @@ export interface SessionUser {
   position?: string
   isManager?: boolean
   mustChangePin?: boolean
+  lineLinked?: boolean
   deny_mods?: string[] // โมดูลที่แอดมินปิดสำหรับบัญชีนี้
 }
 

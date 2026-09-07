@@ -7,7 +7,7 @@ import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary } from './auth.js'
 import { hashPin, verifyPin } from './security.js'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
@@ -28,7 +28,7 @@ process.on('unhandledRejection', (err) => { crashLog('unhandledRejection', err);
 
 const app = express()
 app.use(cors())
-app.use(express.json({ limit: '30mb' })) // allow base64 signatures + file uploads
+app.use(express.json({ limit: '30mb', verify: (req, _res, buf) => { req.rawBody = buf } })) // allow base64 signatures + file uploads · rawBody ไว้ตรวจลายเซ็น webhook LINE
 
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
 function todayTH() {
@@ -258,7 +258,7 @@ function backfillSignatures() {
 }
 api.get('/me', requireAuth, (req, res) => {
   const row = db.prepare('SELECT must_change_pin FROM users WHERE id = ?').get(req.user.id)
-  res.json({ ...req.user, signature: sigOfUser(req.user.id), isManager: isManager(req.user), mustChangePin: !!row?.must_change_pin })
+  res.json({ ...req.user, signature: sigOfUser(req.user.id), isManager: isManager(req.user), mustChangePin: !!row?.must_change_pin, lineLinked: !!db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid })
 })
 // ลืม PIN — ผู้ใช้ที่ล็อกอินไม่ได้ส่งคำขอรีเซ็ต (สาธารณะ) แอดมินยืนยันตัวตนแล้วรีเซ็ตให้
 // คืนข้อความกลาง ๆ เสมอ (ไม่บอกว่ามี username นี้จริงไหม เพื่อกันการเดาชื่อผู้ใช้)
@@ -369,8 +369,9 @@ api.get('/settings/attendance', (_req, res) => res.json({
   cutoff: lateCutoff(),
 }))
 // ===== LINE webhook (สาธารณะ — LINE ยิงเข้ามา) =====
-// ใช้ "หา Group ID": เชิญบอทเข้ากลุ่ม → LINE ส่ง event มาที่นี่ → จำ ID ไว้ให้เลือกในหน้าผู้ใช้งาน + บอทตอบ ID กลับในกลุ่มด้วย
-// ต้องตั้ง Webhook URL ในหน้า LINE Developers เป็น https://<โดเมนสาธารณะ>/api/line/webhook (เปิดชั่วคราวด้วย tunnel.bat ได้)
+// ใช้ 3 อย่าง: (1) หา Group ID ตอนเชิญบอทเข้ากลุ่ม (2) ผูกบัญชี ERP กับ LINE ด้วยรหัส 6 หลัก
+// (3) "CEO สั่งงานผ่าน LINE": พิมพ์คำสั่งในแชทบอท → ระบบเดาผู้รับ/บ้าน/ด่วน → ตอบ 'ตกลง' → ออกใบสั่งงาน + แจ้งคนรับทาง LINE → คนรับตอบ 'รับ' = รับทราบ
+// ต้องตั้ง Webhook URL ในหน้า LINE Developers เป็น https://<โดเมนสาธารณะ>/api/line/webhook (เปิดด้วย tunnel.bat หรือ Cloudflare Tunnel ถาวร)
 function lineSeen() { try { return JSON.parse(getSetting('line_seen', '[]')) || [] } catch { return [] } }
 async function lineSourceName(type, id, token) {
   if (!token) return ''
@@ -383,8 +384,174 @@ async function lineSourceName(type, id, token) {
     return String(j.groupName || j.displayName || '')
   } catch { return '' }
 }
+// ส่งข้อความ LINE (push ถึง user/group) — ไม่มี token = ไม่ส่ง ไม่พัง
+async function linePush(to, text) {
+  const token = getSetting('line_token', '')
+  if (!token || !to) return false
+  try {
+    const r = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ to, messages: [{ type: 'text', text: String(text).slice(0, 4900) }] }), signal: AbortSignal.timeout(10000),
+    })
+    return r.ok
+  } catch { return false }
+}
+async function lineReply(replyToken, text) {
+  const token = getSetting('line_token', '')
+  if (!token || !replyToken) return false
+  try {
+    const r = await fetch('https://api.line.me/v2/bot/message/reply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ replyToken, messages: [{ type: 'text', text: String(text).slice(0, 4900) }] }), signal: AbortSignal.timeout(10000),
+    })
+    return r.ok
+  } catch { return false }
+}
+// ---- ผูกบัญชี: รหัส 6 หลัก อายุ 10 นาที (ขอจากหน้าผู้ใช้งาน แล้วส่งให้บอท) ----
+function lineLinkCodes() { try { return JSON.parse(getSetting('line_link_codes', '{}')) || {} } catch { return {} } }
+function issueLineLinkCode(userId) {
+  const codes = lineLinkCodes()
+  const now = Date.now()
+  for (const [c, v] of Object.entries(codes)) if (!v || v.exp < now || v.user_id === userId) delete codes[c]
+  let code
+  do { code = String(100000 + Math.floor(Math.random() * 900000)) } while (codes[code])
+  codes[code] = { user_id: userId, exp: now + 10 * 60 * 1000 }
+  setSetting('line_link_codes', JSON.stringify(codes))
+  return code
+}
+function consumeLineLinkCode(code, uid) {
+  const codes = lineLinkCodes()
+  const v = codes[code]
+  if (!v || v.exp < Date.now()) return null
+  delete codes[code]; setSetting('line_link_codes', JSON.stringify(codes))
+  const u = db.prepare('SELECT id, name FROM users WHERE id=?').get(v.user_id)
+  if (!u) return null
+  db.prepare('UPDATE users SET line_uid=NULL WHERE line_uid=? AND id<>?').run(uid, u.id) // LINE เดียวผูกได้บัญชีเดียว
+  db.prepare('UPDATE users SET line_uid=? WHERE id=?').run(uid, u.id)
+  return u
+}
+const userByLine = (uid) => db.prepare("SELECT * FROM users WHERE line_uid=? AND status<>'ปิดใช้งาน'").get(uid) || db.prepare('SELECT * FROM users WHERE line_uid=?').get(uid)
+const lineUidOfName = (name) => db.prepare('SELECT line_uid FROM users WHERE name=? AND line_uid IS NOT NULL').get(name)?.line_uid || null
+// พนักงานที่ผูกกับบัญชีผู้ใช้ (employees.user_id หรือชื่อเดียวกัน) — ใช้หาว่างานถูกสั่งถึงคนนี้ไหม
+const empOfUser = (u) => db.prepare('SELECT code, name FROM employees WHERE user_id=? OR name=? ORDER BY CASE WHEN user_id=? THEN 0 ELSE 1 END LIMIT 1').get(u.id, u.name, u.id)
+// CEO/ผู้บริหารที่สั่งงานผ่าน LINE ได้ = แอดมิน หรือผู้จัดการ
+const lineCanCommand = (u) => u.role === 'admin' || isManager(u)
+// ---- ร่างคำสั่งงานที่รอ CEO ยืนยัน (ต่อคน) ----
+function lineDrafts() { try { return JSON.parse(getSetting('line_drafts', '{}')) || {} } catch { return {} } }
+function setLineDraft(uid, draft) { const d = lineDrafts(); if (draft) d[uid] = { ...draft, ts: Date.now() }; else delete d[uid]; setSetting('line_drafts', JSON.stringify(d)) }
+function getLineDraft(uid) { const d = lineDrafts()[uid]; return d && Date.now() - d.ts < 30 * 60 * 1000 ? d : null }
+const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+// เดาผู้รับ/บ้าน/ด่วน/กำหนดส่ง จากข้อความ (กติกาเดียวกับหน้า "สั่งงานด้วยเสียง")
+function parseLineCommand(t) {
+  const emps = db.prepare("SELECT code, name FROM employees WHERE status IS NULL OR status NOT IN ('ลาออก')").all()
+  const houses = db.prepare('SELECT code, name FROM houses').all()
+  const found = { scope: t, executor: '', executor_code: '', house_code: '', house_name: '', urgent: false, due_date: '' }
+  // ผู้รับ: ชื่อเต็ม หรือคำแรกของชื่อ (ยาวสุดก่อน กันชื่อซ้อน)
+  const emp = emps.map((e) => ({ e, key: (e.name || '').trim() })).filter((x) => x.key && t.includes(x.key)).sort((a, b) => b.key.length - a.key.length)[0]?.e
+    || emps.map((e) => ({ e, key: (e.name || '').trim().split(/\s+/)[0] })).filter((x) => x.key && x.key.length >= 2 && t.includes(x.key)).sort((a, b) => b.key.length - a.key.length)[0]?.e
+  if (emp) { found.executor = emp.name; found.executor_code = emp.code }
+  const h = houses.find((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code)))
+  if (h) { found.house_code = h.code; found.house_name = h.name || h.code }
+  if (/ด่วน|เร่งด่วน|urgent/i.test(t)) found.urgent = true
+  const now = new Date()
+  if (/มะรืน/.test(t)) { now.setDate(now.getDate() + 2); found.due_date = isoOf(now) }
+  else if (/พรุ่งนี้/.test(t)) { now.setDate(now.getDate() + 1); found.due_date = isoOf(now) }
+  else if (/วันนี้/.test(t)) found.due_date = isoOf(now)
+  return found
+}
+function draftText(d) {
+  return `📝 ร่างใบสั่งงาน\nงาน: ${d.scope}\nผู้รับ: ${d.executor || '❓ ยังไม่รู้ว่าส่งให้ใคร — พิมพ์ชื่อคนรับได้เลย'}\nบ้าน: ${d.house_name || '-'}\nกำหนด: ${d.due_date || '-'}${d.urgent ? '\n🔴 ด่วน (นับถอยหลัง)' : ''}\n\n` +
+    (d.executor ? "ตอบ 'ตกลง' เพื่อออกใบสั่งงาน · 'ยกเลิก' เพื่อทิ้งร่าง · หรือพิมพ์ชื่อคนอื่นเพื่อเปลี่ยนผู้รับ" : "พิมพ์ชื่อผู้รับ (เช่น สมชาย) แล้วค่อยตอบ 'ตกลง' · 'ยกเลิก' เพื่อทิ้งร่าง")
+}
+function myOpenWorkOrders(u) {
+  const emp = empOfUser(u)
+  const name = emp?.name || u.name
+  return db.prepare("SELECT * FROM work_orders WHERE (executor=? OR esc_name=?) AND status IN ('สั่งงาน','รับทราบ','กำลังทำ','เกินเวลา') ORDER BY urgent DESC, id DESC LIMIT 10").all(name, name)
+}
+async function handleLineUserMessage(uid, text, replyToken) {
+  const t = String(text || '').trim()
+  const u = userByLine(uid)
+  // ยังไม่ผูก → รับเฉพาะรหัส 6 หลัก
+  if (!u) {
+    if (/^\d{6}$/.test(t)) {
+      const linked = consumeLineLinkCode(t, uid)
+      return lineReply(replyToken, linked ? `✅ ผูก LINE กับบัญชี "${linked.name}" แล้ว\n\nพิมพ์ 'ช่วย' เพื่อดูคำสั่งที่ใช้ได้` : '❌ รหัสไม่ถูกหรือหมดอายุ (10 นาที) — ขอรหัสใหม่ที่ ERP → ผู้ใช้งาน → ผูก LINE')
+    }
+    return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้\n1) เข้า ERP → เมนู ผู้ใช้งาน → กด "ผูก LINE"\n2) ส่งรหัส 6 หลักที่ได้มาที่นี่')
+  }
+  const low = t.toLowerCase()
+  if (/^(ช่วย|help|\?|คำสั่ง)$/i.test(t)) {
+    return lineReply(replyToken, (lineCanCommand(u)
+      ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
+      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`))
+  }
+  if (/^(สรุป|summary)$/i.test(t)) {
+    if (!lineCanCommand(u)) return lineReply(replyToken, 'สรุปเรื่องค้างดูได้เฉพาะผู้บริหาร')
+    return lineReply(replyToken, buildLineDigest())
+  }
+  if (/^(งานด่วน|ด่วน)$/i.test(t) && lineCanCommand(u)) {
+    const rows = db.prepare("SELECT * FROM work_orders WHERE urgent=1 AND ack=0 AND status NOT IN ('ยกเลิก') ORDER BY id DESC LIMIT 10").all()
+    return lineReply(replyToken, rows.length ? '🔴 งานด่วนที่ยังไม่รับทราบ:\n' + rows.map((w) => `• ${w.no} ${w.project || w.scope} → ${w.esc_name || w.executor || '-'} (${w.status})`).join('\n') : '✅ ไม่มีงานด่วนค้างรับทราบ')
+  }
+  if (/^(งาน|งานของฉัน|my)$/i.test(t)) {
+    const rows = myOpenWorkOrders(u)
+    return lineReply(replyToken, rows.length ? `📋 งานของ ${u.name}:\n` + rows.map((w) => `• ${w.no} ${w.project || w.scope}${w.due_date ? ' · ครบ ' + w.due_date : ''} · ${w.ack ? 'รับทราบแล้ว' : '⏳ ยังไม่รับ'}${w.urgent ? ' 🔴' : ''}`).join('\n') + "\n\nตอบ 'รับ' เพื่อรับทราบงานล่าสุด หรือ 'รับ WO-…' ระบุใบ" : '✅ ไม่มีงานค้างสำหรับคุณ')
+  }
+  // รับทราบงาน: 'รับ' / 'รับทราบ' / 'รับ WO-69-012'
+  const ackM = t.match(/^(?:รับ|รับทราบ|ok รับ|ack)\s*(WO-[\w-]+)?$/i)
+  if (ackM) {
+    let w = ackM[1] ? db.prepare('SELECT * FROM work_orders WHERE no=?').get(ackM[1]) : myOpenWorkOrders(u).find((x) => !x.ack)
+    if (!w) return lineReply(replyToken, 'ไม่พบงานที่รอรับทราบสำหรับคุณ')
+    if (w.ack) return lineReply(replyToken, `${w.no} รับทราบไปแล้ว`)
+    const emp = empOfUser(u); const name = emp?.name || u.name
+    if (!(w.executor === name || w.esc_name === name || lineCanCommand(u))) return lineReply(replyToken, `${w.no} ไม่ได้สั่งถึงคุณ`)
+    ackWorkOrder(w, name)
+    await lineReply(replyToken, `✅ รับทราบ ${w.no} แล้ว\n${w.project || w.scope}`)
+    const ceoUid = lineUidOfName(w.by)
+    if (ceoUid && ceoUid !== uid) linePush(ceoUid, `✓ ${name} รับทราบงาน ${w.no} แล้ว (${w.project || w.scope})`)
+    return true
+  }
+  if (!lineCanCommand(u)) return lineReply(replyToken, `บัญชี "${u.name}" ใช้ได้เฉพาะ: งาน / รับ — การสั่งงานผ่าน LINE ทำได้เฉพาะผู้บริหาร`)
+  // ---- โหมดสั่งงาน (ผู้บริหาร) ----
+  const draft = getLineDraft(uid)
+  if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineDraft(uid, null); return lineReply(replyToken, 'ทิ้งร่างแล้ว') }
+  if (/^(ตกลง|ok|โอเค|ยืนยัน|ใช่|confirm|ส่ง)$/i.test(low)) {
+    if (!draft) return lineReply(replyToken, 'ยังไม่มีร่างคำสั่งงาน — พิมพ์คำสั่งงานก่อน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน"')
+    if (!draft.executor) return lineReply(replyToken, 'ยังไม่รู้ว่าส่งให้ใคร — พิมพ์ชื่อผู้รับก่อน')
+    const wo = createWorkOrder({ scope: draft.scope, project: draft.scope.slice(0, 40), executor: draft.executor, executor_code: draft.executor_code, house_code: draft.house_code, due_date: draft.due_date, urgent: draft.urgent, source: 'line' }, u.name)
+    setLineDraft(uid, null)
+    audit({ user: u }, draft.urgent ? 'สั่งงานด่วน (LINE)' : 'สั่งงานผ่าน LINE', `${wo.no} → ${draft.executor}`)
+    const toUid = lineUidOfName(draft.executor) || (() => { const e = db.prepare('SELECT user_id FROM employees WHERE code=?').get(draft.executor_code); return e?.user_id ? db.prepare('SELECT line_uid FROM users WHERE id=?').get(e.user_id)?.line_uid : null })()
+    let sent = false
+    if (toUid) sent = await linePush(toUid, `📌 งานใหม่จาก ${u.name}${draft.urgent ? ' 🔴 ด่วน' : ''}\n${wo.no}: ${draft.scope}${draft.house_name ? '\nบ้าน: ' + draft.house_name : ''}${draft.due_date ? '\nกำหนด: ' + draft.due_date : ''}\n\nตอบ 'รับ' เพื่อรับทราบ`)
+    return lineReply(replyToken, `✅ ออกใบสั่งงาน ${wo.no} → ${draft.executor}${draft.urgent ? ' (ด่วน นับถอยหลัง)' : ''}\n` + (sent ? '📨 แจ้งผู้รับทาง LINE แล้ว' : `⚠ ${draft.executor} ยังไม่ได้ผูก LINE — เห็นได้ในระบบ ERP (แจ้งเตือนในแอป)`))
+  }
+  // มีร่างอยู่ + พิมพ์ชื่อคน → เปลี่ยนผู้รับ
+  if (draft) {
+    const p = parseLineCommand(t)
+    if (p.executor && t.length <= 40) {
+      const nd = { ...draft, executor: p.executor, executor_code: p.executor_code }
+      setLineDraft(uid, nd)
+      return lineReply(replyToken, draftText(nd))
+    }
+  }
+  // ข้อความใหม่ = คำสั่งงานใหม่
+  if (t.length < 4) return lineReply(replyToken, "พิมพ์คำสั่งงานให้ชัดขึ้นหน่อยครับ เช่น \"ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้\" (พิมพ์ 'ช่วย' ดูคำสั่ง)")
+  const nd = parseLineCommand(t)
+  setLineDraft(uid, nd)
+  return lineReply(replyToken, draftText(nd))
+}
+function lineSignatureOk(req) {
+  const secret = getSetting('line_secret', '')
+  if (!secret) return true // ยังไม่ตั้ง secret = ไม่ตรวจ (แนะนำให้ตั้ง)
+  const sig = String(req.headers['x-line-signature'] || '')
+  if (!sig || !req.rawBody) return false
+  const mac = createHmac('sha256', secret).update(req.rawBody).digest('base64')
+  try { return mac.length === sig.length && timingSafeEqual(Buffer.from(mac), Buffer.from(sig)) } catch { return false }
+}
 api.get('/line/webhook', (_req, res) => res.json({ ok: true, hint: 'ตั้ง URL นี้ในหน้า LINE Developers → Messaging API → Webhook URL' }))
 api.post('/line/webhook', async (req, res) => {
+  if (!lineSignatureOk(req)) return res.status(403).json({ error: 'ลายเซ็นไม่ถูกต้อง' })
   res.json({ ok: true }) // ตอบ LINE ทันที (ต้องตอบใน 1 วิ) แล้วค่อยประมวลผล
   try {
     const events = Array.isArray(req.body?.events) ? req.body.events : []
@@ -394,17 +561,16 @@ api.post('/line/webhook', async (req, res) => {
       const src = ev.source || {}
       const type = src.type, id = src.groupId || src.roomId || src.userId
       if (!type || !id) continue
+      const text = ev.type === 'message' && ev.message?.type === 'text' ? String(ev.message.text || '').trim() : ''
+      // แชทส่วนตัวกับบอท = ผูกบัญชี / สั่งงาน / รับงาน
+      if (type === 'user' && text) { await handleLineUserMessage(id, text, ev.replyToken); continue }
       const name = await lineSourceName(type, id, token)
       seen = seen.filter((s) => s.id !== id)
       seen.unshift({ type, id, name, at: nowTS(), event: ev.type })
-      // บอทเพิ่งถูกเชิญเข้ากลุ่ม (หรือมีคนพิมพ์ในกลุ่ม) → ตอบ ID กลับในกลุ่ม ให้ก็อปจากมือถือได้เลย
-      if (token && ev.replyToken && (ev.type === 'join' || (ev.type === 'message' && /^(id|ไอดี|group ?id)$/i.test(String(ev.message?.text || '').trim())))) {
-        const label = type === 'group' ? 'Group ID' : type === 'room' ? 'Room ID' : 'User ID'
-        fetch('https://api.line.me/v2/bot/message/reply', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-          body: JSON.stringify({ replyToken: ev.replyToken, messages: [{ type: 'text', text: `สวัสดีครับ บอท PPSD ERP พร้อมส่งสรุปเช้าแล้ว\n${label}:\n${id}\n\nนำ ID นี้ไปวางที่ ผู้ใช้งาน → แจ้งเตือน LINE (หรือกดเลือกจากรายการ "กลุ่มที่บอทเห็น")` }] }),
-          signal: AbortSignal.timeout(8000),
-        }).catch(() => {})
+      // บอทเพิ่งถูกเชิญเข้ากลุ่ม (หรือมีคนพิมพ์ id ในกลุ่ม) → ตอบ ID กลับในกลุ่ม ให้ก็อปจากมือถือได้เลย
+      if (token && ev.replyToken && (ev.type === 'join' || /^(id|ไอดี|group ?id)$/i.test(text))) {
+        const label = type === 'group' ? 'Group ID' : 'Room ID'
+        lineReply(ev.replyToken, `สวัสดีครับ บอท PPSD ERP พร้อมส่งสรุปเช้าแล้ว\n${label}:\n${id}\n\nนำ ID นี้ไปวางที่ ผู้ใช้งาน → แจ้งเตือน LINE (หรือกดเลือกจากรายการ "กลุ่มที่บอทเห็น")`)
       }
     }
     setSetting('line_seen', JSON.stringify(seen.slice(0, 20)))
@@ -2609,7 +2775,7 @@ api.get('/payables', financeOnly, (_req, res) => {
 
 // ---------- users (admin only) ----------
 api.get('/users', adminOnly, (_req, res) =>
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods FROM users ORDER BY id').all().map((u) => ({ ...u, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })() })))
+  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods,line_uid FROM users ORDER BY id').all().map((u) => ({ ...u, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })() })))
 )
 // upload/replace a signature image (admin can set anyone's; users can set their own)
 api.put('/users/:id/signature', (req, res) => {
@@ -3685,9 +3851,8 @@ function woKpiScore(wo, submitIso) {
   return { pts, days }
 }
 api.get('/work-orders', (_req, res) => res.json(db.prepare('SELECT * FROM work_orders ORDER BY id DESC').all().map(woRow)))
-api.post('/work-orders', canWrite, (req, res) => {
-  const b = req.body || {}
-  if (!b.project && !b.scope) return res.status(400).json({ error: 'กรุณากรอกชื่องาน/ขอบเขตงาน' })
+// สร้างใบสั่งงาน (ใช้ร่วมกัน: หน้าเว็บ / สั่งงานด้วยเสียง / บอท LINE)
+function createWorkOrder(b, byName) {
   const seq = db.prepare('SELECT COUNT(*) c FROM work_orders').get().c + 1
   const no = `WO-${docYear()}-${String(seq).padStart(3, '0')}`
   const urgent = b.urgent ? 1 : 0
@@ -3698,11 +3863,27 @@ api.post('/work-orders', canWrite, (req, res) => {
      urgent,created_ts,deadline_min,esc_level,esc_code,esc_name,esc_ts,esc_log,source,seen)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?, ?,?,?,0,?,?,?,?,?,0)`)
     .run(no, priority, todayTH(), b.due_date || '', b.due_time || '', b.line_group || '',
-      b.reviewer || req.user.name, b.executor || '', b.executor_code || '', b.project || '', b.house_code || '',
-      b.scope || '', JSON.stringify(b.dod || {}), b.budget || '', 'สั่งงาน', req.user.name, todayTH(),
+      b.reviewer || byName, b.executor || '', b.executor_code || '', b.project || '', b.house_code || '',
+      b.scope || '', JSON.stringify(b.dod || {}), b.budget || '', 'สั่งงาน', byName, todayTH(),
       urgent, nowTS(), deadlineMin, b.executor_code || '', b.executor || '', nowTS(), '[]', b.source || '')
-  audit(req, urgent ? 'สั่งงานด่วน' : 'สร้างใบสั่งงาน', `${no} → ${b.executor || '-'}`)
-  res.status(201).json(woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(info.lastInsertRowid)))
+  const wo = db.prepare('SELECT * FROM work_orders WHERE id=?').get(info.lastInsertRowid)
+  // แจ้งผู้รับทาง LINE ถ้าผูกไว้ (สั่งจากหน้าเว็บ/เสียงก็แจ้ง — บอท LINE แจ้งเองอยู่แล้ว)
+  if (b.source !== 'line' && wo.executor) {
+    const toUid = lineUidOfName(wo.executor)
+    if (toUid) linePush(toUid, `📌 งานใหม่จาก ${byName}${urgent ? ' 🔴 ด่วน' : ''}\n${no}: ${wo.project || wo.scope}${wo.due_date ? '\nกำหนด: ' + wo.due_date : ''}\n\nตอบ 'รับ' เพื่อรับทราบ`)
+  }
+  return wo
+}
+function ackWorkOrder(d, byName) {
+  db.prepare("UPDATE work_orders SET ack=1, ack_by=?, ack_date=?, ack_ts=?, seen=1, seen_ts=COALESCE(NULLIF(seen_ts,''),?), status=CASE WHEN status='สั่งงาน' THEN 'รับทราบ' ELSE status END WHERE id=?")
+    .run(byName, todayTH(), nowTS(), nowTS(), d.id)
+}
+api.post('/work-orders', canWrite, (req, res) => {
+  const b = req.body || {}
+  if (!b.project && !b.scope) return res.status(400).json({ error: 'กรุณากรอกชื่องาน/ขอบเขตงาน' })
+  const wo = createWorkOrder(b, req.user.name)
+  audit(req, wo.urgent ? 'สั่งงานด่วน' : 'สร้างใบสั่งงาน', `${wo.no} → ${b.executor || '-'}`)
+  res.status(201).json(woRow(wo))
 })
 api.put('/work-orders/:id', canWrite, (req, res) => {
   const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
@@ -3726,9 +3907,9 @@ api.post('/work-orders/:id/ack', (req, res) => {
   // รับทราบได้: ผู้รับหลัก, คนที่ถูกไล่ระดับมาตอนนี้, หรือผู้จัดการ
   const allowed = !d.executor || d.executor === req.user.name || d.esc_name === req.user.name || isManager(req.user)
   if (!allowed) return res.status(403).json({ error: 'เฉพาะผู้รับผิดชอบเท่านั้นที่กดรับทราบได้' })
-  db.prepare("UPDATE work_orders SET ack=1, ack_by=?, ack_date=?, ack_ts=?, seen=1, seen_ts=COALESCE(NULLIF(seen_ts,''),?), status=CASE WHEN status='สั่งงาน' THEN 'รับทราบ' ELSE status END WHERE id=?")
-    .run(req.user.name, todayTH(), nowTS(), nowTS(), d.id)
+  ackWorkOrder(d, req.user.name)
   audit(req, 'รับทราบใบสั่งงาน', d.no)
+  const ceoUid = lineUidOfName(d.by); if (ceoUid) linePush(ceoUid, `✓ ${req.user.name} รับทราบงาน ${d.no} แล้ว (${d.project || d.scope})`)
   res.json(woRow(db.prepare('SELECT * FROM work_orders WHERE id=?').get(d.id)))
 })
 // ผู้รับงาน "ส่งงาน" พร้อมแนบไฟล์/ลิงก์เป็นหลักฐาน → รอผู้สั่งกดรับ
@@ -3807,6 +3988,8 @@ function escalateUrgent() {
           log.push({ at: nowTS(), to: last ? last.name : (w.esc_name || w.executor), reason: 'เกินกำหนด' })
           db.prepare("UPDATE work_orders SET status='เกินเวลา', esc_code=?, esc_name=?, esc_ts=?, esc_log=? WHERE id=?")
             .run(last ? last.code : w.esc_code, last ? last.name : w.esc_name, nowTS(), JSON.stringify(log), w.id)
+          const ceoUid = lineUidOfName(w.by); if (ceoUid) linePush(ceoUid, `⏰ งานด่วน ${w.no} เกินกำหนด ${deadline} นาที ยังไม่มีใครรับทราบ (${w.project || w.scope}) → โยนให้ ${last ? last.name : (w.esc_name || w.executor)}`)
+          const lastUid = last ? lineUidOfName(last.name) : null; if (lastUid) linePush(lastUid, `⏰ งานด่วนตกมาถึงคุณ ${w.no}: ${w.project || w.scope}\nตอบ 'รับ' เพื่อรับทราบ`)
         }
         continue
       }
@@ -3821,6 +4004,7 @@ function escalateUrgent() {
           log.push({ at: nowTS(), to: next.name, reason: 'ยังไม่รับทราบ' })
           db.prepare('UPDATE work_orders SET esc_level=?, esc_code=?, esc_name=?, esc_ts=?, esc_log=? WHERE id=?')
             .run(level + 1, next.code, next.name, nowTS(), JSON.stringify(log), w.id)
+          const nextUid = lineUidOfName(next.name); if (nextUid) linePush(nextUid, `🔴 งานด่วน ${w.no} ยังไม่มีคนรับ → ส่งต่อถึงคุณ: ${w.project || w.scope}\nตอบ 'รับ' เพื่อรับทราบ`)
         }
       }
     }
@@ -4589,6 +4773,7 @@ async function sendLine(text) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
     body: JSON.stringify({ to, messages: [{ type: 'text', text: String(text).slice(0, 4900) }] }),
+    signal: AbortSignal.timeout(15000),
   })
   if (!res.ok) throw new Error(`LINE ตอบ ${res.status}: ${(await res.text()).slice(0, 200)}`)
 }
@@ -4610,13 +4795,27 @@ api.get('/line-settings', adminOnly, (_req, res) => res.json({
   last_sent: getSetting('line_last_sent', ''),
   status: (() => { try { return JSON.parse(getSetting('line_status', '') || 'null') } catch { return null } })(),
   seen: lineSeen(), // กลุ่ม/คนที่บอทเคยเห็นผ่าน webhook → กดเลือกเป็นผู้รับได้
+  secret_set: !!getSetting('line_secret', ''), // Channel secret ไว้ตรวจลายเซ็น webhook (กันคนอื่นยิงคำสั่งปลอม)
+  linked: db.prepare('SELECT COUNT(*) c FROM users WHERE line_uid IS NOT NULL').get().c,
 }))
+// ผูก LINE ของฉัน: ขอรหัส 6 หลัก → ส่งให้บอทในแชทส่วนตัว → บอทผูกให้ (อายุ 10 นาที)
+api.post('/line-link/code', requireAuth, (req, res) => {
+  const code = issueLineLinkCode(req.user.id)
+  res.json({ code, expires_min: 10, linked: !!db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid })
+})
+api.delete('/line-link', requireAuth, (req, res) => {
+  const want = Number(req.query?.user_id || req.body?.user_id) || 0
+  const id = want && req.user.role === 'admin' ? want : req.user.id
+  db.prepare('UPDATE users SET line_uid=NULL WHERE id=?').run(id)
+  res.json({ ok: true })
+})
 // ล้างรายการกลุ่มที่บอทเห็น (กรณีเชิญผิดกลุ่ม)
 api.delete('/line-settings/seen', adminOnly, (_req, res) => { setSetting('line_seen', '[]'); res.json({ ok: true }) })
 api.put('/line-settings', adminOnly, (req, res) => {
   const b = req.body || {}
   if (b.token !== undefined) setSetting('line_token', String(b.token || '').trim())
   if (b.to !== undefined) setSetting('line_to', String(b.to || '').trim())
+  if (b.secret !== undefined) setSetting('line_secret', String(b.secret || '').trim())
   if (b.hour !== undefined) { const hv = Number(b.hour); setSetting('line_hour', String(Number.isFinite(hv) ? Math.max(0, Math.min(23, hv)) : 8)) }
   audit(req, 'ตั้งค่าแจ้งเตือน LINE', getSetting('line_to', '') || '(ปิด)')
   res.json({ ok: true })
