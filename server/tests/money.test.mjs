@@ -648,3 +648,31 @@ test('ตั้งค่า AI: รุ่นเก่า claude-3 ถูกเ�
     assert.match(t.data.error, /ผู้ใช้งาน → ตั้งค่า AI/)
   }
 })
+
+test('LINE webhook: จำ Group ID ที่บอทเห็นไว้ให้เลือก (สาธารณะ ไม่ต้องล็อกอิน)', async () => {
+  const adminToken = token
+  token = null
+  const ok = await GET('/line/webhook')
+  assert.equal(ok.status, 200)
+  const ev = await POST('/line/webhook', { events: [
+    { type: 'join', replyToken: 'x', source: { type: 'group', groupId: 'Cabc123' }, timestamp: 1 },
+    { type: 'message', replyToken: 'y', source: { type: 'user', userId: 'Uxyz789' }, message: { type: 'text', text: 'สวัสดี' } },
+  ] })
+  assert.equal(ev.status, 200)
+  await new Promise((r) => setTimeout(r, 300)) // webhook ประมวลผลหลังตอบ
+  token = adminToken
+  const cfg = (await GET('/line-settings')).data
+  assert.ok(cfg.seen.some((s) => s.type === 'group' && s.id === 'Cabc123'), 'ต้องจำ Group ID ไว้')
+  assert.ok(cfg.seen.some((s) => s.type === 'user' && s.id === 'Uxyz789'))
+  assert.equal(cfg.seen[0].id, 'Uxyz789', 'ล่าสุดอยู่บนสุด')
+  // เห็นซ้ำ → ไม่เพิ่มรายการซ้ำ
+  token = null
+  await POST('/line/webhook', { events: [{ type: 'message', source: { type: 'group', groupId: 'Cabc123' }, message: { type: 'text', text: 'id' } }] })
+  await new Promise((r) => setTimeout(r, 300))
+  token = adminToken
+  const again = (await GET('/line-settings')).data
+  assert.equal(again.seen.filter((s) => s.id === 'Cabc123').length, 1)
+  assert.equal(again.seen[0].id, 'Cabc123')
+  await DEL('/line-settings/seen')
+  assert.equal((await GET('/line-settings')).data.seen.length, 0)
+})
