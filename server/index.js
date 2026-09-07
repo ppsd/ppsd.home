@@ -558,6 +558,22 @@ function doReject(docType, docId, req) {
   return approvalState(docType, docId)
 }
 const attachApproval = (docType) => (r) => r ? { ...r, approval: approvalState(docType, r.id) } : r
+// กติกาจำนวนผู้อนุมัติเปลี่ยน (เช่น 3 → 1) → เอกสารที่ "รออนุมัติ" แต่ตอนนี้นับว่าครบแล้ว ต้องเปลี่ยนสถานะเป็น "อนุมัติ" ให้ตรง
+// (เรียกตอนบูต และหลังแก้กติกาในหน้าตรวจสอบ) — ไม่แตะเอกสารที่ถูกปฏิเสธ
+function syncApprovalStatuses() {
+  let n = 0
+  for (const [docType, cfg] of Object.entries(APPROVE_DOCS)) {
+    if (cfg.noStatus) continue
+    let rows = []
+    try { rows = db.prepare(`SELECT id, status FROM ${cfg.table} WHERE status='รออนุมัติ'`).all() } catch { continue }
+    for (const r of rows) {
+      const st = approvalState(docType, r.id)
+      if (st.done) { setDocStatus(docType, r.id, 'อนุมัติ'); n++ }
+    }
+  }
+  if (n) console.log(`[approvals] ซิงก์สถานะเอกสารที่อนุมัติครบตามกติกาใหม่ ${n} ใบ`)
+  return n
+}
 // กันโกงแบบ "บล็อกจริง" ตอนออก PO — คืนข้อความถ้าถูกบล็อก, หรือ null ถ้าผ่าน
 function poBlockReason(b, ctrl) {
   const amount = Number(b.amount) || 0
@@ -834,6 +850,7 @@ api.delete('/installments/:id', canWrite, (req, res) => {
 // ซ่อมครั้งเดียว: งวดที่มียอดเก็บ/จ่ายจริง (paid > 0) แต่สถานะไม่ตรงยอด → ตั้งตามยอด (ยอดเงินคือความจริง)
 try {
   backfillSignatures()
+  syncApprovalStatuses()
   if (getSetting('inst_status_sync_v1', '') !== '1') {
     let fixed = 0
     for (const i of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) {
@@ -2901,7 +2918,8 @@ api.put('/controls', adminOnly, (req, res) => {
   }
   setSetting('controls', JSON.stringify(next))
   audit(req, 'แก้กติกาควบคุมภายใน', JSON.stringify(next))
-  res.json(next)
+  const synced = syncApprovalStatuses() // จำนวนผู้อนุมัติลดลง → ใบที่ครบแล้วเปลี่ยนเป็น "อนุมัติ" ทันที
+  res.json({ ...next, synced })
 })
 api.get('/audit-log', requireManager, (_req, res) => res.json(db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 300').all()))
 

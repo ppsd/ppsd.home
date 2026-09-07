@@ -9,8 +9,9 @@ const f2 = (n: number) => (n || 0).toLocaleString('en-US', { minimumFractionDigi
 const chk = (on: boolean) => (on ? '☑' : '☐')
 
 export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () => void }) {
-  const approved = pr.status === 'อนุมัติ'
-  const rejected = pr.status === 'ปฏิเสธ'
+  // ดูจากผลอนุมัติจริง (จำนวนคนที่กดครบตามกติกา) ก่อน — สถานะในใบอาจค้างถ้ากติกาจำนวนผู้อนุมัติเปลี่ยนหลังกดไปแล้ว
+  const approved = !!pr.approval?.done || pr.status === 'อนุมัติ'
+  const rejected = !!pr.approval?.rejected || pr.status === 'ปฏิเสธ'
   const items = pr.items && pr.items.length ? pr.items : [{ desc: pr.item, qty: 0, unit: '', price: pr.amount }]
   const catLabel = ({ house: 'ตัวบ้าน', carport: 'โรงจอดรถ', road: 'ถนน/รั้ว' } as Record<string, string>)[pr.category || ''] || pr.category || ''
   return (
@@ -108,7 +109,7 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
           )}
           {!approved && !rejected && (
             <div className="no-print" style={{ marginTop: 12, fontSize: 12, color: '#B7791F', background: '#F6ECD6', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>
-              ใบขอซื้อนี้ยัง “{pr.status}” — ลายเซ็นผู้อนุมัติจะปรากฏเมื่อกดอนุมัติ
+              ใบขอซื้อนี้ยัง “รออนุมัติ” ({pr.approval?.count ?? 0}/{pr.approval?.required ?? '-'}) — ลายเซ็นผู้อนุมัติจะปรากฏเมื่อกดอนุมัติครบ
             </div>
           )}
         </div>
