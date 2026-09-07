@@ -469,3 +469,60 @@ test('โฟร์แมน (site): คีย์ใบขอซื้อได�
   assert.equal((await POST('/purchase-orders', { vendor: 'x', item: 'y', amount: 1 })).status, 403, 'ออก PO ต้องไม่ได้')
   token = adminToken
 })
+
+test('ราคากลางค่าแรง: มีตารางตั้งต้นครบ · จ้างช่างเลือกหมวดแล้วระบบเทียบราคาถูกกว่า/ตาม/สูงกว่า', async () => {
+  const rates = (await GET('/labor-rates')).data
+  assert.ok(Array.isArray(rates) && rates.length >= 28, `ต้องมีราคากลางตั้งต้นจากใบเทียบราคา (ได้ ${rates?.length})`)
+  const brick = rates.find((r) => r.name === 'งานก่อผนังอิฐแดง')
+  assert.ok(brick, 'ต้องมีงานก่อผนังอิฐแดง')
+  assert.equal(brick.price_min, 120); assert.equal(brick.price_max, 150); assert.equal(brick.unit, 'ตร.ม.')
+  const roof = rates.find((r) => r.grp === 'เหมายกหลัง' && r.price_max === 13500)
+  assert.ok(roof && /VAT/.test(roof.note), 'เหมายกหลังค่าของ+ค่าแรง ต้องมีหมายเหตุ VAT')
+  const elec = rates.find((r) => r.name === 'งานระบบไฟฟ้า')
+  assert.equal(elec.price_max, 0, 'งานเสนอราคาต้องไม่มีราคากลาง')
+
+  // จ้างช่างในราคาตามราคากลาง → ชื่องานเติมจากหมวด + ยอดรวม = ปริมาณ × ราคา
+  const h = 'H-LABOR'
+  const ok = await POST(`/houses/${h}/contractors`, { name: 'ทีมก่อ ก.', labor_rate_id: brick.id, qty: 100, unit_price: 140 })
+  assert.equal(ok.status, 201, JSON.stringify(ok.data))
+  assert.equal(ok.data.price_vs, 'ตามราคากลาง')
+  assert.equal(ok.data.role, 'งานก่อผนังอิฐแดง', 'ไม่พิมพ์งาน → ใช้ชื่อหมวด')
+  assert.equal(ok.data.contract_total, 14000)
+  // ถูกกว่า
+  const cheap = await POST(`/houses/${h}/contractors`, { name: 'ทีมก่อ ข.', labor_rate_id: brick.id, qty: 50, unit_price: 110 })
+  assert.equal(cheap.data.price_vs, 'ถูกกว่า')
+  // สูงกว่า → ยังบันทึกได้ (เตือน + ลงประวัติตรวจสอบ) และแก้ราคาลงมาทีหลังได้
+  const high = await POST(`/houses/${h}/contractors`, { name: 'ทีมก่อ ค.', labor_rate_id: brick.id, qty: 10, unit_price: 200, price_note: 'งานเร่ง' })
+  assert.equal(high.data.price_vs, 'สูงกว่า')
+  const fixed = await PUT(`/contractors/${high.data.id}`, { unit_price: 150 })
+  assert.equal(fixed.status, 200, JSON.stringify(fixed.data))
+  assert.equal(fixed.data.price_vs, 'ตามราคากลาง')
+  assert.equal(fixed.data.contract_total, 10 * 150, 'ยอดรวมต้องคำนวณใหม่ตามราคาที่แก้')
+  // งานเสนอราคา → ไม่เทียบ
+  const q = await POST(`/houses/${h}/contractors`, { name: 'ช่างไฟ ง.', labor_rate_id: elec.id, contract_total: 85000 })
+  assert.equal(q.data.price_vs, 'เสนอราคา')
+  // รายการช่างของบ้านต้องมีชื่อหมวด + ผลเทียบ
+  const list = (await GET(`/houses/${h}/contractors`)).data
+  const a = list.find((c) => c.name === 'ทีมก่อ ก.')
+  assert.equal(a.rate_label, 'งานก่อผนังอิฐแดง'); assert.equal(a.rate_unit, 'ตร.ม.'); assert.equal(a.price_vs, 'ตามราคากลาง')
+
+  // เปลี่ยนชื่อช่าง → งวดงานช่างที่ผูกชื่อเดิมต้องตามไป
+  const inst = await POST(`/houses/${h}/installments`, { no: 1, detail: 'ก่อผนังชั้น 1', amount: 7000, side: 'contractor', contractor: 'ทีมก่อ ก.' })
+  assert.equal(inst.status, 201, JSON.stringify(inst.data))
+  await PUT(`/contractors/${ok.data.id}`, { name: 'ทีมก่อ ก. (สมชาย)' })
+  const after = (await GET(`/houses/${h}/contractors`)).data.find((c) => c.id === ok.data.id)
+  assert.equal(after.work_total, 7000, 'ยอดงวดงานต้องยังผูกกับช่างหลังเปลี่ยนชื่อ')
+
+  // การเงินแก้ราคากลางได้ · ลบ = ปิดใช้งาน (ช่างที่จ้างไปแล้วยังเห็นชื่อหมวด)
+  const add = await POST('/labor-rates', { name: 'งานทดสอบ', price_min: 90, price_max: 80, unit: 'จุด' })
+  assert.equal(add.status, 201); assert.equal(add.data.price_max, 90, 'สูงสุดต้องไม่ต่ำกว่าต่ำสุด')
+  assert.ok(add.data.seq > 24, 'ลำดับต่อท้ายอัตโนมัติ')
+  await DEL(`/labor-rates/${add.data.id}`)
+  assert.ok(!(await GET('/labor-rates')).data.some((r) => r.id === add.data.id), 'ลบแล้วต้องหายจากรายการ')
+  // โฟร์แมนเห็นราคากลางค่าแรง (ต้องใช้ตอนจ้างช่าง) แต่แก้ไม่ได้
+  const adminToken = token
+  token = (await POST('/login', { username: 'sitetest', pin: '9999' })).data.token
+  assert.equal((await GET('/labor-rates')).status, 200)
+  assert.equal((await POST('/labor-rates', { name: 'x', price_min: 1 })).status, 403)
+  token = adminToken
+})

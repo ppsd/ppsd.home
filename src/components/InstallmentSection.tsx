@@ -42,10 +42,12 @@ export default function InstallmentSection({
   useEffect(() => { loadAcc() /* eslint-disable-next-line */ }, [houseCode, isCustomer])
   const house = app.data.houses.find((h) => h.code === houseCode)
   // contractor-side งวด can be assigned to a specific ช่าง (loaded from the house)
-  const [contractorNames, setContractorNames] = useState<string[]>([])
-  useEffect(() => {
-    if (!isCustomer) api.get<{ name: string }[]>('/houses/' + houseCode + '/contractors').then((cs) => setContractorNames(cs.map((c) => c.name))).catch(() => {})
-  }, [houseCode, isCustomer])
+  type ConBrief = { name: string; contract_total?: number; work_total?: number; rate_label?: string }
+  const [contractors, setContractors] = useState<ConBrief[]>([])
+  const contractorNames = contractors.map((c) => c.name)
+  const loadContractors = () => { if (!isCustomer) api.get<ConBrief[]>('/houses/' + houseCode + '/contractors').then(setContractors).catch(() => {}) }
+  // โหลดใหม่เมื่อรายการงวดเปลี่ยน — ยอด "ตั้งงวดแล้ว" ของช่างจะได้ตรง
+  useEffect(() => { loadContractors() /* eslint-disable-next-line */ }, [houseCode, isCustomer, rows.length])
 
   const total = rows.reduce((s, r) => s + r.amount, 0)
   const settled = rows.reduce((s, r) => s + (r.paid || 0), 0) // ยอดที่จ่าย/เก็บจริง (รวมบางส่วน)
@@ -137,7 +139,7 @@ export default function InstallmentSection({
         <button onClick={startAdd} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มงวด</button>
       </div>
 
-      {adding && editId === null && <InstForm form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} contractorNames={contractorNames} showContractor={!isCustomer} />}
+      {adding && editId === null && <InstForm form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} contractorNames={contractorNames} showContractor={!isCustomer} contractors={contractors} />}
 
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
@@ -158,7 +160,7 @@ export default function InstallmentSection({
               return (
                 <tr key={r.id}>
                   <td colSpan={7} style={{ padding: 0 }}>
-                    <InstForm form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} contractorNames={contractorNames} showContractor={!isCustomer} />
+                    <InstForm form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} contractorNames={contractorNames} showContractor={!isCustomer} contractors={contractors} editingId={r.id} rows={rows} />
                   </td>
                 </tr>
               )
@@ -219,6 +221,9 @@ function InstForm({
   busy,
   contractorNames = [],
   showContractor = false,
+  contractors = [],
+  editingId,
+  rows = [],
 }: {
   form: typeof blank
   setForm: (f: typeof blank) => void
@@ -227,7 +232,16 @@ function InstForm({
   busy: boolean
   contractorNames?: string[]
   showContractor?: boolean
+  contractors?: { name: string; contract_total?: number; work_total?: number; rate_label?: string }[]
+  editingId?: number
+  rows?: ApiInstallment[]
 }) {
+  // ช่างที่เลือก: ยอดตกลงจ้าง vs งวดที่ตั้งแล้ว (+ งวดนี้) — เตือนถ้าตั้งงวดเกินยอดที่ตกลง
+  const con = showContractor ? contractors.find((c) => c.name === form.contractor) : undefined
+  const thisAmt = Number(String(form.amount).replace(/,/g, '')) || 0
+  const editingOld = editingId ? (rows.find((r) => r.id === editingId)?.amount || 0) : 0
+  const afterTotal = (con?.work_total || 0) - editingOld + thisAmt
+  const overBy = con && (con.contract_total || 0) > 0 ? afterTotal - (con.contract_total || 0) : 0
   return (
     <div style={{ padding: '12px 18px', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 80px 130px 130px', gap: 8 }}>
@@ -245,6 +259,12 @@ function InstForm({
             {contractorNames.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
           {contractorNames.length === 0 && <span style={{ fontSize: 11.5, color: '#94A0A8' }}>(เพิ่มช่างได้ที่แท็บ “ช่าง / ผู้รับเหมา”)</span>}
+          {con && (con.contract_total || 0) > 0 && (
+            <span style={{ fontSize: 11.5, color: overBy > 0 ? '#C24036' : '#5C6770' }}>
+              ตกลงจ้าง <b className="num">{baht(con.contract_total || 0)}</b>{con.rate_label ? ` (${con.rate_label})` : ''} · ตั้งงวดแล้ว <b className="num">{baht(afterTotal)}</b>
+              {overBy > 0 ? ` ⚠ เกินยอดตกลง ${baht(overBy)}` : ` · เหลือ ${baht(-overBy)}`}
+            </span>
+          )}
         </div>
       )}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 9 }}>
