@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useApp } from '../store'
 import type { ApiMaterialPrice } from '../store'
 import { api } from '../api'
+import LaborRates from './LaborRates'
 
 // ราคากลางวัสดุ — อ้างอิงจากประวัติสั่งซื้อจริง ใช้เตือนราคาแพงตอนทำ PR/PO
 const money = (n: number) => (n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
@@ -35,6 +36,7 @@ export default function MaterialPrices() {
   const app = useApp()
   const list = app.data.materialPrices || []
   const canEdit = app.user?.role === 'admin' || app.user?.role === 'accounting'
+  const [tab, setTab] = useState<'material' | 'labor'>('material')
   const [q, setQ] = useState('')
   const [conf, setConf] = useState<'all' | 'สูง' | 'กลาง' | 'ต่ำ'>('all')
   const [busy, setBusy] = useState(false)
@@ -112,6 +114,25 @@ export default function MaterialPrices() {
   const th: React.CSSProperties = { padding: '9px 12px', fontSize: 12, fontWeight: 600, color: '#5C6770', textAlign: 'left', borderBottom: '1px solid #E1E5EA', whiteSpace: 'nowrap' }
   const td: React.CSSProperties = { padding: '10px 12px', fontSize: 13, borderBottom: '1px solid #EEF1F4', verticalAlign: 'top' }
 
+  const tabBtn = (id: 'material' | 'labor', label: string) => (
+    <button onClick={() => setTab(id)} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer', color: tab === id ? '#fff' : '#30506A', background: tab === id ? '#30506A' : '#E2E9EF' }}>{label}</button>
+  )
+
+  if (tab === 'labor') {
+    return (
+      <div style={{ maxWidth: 1180 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#1E2E3B' }}>ราคากลางค่าแรงช่าง</div>
+            <div style={{ fontSize: 12.5, color: '#94A0A8' }}>ใบเทียบราคากลางวัสดุและค่าแรง (Standard Labor Cost) · ราคาแนะนำตอนจ้างช่าง</div>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{tabBtn('material', 'วัสดุ')}{tabBtn('labor', 'ค่าแรงช่าง')}</div>
+        </div>
+        <LaborRates />
+      </div>
+    )
+  }
+
   return (
     <div style={{ maxWidth: 1180 }}>
       {/* หัว + ปุ่ม */}
@@ -120,8 +141,9 @@ export default function MaterialPrices() {
           <div style={{ fontSize: 17, fontWeight: 700, color: '#1E2E3B' }}>ราคากลางวัสดุ</div>
           <div style={{ fontSize: 12.5, color: '#94A0A8' }}>อ้างอิงจากประวัติสั่งซื้อจริง · ใช้เตือนเมื่อราคาที่กรอกใน PR/PO สูงกว่าราคากลาง</div>
         </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{tabBtn('material', 'วัสดุ')}{tabBtn('labor', 'ค่าแรงช่าง')}</div>
         {canEdit && (
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={recompute} disabled={busy} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#30506A', background: '#E2E9EF', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: busy ? 'default' : 'pointer' }}>↻ อัปเดตจากประวัติจริง</button>
             <button onClick={openAdd} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>+ เพิ่มรายการ</button>
           </div>

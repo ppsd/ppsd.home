@@ -2339,6 +2339,59 @@ api.delete('/material-prices/:id', financeOnly, (req, res) => {
   if (cur) audit(req, 'ลบราคากลางวัสดุ', cur.name)
   res.json({ ok: true })
 })
+// ===== ราคากลางค่าแรงช่าง (Standard Labor Cost) =====
+// ทุกคนที่คีย์งานได้ (รวมโฟร์แมน) ต้องเห็นราคากลาง เพื่อใช้เป็นราคาแนะนำตอนจ้างช่าง — แก้ได้เฉพาะการเงิน/แอดมิน
+api.get('/labor-rates', canWrite, (_req, res) =>
+  res.json(db.prepare('SELECT * FROM labor_rates WHERE active=1 ORDER BY CASE grp WHEN ? THEN 0 ELSE 1 END, seq, id').all('เหมายกหลัง')))
+const laborBody = (b, cur = {}) => {
+  const num = (k, d) => (b[k] != null && b[k] !== '' ? Number(b[k]) || 0 : d)
+  const min = num('price_min', cur.price_min ?? 0)
+  const max = Math.max(min, num('price_max', cur.price_max ?? min))
+  return {
+    grp: b.grp === 'เหมายกหลัง' ? 'เหมายกหลัง' : (b.grp != null ? 'แยกงาน' : (cur.grp || 'แยกงาน')),
+    seq: num('seq', cur.seq ?? 0), name: b.name != null ? String(b.name).trim() : (cur.name || ''),
+    variant: b.variant != null ? String(b.variant).trim() : (cur.variant || ''),
+    price_min: min, price_max: max, unit: b.unit != null ? String(b.unit).trim() : (cur.unit || 'ตร.ม.'),
+    note: b.note != null ? String(b.note).trim() : (cur.note || ''),
+  }
+}
+api.post('/labor-rates', financeOnly, (req, res) => {
+  const v = laborBody(req.body || {})
+  if (!v.name) return res.status(400).json({ error: 'กรุณากรอกชื่อหมวดงาน' })
+  if (!v.seq) v.seq = (db.prepare('SELECT COALESCE(MAX(seq),0) m FROM labor_rates WHERE grp=?').get(v.grp).m || 0) + 1
+  const info = db.prepare('INSERT INTO labor_rates (grp,seq,name,variant,price_min,price_max,unit,note,active,updated) VALUES (?,?,?,?,?,?,?,?,1,?)')
+    .run(v.grp, v.seq, v.name, v.variant, v.price_min, v.price_max, v.unit, v.note, new Date().toISOString().slice(0, 10))
+  audit(req, 'เพิ่มราคากลางค่าแรง', `${v.name}${v.variant ? ' (' + v.variant + ')' : ''} ฿${v.price_min}–${v.price_max}/${v.unit}`)
+  res.status(201).json(db.prepare('SELECT * FROM labor_rates WHERE id=?').get(info.lastInsertRowid))
+})
+api.put('/labor-rates/:id', financeOnly, (req, res) => {
+  const cur = db.prepare('SELECT * FROM labor_rates WHERE id=?').get(req.params.id)
+  if (!cur) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  const v = laborBody(req.body || {}, cur)
+  if (!v.name) return res.status(400).json({ error: 'กรุณากรอกชื่อหมวดงาน' })
+  db.prepare('UPDATE labor_rates SET grp=?, seq=?, name=?, variant=?, price_min=?, price_max=?, unit=?, note=?, updated=? WHERE id=?')
+    .run(v.grp, v.seq, v.name, v.variant, v.price_min, v.price_max, v.unit, v.note, new Date().toISOString().slice(0, 10), cur.id)
+  audit(req, 'แก้ราคากลางค่าแรง', `${v.name}${v.variant ? ' (' + v.variant + ')' : ''} ฿${v.price_min}–${v.price_max}/${v.unit}`)
+  res.json(db.prepare('SELECT * FROM labor_rates WHERE id=?').get(cur.id))
+})
+api.delete('/labor-rates/:id', financeOnly, (req, res) => {
+  const cur = db.prepare('SELECT * FROM labor_rates WHERE id=?').get(req.params.id)
+  if (!cur) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  // ปิดการใช้งานแทนลบจริง — ช่างที่เคยจ้างด้วยหมวดนี้ยังอ้างอิงชื่อ/หน่วยได้
+  db.prepare('UPDATE labor_rates SET active=0, updated=? WHERE id=?').run(new Date().toISOString().slice(0, 10), cur.id)
+  audit(req, 'ลบราคากลางค่าแรง', cur.name)
+  res.json({ ok: true })
+})
+// เทียบราคาตกลงกับราคากลาง → 'ถูกกว่า' | 'ตามราคากลาง' | 'สูงกว่า' | 'เสนอราคา' (หมวดที่ไม่มีราคากลาง) | ''
+function laborCompare(rate, unitPrice) {
+  if (!rate) return ''
+  if (!(rate.price_max > 0)) return 'เสนอราคา'
+  const p = Number(unitPrice) || 0
+  if (!(p > 0)) return ''
+  if (p > rate.price_max) return 'สูงกว่า'
+  if (p < rate.price_min) return 'ถูกกว่า'
+  return 'ตามราคากลาง'
+}
 // อัปเดตราคากลางจากประวัติสั่งซื้อจริงในระบบ (รายการในใบสั่งซื้อ PO = ราคาที่ซื้อจริง) — เว้นรายการที่ตั้งราคาเอง
 api.post('/material-prices/recompute', financeOnly, (req, res) => {
   const pos = db.prepare('SELECT id, items FROM purchase_orders ORDER BY id').all()
@@ -2675,8 +2728,45 @@ api.get('/houses/:code/contractors', (req, res) => {
     // ค่าของที่บริษัทออกให้ก่อน (advance) และที่หักจากงวดแล้ว (deduct) — จากสมุด contractor_advances
     const adv_total = db.prepare("SELECT COALESCE(SUM(amount),0) a FROM contractor_advances WHERE contractor_id=? AND type='advance'").get(c.id).a
     const deduct_total = db.prepare("SELECT COALESCE(SUM(amount),0) a FROM contractor_advances WHERE contractor_id=? AND type='deduct'").get(c.id).a
-    return { ...c, work_total, work_paid, eval_avg: ev?.avg ?? null, eval_grade: ev?.grade ?? null, adv_total, deduct_total, adv_left: adv_total - deduct_total }
+    // หมวดงาน + ราคากลางที่ใช้ตอนจ้าง (เทียบราคาตกลงว่าถูกกว่า/ตาม/สูงกว่าราคากลาง)
+    const rate = c.labor_rate_id ? db.prepare('SELECT * FROM labor_rates WHERE id=?').get(c.labor_rate_id) : null
+    const rate_label = rate ? rate.name + (rate.variant ? ' (' + rate.variant + ')' : '') : ''
+    return { ...c, work_total, work_paid, eval_avg: ev?.avg ?? null, eval_grade: ev?.grade ?? null, adv_total, deduct_total, adv_left: adv_total - deduct_total,
+      rate_label, rate_unit: rate?.unit || '', rate_min: rate?.price_min ?? null, rate_max: rate?.price_max ?? null, price_vs: laborCompare(rate, c.unit_price) }
   }))
+})
+// ช่องราคาจ้างของช่าง: หมวดงาน (labor_rate_id) · ปริมาณ · ราคาตกลง/หน่วย · ยอดตกลงรวม · เหตุผลถ้าสูงกว่าราคากลาง
+function contractorPricing(b, cur = {}) {
+  const num = (k, d) => (b[k] != null && b[k] !== '' ? Number(String(b[k]).replace(/,/g, '')) || 0 : d)
+  const labor_rate_id = b.labor_rate_id != null ? (Number(b.labor_rate_id) || null) : (cur.labor_rate_id ?? null)
+  const qty = num('qty', cur.qty ?? 0)
+  const unit_price = num('unit_price', cur.unit_price ?? 0)
+  const auto = qty > 0 && unit_price > 0 ? Math.round(qty * unit_price * 100) / 100 : 0
+  const explicitTotal = b.contract_total != null && b.contract_total !== ''
+  let contract_total = explicitTotal ? num('contract_total', 0) : (cur.contract_total ?? 0)
+  // ยอดรวมเดิมเป็นค่าที่ระบบคำนวณ (ปริมาณ × ราคา) แล้วปริมาณ/ราคาเปลี่ยน → คำนวณใหม่ตาม (ถ้ากรอกยอดรวมเองไว้ จะไม่ทับ)
+  const oldAuto = (cur.qty || 0) > 0 && (cur.unit_price || 0) > 0 ? Math.round(cur.qty * cur.unit_price * 100) / 100 : 0
+  const changed = qty !== (cur.qty || 0) || unit_price !== (cur.unit_price || 0)
+  if (!explicitTotal && changed && auto > 0 && (!(contract_total > 0) || Math.abs(contract_total - oldAuto) < 0.01)) contract_total = auto
+  if (!(contract_total > 0) && auto > 0) contract_total = auto
+  const price_note = b.price_note != null ? String(b.price_note).trim() : (cur.price_note || '')
+  return { labor_rate_id, qty, unit_price, contract_total, price_note }
+}
+api.put('/contractors/:id', canWrite, (req, res) => {
+  const cur = db.prepare('SELECT * FROM contractors WHERE id=?').get(req.params.id)
+  if (!cur) return res.status(404).json({ error: 'ไม่พบช่าง/ผู้รับเหมา' })
+  const b = req.body || {}
+  const name = b.name != null ? String(b.name).trim() : cur.name
+  if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อช่าง/ผู้รับเหมา' })
+  const p = contractorPricing(b, cur)
+  const rate = p.labor_rate_id ? db.prepare('SELECT * FROM labor_rates WHERE id=?').get(p.labor_rate_id) : null
+  db.prepare('UPDATE contractors SET name=?, role=?, type=?, note=?, labor_rate_id=?, qty=?, unit_price=?, contract_total=?, price_note=? WHERE id=?')
+    .run(name, b.role != null ? String(b.role) : cur.role, b.type != null ? String(b.type) : cur.type, b.note != null ? String(b.note) : cur.note,
+      p.labor_rate_id, p.qty, p.unit_price, p.contract_total, p.price_note, cur.id)
+  // ชื่อช่างเปลี่ยน → งวดงานช่างที่ผูกชื่อเดิมต้องตามไปด้วย (ยอดจ่ายช่างคิดจากชื่อ)
+  if (name !== cur.name) db.prepare("UPDATE installments SET contractor=? WHERE house_code=? AND side='contractor' AND contractor=?").run(name, cur.house_code, cur.name)
+  if (laborCompare(rate, p.unit_price) === 'สูงกว่า') audit(req, 'จ้างช่างสูงกว่าราคากลาง', `${name} · ${rate.name} ฿${p.unit_price}/${rate.unit} (ราคากลาง ${rate.price_min}–${rate.price_max}) ${p.price_note ? '· ' + p.price_note : ''}`)
+  res.json({ ...db.prepare('SELECT * FROM contractors WHERE id=?').get(cur.id), price_vs: laborCompare(rate, p.unit_price) })
 })
 
 // ---------- ค่าของที่บริษัทออกให้ผู้รับเหมาก่อน (แล้วหักจากงวด) ----------
@@ -3659,9 +3749,15 @@ api.get('/work-orders/executor-stats', auditView, (req, res) => {
 api.post('/houses/:code/contractors', canWrite, (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อช่าง/ผู้รับเหมา' })
-  const info = db.prepare('INSERT INTO contractors (house_code,name,role,type,advance,deducted,paid,note) VALUES (?,?,?,?,?,?,?,?)')
-    .run(req.params.code, b.name, b.role || '', b.type || 'เหมารวม', Number(b.advance) || 0, Number(b.deducted) || 0, Number(b.paid) || 0, b.note || '')
-  res.status(201).json(db.prepare('SELECT * FROM contractors WHERE id=?').get(info.lastInsertRowid))
+  const p = contractorPricing(b)
+  const rate = p.labor_rate_id ? db.prepare('SELECT * FROM labor_rates WHERE id=?').get(p.labor_rate_id) : null
+  // ไม่ได้พิมพ์งานที่รับผิดชอบ แต่เลือกหมวดงานไว้ → ใช้ชื่อหมวดเป็นงานที่รับผิดชอบ
+  const role = String(b.role || '').trim() || (rate ? rate.name + (rate.variant ? ' (' + rate.variant + ')' : '') : '')
+  const info = db.prepare('INSERT INTO contractors (house_code,name,role,type,advance,deducted,paid,note,labor_rate_id,qty,unit_price,contract_total,price_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(req.params.code, b.name, role, b.type || 'เหมารวม', Number(b.advance) || 0, Number(b.deducted) || 0, Number(b.paid) || 0, b.note || '',
+      p.labor_rate_id, p.qty, p.unit_price, p.contract_total, p.price_note)
+  if (laborCompare(rate, p.unit_price) === 'สูงกว่า') audit(req, 'จ้างช่างสูงกว่าราคากลาง', `${b.name} · ${rate.name} ฿${p.unit_price}/${rate.unit} (ราคากลาง ${rate.price_min}–${rate.price_max}) ${p.price_note ? '· ' + p.price_note : ''}`)
+  res.status(201).json({ ...db.prepare('SELECT * FROM contractors WHERE id=?').get(info.lastInsertRowid), price_vs: laborCompare(rate, p.unit_price) })
 })
 api.delete('/contractors/:id', canWrite, (req, res) => {
   db.prepare('DELETE FROM contractors WHERE id=?').run(req.params.id)

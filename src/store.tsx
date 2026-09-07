@@ -219,6 +219,26 @@ export interface ApiMaterialPrice {
   active?: number
   updated?: string
 }
+// ราคากลางค่าแรงช่าง — ใช้เป็นราคาแนะนำตอนจ้างช่าง (price_max = 0 → เสนอราคา ไม่มีราคากลาง)
+export interface ApiLaborRate {
+  id: number
+  grp: 'เหมายกหลัง' | 'แยกงาน'
+  seq: number
+  name: string
+  variant: string
+  price_min: number
+  price_max: number
+  unit: string
+  note?: string
+  active?: number
+  updated?: string
+}
+export const laborLabel = (r: Pick<ApiLaborRate, 'name' | 'variant'>) => r.name + (r.variant ? ` (${r.variant})` : '')
+// ข้อความราคากลาง เช่น "120–150 บาท/ตร.ม." หรือ "เสนอราคา"
+export const laborPriceText = (r: Pick<ApiLaborRate, 'price_min' | 'price_max' | 'unit'>) =>
+  r.price_max > 0
+    ? (r.price_min === r.price_max ? r.price_max.toLocaleString('en-US') : `${r.price_min.toLocaleString('en-US')}–${r.price_max.toLocaleString('en-US')}`) + ` บาท/${r.unit}`
+    : 'เสนอราคา'
 export interface KioskEmp {
   code: string
   name: string
