@@ -458,6 +458,7 @@ ensureColumn('contractors', 'qty', 'REAL')              // ปริมาณง
 ensureColumn('contractors', 'unit_price', 'REAL')       // ราคาตกลงต่อหน่วย
 ensureColumn('contractors', 'contract_total', 'REAL')   // ยอดตกลงจ้างรวม (qty × unit_price หรือกรอกเอง)
 ensureColumn('contractors', 'price_note', 'TEXT')       // เหตุผลถ้าตกลงราคาสูงกว่าราคากลาง
+ensureColumn('contractors', 'vendor_id', 'INTEGER')     // อ้างทะเบียนผู้รับเหมา (vendors.kind='ผู้รับเหมา') ถ้าเลือกจากทะเบียน
 if (db.prepare('SELECT COUNT(*) c FROM labor_rates').get().c === 0) {
   const today = new Date().toISOString().slice(0, 10)
   const ins = db.prepare('INSERT INTO labor_rates (grp,seq,name,variant,price_min,price_max,unit,note,active,updated) VALUES (?,?,?,?,?,?,?,?,1,?)')
