@@ -417,6 +417,18 @@ test('ราคากลาง: แปลงราคาแพ็คเป็น
   assert.match(r.data.note, /หาร 3/)
 })
 
+test('ผู้ขาย: กรอกที่อยู่+หมวดสินค้าตั้งแต่แรก และแก้ไขเพิ่มภายหลังได้', async () => {
+  const v = await POST('/vendors', { name: 'ร้านไฟฟ้ารุ่งแสง', kind: 'ผู้ขาย', category: 'ไฟฟ้า', address: '99 ถ.เพชรเกษม ราชบุรี', tax_id: '0705500009999' })
+  assert.equal(v.status, 201)
+  assert.equal(v.data.category, 'ไฟฟ้า')
+  assert.equal(v.data.address, '99 ถ.เพชรเกษม ราชบุรี')
+  // รายเดิมที่ไม่มีที่อยู่ → แก้ไขเพิ่มได้
+  const upd = await PUT(`/vendors/${v.data.id}`, { address: '111 ม.9 โพธาราม ราชบุรี', category: 'วัสดุก่อสร้าง' })
+  assert.equal(upd.data.address, '111 ม.9 โพธาราม ราชบุรี')
+  assert.equal(upd.data.category, 'วัสดุก่อสร้าง')
+  assert.equal(upd.data.name, 'ร้านไฟฟ้ารุ่งแสง', 'แก้ที่อยู่ต้องไม่กระทบชื่อ')
+})
+
 test('ผู้ขาย/ผู้รับเหมา: แยกหมวดได้ · ค่าเริ่มต้นเป็นผู้ขาย · สลับหมวดได้', async () => {
   const sub = await POST('/vendors', { name: 'ทีมช่างปูน ก.', kind: 'ผู้รับเหมา', type: 'บุคคลธรรมดา' })
   assert.equal(sub.status, 201)

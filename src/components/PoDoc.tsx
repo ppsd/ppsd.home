@@ -1,6 +1,7 @@
 import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import { bahtText } from '../data'
+import { useApp } from '../store'
 import type { ApiPO } from '../store'
 import ApproverSigns from './ApproverSigns'
 
@@ -11,6 +12,9 @@ const th: React.CSSProperties = { border: bd, padding: '5px 6px', fontSize: 12, 
 const td: React.CSSProperties = { border: bd, padding: '5px 6px', fontSize: 12, verticalAlign: 'top' }
 
 export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName?: string; onClose: () => void }) {
+  // ดึงที่อยู่/เลขภาษีผู้ขายจากทะเบียน (ถ้ากรอกไว้) มาแสดงบนเอกสาร
+  const { data } = useApp()
+  const vend = (data.vendors || []).find((v) => v.name === po.vendor)
   const net = po.amount || 0
   const vat = Math.round(net * 0.07 * 100) / 100
   const grand = net + vat
@@ -46,6 +50,8 @@ export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName
         <div style={{ display: 'flex', gap: 0, border: bd, borderTop: 'none', marginTop: 12 }}>
           <div style={{ flex: 1, padding: '8px 10px', borderRight: bd, lineHeight: 1.7 }}>
             <div><span style={lbl}>ผู้จำหน่าย</span><b>{po.vendor || '-'}</b></div>
+            {vend?.address && <div><span style={lbl}>ที่อยู่</span>{vend.address}</div>}
+            {vend?.tax_id && <div><span style={lbl}>เลขผู้เสียภาษี</span><span className="num">{vend.tax_id}</span></div>}
             <div><span style={lbl}>อ้างอิง PR</span>{po.pr_no || '-'}</div>
             <div><span style={lbl}>การชำระ</span>{credit}</div>
           </div>
