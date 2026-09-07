@@ -98,7 +98,7 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
           <div style={{ border: bd, marginTop: 14, padding: '6px 10px', fontSize: 11.5 }}>
             <b>ผลการพิจารณา</b> &nbsp;&nbsp; {chk(approved)} อนุมัติ &nbsp;&nbsp;&nbsp; {chk(rejected)} ไม่อนุมัติ
           </div>
-          {/* ลายเซ็น: ผู้ขอซื้อ 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติ 3 */}
+          {/* ลายเซ็น: ผู้ขอซื้อ 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติตามกติกา (PR คนเดียวพอ) */}
           <ApproverSigns approval={pr.approval} makerLabel="ผู้ขอซื้อ/ขอจ้าง" makerName={pr.by} makerSig={pr.requester_sig} makerDate={pr.date} />
           <div style={{ textAlign: 'center', fontSize: 9, color: '#B0B8BF', marginTop: 14, borderTop: '1px solid #EEF1F4', paddingTop: 6 }}>เอกสารจัดทำโดยระบบ PPSD Construction ERP</div>
           {!approved && !rejected && (

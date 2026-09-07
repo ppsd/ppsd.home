@@ -9,7 +9,8 @@ interface AuditRow { id: number; ts: string; user: string; action: string; detai
 type Controls = Record<string, number | boolean>
 
 const CTRL_LABELS: Record<string, string> = {
-  approvers_required: 'จำนวนผู้อนุมัติเอกสาร (จัดซื้อ/จ่ายเงิน) 1–3 คน',
+  approvers_pr: 'จำนวนผู้อนุมัติใบขอซื้อ (PR) 1–3 คน · คนเดียวพอ = 1',
+  approvers_required: 'จำนวนผู้อนุมัติ PO / ใบจ่ายเงิน / ใบจ่ายค่าใช้จ่าย 1–3 คน',
   overprice_warn_pct: 'เตือนเมื่อราคาต่อหน่วยสูงกว่าราคากลางเกิน (%) · 0 = ปิด',
   receipt_price_tol_pct: 'ตรวจรับของ: ราคา PO กับใบส่งของต่างกันได้ไม่เกิน (%)',
   block_self_approve: 'ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ',

@@ -440,7 +440,8 @@ const adminOnly = requireRole('admin')
 // ค่าตั้งต้นของกติกาควบคุม (admin แก้ได้ในหน้า "ตรวจสอบ")
 const CONTROL_DEFAULTS = {
   block_self_approve: true, // ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ
-  approvers_required: 3, // จำนวนผู้อนุมัติที่ต้องกดอนุมัติ (1–3) สำหรับ PR/PO/เบิก-จ่าย
+  approvers_pr: 1, // จำนวนผู้อนุมัติใบขอซื้อ (PR) — คนเดียวพอ (1–3)
+  approvers_required: 3, // จำนวนผู้อนุมัติที่ต้องกดอนุมัติ (1–3) สำหรับ PO/ใบจ่ายเงิน/ใบจ่ายค่าใช้จ่าย
   overprice_warn_pct: 10, // เตือนเมื่อราคาต่อหน่วยสูงกว่าราคากลางเกินกี่ % (0 = ปิดการเตือน)
   receipt_price_tol_pct: 2, // ตรวจรับของ: ราคา PO กับใบส่งของต่างกันได้ไม่เกินกี่ % ถึงถือว่าตรง (กันปัดเศษ)
   two_step_above: 500000, // PR ยอด ≥ นี้ ต้องอนุมัติ 2 ชั้น (คนละคน)
@@ -474,13 +475,18 @@ const APPROVE_DOCS = {
   payment: { table: 'payments', label: 'ใบจ่ายเงิน', requester: null },
   expense: { table: 'expenses', label: 'ใบจ่ายค่าใช้จ่าย', requester: null },
 }
-function approversRequired() { return Math.max(1, Math.min(3, Number(controls().approvers_required) || 3)) }
+// จำนวนผู้อนุมัติที่ต้องครบ — ใบขอซื้อ (PR) แยกจากเอกสารเงิน (PO/จ่ายเงิน): PR คนเดียวพอ
+function approversRequired(docType) {
+  const c = controls()
+  const n = docType === 'pr' ? (Number(c.approvers_pr) || 1) : (Number(c.approvers_required) || 3)
+  return Math.max(1, Math.min(3, n))
+}
 function approvalSteps(docType, docId) { return db.prepare('SELECT * FROM doc_approvals WHERE doc_type=? AND doc_id=? ORDER BY step, id').all(docType, Number(docId)) }
 function approvalState(docType, docId) {
   const steps = approvalSteps(docType, docId)
   const rejected = steps.find((s) => s.decision === 'reject')
   const approvals = steps.filter((s) => s.decision === 'approve')
-  const required = approversRequired()
+  const required = approversRequired(docType)
   return { required, count: approvals.length, approvals: approvals.map((a) => ({ step: a.step, approver: a.approver, sig: a.approver_sig, role: a.role, date: a.date, note: a.note })), rejected: !!rejected, rejectedBy: rejected?.approver, rejectNote: rejected?.note, done: !rejected && approvals.length >= required }
 }
 function setDocStatus(docType, docId, status) {
