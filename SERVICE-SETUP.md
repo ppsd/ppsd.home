@@ -21,13 +21,18 @@
 
 ### อัปเดตโปรแกรมเวอร์ชันใหม่
 
-แตกไฟล์ zip ทับโฟลเดอร์เดิม (โฟลเดอร์ `server/data` คือข้อมูลจริง — **ห้ามลบ/ทับ**) แล้ว:
+**วิธีง่าย:** ดับเบิลคลิก `update.bat` — ดึงโค้ดล่าสุดจาก GitHub → ติดตั้งแพ็กเกจ → build → รีสตาร์ทให้เอง (ข้อมูลใน `server/data` ไม่ถูกแตะ)
+
+**วิธีพิมพ์เอง** (เปิด Command Prompt ในโฟลเดอร์โปรแกรม):
 
 ```
+git pull origin master
 npm install
 npm run build
 pm2 restart ppsd-erp
 ```
+
+ถ้าโฟลเดอร์โปรแกรมมาจากการแตก zip (ไม่มีโฟลเดอร์ `.git`) ให้ `git clone https://github.com/ppsd/ppsd.home` ครั้งเดียว แล้วย้าย `server/data` ของเดิมมาไว้ในโฟลเดอร์ใหม่ หลังจากนั้นใช้ `update.bat` ได้ตลอด
 
 ## Windows — วิธีสำรอง (ไม่อยากลง PM2)
 
