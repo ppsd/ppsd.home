@@ -30,7 +30,8 @@ function PermCell({ level }: { level: string }) {
 }
 
 export default function Users({ onAddUser }: { onAddUser: () => void }) {
-  const { data, updateUser, downloadBackup, resetUserPin, addPosition, restoreBackup } = useApp()
+  const { data, user, updateUser, downloadBackup, resetUserPin, addPosition, restoreBackup } = useApp()
+  const isAdmin = user?.role === 'admin'
   // เปิด/ปิดโมดูลรายคน — บันทึกทันที
   const toggleMod = async (u: ApiUser, key: string) => {
     const cur = u.deny_mods || []
@@ -125,6 +126,29 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
     setLineBusy(true)
     try { await api.post('/line-settings/test', {}); window.alert('ส่งสรุปทดสอบเข้า LINE แล้ว — เช็คในกลุ่ม'); loadLine() }
     catch (e) { window.alert('ส่งไม่สำเร็จ: ' + (e as Error).message); loadLine() } finally { setLineBusy(false) }
+  }
+  // ตั้งค่า AI (อ่านใบส่งของ / งวดงานจากสัญญา)
+  interface AiCfg { hasKey: boolean; model: string; models: { id: string; label: string }[]; fromEnv?: boolean }
+  const [aiCfg, setAiCfg] = useState<AiCfg | null>(null)
+  const [aiKeyInput, setAiKeyInput] = useState('')
+  const [aiModel, setAiModel] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiMsg, setAiMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const loadAi = () => api.get<AiCfg>('/ai-settings').then((r) => { setAiCfg(r); setAiModel(r.model) }).catch(() => {})
+  useEffect(() => { if (users && isAdmin) loadAi() /* eslint-disable-next-line */ }, [users])
+  const saveAi = async () => {
+    setAiBusy(true); setAiMsg(null)
+    try {
+      const body: Record<string, unknown> = { model: aiModel }
+      if (aiKeyInput.trim()) body.api_key = aiKeyInput.trim()
+      const r = await api.post<{ hasKey: boolean; model: string }>('/ai-settings', body)
+      setAiKeyInput(''); setAiMsg({ ok: true, text: r.hasKey ? 'บันทึกแล้ว — กด “ทดสอบ” เพื่อเช็คว่ากุญแจใช้ได้จริง' : 'บันทึกรุ่นแล้ว แต่ยังไม่มีกุญแจ' }); loadAi()
+    } catch (e) { setAiMsg({ ok: false, text: (e as Error).message }) } finally { setAiBusy(false) }
+  }
+  const testAi = async () => {
+    setAiBusy(true); setAiMsg(null)
+    try { const r = await api.post<{ model: string; reply: string; ms: number }>('/ai-settings/test', {}); setAiMsg({ ok: true, text: `✓ ใช้งานได้ · รุ่น ${r.model} · ตอบว่า “${r.reply}” (${(r.ms / 1000).toFixed(1)} วิ)` }) }
+    catch (e) { setAiMsg({ ok: false, text: '✗ ' + (e as Error).message }) } finally { setAiBusy(false) }
   }
   const loadMirror = () => api.get<{ dir: string; status: MirrorStatus | null; last?: BackupLast | null }>('/backup-mirror').then((r) => { setMirrorDir(r.dir || ''); setMirrorStat(r.status); setBkLast(r.last || null) }).catch(() => {})
   useEffect(() => { if (users) loadMirror() /* eslint-disable-next-line */ }, [users])
@@ -232,6 +256,34 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
           )}
         </div>
       </div>
+
+      {/* ตั้งค่า AI — ให้ AI อ่านใบส่งของ (ตรวจรับของ) และตารางงวดงานจากสัญญา */}
+      {isAdmin && aiCfg && (
+        <div style={{ background: '#fff', border: '1px solid #D9D2EA', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ padding: '12px 18px', borderBottom: '1px solid #E6E0F1', fontSize: 14, fontWeight: 600, color: '#6B4E9E', background: '#F6F3FB', display: 'flex', alignItems: 'center', gap: 10 }}>
+            🤖 ตั้งค่า AI (อ่านใบส่งของ / งวดงานจากสัญญา)
+            <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 600, color: aiCfg.hasKey ? '#2E7D55' : '#B7791F', background: aiCfg.hasKey ? '#E2F1EA' : '#F6ECD6', padding: '3px 10px', borderRadius: 20 }}>{aiCfg.hasKey ? (aiCfg.fromEnv ? '✓ ใช้กุญแจจากเครื่อง (ENV)' : '✓ ตั้งกุญแจแล้ว') : '⚠ ยังไม่มีกุญแจ'}</span>
+          </div>
+          <div style={{ padding: '14px 18px' }}>
+            <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.6, marginBottom: 10 }}>
+              ใช้ตอน <b>ตรวจรับของ</b> (อัปโหลดรูปใบส่งของ → AI ดึงรายการ/จำนวน/ราคามาเทียบกับ PO) และ <b>นำเข้างวดงานจากสัญญา</b><br />
+              วิธีขอกุญแจ: สมัครที่ console.anthropic.com → เมนู API Keys → Create Key → คัดลอกมาวางด้านล่าง (ขึ้นต้น sk-ant-…) · คิดค่าใช้จ่ายตามการใช้จริง ประมาณไม่กี่สตางค์ต่อใบ
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input type="password" value={aiKeyInput} onChange={(e) => setAiKeyInput(e.target.value)} placeholder={aiCfg.hasKey ? '•••••• (ตั้งไว้แล้ว — วางใหม่เพื่อเปลี่ยน)' : 'วางกุญแจ API (sk-ant-…)'}
+                style={{ flex: 2, minWidth: 260, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px', outline: 'none' }} />
+              <label style={{ fontSize: 12.5, color: '#5C6770', display: 'flex', alignItems: 'center', gap: 6 }}>รุ่น
+                <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px' }}>
+                  {aiCfg.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </label>
+              <button onClick={saveAi} disabled={aiBusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>บันทึก</button>
+              <button onClick={testAi} disabled={aiBusy || !aiCfg.hasKey} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#6B4E9E', background: '#fff', border: '1px solid #D9D2EA', borderRadius: 8, padding: '9px 15px', cursor: aiCfg.hasKey ? 'pointer' : 'default', opacity: aiCfg.hasKey ? 1 : 0.5 }}>{aiBusy ? 'กำลังทดสอบ…' : '🧪 ทดสอบ'}</button>
+            </div>
+            {aiMsg && <div style={{ fontSize: 12, marginTop: 10, color: aiMsg.ok ? '#2E7D55' : '#C24036' }}>{aiMsg.text}</div>}
+          </div>
+        </div>
+      )}
 
       {/* คำขอรีเซ็ต PIN (ลืม PIN) รออนุมัติ */}
       {resets.length > 0 && (
