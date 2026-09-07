@@ -417,6 +417,18 @@ test('ราคากลาง: แปลงราคาแพ็คเป็น
   assert.match(r.data.note, /หาร 3/)
 })
 
+test('ผู้ขาย/ผู้รับเหมา: แยกหมวดได้ · ค่าเริ่มต้นเป็นผู้ขาย · สลับหมวดได้', async () => {
+  const sub = await POST('/vendors', { name: 'ทีมช่างปูน ก.', kind: 'ผู้รับเหมา', type: 'บุคคลธรรมดา' })
+  assert.equal(sub.status, 201)
+  assert.equal(sub.data.kind, 'ผู้รับเหมา')
+  const shop = await POST('/vendors', { name: 'ร้านวัสดุ ข.' })
+  assert.equal(shop.data.kind, 'ผู้ขาย', 'ไม่ระบุหมวด = ผู้ขาย')
+  const flip = await PUT(`/vendors/${shop.data.id}`, { kind: 'ผู้รับเหมา' })
+  assert.equal(flip.data.kind, 'ผู้รับเหมา', 'สลับหมวดได้')
+  const bad = await PUT(`/vendors/${shop.data.id}`, { kind: 'อย่างอื่น' })
+  assert.equal(bad.data.kind, 'ผู้ขาย', 'ค่าประหลาดถูกบังคับเป็นผู้ขาย')
+})
+
 test('สิทธิ์: role site ต้องไม่เห็นตัวเลขเงินรวมบริษัทบนแดชบอร์ด', async () => {
   await POST('/users', { name: 'ช่างเทสต์', username: 'sitetest', pin: '9999', role: 'site', position: 'ช่าง' })
   const adminToken = token
