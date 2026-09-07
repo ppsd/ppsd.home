@@ -38,7 +38,7 @@ const DEL = (p) => api('DELETE', p)
 before(async () => {
   tmp = mkdtempSync(join(tmpdir(), 'ppsd-test-'))
   child = spawn(process.execPath, [join(serverDir, 'index.js')], {
-    env: { ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite') },
+    env: { ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1' },
     stdio: 'ignore',
   })
   // รอเซิร์ฟเวอร์พร้อม
@@ -727,4 +727,28 @@ test('บอท LINE: ผูกบัญชีด้วยรหัส 6 หล�
   // ยกเลิกผูก
   assert.equal((await DEL('/line-link')).status, 200)
   assert.equal((await GET('/me')).data.lineLinked, false)
+})
+
+test('ลิงก์สาธารณะอัตโนมัติ: ค่าตั้งต้นปิด · เปิด/ปิดได้ · คำขอผ่านลิงก์ที่ไม่ใช่ webhook ถูกกันไว้จนกว่าจะอนุญาต', async () => {
+  const t0 = (await GET('/tunnel')).data
+  assert.equal(t0.enabled, false); assert.equal(t0.expose, false)
+  // จำลองคำขอที่มาจากลิงก์ trycloudflare (Host header) → เข้า ERP ไม่ได้ แต่ webhook ผ่าน
+  const viaTunnel = (path) => fetch(BASE + path, { headers: { 'cf-connecting-ip': '203.0.113.9', 'Content-Type': 'application/json', Authorization: 'Bearer ' + token } }) // fetch ตั้ง Host เองไม่ได้ → ใช้ header ของ Cloudflare แทน
+  assert.equal((await viaTunnel('/houses')).status, 404, 'ERP ต้องถูกกันเมื่อมาทางลิงก์สาธารณะ')
+  assert.equal((await viaTunnel('/line/webhook')).status, 200, 'webhook ต้องผ่าน')
+  const on = await PUT('/tunnel', { expose: true })
+  assert.equal(on.data.expose, true)
+  assert.equal((await viaTunnel('/houses')).status, 200, 'อนุญาตแล้วต้องเข้าได้')
+  await PUT('/tunnel', { expose: false })
+  // ยังไม่มีลิงก์ → ตั้ง webhook ต้องแจ้งชัด
+  const reg = await POST('/tunnel/register-webhook', {})
+  assert.equal(reg.status, 400)
+  // เปิดสวิตช์ (ในเครื่องทดสอบอาจไม่มี cloudflared — แค่ต้องไม่พัง และสถานะเปลี่ยนเป็นกำลังเปิด/ผิดพลาด)
+  const en = await PUT('/tunnel', { enabled: true })
+  assert.equal(en.data.enabled, true)
+  await new Promise((r) => setTimeout(r, 500))
+  const st = (await GET('/tunnel')).data
+  assert.ok(typeof st.status === 'string' && st.status !== 'ปิด')
+  const off = await PUT('/tunnel', { enabled: false })
+  assert.equal(off.data.enabled, false); assert.equal(off.data.status, 'ปิด')
 })

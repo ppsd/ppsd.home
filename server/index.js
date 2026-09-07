@@ -11,6 +11,7 @@ import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
+import { createTunnelManager } from './tunnel.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -29,6 +30,14 @@ process.on('unhandledRejection', (err) => { crashLog('unhandledRejection', err);
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '30mb', verify: (req, _res, buf) => { req.rawBody = buf } })) // allow base64 signatures + file uploads · rawBody ไว้ตรวจลายเซ็น webhook LINE
+// ลิงก์สาธารณะอัตโนมัติ (trycloudflare) เปิดไว้เพื่อ LINE webhook เท่านั้น — ถ้าไม่ได้อนุญาต "เปิด ERP ผ่านลิงก์นี้" คำขออื่นจากลิงก์นั้นจะถูกปิด
+app.use((req, res, next) => {
+  const host = String(req.headers.host || '')
+  if (!/\.trycloudflare\.com$/i.test(host) && !req.headers['cf-connecting-ip']) return next()
+  if (req.path.startsWith('/api/line/webhook')) return next()
+  if (getSetting('tunnel_expose', '0') === '1') return next()
+  res.status(404).type('text/plain').send('ลิงก์นี้เปิดไว้สำหรับ LINE webhook เท่านั้น — ถ้าต้องการใช้ ERP นอกออฟฟิศ ให้แอดมินเปิดที่ ผู้ใช้งาน → แจ้งเตือน LINE → "อนุญาตเปิด ERP ผ่านลิงก์นี้"')
+})
 
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
 function todayTH() {
@@ -4813,7 +4822,7 @@ api.delete('/line-link', requireAuth, (req, res) => {
 api.delete('/line-settings/seen', adminOnly, (_req, res) => { setSetting('line_seen', '[]'); res.json({ ok: true }) })
 api.put('/line-settings', adminOnly, (req, res) => {
   const b = req.body || {}
-  if (b.token !== undefined) setSetting('line_token', String(b.token || '').trim())
+  if (b.token !== undefined) { setSetting('line_token', String(b.token || '').trim()); if (tunnel.state.url) registerLineWebhook(tunnel.state.url) }
   if (b.to !== undefined) setSetting('line_to', String(b.to || '').trim())
   if (b.secret !== undefined) setSetting('line_secret', String(b.secret || '').trim())
   if (b.hour !== undefined) { const hv = Number(b.hour); setSetting('line_hour', String(Number.isFinite(hv) ? Math.max(0, Math.min(23, hv)) : 8)) }
@@ -4824,6 +4833,67 @@ api.post('/line-settings/test', adminOnly, async (req, res) => {
   try { await sendLine(buildLineDigest()); setSetting('line_status', JSON.stringify({ at: nowTS(), ok: true })); res.json({ ok: true }) }
   catch (e) { setSetting('line_status', JSON.stringify({ at: nowTS(), ok: false, msg: e.message })); res.status(400).json({ error: e.message }) }
 })
+
+// ===== ลิงก์สาธารณะอัตโนมัติ + ตั้ง Webhook URL ใน LINE ให้เอง =====
+// ทุกครั้งที่ได้ลิงก์ใหม่ (เปิดเครื่อง/หลุดแล้วต่อใหม่) → PUT ไปที่ LINE Messaging API ให้ชี้มาที่ /api/line/webhook อัตโนมัติ
+async function registerLineWebhook(url) {
+  const token = getSetting('line_token', '')
+  if (!token || !url) { setSetting('line_webhook_status', JSON.stringify({ at: nowTS(), ok: false, msg: token ? 'ยังไม่มีลิงก์' : 'ยังไม่ได้ใส่ Channel access token', endpoint: '' })); return false }
+  const endpoint = url.replace(/\/$/, '') + '/api/line/webhook'
+  try {
+    const r = await fetch('https://api.line.me/v2/bot/channel/webhook/endpoint', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ endpoint }), signal: AbortSignal.timeout(15000),
+    })
+    const ok = r.ok
+    let msg = ok ? 'ตั้ง Webhook URL ใน LINE แล้ว' : `LINE ตอบ ${r.status}: ${(await r.text()).slice(0, 160)}`
+    let active = null
+    if (ok) {
+      try {
+        const g = await fetch('https://api.line.me/v2/bot/channel/webhook/endpoint', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(10000) })
+        if (g.ok) { const j = await g.json(); active = !!j.active; if (!active) msg += ' — แต่ยังไม่ได้เปิด "Use webhook" ในหน้า LINE Developers (เปิดครั้งเดียว)' }
+      } catch { /* ignore */ }
+    }
+    setSetting('line_webhook_status', JSON.stringify({ at: nowTS(), ok, msg, endpoint, active }))
+    return ok
+  } catch (e) { setSetting('line_webhook_status', JSON.stringify({ at: nowTS(), ok: false, msg: 'เรียก LINE ไม่สำเร็จ: ' + e.message, endpoint })); return false }
+}
+const tunnel = createTunnelManager({
+  port: process.env.PORT || 3001,
+  appDir: join(__dirname, '..'),
+  onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhook(url) },
+  onStatus: (st) => setSetting('tunnel_state', JSON.stringify(st)),
+})
+const tunnelInfo = () => ({
+  enabled: getSetting('tunnel_auto', '0') === '1', expose: getSetting('tunnel_expose', '0') === '1',
+  ...tunnel.state, url: tunnel.state.url || '',
+  webhook: (() => { try { return JSON.parse(getSetting('line_webhook_status', '') || 'null') } catch { return null } })(),
+})
+api.get('/tunnel', adminOnly, (_req, res) => res.json(tunnelInfo()))
+api.put('/tunnel', adminOnly, async (req, res) => {
+  const b = req.body || {}
+  if (b.expose !== undefined) setSetting('tunnel_expose', b.expose ? '1' : '0')
+  if (b.enabled !== undefined) {
+    setSetting('tunnel_auto', b.enabled ? '1' : '0')
+    if (b.enabled) tunnel.start().catch((e) => console.error('tunnel start:', e.message)); else tunnel.stop()
+  }
+  audit(req, 'ตั้งค่าลิงก์สาธารณะ', `${getSetting('tunnel_auto', '0') === '1' ? 'เปิด' : 'ปิด'}${getSetting('tunnel_expose', '0') === '1' ? ' + เปิด ERP ผ่านลิงก์' : ''}`)
+  res.json(tunnelInfo())
+})
+api.post('/tunnel/restart', adminOnly, async (req, res) => {
+  if (getSetting('tunnel_auto', '0') !== '1') return res.status(400).json({ error: 'ยังไม่ได้เปิดลิงก์สาธารณะอัตโนมัติ' })
+  tunnel.restart().catch((e) => console.error('tunnel restart:', e.message))
+  audit(req, 'เปิดลิงก์สาธารณะใหม่', '')
+  res.json(tunnelInfo())
+})
+// ตั้ง Webhook URL ใน LINE อีกครั้ง (เช่น เพิ่งใส่ token) — หรือใส่ URL ถาวรของตัวเอง (โดเมน/Tailscale) มาแทน
+api.post('/tunnel/register-webhook', adminOnly, async (req, res) => {
+  const url = String(req.body?.url || tunnel.state.url || getSetting('tunnel_url', '') || '').trim()
+  if (!url) return res.status(400).json({ error: 'ยังไม่มีลิงก์สาธารณะ — เปิดลิงก์อัตโนมัติก่อน หรือใส่ URL เอง' })
+  const ok = await registerLineWebhook(url)
+  res.status(ok ? 200 : 400).json(tunnelInfo())
+})
+if (getSetting('tunnel_auto', '0') === '1' && !process.env.PPSD_NO_TUNNEL) tunnel.start().catch((e) => console.error('tunnel start:', e.message))
 
 api.post('/backup-mirror/run', adminOnly, async (req, res) => {
   if (!getSetting('backup_mirror_dir', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้งโฟลเดอร์สำรองนอกเครื่อง' })
