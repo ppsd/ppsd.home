@@ -77,7 +77,7 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
       </nav>
 
       <div style={{ padding: '12px 16px', borderTop: '1px solid #2C3F4F' }}>
-        <div style={{ fontSize: 11, color: '#7C8B97', lineHeight: 1.5 }}>ปีงบประมาณ 2568<br />ข้อมูล ณ 16 มิ.ย. 2568</div>
+        <div style={{ fontSize: 11, color: '#7C8B97', lineHeight: 1.5 }}>ปีงบประมาณ 2568<br /><span title="วัน-เวลาที่ build โปรแกรมเวอร์ชันนี้ — ถ้าไม่ตรงกับที่อัปเดตล่าสุด ให้รัน update.bat แล้วกด F5">เวอร์ชัน {__BUILD_STAMP__}</span></div>
       </div>
     </aside>
   )
