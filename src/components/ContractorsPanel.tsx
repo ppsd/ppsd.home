@@ -12,6 +12,7 @@ interface Contractor {
   // ราคาจ้าง: หมวดงาน + ปริมาณ + ราคาตกลง/หน่วย + ยอดตกลงรวม (เทียบราคากลางค่าแรง)
   labor_rate_id?: number | null; qty?: number; unit_price?: number; contract_total?: number; price_note?: string
   rate_label?: string; rate_unit?: string; rate_min?: number | null; rate_max?: number | null; price_vs?: string
+  vendor_id?: number | null; vendor_category?: string; vendor_type?: string
 }
 interface Advance { id: number; date: string; type: string; item: string; amount: number; by: string }
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', outline: 'none' }
@@ -35,13 +36,30 @@ function compareRate(rate: ApiLaborRate | undefined, unitPrice: number): string 
   return 'ตามราคากลาง'
 }
 
-type HireForm = { name: string; role: string; type: string; labor_rate_id: string; qty: string; unit_price: string; contract_total: string; price_note: string }
-const blankHire: HireForm = { name: '', role: '', type: 'เหมารวม', labor_rate_id: '', qty: '', unit_price: '', contract_total: '', price_note: '' }
+// ทะเบียนผู้รับเหมา (จากหน้าจัดซื้อ แท็บผู้ค้า หมวด "ผู้รับเหมา") — ให้เลือกตอนจ้างช่างแทนพิมพ์ชื่อใหม่ทุกครั้ง
+export interface RegistryContractor { id: number; name: string; type: string; category: string; address: string; tax_id: string }
+export function useContractorRegistry() {
+  const [registry, setRegistry] = useState<RegistryContractor[]>([])
+  useEffect(() => { api.get<RegistryContractor[]>('/contractor-registry').then(setRegistry).catch(() => setRegistry([])) }, [])
+  return registry
+}
 
-// ฟอร์มจ้างช่าง: เลือกหมวดงาน → ราคากลางขึ้นเป็นราคาแนะนำ → กรอกปริมาณ + ราคาตกลง → ระบบเทียบให้
-function HireForm({ f, setF, rates, err, busy, onCancel, onSave, editing }: {
-  f: HireForm; setF: (f: HireForm) => void; rates: ApiLaborRate[]; err: string; busy: boolean; onCancel: () => void; onSave: () => void; editing: boolean
+type HireForm = { name: string; role: string; type: string; labor_rate_id: string; qty: string; unit_price: string; contract_total: string; price_note: string; vendor_id: string }
+const blankHire: HireForm = { name: '', role: '', type: 'เหมารวม', labor_rate_id: '', qty: '', unit_price: '', contract_total: '', price_note: '', vendor_id: '' }
+
+// ฟอร์มจ้างช่าง: เลือกช่างจากทะเบียน (หรือพิมพ์ใหม่) → เลือกหมวดงาน → ราคากลางขึ้นเป็นราคาแนะนำ → กรอกปริมาณ + ราคาตกลง → ระบบเทียบให้
+function HireForm({ f, setF, rates, registry, err, busy, onCancel, onSave, editing }: {
+  f: HireForm; setF: (f: HireForm) => void; rates: ApiLaborRate[]; registry: RegistryContractor[]; err: string; busy: boolean; onCancel: () => void; onSave: () => void; editing: boolean
 }) {
+  const NEW = '__new__'
+  const picked = registry.find((r) => String(r.id) === f.vendor_id)
+  // ค่าใน select: เลือกจากทะเบียน = vendor_id · พิมพ์เอง = NEW (รวมช่างเก่าที่ยังไม่อยู่ในทะเบียน)
+  const selVal = f.vendor_id ? f.vendor_id : NEW
+  const pickVendor = (v: string) => {
+    if (v === NEW) { setF({ ...f, vendor_id: '', name: picked ? '' : f.name }); return }
+    const r = registry.find((x) => String(x.id) === v)
+    setF({ ...f, vendor_id: v, name: r ? r.name : f.name })
+  }
   const rate = rates.find((r) => String(r.id) === f.labor_rate_id)
   const qty = unMoney(f.qty), up = unMoney(f.unit_price)
   const auto = qty > 0 && up > 0 ? Math.round(qty * up * 100) / 100 : 0
@@ -58,7 +76,16 @@ function HireForm({ f, setF, rates, err, busy, onCancel, onSave, editing }: {
   return (
     <div style={{ border: '1px solid #E1E5EA', borderRadius: 10, padding: 14, background: '#FAFBFC' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1.6fr 1fr', gap: 10 }}>
-        <div><div style={lbl}>ชื่อช่าง / ผู้รับเหมา *</div><input style={{ ...field, width: '100%', boxSizing: 'border-box' }} placeholder="เช่น ช่างสมชาย ทีมปูน" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
+        <div>
+          <div style={lbl}>ช่าง / ผู้รับเหมา * <span style={{ color: '#94A0A8' }}>(ทะเบียน {registry.length} ราย)</span></div>
+          <select style={{ ...field, width: '100%', boxSizing: 'border-box' }} value={selVal} onChange={(e) => pickVendor(e.target.value)}>
+            <option value={NEW}>— พิมพ์ชื่อใหม่ (ยังไม่อยู่ในทะเบียน) —</option>
+            {registry.map((r) => <option key={r.id} value={r.id}>{r.name}{r.category ? ` · ${r.category}` : ''}</option>)}
+          </select>
+          {!picked && <input style={{ ...field, width: '100%', boxSizing: 'border-box', marginTop: 6 }} placeholder="เช่น ช่างสมชาย ทีมปูน" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />}
+          {picked && <div style={{ fontSize: 11.5, color: '#5C6770', marginTop: 5 }}>{picked.type || ''}{picked.category ? ` · หมวด ${picked.category}` : ''}{picked.address ? ` · ${picked.address}` : ''}</div>}
+          {!picked && registry.length === 0 && <div style={{ fontSize: 11, color: '#94A0A8', marginTop: 4 }}>ลงทะเบียนผู้รับเหมาได้ที่ จัดซื้อ → ผู้ค้า → หมวด “ผู้รับเหมา” จะได้เลือกซ้ำได้ทุกบ้าน</div>}
+        </div>
         <div>
           <div style={lbl}>หมวดงานที่จ้าง (ราคากลาง)</div>
           <select style={{ ...field, width: '100%', boxSizing: 'border-box' }} value={f.labor_rate_id} onChange={(e) => pickRate(e.target.value)}>
@@ -223,6 +250,7 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
   const [evalFor, setEvalFor] = useState<number | null>(null)
   const [advFor, setAdvFor] = useState<number | null>(null)
   const { rates } = useLaborRates()
+  const registry = useContractorRegistry()
   const rateOf = useMemo(() => new Map(rates.map((r) => [r.id, r])), [rates])
 
   const load = () => api.get<Contractor[]>('/houses/' + houseCode + '/contractors').then(setRows).catch(() => {})
@@ -235,7 +263,9 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
     // ยอดรวมที่ระบบคำนวณเอง (ปริมาณ × ราคา) → ปล่อยช่องว่างไว้ให้คำนวณใหม่ตามราคาที่แก้; กรอกเองไว้ → คงค่าไว้
     const auto = (c.qty || 0) > 0 && (c.unit_price || 0) > 0 ? Math.round((c.qty || 0) * (c.unit_price || 0) * 100) / 100 : 0
     const customTotal = (c.contract_total || 0) > 0 && Math.abs((c.contract_total || 0) - auto) >= 0.01
-    setF({ name: c.name, role: c.role || '', type: c.type || 'เหมารวม', labor_rate_id: c.labor_rate_id ? String(c.labor_rate_id) : '', qty: c.qty ? String(c.qty) : '', unit_price: c.unit_price ? String(c.unit_price) : '', contract_total: customTotal ? String(c.contract_total) : '', price_note: c.price_note || '' })
+    // ช่างเก่าที่ยังไม่ผูกทะเบียน แต่ชื่อตรงกับทะเบียน → ผูกให้เลย
+    const vid = c.vendor_id || registry.find((r) => r.name === c.name)?.id || ''
+    setF({ name: c.name, role: c.role || '', type: c.type || 'เหมารวม', labor_rate_id: c.labor_rate_id ? String(c.labor_rate_id) : '', qty: c.qty ? String(c.qty) : '', unit_price: c.unit_price ? String(c.unit_price) : '', contract_total: customTotal ? String(c.contract_total) : '', price_note: c.price_note || '', vendor_id: vid ? String(vid) : '' })
   }
   const cancel = () => { setAdding(false); setEditId(null); setF(blankHire); setErr('') }
   const submit = async () => {
@@ -247,7 +277,7 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
       if (!confirm(`ราคาตกลง ${baht(up)}/${rate!.unit} สูงกว่าราคากลาง ${baht(rate!.price_max)}/${rate!.unit}\nยืนยันจ้างในราคานี้? (บันทึกลงประวัติตรวจสอบ)`)) return
     }
     setErr(''); setBusy(true)
-    const body = { name: f.name.trim(), role: f.role.trim(), type: f.type, labor_rate_id: f.labor_rate_id ? Number(f.labor_rate_id) : null, qty: unMoney(f.qty), unit_price: up, contract_total: unMoney(f.contract_total), price_note: f.price_note.trim() }
+    const body = { name: f.name.trim(), role: f.role.trim(), type: f.type, labor_rate_id: f.labor_rate_id ? Number(f.labor_rate_id) : null, qty: unMoney(f.qty), unit_price: up, contract_total: unMoney(f.contract_total), price_note: f.price_note.trim(), vendor_id: f.vendor_id ? Number(f.vendor_id) : null }
     try {
       if (editId) await api.put('/contractors/' + editId, body)
       else await api.post('/houses/' + houseCode + '/contractors', { ...body, advance: 0, deducted: 0, paid: 0 })
@@ -264,7 +294,7 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
         <span style={{ marginLeft: 10, fontSize: 11.5, color: '#94A0A8' }}>เลือกหมวดงานตอนจ้าง → ระบบโชว์ราคากลางเป็นราคาแนะนำ</span>
         <button onClick={openAdd} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ จ้างช่าง</button>
       </div>
-      {adding && editId === null && <HireForm f={f} setF={setF} rates={rates} err={err} busy={busy} onCancel={cancel} onSave={submit} editing={false} />}
+      {adding && editId === null && <HireForm f={f} setF={setF} rates={rates} registry={registry} err={err} busy={busy} onCancel={cancel} onSave={submit} editing={false} />}
       {rows.length === 0 && <div style={{ padding: '24px', textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ยังไม่มีช่าง/ผู้รับเหมา</div>}
       {rows.map((c) => {
         const advTotal = c.adv_total || 0
@@ -277,14 +307,14 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
         const vc = vsColor(c.price_vs)
         const contractTotal = c.contract_total || 0
         const overContract = contractTotal > 0 && workTotal > contractTotal // ตั้งงวดงานเกินยอดที่ตกลงจ้าง
-        if (editId === c.id) return <HireForm key={c.id} f={f} setF={setF} rates={rates} err={err} busy={busy} onCancel={cancel} onSave={submit} editing />
+        if (editId === c.id) return <HireForm key={c.id} f={f} setF={setF} rates={rates} registry={registry} err={err} busy={busy} onCancel={cancel} onSave={submit} editing />
         return (
           <div key={c.id} style={{ border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', background: '#F7F9FB', borderBottom: '1px solid #EEF1F4' }}>
               <div style={{ width: 38, height: 38, borderRadius: 9, background: '#30506A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 15 }}>{c.name[0]}</div>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}</div>
-                <div style={{ fontSize: 11.5, color: '#5C6770' }}>{c.role || '-'}</div>
+                <div style={{ fontSize: 11.5, color: '#5C6770' }}>{c.role || '-'}{c.vendor_id ? <span title="อยู่ในทะเบียนผู้รับเหมา (จัดซื้อ → ผู้ค้า)" style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', padding: '1px 7px', borderRadius: 20 }}>ทะเบียน{c.vendor_category ? ` · ${c.vendor_category}` : ''}</span> : null}</div>
                 {c.rate_label && (
                   <div style={{ fontSize: 11.5, color: '#5C6770', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span>ราคากลาง <b className="num">{c.rate_max && c.rate_max > 0 ? (c.rate_min === c.rate_max ? baht(c.rate_max) : `${baht(c.rate_min || 0)}–${baht(c.rate_max)}`) : 'เสนอราคา'}</b>{c.rate_max && c.rate_max > 0 ? `/${c.rate_unit}` : ''}</span>

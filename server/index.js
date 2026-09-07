@@ -2209,6 +2209,9 @@ api.post('/procurement/clear', adminOnly, (req, res) => {
 
 // ---------- procurement (finance only) ----------
 // ผู้ขาย + ยอดค้างจ่ายจริง (คิดสดจาก PO เครดิต − ที่จ่ายแล้ว) และยอดซื้อสะสมจริง
+// ทะเบียนผู้รับเหมา (เฉพาะชื่อ/หมวด/ที่อยู่ — ไม่มีตัวเลขเงิน) ให้ทุกคนที่คีย์งานได้ใช้เลือกตอนจ้างช่างในบ้าน รวมโฟร์แมน
+api.get('/contractor-registry', canWrite, (_req, res) =>
+  res.json(db.prepare("SELECT id, name, type, category, address, tax_id FROM vendors WHERE kind='ผู้รับเหมา' ORDER BY name").all()))
 api.get('/vendors', financeOnly, (_req, res) => {
   const rows = db.prepare('SELECT * FROM vendors ORDER BY id').all().map((v) => {
     const pos = db.prepare("SELECT id, amount, payment_type FROM purchase_orders WHERE vendor=? OR vendor_id=?").all(v.name, v.id)
@@ -2731,8 +2734,10 @@ api.get('/houses/:code/contractors', (req, res) => {
     // หมวดงาน + ราคากลางที่ใช้ตอนจ้าง (เทียบราคาตกลงว่าถูกกว่า/ตาม/สูงกว่าราคากลาง)
     const rate = c.labor_rate_id ? db.prepare('SELECT * FROM labor_rates WHERE id=?').get(c.labor_rate_id) : null
     const rate_label = rate ? rate.name + (rate.variant ? ' (' + rate.variant + ')' : '') : ''
+    const vend = c.vendor_id ? db.prepare('SELECT category, type FROM vendors WHERE id=?').get(c.vendor_id) : null
     return { ...c, work_total, work_paid, eval_avg: ev?.avg ?? null, eval_grade: ev?.grade ?? null, adv_total, deduct_total, adv_left: adv_total - deduct_total,
-      rate_label, rate_unit: rate?.unit || '', rate_min: rate?.price_min ?? null, rate_max: rate?.price_max ?? null, price_vs: laborCompare(rate, c.unit_price) }
+      rate_label, rate_unit: rate?.unit || '', rate_min: rate?.price_min ?? null, rate_max: rate?.price_max ?? null, price_vs: laborCompare(rate, c.unit_price),
+      vendor_category: vend?.category || '', vendor_type: vend?.type || '' }
   }))
 })
 // ช่องราคาจ้างของช่าง: หมวดงาน (labor_rate_id) · ปริมาณ · ราคาตกลง/หน่วย · ยอดตกลงรวม · เหตุผลถ้าสูงกว่าราคากลาง
@@ -2750,7 +2755,10 @@ function contractorPricing(b, cur = {}) {
   if (!explicitTotal && changed && auto > 0 && (!(contract_total > 0) || Math.abs(contract_total - oldAuto) < 0.01)) contract_total = auto
   if (!(contract_total > 0) && auto > 0) contract_total = auto
   const price_note = b.price_note != null ? String(b.price_note).trim() : (cur.price_note || '')
-  return { labor_rate_id, qty, unit_price, contract_total, price_note }
+  // เลือกจากทะเบียนผู้รับเหมา → เก็บ vendor_id (ต้องเป็นรายที่อยู่ในทะเบียนจริง)
+  let vendor_id = b.vendor_id !== undefined ? (Number(b.vendor_id) || null) : (cur.vendor_id ?? null)
+  if (vendor_id && !db.prepare("SELECT id FROM vendors WHERE id=? AND kind='ผู้รับเหมา'").get(vendor_id)) vendor_id = null
+  return { labor_rate_id, qty, unit_price, contract_total, price_note, vendor_id }
 }
 api.put('/contractors/:id', canWrite, (req, res) => {
   const cur = db.prepare('SELECT * FROM contractors WHERE id=?').get(req.params.id)
@@ -2760,9 +2768,9 @@ api.put('/contractors/:id', canWrite, (req, res) => {
   if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อช่าง/ผู้รับเหมา' })
   const p = contractorPricing(b, cur)
   const rate = p.labor_rate_id ? db.prepare('SELECT * FROM labor_rates WHERE id=?').get(p.labor_rate_id) : null
-  db.prepare('UPDATE contractors SET name=?, role=?, type=?, note=?, labor_rate_id=?, qty=?, unit_price=?, contract_total=?, price_note=? WHERE id=?')
+  db.prepare('UPDATE contractors SET name=?, role=?, type=?, note=?, labor_rate_id=?, qty=?, unit_price=?, contract_total=?, price_note=?, vendor_id=? WHERE id=?')
     .run(name, b.role != null ? String(b.role) : cur.role, b.type != null ? String(b.type) : cur.type, b.note != null ? String(b.note) : cur.note,
-      p.labor_rate_id, p.qty, p.unit_price, p.contract_total, p.price_note, cur.id)
+      p.labor_rate_id, p.qty, p.unit_price, p.contract_total, p.price_note, p.vendor_id, cur.id)
   // ชื่อช่างเปลี่ยน → งวดงานช่างที่ผูกชื่อเดิมต้องตามไปด้วย (ยอดจ่ายช่างคิดจากชื่อ)
   if (name !== cur.name) db.prepare("UPDATE installments SET contractor=? WHERE house_code=? AND side='contractor' AND contractor=?").run(name, cur.house_code, cur.name)
   if (laborCompare(rate, p.unit_price) === 'สูงกว่า') audit(req, 'จ้างช่างสูงกว่าราคากลาง', `${name} · ${rate.name} ฿${p.unit_price}/${rate.unit} (ราคากลาง ${rate.price_min}–${rate.price_max}) ${p.price_note ? '· ' + p.price_note : ''}`)
@@ -3753,9 +3761,9 @@ api.post('/houses/:code/contractors', canWrite, (req, res) => {
   const rate = p.labor_rate_id ? db.prepare('SELECT * FROM labor_rates WHERE id=?').get(p.labor_rate_id) : null
   // ไม่ได้พิมพ์งานที่รับผิดชอบ แต่เลือกหมวดงานไว้ → ใช้ชื่อหมวดเป็นงานที่รับผิดชอบ
   const role = String(b.role || '').trim() || (rate ? rate.name + (rate.variant ? ' (' + rate.variant + ')' : '') : '')
-  const info = db.prepare('INSERT INTO contractors (house_code,name,role,type,advance,deducted,paid,note,labor_rate_id,qty,unit_price,contract_total,price_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  const info = db.prepare('INSERT INTO contractors (house_code,name,role,type,advance,deducted,paid,note,labor_rate_id,qty,unit_price,contract_total,price_note,vendor_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(req.params.code, b.name, role, b.type || 'เหมารวม', Number(b.advance) || 0, Number(b.deducted) || 0, Number(b.paid) || 0, b.note || '',
-      p.labor_rate_id, p.qty, p.unit_price, p.contract_total, p.price_note)
+      p.labor_rate_id, p.qty, p.unit_price, p.contract_total, p.price_note, p.vendor_id)
   if (laborCompare(rate, p.unit_price) === 'สูงกว่า') audit(req, 'จ้างช่างสูงกว่าราคากลาง', `${b.name} · ${rate.name} ฿${p.unit_price}/${rate.unit} (ราคากลาง ${rate.price_min}–${rate.price_max}) ${p.price_note ? '· ' + p.price_note : ''}`)
   res.status(201).json({ ...db.prepare('SELECT * FROM contractors WHERE id=?').get(info.lastInsertRowid), price_vs: laborCompare(rate, p.unit_price) })
 })

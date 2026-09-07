@@ -526,3 +526,29 @@ test('ราคากลางค่าแรง: มีตารางตั้
   assert.equal((await POST('/labor-rates', { name: 'x', price_min: 1 })).status, 403)
   token = adminToken
 })
+
+test('จ้างช่าง: ผู้รับเหมาที่ลงทะเบียนไว้ (ผู้ค้า หมวดผู้รับเหมา) ต้องมาให้เลือก — โฟร์แมนเห็นด้วย แต่ไม่เห็นตัวเลขเงิน', async () => {
+  const v = await POST('/vendors', { name: 'ทีมช่างฉาบ ลุงหมาน', kind: 'ผู้รับเหมา', type: 'บุคคลธรรมดา', category: 'งานฉาบ', address: 'โพธาราม' })
+  assert.equal(v.status, 201)
+  await POST('/vendors', { name: 'ร้านวัสดุไม่ใช่ช่าง', kind: 'ผู้ขาย' })
+  const reg = (await GET('/contractor-registry')).data
+  assert.ok(reg.some((r) => r.id === v.data.id && r.category === 'งานฉาบ'), 'ผู้รับเหมาต้องอยู่ในทะเบียนให้เลือก')
+  assert.ok(!reg.some((r) => r.name === 'ร้านวัสดุไม่ใช่ช่าง'), 'ผู้ขายวัสดุต้องไม่ปน')
+  assert.ok(!('outstanding' in reg[0]) && !('total' in reg[0]), 'ทะเบียนต้องไม่มีตัวเลขเงิน')
+  // จ้างโดยอ้างทะเบียน → ชื่อ + หมวดตามมา
+  const c = await POST('/houses/H-LABOR/contractors', { name: 'ทีมช่างฉาบ ลุงหมาน', vendor_id: v.data.id, unit_price: 110 })
+  assert.equal(c.status, 201, JSON.stringify(c.data))
+  assert.equal(c.data.vendor_id, v.data.id)
+  const row = (await GET('/houses/H-LABOR/contractors')).data.find((x) => x.id === c.data.id)
+  assert.equal(row.vendor_category, 'งานฉาบ')
+  // vendor_id ที่ไม่ใช่ผู้รับเหมา → ไม่ผูก
+  const shop = (await GET('/vendors')).data.find((x) => x.name === 'ร้านวัสดุไม่ใช่ช่าง')
+  const bad = await POST('/houses/H-LABOR/contractors', { name: 'x', vendor_id: shop.id })
+  assert.equal(bad.data.vendor_id, null)
+  // โฟร์แมนใช้ทะเบียนได้ (แต่ /vendors เต็มยังเข้าไม่ได้)
+  const adminToken = token
+  token = (await POST('/login', { username: 'sitetest', pin: '9999' })).data.token
+  assert.equal((await GET('/contractor-registry')).status, 200)
+  assert.equal((await GET('/vendors')).status, 403)
+  token = adminToken
+})
