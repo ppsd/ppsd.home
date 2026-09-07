@@ -427,3 +427,21 @@ test('สิทธิ์: role site ต้องไม่เห็นตัว�
   assert.equal(d.net, null)
   token = adminToken
 })
+
+test('โฟร์แมน (site): คีย์ใบขอซื้อได้ + เห็นราคากลาง แต่แตะเงินจริงไม่ได้', async () => {
+  const adminToken = token
+  token = (await POST('/login', { username: 'sitetest', pin: '9999' })).data.token
+  // คีย์ PR ได้
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'อิฐมวลเบา 200 ก้อน', amount: 3000 })
+  assert.equal(pr.status, 201, JSON.stringify(pr.data))
+  const list = await GET('/purchase-requests')
+  assert.equal(list.status, 200)
+  assert.ok(list.data.some((r) => r.id === pr.data.id), 'ต้องเห็น PR ที่ตัวเองคีย์')
+  // เห็นราคากลาง (ใช้เดาคำ + เตือนราคาแพง)
+  assert.equal((await GET('/material-prices')).status, 200)
+  // แต่ส่วนเงินจริงยังเข้าไม่ได้
+  assert.equal((await GET('/payments')).status, 403, 'ใบจ่ายเงินต้องเข้าไม่ได้')
+  assert.equal((await GET('/payables')).status, 403, 'ยอดค้างจ่ายต้องเข้าไม่ได้')
+  assert.equal((await POST('/purchase-orders', { vendor: 'x', item: 'y', amount: 1 })).status, 403, 'ออก PO ต้องไม่ได้')
+  token = adminToken
+})

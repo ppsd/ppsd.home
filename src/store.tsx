@@ -532,7 +532,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const payroll = payrollResp ? payrollResp.rows : null
     const payrollMeta = payrollResp ? { period: payrollResp.period, periodLabel: payrollResp.periodLabel, locked: payrollResp.locked } : null
     const vendors = finance ? await tryGet<ApiVendor[]>('/vendors', []) : null
-    const prs = finance ? await tryGet<ApiPR[]>('/purchase-requests', []) : null
+    const prs = finance || role === 'site' ? await tryGet<ApiPR[]>('/purchase-requests', []) : null // โฟร์แมนคีย์ใบขอซื้อได้
     const payments = finance ? await tryGet<ApiPayment[]>('/payments', []) : null
     const efilings = finance ? await tryGet<EfilingItem[]>('/efiling', []) : null
     const users = role === 'admin' ? await tryGet<ApiUser[]>('/users', []) : null
@@ -548,7 +548,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ])
     const reports = finance ? await tryGet<Reports | null>('/reports', null) : null
     const purchaseOrders = finance ? await tryGet<ApiPO[]>('/purchase-orders', []) : null
-    const materialPrices = finance ? await tryGet<ApiMaterialPrice[]>('/material-prices', []) : null
+    const materialPrices = finance || role === 'site' ? await tryGet<ApiMaterialPrice[]>('/material-prices', []) : null
     const positions = await tryGet<string[]>('/positions', [])
     setData({ houses, installments, issues, expenses, employees, payroll, payrollMeta, ot, vendors, prs, payments, users, dashboard, efilings, customers, tasks, salesDocs, notifications, reports, leaves, timeAdjustments, attendance, purchaseOrders, kioskEmployees, positions, materialPrices })
   }

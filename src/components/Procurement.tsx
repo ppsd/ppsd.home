@@ -255,7 +255,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A0A8" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V8a4 4 0 018 0v3" /></svg>
           </div>
           <div style={{ fontSize: 15, fontWeight: 600, color: '#1C2730' }}>ไม่มีสิทธิ์เข้าถึงจัดซื้อ/จ่าย</div>
-          <div style={{ fontSize: 13, color: '#5C6770', marginTop: 6 }}>ส่วนจัดซื้อ/จ่ายและภาษีเปิดให้เฉพาะบทบาท <b>ผู้ดูแล</b> และ <b>บัญชี</b></div>
+          <div style={{ fontSize: 13, color: '#5C6770', marginTop: 6 }}>ใบขอซื้อเปิดให้ <b>หน้างาน (โฟร์แมน)</b> ด้วย · ส่วนเงินจริง (PO/จ่าย/ภาษี) เฉพาะ <b>ผู้ดูแล</b> และ <b>บัญชี</b></div>
         </div>
       </div>
     )
@@ -278,7 +278,10 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const prHouseOf = (r: { house_code?: string; house?: string }) => r.house_code || houses.find((x) => x.code === r.house || x.name === r.house)?.code || ''
   const prList = (prs || []).filter((r) => (!houseCode || prHouseOf(r) === houseCode) && `${r.no} ${r.house} ${r.item} ${r.by} ${r.status}`.toLowerCase().includes(ql))
   const poList = purchaseOrders.filter((r) => (!houseCode || r.house_code === houseCode) && `${r.no} ${r.vendor} ${r.item} ${r.status}`.toLowerCase().includes(ql))
-  const shownTabs = houseCode ? procurementTabs.filter((t) => t.id === 'pr' || t.id === 'po') : procurementTabs
+  // โฟร์แมน/หน้างาน: เข้าได้เฉพาะแท็บใบขอซื้อ (คีย์ว่าจะซื้ออะไร) — แท็บเงินจริงเป็นของบัญชี
+  const financeOk = user?.role === 'admin' || user?.role === 'accounting'
+  const baseTabs = financeOk ? procurementTabs : procurementTabs.filter((t) => t.id === 'pr')
+  const shownTabs = houseCode ? baseTabs.filter((t) => t.id === 'pr' || t.id === 'po') : baseTabs
   const searchBox = <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเลขที่/ผู้ขาย/รายการ" style={{ ...prField, width: 220, padding: '6px 10px', fontSize: 12.5 }} />
 
   return (
@@ -401,7 +404,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 </tr>
                 {quoteFor === r.id && (
                   <tr style={{ background: '#F7F9FB' }}>
-                    <td colSpan={7} style={{ padding: '10px 18px' }}><QuotePanel prId={r.id} /></td>
+                    <td colSpan={7} style={{ padding: '10px 18px' }}>{financeOk ? <QuotePanel prId={r.id} /> : <div style={{ fontSize: 12, color: '#94A0A8' }}>ใบเทียบราคา — จัดการโดยฝ่ายบัญชี/จัดซื้อ</div>}</td>
                   </tr>
                 )}
                 </Fragment>

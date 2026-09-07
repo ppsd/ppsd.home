@@ -2241,12 +2241,12 @@ api.put('/vendors/:id', financeOnly, (req, res) => {
 function jparse(s) { if (!s) return null; try { return JSON.parse(s) } catch { return null } }
 function prRow(r) { return r ? { ...r, items: jparse(r.items), images: jparse(r.images) } : r }
 function poRow(r) { return r ? { ...r, items: jparse(r.items) || [] } : r }
-api.get('/purchase-requests', financeOnly, (_req, res) =>
+api.get('/purchase-requests', canWrite, (_req, res) => // โฟร์แมน (หน้างาน) เข้าดู/คีย์ใบขอซื้อได้ — ส่วนเงินจริง (PO/จ่าย) ยังเป็น financeOnly
   res.json(db.prepare('SELECT * FROM purchase_requests ORDER BY id DESC').all().map((r) => ({ ...prRow(r), approval: approvalState('pr', r.id) })))
 )
 // create a PR — requester = current user, snapshot their signature, optional product image
 // รองรับหลายรายการในใบเดียว: ส่ง items: [{desc,qty,unit,price}] มา (จำนวนเงินรวม = ผลรวมของทุกรายการ)
-api.post('/purchase-requests', financeOnly, (req, res) => {
+api.post('/purchase-requests', canWrite, (req, res) => {
   const { house, house_code, category, item, amount, image, items, images } = req.body || {}
   // รูปแนบ: รับได้สูงสุด 3 รูป (data URL รูปภาพ)
   const imgs = (Array.isArray(images) ? images : (image ? [image] : []))
@@ -2286,7 +2286,7 @@ api.post('/approve/:docType/:docId', requireManager, (req, res) => { try { res.j
 api.post('/reject/:docType/:docId', requireManager, (req, res) => { try { res.json(doReject(req.params.docType, req.params.docId, req)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) } })
 // ===== ราคากลางวัสดุ (Material Standard Prices) — อ้างอิงจากประวัติสั่งซื้อจริง =====
 const nkeyOf = (n) => String(n || '').replace(/\s+/g, '').replace(/["“”]/g, '').toLowerCase()
-api.get('/material-prices', financeOnly, (_req, res) =>
+api.get('/material-prices', canWrite, (_req, res) => // หน้างานเห็นราคากลางด้วย (ใช้เดาคำ + เตือนราคาแพงตอนคีย์ PR)
   res.json(db.prepare('SELECT * FROM material_prices WHERE active=1 ORDER BY po_count DESC, central DESC').all()))
 api.post('/material-prices', financeOnly, (req, res) => {
   const b = req.body || {}
