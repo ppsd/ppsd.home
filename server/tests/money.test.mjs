@@ -630,3 +630,21 @@ test('กติกาจำนวนผู้อนุมัติลดลง �
   assert.equal(row.approval.done, true)
   await PUT('/controls', { block_self_approve: true })
 })
+
+test('ตั้งค่า AI: รุ่นเก่า claude-3 ถูกเปลี่ยนเป็นรุ่นปัจจุบัน · ไม่มีกุญแจต้องบอกที่ตั้งค่าให้ถูก', async () => {
+  const cfg = (await GET('/ai-settings')).data
+  assert.equal(cfg.model, 'claude-opus-5', 'ค่าตั้งต้นต้องเป็นรุ่นปัจจุบัน')
+  assert.ok(Array.isArray(cfg.models) && cfg.models.some((m) => m.id === 'claude-opus-5'))
+  // ค่าประหลาด/รุ่นปลดแล้ว → บังคับกลับเป็นรุ่นตั้งต้น
+  const bad = await POST('/ai-settings', { model: 'claude-3-5-sonnet-latest' })
+  assert.equal(bad.data.model, 'claude-opus-5')
+  const ok = await POST('/ai-settings', { model: 'claude-sonnet-5' })
+  assert.equal(ok.data.model, 'claude-sonnet-5')
+  await POST('/ai-settings', { model: 'claude-opus-5' })
+  // ไม่มีกุญแจ → ทดสอบต้อง 400 พร้อมบอกที่ตั้งค่า (ไม่ยิงออกอินเทอร์เน็ต)
+  if (!cfg.hasKey) {
+    const t = await POST('/ai-settings/test', {})
+    assert.equal(t.status, 400)
+    assert.match(t.data.error, /ผู้ใช้งาน → ตั้งค่า AI/)
+  }
+})

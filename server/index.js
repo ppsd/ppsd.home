@@ -764,6 +764,37 @@ api.post('/houses/:code/installments/bulk', canWrite, (req, res) => {
   audit(req, 'นำเข้างวดงาน', `${req.params.code} ${n} งวด`)
   res.json({ ok: true, count: n })
 })
+// ===== AI (Claude) — ใช้ร่วมกันทุกจุดที่ให้ AI อ่านเอกสาร (ใบส่งของ / สัญญางวดงาน) =====
+// รุ่นที่เลือกได้ในหน้า ผู้ใช้งาน → ตั้งค่า AI · รุ่นเก่าตระกูล claude-3 ถูกปลดแล้ว → บังคับเป็นรุ่นปัจจุบัน
+const AI_MODELS = [
+  { id: 'claude-opus-5', label: 'Claude Opus 5 — แม่นที่สุด (แนะนำ)' },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 — เร็ว/ประหยัดกว่า' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 — ถูกที่สุด' },
+]
+const AI_DEFAULT_MODEL = 'claude-opus-5'
+function aiModel() {
+  const m = String(getSetting('ai_model', '') || '').trim()
+  return !m || /^claude-3/.test(m) || /-latest$/.test(m) ? AI_DEFAULT_MODEL : m
+}
+const aiKey = () => getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY || ''
+const AI_NO_KEY = 'ยังไม่ได้ตั้งค่ากุญแจ AI — ผู้ดูแลระบบตั้งได้ที่เมนู ผู้ใช้งาน → ตั้งค่า AI'
+// ส่งรูป/PDF + คำสั่งให้ Claude แล้วคืนข้อความตอบ (media = content block รูปหรือเอกสาร, หรือ null ถ้ามีแต่ข้อความ)
+async function aiAsk({ media, prompt, maxTokens = 4000, key = aiKey(), model = aiModel() }) {
+  if (!key) return { ok: false, error: AI_NO_KEY, code: 400 }
+  const content = media ? [media, { type: 'text', text: prompt }] : [{ type: 'text', text: prompt }]
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
+      signal: AbortSignal.timeout(120000),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) return { ok: false, code: 502, error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)), model }
+    if (data.stop_reason === 'refusal') return { ok: false, code: 502, error: 'AI ปฏิเสธคำขอนี้ (' + (data.stop_details?.category || 'refusal') + ')', model }
+    return { ok: true, text: (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join(''), model }
+  } catch (e) { return { ok: false, code: 502, error: 'เรียก AI ไม่สำเร็จ: ' + e.message, model } }
+}
 // ให้ AI อ่านตารางงวดงานจากสัญญา (PDF/รูป) → คืน JSON งวดงานให้พรีวิว
 const EXTRACT_PROMPT = `คุณเป็นผู้ช่วยกรอกข้อมูลงวดงานก่อสร้างจากสัญญา อ่าน "ตารางงวดการชำระเงิน/งวดงาน" ในเอกสารนี้ แล้วสรุปเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
 รูปแบบ: {"installments":[{"no":1,"detail":"รายละเอียดงานงวดนี้","amount":238000,"side":"customer"}]}
@@ -780,8 +811,7 @@ function extractJsonBlock(text) {
   try { return JSON.parse(m[0]) } catch { return null }
 }
 api.post('/houses/:code/installments/extract', canWrite, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
-  const key = getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY || ''
-  if (!key) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่ากุญแจ AI (ไปที่ ตรวจสอบ → ตั้งค่า AI) — หรือใช้วิธี “วางจาก Excel” แทนได้' })
+  if (!aiKey()) return res.status(400).json({ error: AI_NO_KEY + ' — หรือใช้วิธี “วางจาก Excel” แทนได้' })
   const buf = req.body
   if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
   const mime = String(req.query.mime || 'application/pdf')
@@ -789,28 +819,26 @@ api.post('/houses/:code/installments/extract', canWrite, express.raw({ type: 'ap
   const media = mime.includes('pdf')
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
     : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: getSetting('ai_model', 'claude-3-5-sonnet-latest'), max_tokens: 4000, messages: [{ role: 'user', content: [media, { type: 'text', text: EXTRACT_PROMPT }] }] }),
-    })
-    const data = await r.json()
-    if (!r.ok) return res.status(502).json({ error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)) })
-    const text = (data.content || []).map((c) => c.text || '').join('')
-    const parsed = extractJsonBlock(text)
-    const items = (parsed?.installments || parsed || []).map((it, i) => ({ no: Number(it.no) || i + 1, detail: String(it.detail || ''), amount: Number(String(it.amount).toString().replace(/,/g, '')) || 0, side: it.side === 'contractor' ? 'contractor' : 'customer', due_iso: /^\d{4}-\d{2}-\d{2}$/.test(String(it.due_iso || '')) ? it.due_iso : '' }))
-    audit(req, 'AI อ่านงวดงานจากสัญญา', `${req.params.code} ${items.length} งวด`)
-    res.json({ items })
-  } catch (e) { res.status(502).json({ error: 'เรียก AI ไม่สำเร็จ: ' + e.message }) }
+  const ai = await aiAsk({ media, prompt: EXTRACT_PROMPT })
+  if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error })
+  const parsed = extractJsonBlock(ai.text)
+  const items = (parsed?.installments || parsed || []).map((it, i) => ({ no: Number(it.no) || i + 1, detail: String(it.detail || ''), amount: Number(String(it.amount).toString().replace(/,/g, '')) || 0, side: it.side === 'contractor' ? 'contractor' : 'customer', due_iso: /^\d{4}-\d{2}-\d{2}$/.test(String(it.due_iso || '')) ? it.due_iso : '' }))
+  audit(req, 'AI อ่านงวดงานจากสัญญา', `${req.params.code} ${items.length} งวด`)
+  res.json({ items })
 })
-// ตั้งค่ากุญแจ AI (admin) — เก็บใน settings
-api.get('/ai-settings', adminOnly, (_req, res) => res.json({ hasKey: !!(getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY), model: getSetting('ai_model', 'claude-3-5-sonnet-latest') }))
+// ตั้งค่ากุญแจ AI (admin) — เก็บใน settings · เลือกรุ่นได้ · ปุ่มทดสอบยิงคำถามสั้นๆ เช็คว่ากุญแจใช้ได้จริง
+api.get('/ai-settings', adminOnly, (_req, res) => res.json({ hasKey: !!aiKey(), model: aiModel(), models: AI_MODELS, fromEnv: !getSetting('ai_api_key', '') && !!process.env.ANTHROPIC_API_KEY }))
 api.post('/ai-settings', adminOnly, (req, res) => {
-  if (req.body?.api_key != null) setSetting('ai_api_key', String(req.body.api_key || ''))
-  if (req.body?.model) setSetting('ai_model', String(req.body.model))
-  audit(req, 'ตั้งค่า AI', req.body?.model || '')
-  res.json({ ok: true, hasKey: !!(getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY) })
+  if (req.body?.api_key != null) setSetting('ai_api_key', String(req.body.api_key || '').trim())
+  if (req.body?.model) setSetting('ai_model', AI_MODELS.some((m) => m.id === req.body.model) ? String(req.body.model) : AI_DEFAULT_MODEL)
+  audit(req, 'ตั้งค่า AI', aiModel())
+  res.json({ ok: true, hasKey: !!aiKey(), model: aiModel() })
+})
+api.post('/ai-settings/test', adminOnly, async (_req, res) => {
+  const t0 = Date.now()
+  const ai = await aiAsk({ media: null, prompt: 'ตอบสั้นๆ คำเดียวว่า "พร้อมใช้งาน"', maxTokens: 50 })
+  if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error, model: ai.model })
+  res.json({ ok: true, model: ai.model, reply: String(ai.text || '').trim().slice(0, 80), ms: Date.now() - t0 })
 })
 // edit an installment (รายละเอียด/วัน/กำหนด/จำนวนเงิน/สถานะ)
 api.put('/installments/:id', canWrite, (req, res) => {
@@ -851,6 +879,8 @@ api.delete('/installments/:id', canWrite, (req, res) => {
 try {
   backfillSignatures()
   syncApprovalStatuses()
+  // รุ่น AI เก่า (claude-3-*) ถูกปลดจาก API แล้ว → เปลี่ยนเป็นรุ่นปัจจุบัน
+  if (getSetting('ai_model', '') && aiModel() !== getSetting('ai_model', '')) { setSetting('ai_model', aiModel()); console.log('[ai] เปลี่ยนรุ่น AI เป็น ' + aiModel()) }
   if (getSetting('inst_status_sync_v1', '') !== '1') {
     let fixed = 0
     for (const i of db.prepare('SELECT * FROM installments WHERE COALESCE(paid,0) > 0').all()) {
@@ -2147,8 +2177,7 @@ const RECEIPT_PROMPT = `คุณเป็นผู้ช่วยตรวจ�
 
 // AI อ่านใบส่งของจากรูป → คืนรายการสินค้า (ยังไม่บันทึก ให้ผู้ใช้ตรวจ/แก้ก่อน)
 api.post('/purchase-orders/:id/extract-receipt', canWrite, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
-  const key = getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY || ''
-  if (!key) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่ากุญแจ AI (ไปที่ ตรวจสอบ → ตั้งค่า AI) — หรือกรอกรายการในใบส่งของเองได้' })
+  if (!aiKey()) return res.status(400).json({ error: AI_NO_KEY + ' — หรือกรอกรายการในใบส่งของเองได้' })
   const buf = req.body
   if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
   const mime = String(req.query.mime || 'image/jpeg')
@@ -2156,26 +2185,18 @@ api.post('/purchase-orders/:id/extract-receipt', canWrite, express.raw({ type: '
   const media = mime.includes('pdf')
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
     : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: getSetting('ai_model', 'claude-3-5-sonnet-latest'), max_tokens: 4000, messages: [{ role: 'user', content: [media, { type: 'text', text: RECEIPT_PROMPT }] }] }),
-    })
-    const data = await r.json()
-    if (!r.ok) return res.status(502).json({ error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)) })
-    const text = (data.content || []).map((c) => c.text || '').join('')
-    const parsed = extractJsonBlock(text)
-    const items = (parsed?.items || parsed || []).map((it) => {
-      const qty = Number(String(it.qty).toString().replace(/,/g, '')) || 0
-      const amount = Number(String(it.amount).toString().replace(/,/g, '')) || 0
-      let price = Number(String(it.price).toString().replace(/,/g, '')) || 0
-      if (!price && amount && qty) price = Math.round((amount / qty) * 100) / 100
-      return { name: String(it.name || ''), qty, unit: String(it.unit || ''), price, amount: amount || qty * price }
-    }).filter((it) => it.name)
-    audit(req, 'AI อ่านใบส่งของ', `PO#${req.params.id} ${items.length} รายการ`)
-    res.json({ items })
-  } catch (e) { res.status(502).json({ error: 'เรียก AI ไม่สำเร็จ: ' + e.message }) }
+  const ai = await aiAsk({ media, prompt: RECEIPT_PROMPT })
+  if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error })
+  const parsed = extractJsonBlock(ai.text)
+  const items = (parsed?.items || parsed || []).map((it) => {
+    const qty = Number(String(it.qty).toString().replace(/,/g, '')) || 0
+    const amount = Number(String(it.amount).toString().replace(/,/g, '')) || 0
+    let price = Number(String(it.price).toString().replace(/,/g, '')) || 0
+    if (!price && amount && qty) price = Math.round((amount / qty) * 100) / 100
+    return { name: String(it.name || ''), qty, unit: String(it.unit || ''), price, amount: amount || qty * price }
+  }).filter((it) => it.name)
+  audit(req, 'AI อ่านใบส่งของ', `PO#${req.params.id} ${items.length} รายการ (${ai.model})`)
+  res.json({ items })
 })
 
 // ตรวจรับของ: เทียบ PO.items กับรายการในใบส่งของ (ที่ผู้ใช้ยืนยันแล้ว) → บันทึกผล + อัปเดตสถานะ PO
