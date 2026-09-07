@@ -656,7 +656,7 @@ test('LINE webhook: จำ Group ID ที่บอทเห็นไว้ใ�
   assert.equal(ok.status, 200)
   const ev = await POST('/line/webhook', { events: [
     { type: 'join', replyToken: 'x', source: { type: 'group', groupId: 'Cabc123' }, timestamp: 1 },
-    { type: 'message', replyToken: 'y', source: { type: 'user', userId: 'Uxyz789' }, message: { type: 'text', text: 'สวัสดี' } },
+    { type: 'follow', replyToken: 'y', source: { type: 'user', userId: 'Uxyz789' } }, // เพิ่มเพื่อน (ข้อความส่วนตัว = คำสั่งบอท ไม่ลงรายการ)
   ] })
   assert.equal(ev.status, 200)
   await new Promise((r) => setTimeout(r, 300)) // webhook ประมวลผลหลังตอบ
@@ -675,4 +675,56 @@ test('LINE webhook: จำ Group ID ที่บอทเห็นไว้ใ�
   assert.equal(again.seen[0].id, 'Cabc123')
   await DEL('/line-settings/seen')
   assert.equal((await GET('/line-settings')).data.seen.length, 0)
+})
+
+test('บอท LINE: ผูกบัญชีด้วยรหัส 6 หลัก · CEO สั่งงานในแชท → ตกลง → ใบสั่งงาน · พนักงานตอบ รับ = รับทราบ', async () => {
+  const hook = (uid, text) => api('POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r1', source: { type: 'user', userId: uid }, message: { type: 'text', text } }] })
+  // ยังไม่ผูก → ส่งคำสั่งไม่ได้ (webhook ต้องตอบ 200 เสมอ)
+  assert.equal((await hook('Uceo', 'ให้ใครก็ได้ทำอะไรสักอย่าง')).status, 200)
+  // ผูก CEO (admin) — รหัสจาก /line-link/code
+  const c1 = await POST('/line-link/code', {})
+  assert.equal(c1.status, 200); assert.match(c1.data.code, /^\d{6}$/)
+  await hook('Uceo', c1.data.code)
+  await new Promise((r) => setTimeout(r, 300)) // webhook ประมวลผลหลังตอบ 200
+  const me = (await GET('/me')).data
+  assert.equal(me.lineLinked, true, 'CEO ต้องผูกแล้ว')
+  // พนักงานผู้รับ: สร้างพนักงาน + ผู้ใช้ชื่อเดียวกัน แล้วผูก LINE
+  const emp = await POST('/employees', { name: 'สมชาย ช่างหลังคา', role: 'ช่าง', pay_type: 'รายวัน', base: 500 })
+  assert.equal(emp.status, 201)
+  await POST('/users', { name: 'สมชาย ช่างหลังคา', username: 'somchai', pin: '5555', role: 'site', position: 'ช่าง' })
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const c2 = await POST('/line-link/code', {})
+  token = adminToken
+  await hook('Usomchai', c2.data.code)
+  await new Promise((r) => setTimeout(r, 300))
+  // CEO สั่งงาน → ร่าง → ตกลง
+  await hook('Uceo', 'ให้สมชายไปเช็คหลังคาบ้านเทสต์ ด่วน พรุ่งนี้')
+  await new Promise((r) => setTimeout(r, 300))
+  await hook('Uceo', 'ตกลง')
+  await new Promise((r) => setTimeout(r, 300))
+  const wos = (await GET('/work-orders')).data
+  const wo = wos.find((w) => w.source === 'line' && w.executor === 'สมชาย ช่างหลังคา')
+  assert.ok(wo, 'ต้องมีใบสั่งงานจาก LINE ถึงสมชาย')
+  assert.equal(wo.urgent, 1, 'ต้องเป็นงานด่วน')
+  assert.equal(wo.by, me.name)
+  assert.equal(wo.ack, 0)
+  // พนักงานตอบ 'รับ' → รับทราบ
+  await hook('Usomchai', 'รับ')
+  await new Promise((r) => setTimeout(r, 300))
+  const after = (await GET('/work-orders')).data.find((w) => w.id === wo.id)
+  assert.equal(after.ack, 1, 'ตอบ รับ ต้องกลายเป็นรับทราบ')
+  assert.equal(after.ack_by, 'สมชาย ช่างหลังคา')
+  // พนักงานธรรมดาสั่งงานไม่ได้ (ต้องไม่มีใบใหม่)
+  const n0 = (await GET('/work-orders')).data.length
+  await hook('Usomchai', 'ให้ธวัชไปดูงานบ้านเทสต์'); await hook('Usomchai', 'ตกลง')
+  await new Promise((r) => setTimeout(r, 300))
+  assert.equal((await GET('/work-orders')).data.length, n0, 'พนักงานสั่งงานผ่าน LINE ไม่ได้')
+  // ตั้ง secret แล้ว webhook ที่ไม่มีลายเซ็นต้องถูกปฏิเสธ
+  await PUT('/line-settings', { secret: 'testsecret' })
+  assert.equal((await hook('Uceo', 'สรุป')).status, 403)
+  await PUT('/line-settings', { secret: '' })
+  // ยกเลิกผูก
+  assert.equal((await DEL('/line-link')).status, 200)
+  assert.equal((await GET('/me')).data.lineLinked, false)
 })

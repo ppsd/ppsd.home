@@ -107,7 +107,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const [bkLast, setBkLast] = useState<BackupLast | null>(null)
   // แจ้งเตือน LINE
   interface LineSeen { type: string; id: string; name: string; at: string; event: string }
-  interface LineCfg { token_set: boolean; to: string; hour: number; last_sent: string; status: { at: string; ok: boolean; msg?: string } | null; seen?: LineSeen[] }
+  interface LineCfg { token_set: boolean; to: string; hour: number; last_sent: string; status: { at: string; ok: boolean; msg?: string } | null; seen?: LineSeen[]; secret_set?: boolean; linked?: number }
   const [lineHelp, setLineHelp] = useState(false)
   const [lineCfg, setLineCfg] = useState<LineCfg | null>(null)
   const [lineToken, setLineToken] = useState('')
@@ -121,13 +121,24 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
     try {
       const body: Record<string, unknown> = { to: lineTo.trim(), hour: lineHour }
       if (lineToken.trim()) body.token = lineToken.trim()
-      await api.put('/line-settings', body); setLineToken(''); window.alert('บันทึกการตั้งค่า LINE แล้ว'); loadLine()
+      if (lineSecret.trim()) body.secret = lineSecret.trim()
+      await api.put('/line-settings', body); setLineToken(''); setLineSecret(''); window.alert('บันทึกการตั้งค่า LINE แล้ว'); loadLine()
     } catch (e) { window.alert((e as Error).message) } finally { setLineBusy(false) }
   }
   const testLine = async () => {
     setLineBusy(true)
     try { await api.post('/line-settings/test', {}); window.alert('ส่งสรุปทดสอบเข้า LINE แล้ว — เช็คในกลุ่ม'); loadLine() }
     catch (e) { window.alert('ส่งไม่สำเร็จ: ' + (e as Error).message); loadLine() } finally { setLineBusy(false) }
+  }
+  // ผูก LINE ของฉัน (รหัส 6 หลัก → ส่งให้บอท)
+  const [lineSecret, setLineSecret] = useState('')
+  const [linkCode, setLinkCode] = useState<{ code: string; expires_min: number } | null>(null)
+  const requestLinkCode = async () => {
+    try { const r = await api.post<{ code: string; expires_min: number }>('/line-link/code', {}); setLinkCode(r) } catch (e) { window.alert((e as Error).message) }
+  }
+  const unlinkLine = async (u: ApiUser) => {
+    if (!window.confirm(`ยกเลิกการผูก LINE ของ ${u.name}?`)) return
+    try { await api.del('/line-link?user_id=' + u.id); window.location.reload() } catch (e) { window.alert((e as Error).message) }
   }
   // ตั้งค่า AI (อ่านใบส่งของ / งวดงานจากสัญญา)
   interface AiCfg { hasKey: boolean; model: string; models: { id: string; label: string }[]; fromEnv?: boolean }
@@ -268,6 +279,8 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input type="password" value={lineToken} onChange={(e) => setLineToken(e.target.value)} placeholder={lineCfg?.token_set ? '•••••• (ตั้งไว้แล้ว — พิมพ์ใหม่เพื่อเปลี่ยน)' : 'Channel access token'}
               style={{ flex: 2, minWidth: 220, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px', outline: 'none' }} />
+            <input type="password" value={lineSecret} onChange={(e) => setLineSecret(e.target.value)} placeholder={lineCfg?.secret_set ? 'Channel secret •••••• (ตั้งไว้แล้ว)' : 'Channel secret (แท็บ Basic settings — แนะนำให้ใส่)'}
+              style={{ flex: 1, minWidth: 200, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px', outline: 'none' }} />
             <input value={lineTo} onChange={(e) => setLineTo(e.target.value)} placeholder="Group ID / User ID (ขึ้นต้น C… หรือ U…)"
               style={{ flex: 1, minWidth: 200, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px', outline: 'none' }} />
             <label style={{ fontSize: 12.5, color: '#5C6770', display: 'flex', alignItems: 'center', gap: 6 }}>ส่งเวลา
@@ -284,6 +297,32 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               {lineCfg.last_sent ? ` · สรุปเช้าล่าสุด ${lineCfg.last_sent}` : ''}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ผูก LINE ของฉัน — สั่งงาน (ผู้บริหาร) / รับงาน ผ่านแชทบอท */}
+      <div style={{ background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 18px', borderBottom: '1px solid #DFEEE5', fontSize: 14, fontWeight: 600, color: '#2E7D55', background: '#F2F8F4', display: 'flex', alignItems: 'center', gap: 10 }}>
+          📱 ผูก LINE ของฉัน — สั่งงาน / รับงานผ่านแชทบอท
+          {lineCfg && <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 600, color: '#5C6770' }}>ผูกแล้ว {lineCfg.linked || 0} คน</span>}
+        </div>
+        <div style={{ padding: '14px 18px' }}>
+          <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.7, marginBottom: 10 }}>
+            <b>ผู้บริหาร</b>: พิมพ์คำสั่งในแชทบอท เช่น “ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้” → บอททำร่าง → ตอบ <b>ตกลง</b> → ออกใบสั่งงานและแจ้งคนรับทาง LINE ทันที · พิมพ์ <b>สรุป</b> = เรื่องค้างวันนี้ · <b>งานด่วน</b> = งานด่วนที่ยังไม่รับ<br />
+            <b>พนักงาน</b>: ได้รับแจ้งงานในแชท → ตอบ <b>รับ</b> = รับทราบ (CEO เห็นทันที) · พิมพ์ <b>งาน</b> = งานที่ค้างของฉัน<br />
+            วิธีผูก: เพิ่มบอทเป็นเพื่อน (QR ในแท็บ Messaging API) → กดปุ่มด้านล่าง → ส่งรหัส 6 หลักไปในแชทบอท (รหัสใช้ได้ 10 นาที)
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <button onClick={requestLinkCode} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>{user?.lineLinked ? '🔁 ผูก LINE ใหม่' : '🔗 ผูก LINE ของฉัน'}</button>
+            {user?.lineLinked && !linkCode && <span style={{ fontSize: 12.5, color: '#2E7D55', fontWeight: 600 }}>✓ บัญชีนี้ผูก LINE แล้ว</span>}
+            {linkCode && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#F2F8F4', border: '1px solid #CDE3D6', borderRadius: 10, padding: '8px 14px' }}>
+                <span style={{ fontSize: 12.5, color: '#3C4750' }}>ส่งรหัสนี้ไปในแชทบอท:</span>
+                <span className="num" style={{ fontSize: 24, fontWeight: 800, letterSpacing: 4, color: '#1C2730' }}>{linkCode.code}</span>
+                <span style={{ fontSize: 11.5, color: '#94A0A8' }}>ใช้ได้ {linkCode.expires_min} นาที · ผูกเสร็จบอทจะตอบยืนยัน แล้วกด F5 หน้านี้</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -360,6 +399,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <th style={th}>ใช้งานล่าสุด</th>
               <th style={th}>สิทธิ์รายโมดูล <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10.5 }}>(กดเพื่อเปิด/ปิด)</span></th>
               <th style={{ ...th, textAlign: 'center' }}>ลายเซ็น</th>
+              <th style={{ ...th, textAlign: 'center' }}>LINE</th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>จัดการ</th>
             </tr>
           </thead>
@@ -393,6 +433,11 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                         </div>}
                   </td>
                   <td style={{ ...td, textAlign: 'center' }}><SignatureCell userId={u.id} signature={u.signature} /></td>
+                  <td style={{ ...td, textAlign: 'center' }}>
+                    {u.line_uid
+                      ? <span title="ผูก LINE แล้ว — รับแจ้งงาน/ตอบ 'รับ' ผ่านบอทได้" style={{ fontSize: 10.5, fontWeight: 700, color: '#2E7D55', background: '#E2F1EA', padding: '2px 9px', borderRadius: 20, cursor: 'pointer' }} onClick={() => unlinkLine(u)}>✓ ผูกแล้ว</span>
+                      : <span style={{ fontSize: 10.5, color: '#94A0A8' }}>—</span>}
+                  </td>
                   <td style={{ ...td, padding: '11px 18px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
                       <select
