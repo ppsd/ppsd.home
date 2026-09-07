@@ -116,6 +116,19 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const [lineBusy, setLineBusy] = useState(false)
   const loadLine = () => api.get<LineCfg>('/line-settings').then((r) => { setLineCfg(r); setLineTo(r.to || ''); setLineHour(r.hour ?? 8) }).catch(() => {})
   useEffect(() => { if (users) loadLine() /* eslint-disable-next-line */ }, [users])
+  // ลิงก์สาธารณะอัตโนมัติ (สำหรับ LINE webhook)
+  interface TunnelInfo { enabled: boolean; expose: boolean; url: string; status: string; msg: string; at: string; restarts: number; webhook: { at: string; ok: boolean; msg: string; endpoint: string; active?: boolean | null } | null }
+  const [tun, setTun] = useState<TunnelInfo | null>(null)
+  const [tunBusy, setTunBusy] = useState(false)
+  const loadTun = () => api.get<TunnelInfo>('/tunnel').then(setTun).catch(() => {})
+  useEffect(() => { if (users && isAdmin) { loadTun(); const t = setInterval(loadTun, 10000); return () => clearInterval(t) } /* eslint-disable-next-line */ }, [users])
+  const setTunnel = async (patch: { enabled?: boolean; expose?: boolean }) => {
+    if (patch.expose === true && !window.confirm('เปิดให้เข้า ERP ผ่านลิงก์สาธารณะนี้ด้วย?\nทุกคนที่รู้ลิงก์จะเห็นหน้าล็อกอิน (ยังต้องมีชื่อผู้ใช้ + PIN) — เหมาะเมื่อต้องใช้นอกออฟฟิศ')) return
+    setTunBusy(true)
+    try { setTun(await api.put<TunnelInfo>('/tunnel', patch)) } catch (e) { window.alert((e as Error).message) } finally { setTunBusy(false) }
+  }
+  const restartTunnel = async () => { setTunBusy(true); try { setTun(await api.post<TunnelInfo>('/tunnel/restart', {})) } catch (e) { window.alert((e as Error).message) } finally { setTunBusy(false) } }
+  const registerWebhook = async () => { setTunBusy(true); try { setTun(await api.post<TunnelInfo>('/tunnel/register-webhook', {})) } catch (e) { window.alert((e as Error).message); loadTun() } finally { setTunBusy(false) } }
   const saveLine = async () => {
     setLineBusy(true)
     try {
@@ -254,10 +267,10 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <li>Create a channel → เลือก <b>Messaging API</b> → ตั้งชื่อบอท เช่น “PPSD แจ้งเตือน” → สร้าง</li>
               <li>แท็บ <b>Messaging API</b> → เลื่อนลงล่างสุด <b>Channel access token</b> กด Issue → คัดลอกมาวางช่องแรกด้านล่าง แล้วกด บันทึก</li>
               <li>แท็บเดียวกัน ปิด <b>Auto-reply messages</b> และ <b>Greeting messages</b> (กด Edit → Disabled) ไม่งั้นบอทจะตอบข้อความอัตโนมัติรบกวนกลุ่ม · เปิด <b>Allow bot to join group chats</b> (Edit → Enable)</li>
-              <li>ที่เครื่องนี้ ดับเบิลคลิก <b>tunnel.bat</b> ในโฟลเดอร์โปรแกรม จะได้ลิงก์ <code>https://xxxx.trycloudflare.com</code> (เปิดค้างไว้ก่อน)</li>
-              <li>กลับหน้า LINE Developers → <b>Webhook URL</b> ใส่ <code>https://xxxx.trycloudflare.com/api/line/webhook</code> → Verify (ต้องขึ้น Success) → เปิด <b>Use webhook</b></li>
-              <li>ในมือถือ สแกน QR ของบอท (อยู่ในแท็บ Messaging API) เพิ่มเป็นเพื่อน → เชิญบอทเข้ากลุ่มบริหาร → บอทจะตอบ <b>Group ID</b> ในกลุ่มทันที และชื่อกลุ่มจะโผล่ในรายการ “กลุ่มที่บอทเห็น” ด้านล่าง → กด <b>ใช้อันนี้</b> → บันทึก → ส่งทดสอบ</li>
-              <li>ได้ Group ID แล้วปิด tunnel.bat ได้เลย การส่งสรุปเช้าไม่ต้องใช้ webhook (ถ้าอยากรู้ ID ทีหลัง พิมพ์คำว่า <b>id</b> ในกลุ่มตอนเปิด tunnel อีกครั้ง)</li>
+              <li>เปิดสวิตช์ <b>ลิงก์สาธารณะอัตโนมัติ</b> ด้านล่าง ระบบจะสร้างลิงก์และตั้ง Webhook URL ใน LINE ให้เอง (รอจนขึ้น ✓)</li>
+              <li>กลับหน้า LINE Developers แท็บ Messaging API → เปิด <b>Use webhook</b> (ครั้งเดียว) → กด Verify ต้องขึ้น Success</li>
+              <li>ในมือถือ สแกน QR ของบอท (แท็บ Messaging API) เพิ่มเป็นเพื่อน → เชิญบอทเข้ากลุ่มบริหาร → บอทจะตอบ <b>Group ID</b> ในกลุ่มทันที และชื่อกลุ่มจะโผล่ในรายการ “กลุ่มที่บอทเห็น” ด้านล่าง → กด <b>ใช้อันนี้</b> → บันทึก → ส่งทดสอบ</li>
+              <li>ปล่อยสวิตช์เปิดไว้ตลอด — ลิงก์อาจเปลี่ยนเมื่อเปิดเครื่องใหม่ แต่ระบบจะตั้ง Webhook URL ใหม่ให้เองทุกครั้ง</li>
             </ol>
           )}
           {(lineCfg?.seen?.length || 0) > 0 && (
@@ -291,6 +304,34 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
             <button onClick={saveLine} disabled={lineBusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>บันทึก</button>
             <button onClick={testLine} disabled={lineBusy} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>{lineBusy ? 'กำลังส่ง…' : '📨 ส่งทดสอบ'}</button>
           </div>
+          {tun && (
+            <div style={{ marginTop: 12, border: '1px solid #DFEEE5', borderRadius: 10, padding: '10px 14px', background: '#FBFDFC' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#1C2730', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={tun.enabled} disabled={tunBusy} onChange={(e) => setTunnel({ enabled: e.target.checked })} />
+                  🌐 ลิงก์สาธารณะอัตโนมัติ (ให้ LINE ส่งข้อความเข้ามาได้ตลอด)
+                </label>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: tun.status === 'เปิดอยู่' ? '#2E7D55' : tun.enabled ? '#B7791F' : '#94A0A8', background: tun.status === 'เปิดอยู่' ? '#E2F1EA' : tun.enabled ? '#F6ECD6' : '#EDF1F4', padding: '3px 10px', borderRadius: 20 }}>{tun.enabled ? tun.status : 'ปิด'}</span>
+                {tun.enabled && <button onClick={restartTunnel} disabled={tunBusy} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>↻ เปิดลิงก์ใหม่</button>}
+              </div>
+              {tun.enabled && (
+                <div style={{ fontSize: 12, color: '#3C4750', marginTop: 8, lineHeight: 1.7 }}>
+                  {tun.url ? <div>ลิงก์: <code style={{ background: '#EDF1F4', padding: '1px 6px', borderRadius: 5 }}>{tun.url}</code></div> : <div style={{ color: '#B7791F' }}>{tun.msg || 'กำลังสร้างลิงก์… (ครั้งแรกต้องดาวน์โหลด cloudflared ประมาณ 1 นาที)'}</div>}
+                  {tun.webhook && (
+                    <div style={{ color: tun.webhook.ok ? (tun.webhook.active === false ? '#B7791F' : '#2E7D55') : '#C24036' }}>
+                      {tun.webhook.ok ? (tun.webhook.active === false ? '⚠' : '✓') : '✗'} {tun.webhook.msg} <span style={{ color: '#94A0A8' }}>· {tun.webhook.at}</span>
+                      {!tun.webhook.ok && <button onClick={registerWebhook} disabled={tunBusy} style={{ marginLeft: 8, border: 'none', background: 'none', color: '#30506A', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11.5 }}>ลองตั้ง Webhook อีกครั้ง</button>}
+                    </div>
+                  )}
+                  {tun.msg && tun.url && <div style={{ color: '#94A0A8' }}>{tun.msg}</div>}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 4, cursor: 'pointer', color: '#5C6770' }}>
+                    <input type="checkbox" checked={tun.expose} disabled={tunBusy} onChange={(e) => setTunnel({ expose: e.target.checked })} />
+                    อนุญาตเปิด ERP ผ่านลิงก์นี้ด้วย (ใช้นอกออฟฟิศ) — ปิดไว้ = ลิงก์รับได้เฉพาะข้อความจาก LINE
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
           {lineCfg?.status && (
             <div style={{ fontSize: 12, marginTop: 10, color: lineCfg.status.ok ? '#2E7D55' : '#C24036' }}>
               {lineCfg.status.ok ? '✓ ส่งล่าสุดสำเร็จ' : '✗ ส่งไม่สำเร็จ'} · {lineCfg.status.at}{!lineCfg.status.ok && lineCfg.status.msg ? ` — ${lineCfg.status.msg}` : ''}
