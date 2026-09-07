@@ -101,6 +101,11 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
           {/* ลายเซ็น: ผู้ขอซื้อ 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติตามกติกา (PR คนเดียวพอ) */}
           <ApproverSigns approval={pr.approval} makerLabel="ผู้ขอซื้อ/ขอจ้าง" makerName={pr.by} makerSig={pr.requester_sig} makerDate={pr.date} />
           <div style={{ textAlign: 'center', fontSize: 9, color: '#B0B8BF', marginTop: 14, borderTop: '1px solid #EEF1F4', paddingTop: 6 }}>เอกสารจัดทำโดยระบบ PPSD Construction ERP</div>
+          {!pr.requester_sig && (
+            <div className="no-print" style={{ marginTop: 12, fontSize: 12, color: '#8A6A1F', background: '#FBF4E1', border: '1px solid #ECDCB8', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>
+              ผู้ขอซื้อ “{pr.by}” ยังไม่มีลายเซ็นในระบบ — อัปโหลดได้ที่เมนู ผู้ใช้งาน → คอลัมน์ลายเซ็น (หรือในทะเบียนพนักงาน HR) แล้วระบบจะเติมให้ใบนี้อัตโนมัติ
+            </div>
+          )}
           {!approved && !rejected && (
             <div className="no-print" style={{ marginTop: 12, fontSize: 12, color: '#B7791F', background: '#F6ECD6', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>
               ใบขอซื้อนี้ยัง “{pr.status}” — ลายเซ็นผู้อนุมัติจะปรากฏเมื่อกดอนุมัติ
