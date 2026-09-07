@@ -106,7 +106,9 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const [mirrorBusy, setMirrorBusy] = useState(false)
   const [bkLast, setBkLast] = useState<BackupLast | null>(null)
   // แจ้งเตือน LINE
-  interface LineCfg { token_set: boolean; to: string; hour: number; last_sent: string; status: { at: string; ok: boolean; msg?: string } | null }
+  interface LineSeen { type: string; id: string; name: string; at: string; event: string }
+  interface LineCfg { token_set: boolean; to: string; hour: number; last_sent: string; status: { at: string; ok: boolean; msg?: string } | null; seen?: LineSeen[] }
+  const [lineHelp, setLineHelp] = useState(false)
   const [lineCfg, setLineCfg] = useState<LineCfg | null>(null)
   const [lineToken, setLineToken] = useState('')
   const [lineTo, setLineTo] = useState('')
@@ -232,9 +234,37 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
         <div style={{ padding: '12px 18px', borderBottom: '1px solid #DFEEE5', fontSize: 14, fontWeight: 600, color: '#2E7D55', background: '#F2F8F4' }}>💬 แจ้งเตือน LINE (สรุปเช้าอัตโนมัติ)</div>
         <div style={{ padding: '14px 18px' }}>
           <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.6, marginBottom: 10 }}>
-            ส่งสรุปเรื่องค้างเข้า LINE ทุกเช้า: งวดเลยกำหนด · หนี้ผู้ขายครบกำหนด · เรื่องรออนุมัติ · ลงบัญชีไม่สำเร็จ · สถานะสำรองข้อมูล<br />
-            วิธีตั้ง: สร้าง Messaging API channel ที่ developers.line.biz → คัดลอก <b>Channel access token</b> → เชิญบอทเข้ากลุ่ม แล้วเอา <b>Group ID</b> มาใส่
+            ส่งสรุปเรื่องค้างเข้า LINE ทุกเช้า: งวดเลยกำหนด · หนี้ผู้ขายครบกำหนด · เรื่องรออนุมัติ · ลงบัญชีไม่สำเร็จ · สถานะสำรองข้อมูล
+            <button onClick={() => setLineHelp((v) => !v)} style={{ marginLeft: 8, border: 'none', background: 'none', color: '#2E7D55', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, textDecoration: 'underline' }}>{lineHelp ? 'ซ่อนวิธีตั้งค่า' : 'วิธีตั้งค่า (ทีละขั้น)'}</button>
           </div>
+          {lineHelp && (
+            <ol style={{ fontSize: 12.5, color: '#3C4750', lineHeight: 1.7, margin: '0 0 12px', paddingLeft: 22, background: '#F7FAF8', border: '1px solid #DFEEE5', borderRadius: 9, padding: '10px 14px 10px 30px' }}>
+              <li>เข้า <b>developers.line.biz</b> → ล็อกอินด้วย LINE ของบริษัท → Create a new provider (ชื่ออะไรก็ได้ เช่น PPSD)</li>
+              <li>Create a channel → เลือก <b>Messaging API</b> → ตั้งชื่อบอท เช่น “PPSD แจ้งเตือน” → สร้าง</li>
+              <li>แท็บ <b>Messaging API</b> → เลื่อนลงล่างสุด <b>Channel access token</b> กด Issue → คัดลอกมาวางช่องแรกด้านล่าง แล้วกด บันทึก</li>
+              <li>แท็บเดียวกัน ปิด <b>Auto-reply messages</b> และ <b>Greeting messages</b> (กด Edit → Disabled) ไม่งั้นบอทจะตอบข้อความอัตโนมัติรบกวนกลุ่ม · เปิด <b>Allow bot to join group chats</b> (Edit → Enable)</li>
+              <li>ที่เครื่องนี้ ดับเบิลคลิก <b>tunnel.bat</b> ในโฟลเดอร์โปรแกรม จะได้ลิงก์ <code>https://xxxx.trycloudflare.com</code> (เปิดค้างไว้ก่อน)</li>
+              <li>กลับหน้า LINE Developers → <b>Webhook URL</b> ใส่ <code>https://xxxx.trycloudflare.com/api/line/webhook</code> → Verify (ต้องขึ้น Success) → เปิด <b>Use webhook</b></li>
+              <li>ในมือถือ สแกน QR ของบอท (อยู่ในแท็บ Messaging API) เพิ่มเป็นเพื่อน → เชิญบอทเข้ากลุ่มบริหาร → บอทจะตอบ <b>Group ID</b> ในกลุ่มทันที และชื่อกลุ่มจะโผล่ในรายการ “กลุ่มที่บอทเห็น” ด้านล่าง → กด <b>ใช้อันนี้</b> → บันทึก → ส่งทดสอบ</li>
+              <li>ได้ Group ID แล้วปิด tunnel.bat ได้เลย การส่งสรุปเช้าไม่ต้องใช้ webhook (ถ้าอยากรู้ ID ทีหลัง พิมพ์คำว่า <b>id</b> ในกลุ่มตอนเปิด tunnel อีกครั้ง)</li>
+            </ol>
+          )}
+          {(lineCfg?.seen?.length || 0) > 0 && (
+            <div style={{ marginBottom: 10, fontSize: 12.5 }}>
+              <div style={{ fontWeight: 600, color: '#2E7D55', marginBottom: 4 }}>กลุ่ม / คนที่บอทเห็น (ล่าสุดก่อน)</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {(lineCfg?.seen || []).map((s) => (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderRadius: 8, background: lineTo === s.id ? '#E2F1EA' : '#F7F9FB' }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: s.type === 'group' ? '#2E7D55' : '#30506A', background: s.type === 'group' ? '#E2F1EA' : '#E2E9EF', padding: '1px 7px', borderRadius: 20 }}>{s.type === 'group' ? 'กลุ่ม' : s.type === 'room' ? 'ห้อง' : 'คน'}</span>
+                    <span style={{ fontWeight: 600 }}>{s.name || '(ไม่ทราบชื่อ)'}</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#5C6770' }}>{s.id}</span>
+                    <span style={{ fontSize: 11, color: '#94A0A8' }}>{s.at}</span>
+                    <button onClick={() => setLineTo(s.id)} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: lineTo === s.id ? '#fff' : '#2E7D55', background: lineTo === s.id ? '#2E7D55' : '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 10px', cursor: 'pointer' }}>{lineTo === s.id ? '✓ เลือกอยู่' : 'ใช้อันนี้'}</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input type="password" value={lineToken} onChange={(e) => setLineToken(e.target.value)} placeholder={lineCfg?.token_set ? '•••••• (ตั้งไว้แล้ว — พิมพ์ใหม่เพื่อเปลี่ยน)' : 'Channel access token'}
               style={{ flex: 2, minWidth: 220, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px', outline: 'none' }} />

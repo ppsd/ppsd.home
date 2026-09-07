@@ -368,6 +368,48 @@ api.get('/settings/attendance', (_req, res) => res.json({
   grace: parseInt(getSetting('att_grace', '5'), 10) || 0,
   cutoff: lateCutoff(),
 }))
+// ===== LINE webhook (สาธารณะ — LINE ยิงเข้ามา) =====
+// ใช้ "หา Group ID": เชิญบอทเข้ากลุ่ม → LINE ส่ง event มาที่นี่ → จำ ID ไว้ให้เลือกในหน้าผู้ใช้งาน + บอทตอบ ID กลับในกลุ่มด้วย
+// ต้องตั้ง Webhook URL ในหน้า LINE Developers เป็น https://<โดเมนสาธารณะ>/api/line/webhook (เปิดชั่วคราวด้วย tunnel.bat ได้)
+function lineSeen() { try { return JSON.parse(getSetting('line_seen', '[]')) || [] } catch { return [] } }
+async function lineSourceName(type, id, token) {
+  if (!token) return ''
+  const url = type === 'group' ? `https://api.line.me/v2/bot/group/${id}/summary` : type === 'user' ? `https://api.line.me/v2/bot/profile/${id}` : ''
+  if (!url) return ''
+  try {
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8000) })
+    if (!r.ok) return ''
+    const j = await r.json()
+    return String(j.groupName || j.displayName || '')
+  } catch { return '' }
+}
+api.get('/line/webhook', (_req, res) => res.json({ ok: true, hint: 'ตั้ง URL นี้ในหน้า LINE Developers → Messaging API → Webhook URL' }))
+api.post('/line/webhook', async (req, res) => {
+  res.json({ ok: true }) // ตอบ LINE ทันที (ต้องตอบใน 1 วิ) แล้วค่อยประมวลผล
+  try {
+    const events = Array.isArray(req.body?.events) ? req.body.events : []
+    const token = getSetting('line_token', '')
+    let seen = lineSeen()
+    for (const ev of events) {
+      const src = ev.source || {}
+      const type = src.type, id = src.groupId || src.roomId || src.userId
+      if (!type || !id) continue
+      const name = await lineSourceName(type, id, token)
+      seen = seen.filter((s) => s.id !== id)
+      seen.unshift({ type, id, name, at: nowTS(), event: ev.type })
+      // บอทเพิ่งถูกเชิญเข้ากลุ่ม (หรือมีคนพิมพ์ในกลุ่ม) → ตอบ ID กลับในกลุ่ม ให้ก็อปจากมือถือได้เลย
+      if (token && ev.replyToken && (ev.type === 'join' || (ev.type === 'message' && /^(id|ไอดี|group ?id)$/i.test(String(ev.message?.text || '').trim())))) {
+        const label = type === 'group' ? 'Group ID' : type === 'room' ? 'Room ID' : 'User ID'
+        fetch('https://api.line.me/v2/bot/message/reply', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ replyToken: ev.replyToken, messages: [{ type: 'text', text: `สวัสดีครับ บอท PPSD ERP พร้อมส่งสรุปเช้าแล้ว\n${label}:\n${id}\n\nนำ ID นี้ไปวางที่ ผู้ใช้งาน → แจ้งเตือน LINE (หรือกดเลือกจากรายการ "กลุ่มที่บอทเห็น")` }] }),
+          signal: AbortSignal.timeout(8000),
+        }).catch(() => {})
+      }
+    }
+    setSetting('line_seen', JSON.stringify(seen.slice(0, 20)))
+  } catch (e) { console.error('line webhook:', e.message) }
+})
 api.post('/kiosk/punch', (req, res) => {
   const { emp_code, pin, kind } = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
@@ -4567,7 +4609,10 @@ api.get('/line-settings', adminOnly, (_req, res) => res.json({
   token_set: !!getSetting('line_token', ''), to: getSetting('line_to', ''), hour: Number(getSetting('line_hour', '8')) || 8,
   last_sent: getSetting('line_last_sent', ''),
   status: (() => { try { return JSON.parse(getSetting('line_status', '') || 'null') } catch { return null } })(),
+  seen: lineSeen(), // กลุ่ม/คนที่บอทเคยเห็นผ่าน webhook → กดเลือกเป็นผู้รับได้
 }))
+// ล้างรายการกลุ่มที่บอทเห็น (กรณีเชิญผิดกลุ่ม)
+api.delete('/line-settings/seen', adminOnly, (_req, res) => { setSetting('line_seen', '[]'); res.json({ ok: true }) })
 api.put('/line-settings', adminOnly, (req, res) => {
   const b = req.body || {}
   if (b.token !== undefined) setSetting('line_token', String(b.token || '').trim())
