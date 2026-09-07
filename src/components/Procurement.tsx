@@ -148,10 +148,12 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     } catch (e) { setPayErr((e as Error).message) }
   }
   const [addingVendor, setAddingVendor] = useState(false)
-  const [vendorForm, setVendorForm] = useState({ name: '', type: 'นิติบุคคล', tax_id: '', credit_days: '' })
+  const [vendorForm, setVendorForm] = useState({ name: '', kind: 'ผู้ขาย', type: 'นิติบุคคล', tax_id: '', credit_days: '' })
+  const [vendorKindFilter, setVendorKindFilter] = useState<'all' | 'ผู้ขาย' | 'ผู้รับเหมา'>('all')
+  const kindOf = (v: { kind?: string }) => (v.kind === 'ผู้รับเหมา' ? 'ผู้รับเหมา' : 'ผู้ขาย') // ว่าง = ผู้ขาย (ข้อมูลเก่า)
   const submitVendor = async () => {
     if (!vendorForm.name.trim()) return
-    try { await addVendor({ ...vendorForm, credit_days: Number(vendorForm.credit_days) || 0 }); setAddingVendor(false); setVendorForm({ name: '', type: 'นิติบุคคล', tax_id: '', credit_days: '' }) } catch { /* ignore */ }
+    try { await addVendor({ ...vendorForm, credit_days: Number(vendorForm.credit_days) || 0 }); setAddingVendor(false); setVendorForm({ name: '', kind: 'ผู้ขาย', type: 'นิติบุคคล', tax_id: '', credit_days: '' }) } catch { /* ignore */ }
   }
   const houses = data.houses
   const makePoFromPr = async (r: ApiPR) => {
@@ -426,8 +428,13 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 1fr 1fr', gap: 10 }}>
                 <select style={prField} value={poForm.vendor} onChange={(e) => pickVendor(e.target.value)}>
-                  <option value="">เลือกผู้ขาย *</option>
-                  {vendors.map((v) => <option key={v.id} value={v.name}>{v.name}{v.credit_days ? ` (เครดิต ${v.credit_days} วัน)` : ''}</option>)}
+                  <option value="">เลือกผู้ขาย/ผู้รับเหมา *</option>
+                  <optgroup label="🏪 ผู้ขาย (วัสดุ/ของ)">
+                    {vendors.filter((v) => kindOf(v) === 'ผู้ขาย').map((v) => <option key={v.id} value={v.name}>{v.name}{v.credit_days ? ` (เครดิต ${v.credit_days} วัน)` : ''}</option>)}
+                  </optgroup>
+                  <optgroup label="🔨 ผู้รับเหมา (ค่าแรง/รับช่วง)">
+                    {vendors.filter((v) => kindOf(v) === 'ผู้รับเหมา').map((v) => <option key={v.id} value={v.name}>{v.name}{v.credit_days ? ` (เครดิต ${v.credit_days} วัน)` : ''}</option>)}
+                  </optgroup>
                 </select>
                 <MaterialAutocomplete style={prField} placeholder="รายการสินค้า * (พิมพ์เพื่อค้นหา)" value={poForm.item} materials={materialPrices} onChange={(v) => setPoForm((f) => ({ ...f, item: v }))} onSelect={(m) => setPoForm((f) => ({ ...f, item: m.name }))} />
                 <MoneyInput style={prField} placeholder="มูลค่า (บาท)" value={poForm.amount} onChange={(v) => setPoForm({ ...poForm, amount: v })} />
@@ -686,13 +693,29 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
         {/* Vendors */}
         {tab === 'vendors' && (
           <>
-          <div style={{ display: 'flex', alignItems: 'center', padding: '12px 18px', borderBottom: '1px solid #EEF1F4' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid #EEF1F4', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>ผู้ขาย / ผู้รับเหมา</span>
-            <button onClick={() => setAddingVendor((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มผู้ขาย</button>
+            {/* ชิพกรองหมวด — แยก ผู้ขาย (วัสดุ) กับ ผู้รับเหมา (ค่าแรง/รับช่วง) ให้เห็นชัด */}
+            <div style={{ display: 'flex', gap: 5 }}>
+              {([
+                ['all', `ทั้งหมด ${vendors.length}`],
+                ['ผู้ขาย', `🏪 ผู้ขาย ${vendors.filter((v) => kindOf(v) === 'ผู้ขาย').length}`],
+                ['ผู้รับเหมา', `🔨 ผู้รับเหมา ${vendors.filter((v) => kindOf(v) === 'ผู้รับเหมา').length}`],
+              ] as const).map(([id, label]) => (
+                <button key={id} onClick={() => setVendorKindFilter(id)}
+                  style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, border: 'none', borderRadius: 20, padding: '5px 13px', cursor: 'pointer', color: vendorKindFilter === id ? '#fff' : '#5C6770', background: vendorKindFilter === id ? '#30506A' : '#EDF1F4' }}>{label}</button>
+              ))}
+            </div>
+            <span style={{ fontSize: 11.5, color: '#94A0A8' }}>กดป้ายหมวดในตารางเพื่อย้ายรายชื่อระหว่าง ผู้ขาย ↔ ผู้รับเหมา</span>
+            <button onClick={() => setAddingVendor((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มผู้ขาย/ผู้รับเหมา</button>
           </div>
           {addingVendor && (
             <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC', display: 'flex', gap: 10 }}>
-              <input style={{ ...prField, flex: 1.4 }} placeholder="ชื่อผู้ขาย *" value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} />
+              <select style={{ ...prField, width: 'auto' }} value={vendorForm.kind} onChange={(e) => setVendorForm({ ...vendorForm, kind: e.target.value })} title="หมวด: ผู้ขาย = ร้านวัสดุ/ของ · ผู้รับเหมา = ค่าแรง/รับช่วงงาน">
+                <option value="ผู้ขาย">🏪 ผู้ขาย (วัสดุ/ของ)</option>
+                <option value="ผู้รับเหมา">🔨 ผู้รับเหมา (ค่าแรง/รับช่วง)</option>
+              </select>
+              <input style={{ ...prField, flex: 1.4 }} placeholder="ชื่อผู้ขาย/ผู้รับเหมา *" value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} />
               <select style={prField} value={vendorForm.type} onChange={(e) => setVendorForm({ ...vendorForm, type: e.target.value })}><option>นิติบุคคล</option><option>บุคคล</option></select>
               <input style={{ ...prField, flex: 1 }} placeholder="เลขผู้เสียภาษี" value={vendorForm.tax_id} onChange={(e) => setVendorForm({ ...vendorForm, tax_id: e.target.value })} />
               <input style={{ ...prField, width: 130 }} type="number" placeholder="เครดิต (วัน)" title="0 = เงินสด" value={vendorForm.credit_days} onChange={(e) => setVendorForm({ ...vendorForm, credit_days: e.target.value })} />
@@ -705,6 +728,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 <th style={{ ...th, padding: '9px 18px' }}>ชื่อผู้ขาย / ผู้รับเหมา</th>
                 <th style={{ ...th, textAlign: 'center' }}>ประเภท</th>
                 <th style={th}>เลขผู้เสียภาษี</th>
+                <th style={{ ...th, textAlign: 'center' }}>หมวด</th>
                 <th style={{ ...th, textAlign: 'center' }}>เครดิต (วัน)</th>
                 <th style={{ ...th, textAlign: 'center' }}>จด VAT</th>
                 <th style={{ ...th, textAlign: 'right' }}>ยอดซื้อสะสม</th>
@@ -712,14 +736,21 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
               </tr>
             </thead>
             <tbody>
-              {vendors.length === 0 && <tr><td colSpan={7} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีผู้ขาย — กด “เพิ่มผู้ขาย”</td></tr>}
-              {vendors.map((r) => (
+              {vendors.length === 0 && <tr><td colSpan={8} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีผู้ขาย — กด “เพิ่มผู้ขาย”</td></tr>}
+              {vendors.filter((r) => vendorKindFilter === 'all' || kindOf(r) === vendorKindFilter).map((r) => (
                 <tr key={r.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name}</td>
                   <td style={{ ...td, textAlign: 'center' }}>
                     <span style={{ fontSize: 11, fontWeight: 600, color: r.type === 'นิติบุคคล' ? '#30506A' : '#C0852C', background: r.type === 'นิติบุคคล' ? '#E2E9EF' : '#F6ECD6', padding: '2px 9px', borderRadius: 20 }}>{r.type}</span>
                   </td>
                   <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{r.tax_id}</td>
+                  <td style={{ ...td, textAlign: 'center' }}>
+                    <span onClick={() => updateVendor(r.id, { kind: kindOf(r) === 'ผู้ขาย' ? 'ผู้รับเหมา' : 'ผู้ขาย' })}
+                      title="กดเพื่อสลับหมวด ผู้ขาย ↔ ผู้รับเหมา"
+                      style={{ fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: '3px 11px', borderRadius: 20, whiteSpace: 'nowrap', color: kindOf(r) === 'ผู้รับเหมา' ? '#8A5A16' : '#1D5C8E', background: kindOf(r) === 'ผู้รับเหมา' ? '#FBEFD9' : '#E1EEF8', border: '1px solid ' + (kindOf(r) === 'ผู้รับเหมา' ? '#EBD7AE' : '#C6DEF0') }}>
+                      {kindOf(r) === 'ผู้รับเหมา' ? '🔨 ผู้รับเหมา' : '🏪 ผู้ขาย'}
+                    </span>
+                  </td>
                   <td style={{ ...td, textAlign: 'center' }}>
                     <input
                       type="number"
