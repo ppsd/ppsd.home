@@ -3,7 +3,7 @@ import { procurementTabs } from '../erpData'
 import { baht, unMoney, matchMaterial } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
-import type { ApiPR, ApiPO, ApiPayment } from '../store'
+import type { ApiPR, ApiPO, ApiPayment, ApiVendor } from '../store'
 import MoneyInput from './MoneyInput'
 import EfilingList from './EfilingList'
 import PrApprovalDoc from './PrApprovalDoc'
@@ -148,12 +148,25 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     } catch (e) { setPayErr((e as Error).message) }
   }
   const [addingVendor, setAddingVendor] = useState(false)
-  const [vendorForm, setVendorForm] = useState({ name: '', kind: 'ผู้ขาย', type: 'นิติบุคคล', tax_id: '', credit_days: '' })
+  const [vendorForm, setVendorForm] = useState({ name: '', kind: 'ผู้ขาย', category: '', type: 'นิติบุคคล', tax_id: '', address: '', credit_days: '' })
+  const [editingVendorId, setEditingVendorId] = useState<number | null>(null) // null = เพิ่มใหม่ · id = แก้ไขรายเดิม
+  // หมวดสินค้า/งานที่ใช้บ่อย (พิมพ์เองได้ ไม่จำกัดแค่นี้)
+  const VENDOR_CATS = ['วัสดุก่อสร้าง', 'ไฟฟ้า', 'ประปา', 'สี', 'เหล็ก', 'ไม้', 'กระเบื้อง', 'สุขภัณฑ์', 'หลังคา', 'อลูมิเนียม/กระจก', 'ฮาร์ดแวร์/เครื่องมือ', 'งานปูน/โครงสร้าง', 'งานหลังคา', 'งานไฟฟ้า', 'งานประปา', 'งานฝ้า/ผนัง', 'งานสี', 'งานกระเบื้อง', 'ขนส่ง', 'อื่นๆ']
+  const openEditVendor = (v: ApiVendor) => {
+    setVendorForm({ name: v.name, kind: v.kind === 'ผู้รับเหมา' ? 'ผู้รับเหมา' : 'ผู้ขาย', category: v.category || '', type: v.type || 'นิติบุคคล', tax_id: v.tax_id || '', address: v.address || '', credit_days: String(v.credit_days || '') })
+    setEditingVendorId(v.id); setAddingVendor(true)
+  }
   const [vendorKindFilter, setVendorKindFilter] = useState<'all' | 'ผู้ขาย' | 'ผู้รับเหมา'>('all')
   const kindOf = (v: { kind?: string }) => (v.kind === 'ผู้รับเหมา' ? 'ผู้รับเหมา' : 'ผู้ขาย') // ว่าง = ผู้ขาย (ข้อมูลเก่า)
+  const blankVendorForm = { name: '', kind: 'ผู้ขาย', category: '', type: 'นิติบุคคล', tax_id: '', address: '', credit_days: '' }
   const submitVendor = async () => {
     if (!vendorForm.name.trim()) return
-    try { await addVendor({ ...vendorForm, credit_days: Number(vendorForm.credit_days) || 0 }); setAddingVendor(false); setVendorForm({ name: '', kind: 'ผู้ขาย', type: 'นิติบุคคล', tax_id: '', credit_days: '' }) } catch { /* ignore */ }
+    const body = { ...vendorForm, credit_days: Number(vendorForm.credit_days) || 0 }
+    try {
+      if (editingVendorId != null) await updateVendor(editingVendorId, body)
+      else await addVendor(body)
+      setAddingVendor(false); setEditingVendorId(null); setVendorForm(blankVendorForm)
+    } catch { /* ignore */ }
   }
   const houses = data.houses
   const makePoFromPr = async (r: ApiPR) => {
@@ -710,16 +723,27 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             <button onClick={() => setAddingVendor((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มผู้ขาย/ผู้รับเหมา</button>
           </div>
           {addingVendor && (
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC', display: 'flex', gap: 10 }}>
-              <select style={{ ...prField, width: 'auto' }} value={vendorForm.kind} onChange={(e) => setVendorForm({ ...vendorForm, kind: e.target.value })} title="หมวด: ผู้ขาย = ร้านวัสดุ/ของ · ผู้รับเหมา = ค่าแรง/รับช่วงงาน">
-                <option value="ผู้ขาย">🏪 ผู้ขาย (วัสดุ/ของ)</option>
-                <option value="ผู้รับเหมา">🔨 ผู้รับเหมา (ค่าแรง/รับช่วง)</option>
-              </select>
-              <input style={{ ...prField, flex: 1.4 }} placeholder="ชื่อผู้ขาย/ผู้รับเหมา *" value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} />
-              <select style={prField} value={vendorForm.type} onChange={(e) => setVendorForm({ ...vendorForm, type: e.target.value })}><option>นิติบุคคล</option><option>บุคคล</option></select>
-              <input style={{ ...prField, flex: 1 }} placeholder="เลขผู้เสียภาษี" value={vendorForm.tax_id} onChange={(e) => setVendorForm({ ...vendorForm, tax_id: e.target.value })} />
-              <input style={{ ...prField, width: 130 }} type="number" placeholder="เครดิต (วัน)" title="0 = เงินสด" value={vendorForm.credit_days} onChange={(e) => setVendorForm({ ...vendorForm, credit_days: e.target.value })} />
-              <button onClick={submitVendor} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึก</button>
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC', display: 'flex', flexDirection: 'column', gap: 9 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: editingVendorId != null ? '#B7791F' : '#30506A' }}>
+                {editingVendorId != null ? `✎ แก้ไขข้อมูล: ${vendorForm.name}` : 'เพิ่มร้านค้า / ช่างใหม่ — กรอกครบรอบเดียว'}
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <select style={{ ...prField, width: 'auto' }} value={vendorForm.kind} onChange={(e) => setVendorForm({ ...vendorForm, kind: e.target.value })} title="ผู้ขาย = ร้านวัสดุ/ของ · ผู้รับเหมา = ค่าแรง/รับช่วงงาน">
+                  <option value="ผู้ขาย">🏪 ผู้ขาย (วัสดุ/ของ)</option>
+                  <option value="ผู้รับเหมา">🔨 ผู้รับเหมา (ค่าแรง/รับช่วง)</option>
+                </select>
+                <input style={{ ...prField, flex: 1.4, minWidth: 200 }} placeholder="ชื่อร้าน/ช่าง *" value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} />
+                <input style={{ ...prField, width: 170 }} list="vendor-cats" placeholder="หมวดสินค้า/งาน" title="เช่น วัสดุก่อสร้าง ไฟฟ้า ประปา — พิมพ์เองได้" value={vendorForm.category} onChange={(e) => setVendorForm({ ...vendorForm, category: e.target.value })} />
+                <datalist id="vendor-cats">{VENDOR_CATS.map((c) => <option key={c} value={c} />)}</datalist>
+                <select style={prField} value={vendorForm.type} onChange={(e) => setVendorForm({ ...vendorForm, type: e.target.value })}><option>นิติบุคคล</option><option>บุคคล</option></select>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <input style={{ ...prField, width: 170 }} placeholder="เลขผู้เสียภาษี" value={vendorForm.tax_id} onChange={(e) => setVendorForm({ ...vendorForm, tax_id: e.target.value })} />
+                <input style={{ ...prField, flex: 1, minWidth: 260 }} placeholder="ที่อยู่ (ใช้ในเอกสาร/ติดต่อ)" value={vendorForm.address} onChange={(e) => setVendorForm({ ...vendorForm, address: e.target.value })} />
+                <input style={{ ...prField, width: 120 }} type="number" placeholder="เครดิต (วัน)" title="0 = เงินสด" value={vendorForm.credit_days} onChange={(e) => setVendorForm({ ...vendorForm, credit_days: e.target.value })} />
+                <button onClick={submitVendor} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: editingVendorId != null ? '#B7791F' : '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>{editingVendorId != null ? 'บันทึกการแก้ไข' : 'บันทึก'}</button>
+                <button onClick={() => { setAddingVendor(false); setEditingVendorId(null); setVendorForm(blankVendorForm) }} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#EDF1F4', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
+              </div>
             </div>
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -732,14 +756,18 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 <th style={{ ...th, textAlign: 'center' }}>เครดิต (วัน)</th>
                 <th style={{ ...th, textAlign: 'center' }}>จด VAT</th>
                 <th style={{ ...th, textAlign: 'right' }}>ยอดซื้อสะสม</th>
-                <th style={{ ...th, padding: '9px 18px', textAlign: 'right' }}>ค้างจ่าย</th>
+                <th style={{ ...th, textAlign: 'right' }}>ค้างจ่าย</th>
+                <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}></th>
               </tr>
             </thead>
             <tbody>
-              {vendors.length === 0 && <tr><td colSpan={8} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีผู้ขาย — กด “เพิ่มผู้ขาย”</td></tr>}
+              {vendors.length === 0 && <tr><td colSpan={9} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีรายชื่อ — กด “เพิ่มผู้ขาย/ผู้รับเหมา”</td></tr>}
               {vendors.filter((r) => vendorKindFilter === 'all' || kindOf(r) === vendorKindFilter).map((r) => (
                 <tr key={r.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
-                  <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name}</td>
+                  <td style={{ ...td, padding: '10px 18px' }}>
+                    <div style={{ fontWeight: 500 }}>{r.name} {r.category && <span style={{ fontSize: 10.5, fontWeight: 600, color: '#6B4E9E', background: '#EEE8F6', borderRadius: 6, padding: '1px 8px', marginLeft: 4 }}>{r.category}</span>}</div>
+                    {r.address && <div style={{ fontSize: 11, color: '#94A0A8', marginTop: 2 }}>📍 {r.address}</div>}
+                  </td>
                   <td style={{ ...td, textAlign: 'center' }}>
                     <span style={{ fontSize: 11, fontWeight: 600, color: r.type === 'นิติบุคคล' ? '#30506A' : '#C0852C', background: r.type === 'นิติบุคคล' ? '#E2E9EF' : '#F6ECD6', padding: '2px 9px', borderRadius: 20 }}>{r.type}</span>
                   </td>
@@ -764,7 +792,10 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                     <input type="checkbox" checked={!!r.vat_registered} title="ผู้ขายรายนี้ออกใบกำกับภาษี — PO ใหม่จะติ๊ก VAT ให้อัตโนมัติ" onChange={(e) => updateVendor(r.id, { vat_registered: e.target.checked ? 1 : 0 })} style={{ cursor: 'pointer', width: 15, height: 15 }} />
                   </td>
                   <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.total_live ?? r.total)}</td>
-                  <td className="num" style={{ ...td, padding: '10px 18px', textAlign: 'right', fontWeight: 600, color: (r.outstanding_live ?? r.outstanding) === 0 ? '#94A0A8' : '#C0852C' }}>{baht(r.outstanding_live ?? r.outstanding)}</td>
+                  <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600, color: (r.outstanding_live ?? r.outstanding) === 0 ? '#94A0A8' : '#C0852C' }}>{baht(r.outstanding_live ?? r.outstanding)}</td>
+                  <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
+                    <button onClick={() => openEditVendor(r)} title="แก้ไขข้อมูล (เพิ่มที่อยู่/หมวด/เลขภาษี)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>✎ แก้ไข</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

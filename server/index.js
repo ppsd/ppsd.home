@@ -2225,8 +2225,8 @@ api.post('/vendors', financeOnly, (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ขาย' })
   const kind = b.kind === 'ผู้รับเหมา' ? 'ผู้รับเหมา' : 'ผู้ขาย' // หมวด: ผู้ขายวัสดุ หรือ ผู้รับเหมา (ค่าแรง/รับช่วง)
-  const info = db.prepare('INSERT INTO vendors (name,type,tax_id,total,outstanding,credit_days,kind) VALUES (?,?,?,?,?,?,?)')
-    .run(b.name, b.type || 'นิติบุคคล', b.tax_id || '', Number(b.total) || 0, Number(b.outstanding) || 0, Math.max(0, Number(b.credit_days) || 0), kind)
+  const info = db.prepare('INSERT INTO vendors (name,type,tax_id,total,outstanding,credit_days,kind,address,category) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(b.name, b.type || 'นิติบุคคล', b.tax_id || '', Number(b.total) || 0, Number(b.outstanding) || 0, Math.max(0, Number(b.credit_days) || 0), kind, String(b.address || '').trim(), String(b.category || '').trim())
   res.status(201).json(db.prepare('SELECT * FROM vendors WHERE id=?').get(info.lastInsertRowid))
 })
 // edit a vendor's credit terms (เครดิตประจำร้าน)
@@ -2235,8 +2235,8 @@ api.put('/vendors/:id', financeOnly, (req, res) => {
   if (!v) return res.status(404).json({ error: 'ไม่พบผู้ขาย' })
   const b = req.body || {}
   const newKind = b.kind != null ? (b.kind === 'ผู้รับเหมา' ? 'ผู้รับเหมา' : 'ผู้ขาย') : v.kind
-  db.prepare('UPDATE vendors SET name=?, type=?, tax_id=?, credit_days=?, vat_registered=?, kind=? WHERE id=?')
-    .run(b.name ?? v.name, b.type ?? v.type, b.tax_id ?? v.tax_id, b.credit_days != null ? Math.max(0, Number(b.credit_days) || 0) : v.credit_days, b.vat_registered != null ? (b.vat_registered ? 1 : 0) : v.vat_registered, newKind, v.id)
+  db.prepare('UPDATE vendors SET name=?, type=?, tax_id=?, credit_days=?, vat_registered=?, kind=?, address=?, category=? WHERE id=?')
+    .run(b.name ?? v.name, b.type ?? v.type, b.tax_id ?? v.tax_id, b.credit_days != null ? Math.max(0, Number(b.credit_days) || 0) : v.credit_days, b.vat_registered != null ? (b.vat_registered ? 1 : 0) : v.vat_registered, newKind, b.address != null ? String(b.address).trim() : v.address, b.category != null ? String(b.category).trim() : v.category, v.id)
   res.json(db.prepare('SELECT * FROM vendors WHERE id=?').get(v.id))
 })
 // parse the items/images JSON columns into arrays for the client

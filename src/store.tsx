@@ -241,6 +241,8 @@ export interface ApiVendor {
   outstanding: number
   credit_days?: number
   kind?: string // 'ผู้ขาย' (วัสดุ) หรือ 'ผู้รับเหมา' (ค่าแรง/รับช่วง)
+  address?: string
+  category?: string // หมวดสินค้า/งาน เช่น วัสดุก่อสร้าง ไฟฟ้า ประปา
   vat_registered?: number
   outstanding_live?: number
   total_live?: number

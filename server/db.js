@@ -385,6 +385,8 @@ ensureColumn('payments', 'vendor_id', 'INTEGER')       // ผูกผู้ร�
 ensureColumn('purchase_orders', 'vendor_id', 'INTEGER') // ผูก PO กับทะเบียนผู้ขาย (ถ้าชื่อตรง)
 ensureColumn('vendors', 'vat_registered', 'INTEGER')    // ผู้ขายจดทะเบียน VAT (ออกใบกำกับภาษี) — ใช้ติ๊ก VAT ให้อัตโนมัติ + เติมย้อนหลัง
 ensureColumn('vendors', 'kind', 'TEXT')                 // หมวด: 'ผู้ขาย' (วัสดุ/ของ) หรือ 'ผู้รับเหมา' (ค่าแรง/รับช่วง) — ว่าง = ผู้ขาย
+ensureColumn('vendors', 'address', 'TEXT')              // ที่อยู่ร้าน/ช่าง (ใช้ในเอกสาร + ติดต่อ)
+ensureColumn('vendors', 'category', 'TEXT')             // หมวดสินค้า/งาน เช่น วัสดุก่อสร้าง ไฟฟ้า ประปา งานปูน
 ensureColumn('sales_docs', 'date_iso', 'TEXT')          // วันที่เอกสารขาย (ISO) — ใช้กรองสรุปภาษีตามช่วงเวลา
 ensureColumn('sales_docs', 'ref', 'TEXT')               // อ้างอิงเอกสารต้นทาง (ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จ)
 // ภาษีซื้อจากใบกำกับจริง — เลิกเดา 7/107 จากรายจ่ายทุกใบ (บางร้านไม่จด VAT)
