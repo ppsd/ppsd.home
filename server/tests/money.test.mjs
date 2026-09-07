@@ -614,3 +614,19 @@ test('ลายเซ็นผู้ขอซื้อ: ประทับจา
   assert.equal(pr3.data.requester_sig, SIG2, 'ต้องดึงลายเซ็นจากทะเบียนพนักงานมาใช้')
   token = adminToken
 })
+
+test('กติกาจำนวนผู้อนุมัติลดลง → ใบที่กดไปแล้วครบตามกติกาใหม่ต้องเปลี่ยนเป็น "อนุมัติ" ทันที', async () => {
+  await PUT('/controls', { block_self_approve: false, approvers_pr: 2 })
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ปูน 10 ถุง', amount: 1500 })
+  const a = await POST(`/approve/pr/${pr.data.id}`)
+  assert.equal(a.data.done, false)
+  let row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.status, 'รออนุมัติ', 'อนุมัติ 1/2 ยังรอ')
+  // ลดกติกาเหลือ 1 คน → ใบนี้ต้องกลายเป็นอนุมัติเอง ไม่ต้องกดซ้ำ
+  const c = await PUT('/controls', { approvers_pr: 1 })
+  assert.ok(c.data.synced >= 1, 'ต้องมีใบถูกซิงก์สถานะ')
+  row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.status, 'อนุมัติ')
+  assert.equal(row.approval.done, true)
+  await PUT('/controls', { block_self_approve: true })
+})
