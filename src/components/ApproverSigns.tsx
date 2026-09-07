@@ -11,10 +11,12 @@ export default function ApproverSigns({ approval, makerLabel = 'ผู้จั�
   checker?: boolean
 }) {
   const appr = approval?.approvals || []
+  // จำนวนช่องผู้อนุมัติตามกติกาของเอกสารนั้น (PR คนเดียวพอ = 1 ช่อง) — อย่างน้อยเท่าที่อนุมัติไปแล้ว
+  const n = Math.max(1, Math.min(3, Number(approval?.required) || 3, appr.length || 1), appr.length)
   const slots: { label: string; name?: string | null; sig?: string | null; date?: string | null }[] = [
     { label: makerLabel, name: makerName, sig: makerSig, date: makerDate },
     ...(checker ? [{ label: 'ผู้ตรวจสอบ', name: '', sig: null, date: '' }] : []),
-    ...[0, 1, 2].map((i) => ({ label: `ผู้อนุมัติคนที่ ${i + 1}`, name: appr[i]?.approver, sig: appr[i]?.sig, date: appr[i]?.date })),
+    ...Array.from({ length: n }, (_, i) => ({ label: n === 1 ? 'ผู้อนุมัติ' : `ผู้อนุมัติคนที่ ${i + 1}`, name: appr[i]?.approver, sig: appr[i]?.sig, date: appr[i]?.date })),
   ]
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 30, fontSize: 10.5 }}>
