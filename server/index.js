@@ -198,6 +198,9 @@ function syncEmployeePin(user, hashedPin) {
 
 const api = express.Router()
 
+// ทุก API = ข้อมูลสด ห้ามเบราว์เซอร์แคช (กด F5 แล้วเห็นข้อมูลล่าสุดเสมอ)
+api.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next() })
+
 // ---------- auth ----------
 // brute-force guard: lock an account for a while after too many wrong PINs
 const loginAttempts = new Map() // username -> { fails, lockedUntil }
@@ -4201,10 +4204,20 @@ app.use('/api', api)
 // one port and is reachable from other devices on the LAN.
 const distDir = join(__dirname, '..', 'dist')
 if (existsSync(join(distDir, 'index.html'))) {
-  app.use(express.static(distDir))
-  // SPA fallback for any non-API GET
+  // ไฟล์ JS/CSS มีรหัส (hash) ในชื่อไฟล์อยู่แล้ว → แคชยาวได้ (เปลี่ยนโค้ด = ชื่อไฟล์เปลี่ยน)
+  // แต่ index.html ต้อง "ไม่แคช" — ดึงใหม่ทุกครั้ง เพื่อให้ชี้ไปไฟล์ JS เวอร์ชันล่าสุดเสมอ
+  // ผล: อัปเดตโปรแกรม + รีสตาร์ท แล้วผู้ใช้กด F5 ทีเดียวเห็นของใหม่เลย (ไม่ต้องล้างแคช)
+  app.use(express.static(distDir, {
+    etag: true,
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache, must-revalidate')
+      else if (/[\\/]assets[\\/]/.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    },
+  }))
+  // SPA fallback for any non-API GET — index.html ห้ามแคชเช่นกัน
   app.use((req, res, next) => {
     if (req.method === 'GET' && !req.path.startsWith('/api')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate')
       return res.sendFile(join(distDir, 'index.html'))
     }
     next()
