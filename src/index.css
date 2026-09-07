@@ -1,0 +1,200 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Kanit', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: #1c2730;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cfd6dd;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b4bdc6;
+  background-clip: padding-box;
+}
+
+input::placeholder {
+  color: #9aa6ae;
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- hover / focus helpers (the prototype used style-hover / style-focus) ---- */
+.hov-fafbfc:hover {
+  background: #fafbfc;
+}
+.hov-f3f5f7:hover {
+  background: #f3f5f7;
+}
+.hov-f7f9fb:hover {
+  background: #f7f9fb;
+}
+.hov-e7ebef:hover {
+  background: #e7ebef;
+}
+.btn-primary:hover {
+  background: #223a4e !important;
+}
+.house-card {
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.house-card:hover {
+  box-shadow: 0 8px 24px rgba(28, 39, 48, 0.1);
+  transform: translateY(-2px);
+}
+.field:focus {
+  border: 1px solid #30506a !important;
+  box-shadow: 0 0 0 3px #e2e9ef;
+}
+
+/* ---- mobile: collapse sidebar to an icon rail, stack multi-column layouts ---- */
+@media (max-width: 820px) {
+  /* sidebar → 54px icon-only rail */
+  aside {
+    width: 54px !important;
+  }
+  aside nav span,
+  aside .num,
+  .sb-brand-text,
+  aside > div:last-child {
+    display: none !important;
+  }
+  aside > div:first-child {
+    justify-content: center !important;
+    padding: 14px 4px !important;
+  }
+  aside nav {
+    padding: 4px 7px !important;
+  }
+  aside nav > div {
+    justify-content: center !important;
+    padding: 10px 0 !important;
+  }
+
+  /* content */
+  main {
+    padding: 12px !important;
+    overflow-x: hidden !important;
+  }
+  /* collapse inline multi-column layout grids to a single column
+     (small functional grids opt out with .keep-grid) */
+  main div[style*="grid-template-columns"]:not(.keep-grid) {
+    grid-template-columns: 1fr !important;
+  }
+  /* shrink dense tables so they fit the viewport instead of overflowing */
+  main table {
+    font-size: 12px !important;
+  }
+  main th,
+  main td {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  /* topbar */
+  header {
+    padding: 0 10px !important;
+    gap: 8px !important;
+  }
+  .tb-search {
+    width: auto !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+  .tb-search > div[style*="absolute"] {
+    width: 80vw !important;
+    max-width: 320px !important;
+  }
+  .tb-profile {
+    display: none !important;
+  }
+}
+
+/* ---- print: show only the document sheet ---- */
+@page {
+  size: A4;
+  margin: 10mm;
+}
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  /* พิมพ์สีตามจริง (แถบสี/ยอดรวมสีเหลือง ฯลฯ) */
+  .print-area {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .printdoc-backdrop {
+    position: absolute !important;
+    inset: 0 !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+  .print-area {
+    max-width: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  /* เอกสารทางการ: ให้เต็มหน้า A4 แล้วดันช่องลายเซ็น/ท้ายเอกสารไปอยู่ล่างสุด (สัดส่วนสวย) */
+  .doc-sheet {
+    box-sizing: border-box !important;
+    min-height: 272mm !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .doc-foot {
+    margin-top: auto !important;
+  }
+  /* full-page printable (รายงาน) — lift to page top so it prints clean as PDF */
+  .page-print {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 10mm !important;
+  }
+}

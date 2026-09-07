@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1E2E3B"/>
+  <g fill="none" stroke="#C0852C" stroke-width="22" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M128 248 L256 150 L384 248"/>
+    <path d="M160 232 V366 H352 V232"/>
+  </g>
+  <rect x="232" y="300" width="48" height="66" fill="#C0852C"/>
+  <text x="256" y="446" font-family="Kanit, Segoe UI, sans-serif" font-size="78" font-weight="700" fill="#FFFFFF" text-anchor="middle">PPSD</text>
+</svg>
