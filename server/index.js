@@ -779,20 +779,26 @@ function aiModel() {
 const aiKey = () => getSetting('ai_api_key', '') || process.env.ANTHROPIC_API_KEY || ''
 const AI_NO_KEY = 'ยังไม่ได้ตั้งค่ากุญแจ AI — ผู้ดูแลระบบตั้งได้ที่เมนู ผู้ใช้งาน → ตั้งค่า AI'
 // ส่งรูป/PDF + คำสั่งให้ Claude แล้วคืนข้อความตอบ (media = content block รูปหรือเอกสาร, หรือ null ถ้ามีแต่ข้อความ)
-async function aiAsk({ media, prompt, maxTokens = 4000, key = aiKey(), model = aiModel() }) {
+// รุ่น Opus 5 / Sonnet 5 "คิด" ก่อนตอบและใช้ token ส่วนนั้นจาก max_tokens ด้วย → ต้องเผื่อ max_tokens ให้พอ
+// และตั้ง effort ต่ำสำหรับงานอ่านเอกสาร (ไม่งั้นคิดนานและกิน token จนไม่เหลือให้ตอบ) — Haiku 4.5 ไม่รับ effort
+async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel() }) {
   if (!key) return { ok: false, error: AI_NO_KEY, code: 400 }
   const content = media ? [media, { type: 'text', text: prompt }] : [{ type: 'text', text: prompt }]
+  const body = { model, max_tokens: maxTokens, messages: [{ role: 'user', content }] }
+  if (!/haiku/.test(model)) body.output_config = { effort: 'low' }
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
-      signal: AbortSignal.timeout(120000),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(180000),
     })
     const data = await r.json().catch(() => ({}))
     if (!r.ok) return { ok: false, code: 502, error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)), model }
     if (data.stop_reason === 'refusal') return { ok: false, code: 502, error: 'AI ปฏิเสธคำขอนี้ (' + (data.stop_details?.category || 'refusal') + ')', model }
-    return { ok: true, text: (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join(''), model }
+    const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join('')
+    if (!text && data.stop_reason === 'max_tokens') return { ok: false, code: 502, error: 'AI ใช้ token หมดก่อนตอบ (เอกสารยาวเกินไป) — ลองถ่ายเฉพาะส่วนรายการสินค้า', model }
+    return { ok: true, text, model }
   } catch (e) { return { ok: false, code: 502, error: 'เรียก AI ไม่สำเร็จ: ' + e.message, model } }
 }
 // ให้ AI อ่านตารางงวดงานจากสัญญา (PDF/รูป) → คืน JSON งวดงานให้พรีวิว
@@ -836,7 +842,7 @@ api.post('/ai-settings', adminOnly, (req, res) => {
 })
 api.post('/ai-settings/test', adminOnly, async (_req, res) => {
   const t0 = Date.now()
-  const ai = await aiAsk({ media: null, prompt: 'ตอบสั้นๆ คำเดียวว่า "พร้อมใช้งาน"', maxTokens: 50 })
+  const ai = await aiAsk({ media: null, prompt: 'ตอบสั้นๆ คำเดียวว่า "พร้อมใช้งาน"', maxTokens: 400 })
   if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error, model: ai.model })
   res.json({ ok: true, model: ai.model, reply: String(ai.text || '').trim().slice(0, 80), ms: Date.now() - t0 })
 })
