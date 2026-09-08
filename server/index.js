@@ -4913,6 +4913,13 @@ async function refreshLineWebhookActive() {
     if (!g.ok) return
     const j = await g.json()
     const active = !!j.active
+    // มีคนแก้ URL ในหน้า LINE ให้ผิด (เช่น ลืมท้าย /api/line/webhook) → ตั้งกลับให้ถูกเอง
+    const expected = tunnel.state.url ? tunnel.state.url.replace(/\/$/, '') + '/api/line/webhook' : ''
+    if (expected && j.endpoint && j.endpoint !== expected && !j.endpoint.endsWith('/api/line/webhook')) {
+      console.log('[line] Webhook URL ใน LINE ไม่ตรง (' + j.endpoint + ') → ตั้งใหม่เป็น ' + expected)
+      registerLineWebhook(tunnel.state.url)
+      return
+    }
     if (active !== st.active || (j.endpoint && j.endpoint !== st.endpoint)) {
       const base = 'ตั้ง Webhook URL ใน LINE แล้ว'
       const msg = active ? base + ' และเปิด Use webhook แล้ว ✓' : base + ' — แต่ยังไม่ได้เปิด "Use webhook" ในหน้า LINE Developers (เปิดครั้งเดียว)'
