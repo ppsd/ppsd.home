@@ -3739,7 +3739,10 @@ api.post('/doc-register/:id/revise', auditView, (req, res) => {
 api.delete('/doc-register/:id', auditView, (req, res) => { db.prepare('DELETE FROM doc_register WHERE id=?').run(req.params.id); res.json({ ok: true }) })
 
 // ---------- QC Checklist (ตรวจงานก่อสร้าง) ----------
-const qcRow = (r) => r ? { ...r, items: jparse(r.items) || [], images: jparse(r.images) || [] } : r
+const qcRow = (r) => r ? { ...r, items: jparse(r.items) || [], images: jparse(r.images) || [], extra: jparse(r.extra) || {} } : r
+const qcItems = (arr) => arr.map((it, i) => ({ no: it.no || i + 1, section: String(it.section || ''), text: String(it.text || ''), result: it.result || '', fix: it.fix || '', remark: it.remark || '', images: cleanImgs(it.images) }))
+const cleanExtra = (o) => (o && typeof o === 'object' && !Array.isArray(o)) ? Object.fromEntries(Object.entries(o).map(([k, v]) => [String(k).slice(0, 200), String(v ?? '').slice(0, 500)])) : {}
+const QC_STD = ['ผ่านมาตรฐาน', 'ไม่ผ่านตามมาตรฐาน', '']
 // รับรูปแนบ: เฉพาะ data URL รูปภาพ สูงสุด 3 รูป
 const cleanImgs = (arr) => (Array.isArray(arr) ? arr : []).filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, 3)
 api.get('/qc', (req, res) => {
@@ -3750,11 +3753,12 @@ api.get('/qc', (req, res) => {
 api.post('/qc', canWrite, (req, res) => {
   const b = req.body || {}
   if (!b.category || !b.type) return res.status(400).json({ error: 'กรุณาเลือกหมวด/ประเภทงาน' })
-  const items = Array.isArray(b.items) ? b.items.map((it, i) => ({ no: it.no || i + 1, text: String(it.text || ''), result: it.result || '', fix: it.fix || '', remark: it.remark || '', images: cleanImgs(it.images) })) : []
+  const items = Array.isArray(b.items) ? qcItems(b.items) : []
   const seq = db.prepare('SELECT COUNT(*) c FROM qc_inspections').get().c + 1
   const no = `QC-${docYear()}-${String(seq).padStart(3, '0')}`
-  const info = db.prepare('INSERT INTO qc_inspections (no,house_code,category,type,zone,inspector,date,status,items,remark,images,start_date,end_date,by,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(no, b.house_code || '', b.category, b.type, b.zone || '', b.inspector || req.user.name, todayTH(), b.status || 'กำลังตรวจ', JSON.stringify(items), b.remark || '', JSON.stringify(cleanImgs(b.images)), b.start_date || '', b.end_date || '', req.user.name, todayTH())
+  const info = db.prepare('INSERT INTO qc_inspections (no,house_code,category,type,zone,inspector,date,status,items,remark,images,start_date,end_date,by,created,phase,form_id,kind,extra,worker,std,fix_date,recheck_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(no, b.house_code || '', b.category, b.type, b.zone || '', b.inspector || req.user.name, todayTH(), b.status || 'กำลังตรวจ', JSON.stringify(items), b.remark || '', JSON.stringify(cleanImgs(b.images)), b.start_date || '', b.end_date || '', req.user.name, todayTH(),
+      String(b.phase || ''), String(b.form_id || ''), String(b.kind || ''), JSON.stringify(cleanExtra(b.extra)), String(b.worker || ''), QC_STD.includes(b.std) ? b.std : '', String(b.fix_date || ''), String(b.recheck_date || ''))
   audit(req, 'สร้างใบตรวจ QC', `${no} · ${b.type}`)
   res.status(201).json(qcRow(db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(info.lastInsertRowid)))
 })
@@ -3762,12 +3766,12 @@ api.put('/qc/:id', canWrite, (req, res) => {
   const d = db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(req.params.id)
   if (!d) return res.status(404).json({ error: 'ไม่พบใบตรวจ' })
   const b = req.body || {}
-  const items = Array.isArray(b.items)
-    ? JSON.stringify(b.items.map((it, i) => ({ no: it.no || i + 1, text: String(it.text || ''), result: it.result || '', fix: it.fix || '', remark: it.remark || '', images: cleanImgs(it.images) })))
-    : d.items
+  const items = Array.isArray(b.items) ? JSON.stringify(qcItems(b.items)) : d.items
   const images = b.images !== undefined ? JSON.stringify(cleanImgs(b.images)) : d.images
-  db.prepare('UPDATE qc_inspections SET status=?, items=?, remark=?, zone=?, inspector=?, images=?, start_date=?, end_date=? WHERE id=?')
-    .run(b.status ?? d.status, items, b.remark ?? d.remark, b.zone ?? d.zone, b.inspector ?? d.inspector, images, b.start_date ?? d.start_date, b.end_date ?? d.end_date, d.id)
+  const extra = b.extra !== undefined ? JSON.stringify(cleanExtra(b.extra)) : d.extra
+  db.prepare('UPDATE qc_inspections SET status=?, items=?, remark=?, zone=?, inspector=?, images=?, start_date=?, end_date=?, extra=?, worker=?, std=?, fix_date=?, recheck_date=? WHERE id=?')
+    .run(b.status ?? d.status, items, b.remark ?? d.remark, b.zone ?? d.zone, b.inspector ?? d.inspector, images, b.start_date ?? d.start_date, b.end_date ?? d.end_date,
+      extra, b.worker ?? d.worker ?? '', QC_STD.includes(b.std) ? b.std : (d.std || ''), b.fix_date ?? d.fix_date ?? '', b.recheck_date ?? d.recheck_date ?? '', d.id)
   res.json(qcRow(db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(d.id)))
 })
 api.delete('/qc/:id', canWrite, (req, res) => { db.prepare('DELETE FROM qc_inspections WHERE id=?').run(req.params.id); res.json({ ok: true }) })
