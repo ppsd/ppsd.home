@@ -558,6 +558,16 @@ function lineSignatureOk(req) {
   const mac = createHmac('sha256', secret).update(req.rawBody).digest('base64')
   try { return mac.length === sig.length && timingSafeEqual(Buffer.from(mac), Buffer.from(sig)) } catch { return false }
 }
+// ===== เวอร์ชัน/สถานะเซิร์ฟเวอร์ (สาธารณะ) — หน้าเว็บใช้เช็คว่า process ที่รันอยู่เก่ากว่าไฟล์บนดิสก์ไหม (อัปเดตแล้วแต่ยังไม่รีสตาร์ท) =====
+const BOOT_TS = Date.now()
+function serverVersion() {
+  let fileMtime = 0
+  try { fileMtime = Math.max(statSync(fileURLToPath(import.meta.url)).mtimeMs, statSync(join(__dirname, 'db.js')).mtimeMs) } catch { /* ignore */ }
+  let distMtime = 0
+  try { distMtime = statSync(join(__dirname, '..', 'dist', 'index.html')).mtimeMs } catch { /* ignore */ }
+  return { started: BOOT_TS, file_mtime: fileMtime, dist_mtime: distMtime, stale: fileMtime > BOOT_TS + 5000, pm2: !!process.env.pm_id }
+}
+api.get('/version', (_req, res) => res.json(serverVersion()))
 api.get('/line/webhook', (_req, res) => res.json({ ok: true, hint: 'ตั้ง URL นี้ในหน้า LINE Developers → Messaging API → Webhook URL' }))
 api.post('/line/webhook', async (req, res) => {
   if (!lineSignatureOk(req)) return res.status(403).json({ error: 'ลายเซ็นไม่ถูกต้อง' })
@@ -4868,6 +4878,12 @@ const tunnelInfo = () => ({
   enabled: getSetting('tunnel_auto', '0') === '1', expose: getSetting('tunnel_expose', '0') === '1',
   ...tunnel.state, url: tunnel.state.url || '',
   webhook: (() => { try { return JSON.parse(getSetting('line_webhook_status', '') || 'null') } catch { return null } })(),
+})
+// รีสตาร์ทเซิร์ฟเวอร์จากหน้าเว็บ (ใช้หลังอัปเดตโค้ด) — PM2 / run-server.bat จะเปิดใหม่ให้เอง; ถ้าเปิดด้วย start.bat ต้องดับเบิลคลิกใหม่
+api.post('/restart', adminOnly, (req, res) => {
+  audit(req, 'สั่งรีสตาร์ทเซิร์ฟเวอร์จากหน้าเว็บ', serverVersion().stale ? 'โค้ดใหม่กว่า process' : '')
+  res.json({ ok: true, pm2: !!process.env.pm_id })
+  setTimeout(() => process.exit(0), 400)
 })
 api.get('/tunnel', adminOnly, (_req, res) => res.json(tunnelInfo()))
 api.put('/tunnel', adminOnly, async (req, res) => {

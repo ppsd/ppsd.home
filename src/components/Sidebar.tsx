@@ -4,6 +4,7 @@ import { nav, navGroups, deniedPages } from '../data'
 import type { NavDef } from '../data'
 import { PPSD_MARK } from '../assets'
 import { useApp } from '../store'
+import { api } from '../api'
 
 interface SidebarProps {
   activePage: string
@@ -12,6 +13,28 @@ interface SidebarProps {
 
 export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   const { user } = useApp()
+  // เช็คว่าเซิร์ฟเวอร์ที่รันอยู่เก่ากว่าไฟล์บนดิสก์ไหม (อัปเดตแล้วแต่ยังไม่รีสตาร์ท) — เตือน + ปุ่มรีสตาร์ท (แอดมิน)
+  const [srv, setSrv] = useState<{ started: number; stale: boolean; pm2: boolean } | null>(null)
+  const [restarting, setRestarting] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const check = () => api.get<{ started: number; stale: boolean; pm2: boolean }>('/version').then((v) => { if (alive) setSrv(v) }).catch(() => { if (alive) setSrv({ started: 0, stale: true, pm2: false }) })
+    check(); const t = setInterval(check, 60000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
+  const restartServer = async () => {
+    if (!window.confirm('รีสตาร์ทเซิร์ฟเวอร์ตอนนี้? ทุกคนจะใช้งานไม่ได้ประมาณ 5–10 วินาที')) return
+    setRestarting(true)
+    const before = srv?.started || 0
+    try { await api.post('/restart', {}) } catch { /* server อาจปิดก่อนตอบ */ }
+    // รอจน process ใหม่ขึ้น (started เปลี่ยน) แล้วโหลดหน้าใหม่
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 1500))
+      try { const v = await api.get<{ started: number }>('/version'); if (v.started !== before) { window.location.reload(); return } } catch { /* ยังไม่ขึ้น */ }
+    }
+    setRestarting(false)
+    window.alert('เซิร์ฟเวอร์ยังไม่กลับมา — ถ้าเปิดด้วย start.bat ให้ดับเบิลคลิก start.bat ใหม่ (ถ้าลง service ไว้จะเปิดเองใน 1 นาที)')
+  }
   const canFinance = user?.role === 'admin' || user?.role === 'accounting' || !!user?.isManager
   const canManager = !!user?.isManager
   const canHr = canFinance || user?.position === 'บุคคล'
@@ -78,6 +101,14 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
 
       <div style={{ padding: '12px 16px', borderTop: '1px solid #2C3F4F' }}>
         <div style={{ fontSize: 11, color: '#7C8B97', lineHeight: 1.5 }}>ปีงบประมาณ 2568<br /><span title="วัน-เวลาที่ build โปรแกรมเวอร์ชันนี้ — ถ้าไม่ตรงกับที่อัปเดตล่าสุด ให้รัน update.bat แล้วกด F5">เวอร์ชัน {__BUILD_STAMP__}</span></div>
+        {srv?.stale && (
+          <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.45, color: '#FFD9D4', background: 'rgba(194,64,54,.35)', border: '1px solid rgba(255,120,110,.5)', borderRadius: 8, padding: '7px 9px' }}>
+            ⚠ {srv.started ? 'อัปเดตโค้ดแล้ว แต่เซิร์ฟเวอร์ยังรันตัวเก่า' : 'เซิร์ฟเวอร์เป็นเวอร์ชันเก่า (ไม่รู้จักหน้านี้)'}
+            {user?.role === 'admin' && srv.started ? (
+              <button onClick={restartServer} disabled={restarting} style={{ display: 'block', marginTop: 6, width: '100%', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 700, color: '#fff', background: '#C24036', border: 'none', borderRadius: 7, padding: '6px 8px', cursor: 'pointer' }}>{restarting ? 'กำลังรีสตาร์ท…' : '↻ รีสตาร์ทเซิร์ฟเวอร์'}</button>
+            ) : <div style={{ marginTop: 3 }}>ให้แอดมินรีสตาร์ท (update.bat)</div>}
+          </div>
+        )}
       </div>
     </aside>
   )

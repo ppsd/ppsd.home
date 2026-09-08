@@ -752,3 +752,15 @@ test('ลิงก์สาธารณะอัตโนมัติ: ค่า
   const off = await PUT('/tunnel', { enabled: false })
   assert.equal(off.data.enabled, false); assert.equal(off.data.status, 'ปิด')
 })
+
+test('เวอร์ชันเซิร์ฟเวอร์: /version สาธารณะ บอกว่า process เก่ากว่าไฟล์ไหม · รีสตาร์ทได้เฉพาะแอดมิน', async () => {
+  const adminToken = token
+  token = null
+  const v = await GET('/version')
+  assert.equal(v.status, 200)
+  assert.ok(v.data.started > 0 && v.data.file_mtime > 0)
+  assert.equal(v.data.stale, false, 'เพิ่งเปิดเซิร์ฟเวอร์จากไฟล์ปัจจุบัน ต้องไม่ stale')
+  token = (await POST('/login', { username: 'sitetest', pin: '9999' })).data.token
+  assert.equal((await POST('/restart', {})).status, 403, 'พนักงานสั่งรีสตาร์ทไม่ได้')
+  token = adminToken
+})
