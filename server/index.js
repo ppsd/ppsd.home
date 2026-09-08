@@ -450,15 +450,34 @@ function lineDrafts() { try { return JSON.parse(getSetting('line_drafts', '{}'))
 function setLineDraft(uid, draft) { const d = lineDrafts(); if (draft) d[uid] = { ...draft, ts: Date.now() }; else delete d[uid]; setSetting('line_drafts', JSON.stringify(d)) }
 function getLineDraft(uid) { const d = lineDrafts()[uid]; return d && Date.now() - d.ts < 30 * 60 * 1000 ? d : null }
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+// หาพนักงานจากข้อความ: ชื่อเต็ม > ชื่อจริง (คำแรก) > ชื่อเล่น (รองรับ "พี่ต้น" "ช่างต้น" "คุณต้น" "น้องต้น") — ยาวสุดก่อน กันชื่อซ้อน
+// คืน { code, name, nickname, matched_by } หรือ null · ใช้ทั้งบอท LINE และ API /employees/match
+function matchEmployee(text, emps) {
+  const t = String(text || '')
+  const norm = (x) => String(x || '').trim()
+  const cands = []
+  for (const e of emps) {
+    const full = norm(e.name); const first = full.split(/\s+/)[0]; const nick = norm(e.nickname)
+    if (full && t.includes(full)) cands.push({ e, len: full.length + 100, by: 'ชื่อเต็ม' })
+    if (first && first.length >= 2 && t.includes(first)) cands.push({ e, len: first.length + 50, by: 'ชื่อจริง' })
+    if (nick && nick.length >= 2) {
+      // ชื่อเล่นต้องมีคำนำหน้าหรืออยู่หลัง "ให้/บอก/สั่ง" หรือขึ้นต้นข้อความ — กันชื่อเล่นสั้นๆ ไปชนคำอื่น
+      const re = new RegExp('(^|ให้|บอก|สั่ง|พี่|ช่าง|คุณ|น้อง|ลุง|ป้า|เฮีย|เจ๊|\\s)' + nick.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      if (re.test(t)) cands.push({ e, len: nick.length + 10, by: 'ชื่อเล่น' })
+      else if (nick.replace(/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/g, '').length >= 3 && t.includes(nick)) cands.push({ e, len: nick.length, by: 'ชื่อเล่น' }) // นับเฉพาะพยัญชนะ/สระเต็มตัว (ไม่นับวรรณยุกต์) กันชื่อเล่นสั้นไปชนคำอื่น เช่น ต้น ↔ ต้นไม้
+    }
+  }
+  cands.sort((a, b) => b.len - a.len)
+  const top = cands[0]
+  return top ? { code: top.e.code, name: top.e.name, nickname: top.e.nickname || '', matched_by: top.by } : null
+}
 // เดาผู้รับ/บ้าน/ด่วน/กำหนดส่ง จากข้อความ (กติกาเดียวกับหน้า "สั่งงานด้วยเสียง")
 function parseLineCommand(t) {
-  const emps = db.prepare("SELECT code, name FROM employees WHERE status IS NULL OR status NOT IN ('ลาออก')").all()
+  const emps = db.prepare("SELECT code, name, nickname FROM employees WHERE status IS NULL OR status NOT IN ('ลาออก')").all()
   const houses = db.prepare('SELECT code, name FROM houses').all()
-  const found = { scope: t, executor: '', executor_code: '', house_code: '', house_name: '', urgent: false, due_date: '' }
-  // ผู้รับ: ชื่อเต็ม หรือคำแรกของชื่อ (ยาวสุดก่อน กันชื่อซ้อน)
-  const emp = emps.map((e) => ({ e, key: (e.name || '').trim() })).filter((x) => x.key && t.includes(x.key)).sort((a, b) => b.key.length - a.key.length)[0]?.e
-    || emps.map((e) => ({ e, key: (e.name || '').trim().split(/\s+/)[0] })).filter((x) => x.key && x.key.length >= 2 && t.includes(x.key)).sort((a, b) => b.key.length - a.key.length)[0]?.e
-  if (emp) { found.executor = emp.name; found.executor_code = emp.code }
+  const found = { scope: t, executor: '', executor_code: '', house_code: '', house_name: '', urgent: false, due_date: '', matched_by: '' }
+  const emp = matchEmployee(t, emps)
+  if (emp) { found.executor = emp.name; found.executor_code = emp.code; found.matched_by = emp.matched_by }
   const h = houses.find((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code)))
   if (h) { found.house_code = h.code; found.house_name = h.name || h.code }
   if (/ด่วน|เร่งด่วน|urgent/i.test(t)) found.urgent = true
@@ -469,7 +488,7 @@ function parseLineCommand(t) {
   return found
 }
 function draftText(d) {
-  return `📝 ร่างใบสั่งงาน\nงาน: ${d.scope}\nผู้รับ: ${d.executor || '❓ ยังไม่รู้ว่าส่งให้ใคร — พิมพ์ชื่อคนรับได้เลย'}\nบ้าน: ${d.house_name || '-'}\nกำหนด: ${d.due_date || '-'}${d.urgent ? '\n🔴 ด่วน (นับถอยหลัง)' : ''}\n\n` +
+  return `📝 ร่างใบสั่งงาน\nงาน: ${d.scope}\nผู้รับ: ${d.executor ? d.executor + (d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : '') : '❓ ยังไม่รู้ว่าส่งให้ใคร — พิมพ์ชื่อคนรับได้เลย'}\nบ้าน: ${d.house_name || '-'}\nกำหนด: ${d.due_date || '-'}${d.urgent ? '\n🔴 ด่วน (นับถอยหลัง)' : ''}\n\n` +
     (d.executor ? "ตอบ 'ตกลง' เพื่อออกใบสั่งงาน · 'ยกเลิก' เพื่อทิ้งร่าง · หรือพิมพ์ชื่อคนอื่นเพื่อเปลี่ยนผู้รับ" : "พิมพ์ชื่อผู้รับ (เช่น สมชาย) แล้วค่อยตอบ 'ตกลง' · 'ยกเลิก' เพื่อทิ้งร่าง")
 }
 function myOpenWorkOrders(u) {
@@ -539,7 +558,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (draft) {
     const p = parseLineCommand(t)
     if (p.executor && t.length <= 40) {
-      const nd = { ...draft, executor: p.executor, executor_code: p.executor_code }
+      const nd = { ...draft, executor: p.executor, executor_code: p.executor_code, matched_by: p.matched_by }
       setLineDraft(uid, nd)
       return lineReply(replyToken, draftText(nd))
     }
@@ -4032,6 +4051,11 @@ function escalateUrgent() {
 function safeJson(s) { try { return JSON.parse(s || '[]') } catch { return [] } }
 setInterval(escalateUrgent, 20 * 1000) // ตรวจทุก 20 วินาที
 // ฟีดสถานะงานด่วนสำหรับ CEO — เวลา ส่ง/เห็น/รับทราบ + สายไล่ระดับ + นับถอยหลัง
+// เดาผู้รับจากข้อความ (ชื่อเต็ม/ชื่อจริง/ชื่อเล่น) — หน้าสั่งงานด้วยเสียงใช้กติกาเดียวกับบอท LINE
+api.post('/employees/match', requireAuth, (req, res) => {
+  const emps = db.prepare("SELECT code, name, nickname FROM employees WHERE status IS NULL OR status NOT IN ('ลาออก')").all()
+  res.json({ match: matchEmployee(String(req.body?.text || ''), emps) })
+})
 api.get('/work-orders/ceo-feed', requireAuth, (req, res) => {
   const rows = db.prepare("SELECT * FROM work_orders WHERE urgent=1 ORDER BY id DESC LIMIT 50").all().map((w) => {
     const seenMin = w.seen_ts ? minutesSince(w.created_ts) : null

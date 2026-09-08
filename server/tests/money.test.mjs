@@ -780,3 +780,28 @@ test('ผูก LINE: แอดมินขอรหัสแทนคนอื�
   assert.equal(me.data.name, 'สมชาย ช่างหลังคา')
   token = adminToken
 })
+
+test('บอท LINE: สั่งงานด้วยชื่อเล่น ("ให้ต้น…" / "พี่ต้น") จับคนถูก และ push แจ้งคนนั้น (ถ้าผูก LINE)', async () => {
+  const e = await POST('/employees', { name: 'ประยุทธ์ แสงดี', nickname: 'ต้น', role: 'ช่าง', pay_type: 'รายวัน', base: 500 })
+  assert.equal(e.status, 201, JSON.stringify(e.data))
+  // ชื่อเล่นหลังคำว่า "ให้" และแบบมีคำนำหน้า
+  for (const text of ['ให้ต้นไปเช็คหลังคาบ้านเทสต์ พรุ่งนี้', 'บอกพี่ต้นไปดูงานหน้างานด้วย', 'ช่างต้น ไปซ่อมประตูบ้านเทสต์']) {
+    const m = (await POST('/employees/match', { text })).data.match
+    assert.ok(m && m.name === 'ประยุทธ์ แสงดี', `ต้องจับ "ต้น" ได้จาก: ${text} (ได้ ${m?.name})`)
+    assert.equal(m.matched_by, 'ชื่อเล่น')
+  }
+  // ชื่อเต็มชนะชื่อเล่นเมื่อมีทั้งคู่ · คำที่บังเอิญมี "ต้น" อยู่ข้างใน (เช่น "ต้นไม้") ต้องไม่จับถ้าไม่มีคำนำหน้า
+  const m2 = (await POST('/employees/match', { text: 'ให้สมชาย ช่างหลังคา ไปตัดต้นไม้' })).data.match
+  assert.equal(m2.name, 'สมชาย ช่างหลังคา')
+  const m3 = (await POST('/employees/match', { text: 'ไปตัดต้นไม้หน้าบ้าน' })).data.match
+  assert.ok(!m3 || m3.name !== 'ประยุทธ์ แสงดี', 'คำว่า ต้นไม้ ต้องไม่ถูกจับเป็นชื่อเล่น')
+  // สั่งผ่านบอทด้วยชื่อเล่น → ร่างระบุผู้รับถูกคน → ตกลง → ใบสั่งงานถึงประยุทธ์
+  const hook = (uid, text) => api('POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r1', source: { type: 'user', userId: uid }, message: { type: 'text', text } }] })
+  const c1 = await POST('/line-link/code', {})
+  await hook('Uceo', c1.data.code); await new Promise((r) => setTimeout(r, 300))
+  await hook('Uceo', 'ให้ต้นไปเช็คหลังคาบ้านเทสต์ พรุ่งนี้'); await new Promise((r) => setTimeout(r, 300))
+  await hook('Uceo', 'ตกลง'); await new Promise((r) => setTimeout(r, 300))
+  const wo = (await GET('/work-orders')).data.find((w) => w.source === 'line' && w.executor === 'ประยุทธ์ แสงดี')
+  assert.ok(wo, 'ต้องมีใบสั่งงานถึงประยุทธ์จากชื่อเล่น')
+  await DEL('/line-link')
+})

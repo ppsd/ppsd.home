@@ -68,8 +68,20 @@ export default function CeoVoice() {
     setMsg('')
     const found = { ...blank, scope: t }
     // ผู้รับ: หาชื่อพนักงานที่ปรากฏในข้อความ (จับคำแรกของชื่อด้วย)
-    const emp = emps.find((e) => e.name && (t.includes(e.name) || t.includes(e.name.split(' ')[0])))
-    if (emp) found.executor_code = emp.code
+    // ผู้รับ: ชื่อเต็ม > ชื่อจริง > ชื่อเล่น (รองรับ "พี่ต้น" "ช่างต้น") — ยาวสุดก่อน กันชื่อซ้อน (กติกาเดียวกับบอท LINE)
+    const cands: { code: string; len: number }[] = []
+    for (const e of emps) {
+      const full = (e.name || '').trim(); const first = full.split(/\s+/)[0]; const nick = (e.nickname || '').trim()
+      if (full && t.includes(full)) cands.push({ code: e.code, len: full.length + 100 })
+      if (first && first.length >= 2 && t.includes(first)) cands.push({ code: e.code, len: first.length + 50 })
+      if (nick && nick.length >= 2) {
+        const re = new RegExp('(^|ให้|บอก|สั่ง|พี่|ช่าง|คุณ|น้อง|ลุง|ป้า|เฮีย|เจ๊|\\s)' + nick.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        if (re.test(t)) cands.push({ code: e.code, len: nick.length + 10 })
+        else if (nick.replace(/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/g, '').length >= 3 && t.includes(nick)) cands.push({ code: e.code, len: nick.length })
+      }
+    }
+    cands.sort((a, b) => b.len - a.len)
+    if (cands[0]) found.executor_code = cands[0].code
     // บ้าน: หาชื่อบ้าน/รหัสบ้านในข้อความ
     const h = houses.find((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code)))
     if (h) found.house_code = h.code
