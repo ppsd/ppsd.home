@@ -316,7 +316,14 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               </div>
               {tun.enabled && (
                 <div style={{ fontSize: 12, color: '#3C4750', marginTop: 8, lineHeight: 1.7 }}>
-                  {tun.url ? <div>ลิงก์: <code style={{ background: '#EDF1F4', padding: '1px 6px', borderRadius: 5 }}>{tun.url}</code></div> : <div style={{ color: '#B7791F' }}>{tun.msg || 'กำลังสร้างลิงก์… (ครั้งแรกต้องดาวน์โหลด cloudflared ประมาณ 1 นาที)'}</div>}
+                  {tun.url ? (
+                    <div>
+                      <div>ลิงก์หลัก: <code style={{ background: '#EDF1F4', padding: '1px 6px', borderRadius: 5 }}>{tun.url}</code></div>
+                      <div>Webhook URL ที่ตั้งใน LINE: <code style={{ background: '#EDF1F4', padding: '1px 6px', borderRadius: 5 }}>{tun.url.replace(/\/$/, '') + '/api/line/webhook'}</code>
+                        <button onClick={() => { navigator.clipboard?.writeText(tun.url.replace(/\/$/, '') + '/api/line/webhook').then(() => window.alert('คัดลอกแล้ว — วางในช่อง Webhook URL ของหน้า LINE Developers ได้เลย')) }} style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 6, padding: '1px 8px', cursor: 'pointer' }}>คัดลอก</button>
+                      </div>
+                    </div>
+                  ) : <div style={{ color: '#B7791F' }}>{tun.msg || 'กำลังสร้างลิงก์… (ครั้งแรกต้องดาวน์โหลด cloudflared ประมาณ 1 นาที)'}</div>}
                   {tun.webhook && (
                     <div style={{ color: tun.webhook.ok ? (tun.webhook.active === false ? '#B7791F' : '#2E7D55') : '#C24036' }}>
                       {tun.webhook.ok ? (tun.webhook.active === false ? '⚠' : '✓') : '✗'} {tun.webhook.msg} <span style={{ color: '#94A0A8' }}>· {tun.webhook.at}</span>
