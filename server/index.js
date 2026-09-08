@@ -4864,14 +4864,36 @@ async function registerLineWebhook(url) {
         if (g.ok) { const j = await g.json(); active = !!j.active; if (!active) msg += ' — แต่ยังไม่ได้เปิด "Use webhook" ในหน้า LINE Developers (เปิดครั้งเดียว)' }
       } catch { /* ignore */ }
     }
-    setSetting('line_webhook_status', JSON.stringify({ at: nowTS(), ok, msg, endpoint, active }))
+    // ตั้งสำเร็จ → ให้ LINE ยิงทดสอบมาที่ endpoint จริง (เช็คว่าถึงเครื่องเราไหม)
+    let reach = null
+    if (ok) {
+      try {
+        const t = await fetch('https://api.line.me/v2/bot/channel/webhook/test', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ endpoint }), signal: AbortSignal.timeout(20000) })
+        if (t.ok) { const j = await t.json(); reach = { success: !!j.success, statusCode: j.statusCode, reason: j.reason, detail: j.detail }; if (!j.success) msg += ` — แต่ LINE ยิงทดสอบมาไม่ถึง (${j.reason || j.statusCode}) ลองกด "ลองตั้ง Webhook อีกครั้ง" ในอีก 1 นาที` }
+      } catch { /* ignore */ }
+    }
+    setSetting('line_webhook_status', JSON.stringify({ at: nowTS(), ok, msg, endpoint, active, reach }))
     return ok
   } catch (e) { setSetting('line_webhook_status', JSON.stringify({ at: nowTS(), ok: false, msg: 'เรียก LINE ไม่สำเร็จ: ' + e.message, endpoint })); return false }
+}
+// ลิงก์ใหม่จาก trycloudflare ต้องรอ DNS กระจายสักครู่ LINE ถึงจะยอมรับ ("Invalid webhook endpoint URL") → ลองซ้ำเป็นช่วงจนกว่าจะสำเร็จ
+let webhookRetryTimer = null
+function registerLineWebhookWithRetry(url) {
+  clearTimeout(webhookRetryTimer)
+  const delays = [3000, 15000, 45000, 90000, 180000, 300000]
+  let i = 0
+  const attempt = async () => {
+    if (tunnel.state.url !== url) return // ลิงก์เปลี่ยนไปแล้ว — รอบใหม่จะจัดการเอง
+    const ok = await registerLineWebhook(url)
+    if (ok || i >= delays.length) return
+    webhookRetryTimer = setTimeout(attempt, delays[i++])
+  }
+  webhookRetryTimer = setTimeout(attempt, delays[i++])
 }
 const tunnel = createTunnelManager({
   port: process.env.PORT || 3001,
   appDir: join(__dirname, '..'),
-  onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhook(url) },
+  onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhookWithRetry(url) },
   onStatus: (st) => setSetting('tunnel_state', JSON.stringify(st)),
 })
 const tunnelInfo = () => ({
