@@ -4901,13 +4901,32 @@ const tunnelInfo = () => ({
   ...tunnel.state, url: tunnel.state.url || '',
   webhook: (() => { try { return JSON.parse(getSetting('line_webhook_status', '') || 'null') } catch { return null } })(),
 })
+// เช็คสวิตช์ "Use webhook" ใน LINE แบบสด (ถี่สุดทุก 20 วิ) — พอผู้ใช้เปิดสวิตช์ในหน้า LINE การ์ดจะเปลี่ยนเป็นเขียวเอง
+let lineActiveCheckedAt = 0
+async function refreshLineWebhookActive() {
+  const token = getSetting('line_token', '')
+  const st = tunnelInfo().webhook
+  if (!token || !st || !st.ok || Date.now() - lineActiveCheckedAt < 20000) return
+  lineActiveCheckedAt = Date.now()
+  try {
+    const g = await fetch('https://api.line.me/v2/bot/channel/webhook/endpoint', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8000) })
+    if (!g.ok) return
+    const j = await g.json()
+    const active = !!j.active
+    if (active !== st.active || (j.endpoint && j.endpoint !== st.endpoint)) {
+      const base = 'ตั้ง Webhook URL ใน LINE แล้ว'
+      const msg = active ? base + ' และเปิด Use webhook แล้ว ✓' : base + ' — แต่ยังไม่ได้เปิด "Use webhook" ในหน้า LINE Developers (เปิดครั้งเดียว)'
+      setSetting('line_webhook_status', JSON.stringify({ ...st, at: nowTS(), active, msg, endpoint: j.endpoint || st.endpoint }))
+    }
+  } catch { /* ignore */ }
+}
 // รีสตาร์ทเซิร์ฟเวอร์จากหน้าเว็บ (ใช้หลังอัปเดตโค้ด) — PM2 / run-server.bat จะเปิดใหม่ให้เอง; ถ้าเปิดด้วย start.bat ต้องดับเบิลคลิกใหม่
 api.post('/restart', adminOnly, (req, res) => {
   audit(req, 'สั่งรีสตาร์ทเซิร์ฟเวอร์จากหน้าเว็บ', serverVersion().stale ? 'โค้ดใหม่กว่า process' : '')
   res.json({ ok: true, pm2: !!process.env.pm_id })
   setTimeout(() => process.exit(0), 400)
 })
-api.get('/tunnel', adminOnly, (_req, res) => res.json(tunnelInfo()))
+api.get('/tunnel', adminOnly, async (_req, res) => { await refreshLineWebhookActive(); res.json(tunnelInfo()) })
 api.put('/tunnel', adminOnly, async (req, res) => {
   const b = req.body || {}
   if (b.expose !== undefined) setSetting('tunnel_expose', b.expose ? '1' : '0')
