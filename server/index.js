@@ -449,6 +449,133 @@ function lineUidOfExecutor(executor, executorCode) {
   const e = executorCode ? db.prepare('SELECT user_id FROM employees WHERE code=?').get(executorCode) : null
   return e?.user_id ? (db.prepare('SELECT line_uid FROM users WHERE id=?').get(e.user_id)?.line_uid || null) : null
 }
+// ===== ขออนุมัติผ่าน LINE: การ์ดรายละเอียด + ปุ่ม อนุมัติ / ยังไม่อนุมัติ → ส่งถึง CEO และผู้จัดการทุกคนที่ผูก LINE =====
+const DOC_PREFIX = { pr: 'PR', po: 'PO', payment: 'PV', expense: 'EXP' }
+const docNoOf = (docType, doc) => doc.no || `${DOC_PREFIX[docType]}-${doc.id}`
+function approvalDocById(docType, id) { const cfg = APPROVE_DOCS[docType]; return cfg ? db.prepare(`SELECT * FROM ${cfg.table} WHERE id=?`).get(Number(id)) : null }
+function approvalDocByNo(no) {
+  const m = String(no || '').trim().toUpperCase().match(/^(PR|PO|PV|EXP)-?(.+)$/)
+  if (!m) return null
+  const docType = { PR: 'pr', PO: 'po', PV: 'payment', EXP: 'expense' }[m[1]]
+  if (docType === 'expense') return { docType, doc: approvalDocById('expense', m[2]) }
+  const full = `${m[1]}-${m[2]}`
+  return { docType, doc: db.prepare(`SELECT * FROM ${APPROVE_DOCS[docType].table} WHERE no=?`).get(full) }
+}
+const fmtMoney = (n) => (Number(n) || 0).toLocaleString('en-US')
+// รายละเอียดเอกสารเป็นบรรทัด (ใช้ทั้งในการ์ดและข้อความล้วน)
+function approvalLines(docType, doc) {
+  const L = []
+  const houseName = (code) => code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code) : ''
+  if (docType === 'pr') {
+    L.push(['บ้าน/โครงการ', doc.house || houseName(doc.house_code) || '-'], ['ผู้ขอ', doc.by || '-'], ['วันที่', doc.date || '-'])
+    const items = jparse(doc.items)
+    if (Array.isArray(items) && items.length) items.slice(0, 8).forEach((it, i) => L.push([`${i + 1}.`, `${it.desc} ${it.qty ? fmtMoney(it.qty) + ' ' + (it.unit || '') : ''}${it.price ? ' × ' + fmtMoney(it.price) : ''}`]))
+    else L.push(['รายการ', doc.item || '-'])
+    if (Array.isArray(items) && items.length > 8) L.push(['', `…และอีก ${items.length - 8} รายการ`])
+    L.push(['รวม', fmtMoney(doc.amount) + ' บาท'])
+  } else if (docType === 'po') {
+    L.push(['ผู้ขาย', doc.vendor || '-'], ['อ้างอิง PR', doc.pr_no || '-'], ['ชำระ', doc.payment_type === 'credit' ? `เครดิต ${doc.credit_days || 0} วัน` : 'เงินสด'], ['ผู้ออก', doc.by || '-'])
+    const items = jparse(doc.items)
+    if (Array.isArray(items) && items.length) items.slice(0, 8).forEach((it, i) => L.push([`${i + 1}.`, `${it.desc} ${it.qty ? fmtMoney(it.qty) + ' ' + (it.unit || '') : ''}${it.price ? ' × ' + fmtMoney(it.price) : ''}`]))
+    else L.push(['รายการ', doc.item || '-'])
+    L.push(['รวม', fmtMoney(doc.amount) + ' บาท'])
+  } else if (docType === 'payment') {
+    L.push(['ผู้รับเงิน', doc.payee || '-'], ['ยอดจ่าย', fmtMoney(doc.gross) + ' บาท'])
+    if (doc.wht) L.push(['หัก ณ ที่จ่าย', `${doc.type || ''} ${doc.wht_rate || 0}% = ${fmtMoney(doc.wht)} บาท`])
+    L.push(['จ่ายสุทธิ', fmtMoney(doc.net) + ' บาท'])
+    if (doc.po_id) L.push(['ชำระ PO', db.prepare('SELECT no FROM purchase_orders WHERE id=?').get(doc.po_id)?.no || '-'])
+    if (doc.note) L.push(['หมายเหตุ', doc.note])
+  } else if (docType === 'expense') {
+    L.push(['รายการ', doc.item || '-'], ['หมวด', doc.cat || '-'], ['ร้าน/ผู้รับ', doc.vendor || '-'], ['บ้าน', houseName(doc.house_code) || '-'], ['ยอด', fmtMoney(doc.amount) + ' บาท'], ['วันที่', doc.date || '-'])
+  }
+  return L
+}
+function approvalFlex(docType, doc) {
+  const cfg = APPROVE_DOCS[docType]
+  const no = docNoOf(docType, doc)
+  const st = approvalState(docType, doc.id)
+  const row = ([label, value]) => ({ type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+    { type: 'text', text: String(label || ' '), size: 'sm', color: '#94A0A8', flex: 2 },
+    { type: 'text', text: String(value || '-'), size: 'sm', color: '#1C2730', flex: 5, wrap: true }] })
+  const amount = docType === 'payment' ? doc.net : doc.amount
+  return {
+    type: 'flex', altText: `มี${cfg.label} ${no} รออนุมัติ (${fmtMoney(amount)} บาท)`,
+    contents: { type: 'bubble', size: 'mega',
+      header: { type: 'box', layout: 'vertical', backgroundColor: '#C0852C', paddingAll: '14px', contents: [
+        { type: 'text', text: `${cfg.label} ${no}`, color: '#FFFFFF', weight: 'bold', size: 'md' },
+        { type: 'text', text: `รออนุมัติ · ${st.count}/${st.required} คนแล้ว`, color: '#FBF1DF', size: 'xs' }] },
+      body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+        { type: 'text', text: `${fmtMoney(amount)} บาท`, weight: 'bold', size: 'xl', color: '#1C2730' },
+        { type: 'separator', margin: 'sm' },
+        ...approvalLines(docType, doc).map(row),
+        { type: 'separator', margin: 'md' },
+        { type: 'text', text: 'อนุมัติไหมคะ?', weight: 'bold', size: 'md', color: '#30506A', margin: 'md', align: 'center' }] },
+      footer: { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+        { type: 'button', style: 'primary', color: '#2E7D55', height: 'sm', action: { type: 'postback', label: 'อนุมัติ', data: `apv:${docType}:${doc.id}:approve`, displayText: `อนุมัติ ${no}` } },
+        { type: 'button', style: 'secondary', height: 'sm', action: { type: 'postback', label: 'ยังไม่อนุมัติ', data: `apv:${docType}:${doc.id}:hold`, displayText: `ยังไม่อนุมัติ ${no}` } }] } },
+  }
+}
+// ผู้อนุมัติที่ผูก LINE (CEO/แอดมิน + ผู้จัดการ) — ไม่ส่งให้คนที่เป็นผู้ขอเอง
+function lineApprovers(excludeName) {
+  return db.prepare("SELECT id, name, role, position, line_uid FROM users WHERE line_uid IS NOT NULL AND status='ใช้งาน'").all()
+    .filter((u) => lineCanCommand(u) && u.name !== excludeName)
+}
+async function notifyApprovers(docType, docId, requesterName) {
+  try {
+    const doc = approvalDocById(docType, docId)
+    if (!doc || !getSetting('line_token', '')) return 0
+    const cfg = APPROVE_DOCS[docType]
+    const no = docNoOf(docType, doc)
+    const amount = docType === 'payment' ? doc.net : doc.amount
+    let n = 0
+    for (const u of lineApprovers(requesterName)) {
+      const ok = await linePush(u.line_uid, [`มี${cfg.label}ต้องอนุมัติค่ะ — ${no} จาก ${requesterName || doc.by || '-'} ยอด ${fmtMoney(amount)} บาท`, approvalFlex(docType, doc)])
+      if (ok) n++
+    }
+    return n
+  } catch (e) { console.error('notifyApprovers:', e.message); return 0 }
+}
+async function lineApprovalAction(u, docType, docId, action, note, replyToken) {
+  const cfg = APPROVE_DOCS[docType]
+  const doc = approvalDocById(docType, docId)
+  if (!cfg || !doc) return lineReply(replyToken, 'ไม่พบเอกสารนี้ในระบบค่ะ')
+  if (!lineCanCommand(u)) return lineReply(replyToken, 'อนุมัติได้เฉพาะผู้บริหาร/ผู้จัดการค่ะ')
+  const no = docNoOf(docType, doc)
+  if (action === 'hold') return lineReply(replyToken, `รับทราบค่ะ ยังไม่อนุมัติ ${no}\nเอกสารยังรออยู่ในระบบ กดปุ่มในการ์ดนี้ได้อีกเมื่อพร้อม หรือพิมพ์ 'ปฏิเสธ ${no} เหตุผล' ถ้าไม่อนุมัติเลย`)
+  const fakeReq = { user: u, body: { note: note || (action === 'approve' ? 'อนุมัติผ่าน LINE' : 'ปฏิเสธผ่าน LINE') } }
+  try {
+    if (action === 'approve') {
+      const st = doApprove(docType, doc.id, fakeReq)
+      let msg = `✅ อนุมัติ ${cfg.label} ${no} แล้ว (${st.count}/${st.required})`
+      if (st.done) {
+        msg += ' — อนุมัติครบแล้ว'
+        const reqUid = lineUidOfName(doc.by); if (reqUid && reqUid !== u.line_uid) linePush(reqUid, `✅ ${cfg.label} ${no} ของคุณได้รับอนุมัติแล้วโดย ${u.name}`)
+        for (const a of lineApprovers(u.name)) linePush(a.line_uid, `ℹ️ ${cfg.label} ${no} อนุมัติครบแล้ว (โดย ${u.name}) — ไม่ต้องกดซ้ำค่ะ`)
+      } else msg += ` — รออีก ${st.required - st.count} คน`
+      return lineReply(replyToken, msg)
+    }
+    doReject(docType, doc.id, fakeReq)
+    const reqUid = lineUidOfName(doc.by); if (reqUid && reqUid !== u.line_uid) linePush(reqUid, `❌ ${cfg.label} ${no} ของคุณถูกปฏิเสธโดย ${u.name}${note ? '\nเหตุผล: ' + note : ''}`)
+    return lineReply(replyToken, `❌ ปฏิเสธ ${cfg.label} ${no} แล้ว${note ? ' (' + note + ')' : ''}`)
+  } catch (e) { return lineReply(replyToken, `ทำรายการไม่ได้ค่ะ: ${e.msg || e.message}`) }
+}
+async function handleLinePostback(uid, data, replyToken) {
+  const u = userByLine(uid)
+  if (!u) return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ')
+  const m = String(data || '').match(/^apv:(pr|po|payment|expense):(\d+):(approve|hold|reject)$/)
+  if (!m) return false
+  return lineApprovalAction(u, m[1], Number(m[2]), m[3], '', replyToken)
+}
+// รายการรออนุมัติทั้งหมด (สำหรับคำสั่ง 'รออนุมัติ')
+function pendingApprovals() {
+  const out = []
+  for (const [docType, cfg] of Object.entries(APPROVE_DOCS)) {
+    let rows = []
+    try { rows = cfg.noStatus ? db.prepare(`SELECT * FROM ${cfg.table} ORDER BY id DESC LIMIT 100`).all() : db.prepare(`SELECT * FROM ${cfg.table} WHERE status='รออนุมัติ' ORDER BY id DESC LIMIT 30`).all() } catch { continue }
+    for (const r of rows) { const st = approvalState(docType, r.id); if (!st.done && !st.rejected) out.push({ docType, doc: r, st }) }
+  }
+  return out.slice(0, 30)
+}
 // แปลงวันแบบพูด → YYYY-MM-DD: วันนี้ พรุ่งนี้ มะรืน · จันทร์นี้/ศุกร์หน้า · 15/9 · 15 ก.ย. · 15 กันยายน 2569 · สิ้นเดือน · ภายใน 3 วัน · ไม่กำหนด → ''
 function parseThaiDate(text) {
   const t = String(text || '').trim()
@@ -585,7 +712,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   const low = t.toLowerCase()
   if (/^(ช่วย|help|\?|คำสั่ง)$/i.test(t)) {
     return lineReply(replyToken, (lineCanCommand(u)
-      ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
+      ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• รออนุมัติ — เอกสารที่รอคุณอนุมัติ (กดปุ่มในการ์ดได้เลย) · อนุมัติ PR-69-0144 / ปฏิเสธ PR-69-0144 เหตุผล\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
       : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`))
   }
   if (/^(สรุป|summary)$/i.test(t)) {
@@ -613,6 +740,22 @@ async function handleLineUserMessage(uid, text, replyToken) {
     const ceoUid = lineUidOfName(w.by)
     if (ceoUid && ceoUid !== uid) linePush(ceoUid, `✓ ${name} รับทราบงาน ${w.no} แล้ว (${w.project || w.scope})`)
     return true
+  }
+  // อนุมัติ/ปฏิเสธด้วยข้อความ: "อนุมัติ PR-69-0144" · "ยังไม่อนุมัติ PO-69-0096" · "ปฏิเสธ PV-69-0208 ราคาสูงไป"
+  const apv = t.match(/^(อนุมัติ|ยังไม่อนุมัติ|ไม่อนุมัติ|ปฏิเสธ)\s+((?:PR|PO|PV|EXP)-?[\w-]+)\s*(.*)$/i)
+  if (apv) {
+    const found = approvalDocByNo(apv[2])
+    if (!found?.doc) return lineReply(replyToken, `ไม่พบเอกสาร ${apv[2].toUpperCase()} ค่ะ`)
+    const action = apv[1] === 'อนุมัติ' ? 'approve' : apv[1] === 'ยังไม่อนุมัติ' ? 'hold' : 'reject'
+    return lineApprovalAction(u, found.docType, found.doc.id, action, apv[3].trim(), replyToken)
+  }
+  if (/^(รออนุมัติ|อนุมัติ|approvals?)$/i.test(t) && lineCanCommand(u)) {
+    const list = pendingApprovals()
+    if (!list.length) return lineReply(replyToken, '✅ ไม่มีเอกสารรออนุมัติค่ะ')
+    // ส่งการ์ดใบแรกๆ ให้กดได้เลย + สรุปที่เหลือเป็นข้อความ
+    const cards = list.slice(0, 4).map(({ docType, doc }) => approvalFlex(docType, doc))
+    const rest = list.slice(4).map(({ docType, doc, st }) => `• ${APPROVE_DOCS[docType].label} ${docNoOf(docType, doc)} ${fmtMoney(docType === 'payment' ? doc.net : doc.amount)} บาท (${st.count}/${st.required})`).join('\n')
+    return lineReply(replyToken, [`📋 รออนุมัติ ${list.length} รายการ`, ...cards, ...(rest ? [rest + "\n\nพิมพ์ 'อนุมัติ PR-…' เพื่ออนุมัติใบที่ระบุ"] : [])])
   }
   if (!lineCanCommand(u)) return lineReply(replyToken, `บัญชี "${u.name}" ใช้ได้เฉพาะ: งาน / รับ — การสั่งงานผ่าน LINE ทำได้เฉพาะผู้บริหาร`)
   // ---- โหมดสั่งงาน (ผู้บริหาร) ----
@@ -684,6 +827,7 @@ api.post('/line/webhook', async (req, res) => {
       const text = ev.type === 'message' && ev.message?.type === 'text' ? String(ev.message.text || '').trim() : ''
       // แชทส่วนตัวกับบอท = ผูกบัญชี / สั่งงาน / รับงาน
       if (type === 'user' && text) { await handleLineUserMessage(id, text, ev.replyToken); continue }
+      if (type === 'user' && ev.type === 'postback') { await handleLinePostback(id, ev.postback?.data, ev.replyToken); continue }
       const name = await lineSourceName(type, id, token)
       seen = seen.filter((s) => s.id !== id)
       seen.unshift({ type, id, name, at: nowTS(), event: ev.type })
@@ -1327,6 +1471,7 @@ api.post('/expenses', canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid)
   try { acct.syncExpenseJournal(row) } catch (e) { console.error('journal(expense):', e.message); logJournalIssue('exp', row.id, row.item || 'รายจ่าย', e) }
   audit(req, 'บันทึกรายจ่าย', `${row.item} ${baht(row.amount)}${row.house_code ? ' (' + row.house_code + ')' : ''}`)
+  notifyApprovers('expense', row.id, req.user.name)
   res.status(201).json(row)
 })
 
@@ -2317,6 +2462,7 @@ api.post('/purchase-orders', financeOnly, (req, res) => {
   const info = db
     .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso,items,vendor_id,vat_amount,tax_invoice_no) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', req.user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems), poVendorId, poVat, String(b.tax_invoice_no || '').trim())
+  notifyApprovers('po', info.lastInsertRowid, req.user.name)
   res.status(201).json(poRow(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(info.lastInsertRowid)))
 })
 // ===== สต๊อกวัสดุ — นับจำนวน/ที่อยู่ของ (ต้นทุนลงบัญชีตามเดิมตอนรับของ ไม่เปลี่ยน) =====
@@ -2684,6 +2830,7 @@ api.post('/purchase-requests', canWrite, (req, res) => {
   const info = db
     .prepare('INSERT INTO purchase_requests (no,date,house,by,item,amount,status,requester_sig,image,house_code,category,items,images) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, todayTH(), hName, me.name, summary, total, 'รออนุมัติ', me.signature || null, imgs[0] || null, house_code || '', cat, lineItems ? JSON.stringify(lineItems) : null, imgs.length ? JSON.stringify(imgs) : null)
+  notifyApprovers('pr', info.lastInsertRowid, me.name)
   res.status(201).json(prRow(db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(info.lastInsertRowid)))
 })
 // approve/reject — managers only; on approval, snapshot approver name + signature
@@ -2877,6 +3024,7 @@ api.post('/payments', financeOnly, (req, res) => {
   // ลงบัญชีแยกประเภท: ชำระ PO เครดิต → ตัดเจ้าหนี้การค้า · จ่ายทั่วไป → ค่าแรง/ค่าใช้จ่าย + ภาษีหัก ณ ที่จ่ายค้างนำส่ง
   try { acct.syncPaymentJournal(row) } catch (e) { console.error('journal(payment):', e.message); logJournalIssue('pay', row.id, row.no, e) }
   audit(req, 'บันทึกจ่ายเงิน', `${b.payee} ฿${gross}${po ? ' (ชำระ ' + po.no + ')' : ''}`)
+  notifyApprovers('payment', row.id, req.user.name)
   res.status(201).json(row)
 })
 

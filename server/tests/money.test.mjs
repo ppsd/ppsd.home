@@ -836,3 +836,50 @@ test('บอท LINE: ข้อมูลไม่ครบ → ถามผู�
   assert.equal(wo.house_code, 'H-TEST-LINE'.length ? wo.house_code : wo.house_code) // house optional
   await DEL('/line-link')
 })
+
+test('อนุมัติผ่าน LINE: PR ใหม่ → การ์ดถึง CEO → กดปุ่ม อนุมัติ = อนุมัติในระบบ · ยังไม่อนุมัติ = ค้างไว้ · ปฏิเสธด้วยข้อความ', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const postback = (uid, data) => hook(uid, { type: 'postback', postback: { data } })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  // ผูก CEO
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  // พนักงาน (somchai, site) ขอซื้อ → PR รออนุมัติ
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ปูนซีเมนต์', qty: 20, unit: 'ถุง', price: 135 }, { desc: 'ทรายหยาบ', qty: 2, unit: 'คิว', price: 650 }] })
+  assert.equal(pr.status, 201, JSON.stringify(pr.data))
+  token = adminToken
+  // ยังไม่อนุมัติ (hold) → สถานะเดิม
+  await postback('Uceo', `apv:pr:${pr.data.id}:hold`); await wait()
+  let row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.status, 'รออนุมัติ')
+  // กดอนุมัติจากการ์ด → อนุมัติ (PR ต้องการ 1 คน)
+  await postback('Uceo', `apv:pr:${pr.data.id}:approve`); await wait()
+  row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.status, 'อนุมัติ', 'กดปุ่มอนุมัติในการ์ดต้องอนุมัติจริง')
+  assert.equal(row.approval.approvals[0].note, 'อนุมัติผ่าน LINE')
+  // ลายเซ็นผู้อนุมัติต้องติดมาเหมือนกดจากเว็บ (ใช้ลายเซ็นของบัญชี CEO)
+  const meId = (await GET('/me')).data.id
+  await PUT(`/users/${meId}/signature`, { signature: 'data:image/png;base64,iVBORw0KGgo=' })
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr3 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'สีทาบ้าน', amount: 1200 })
+  token = adminToken
+  await postback('Uceo', `apv:pr:${pr3.data.id}:approve`); await wait()
+  const r3 = (await GET('/purchase-requests')).data.find((r) => r.id === pr3.data.id)
+  assert.equal(r3.status, 'อนุมัติ')
+  assert.equal(r3.approval.approvals[0].approver, (await GET('/me')).data.name)
+  assert.equal(r3.approval.approvals[0].sig, 'data:image/png;base64,iVBORw0KGgo=', 'ลายเซ็นผู้อนุมัติต้องอยู่ในใบ')
+  assert.ok(r3.approval.approvals[0].date, 'ต้องมีวันที่อนุมัติ')
+  // พนักงานธรรมดากดปุ่มอนุมัติ → ไม่มีผล
+  const pr2 = await (async () => { token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token; const r = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'เหล็กเส้น', amount: 2850 }); token = adminToken; return r })()
+  await postback('Usom2', `apv:pr:${pr2.data.id}:approve`); await wait()
+  row = (await GET('/purchase-requests')).data.find((r) => r.id === pr2.data.id)
+  assert.equal(row.status, 'รออนุมัติ', 'พนักงานอนุมัติผ่าน LINE ไม่ได้')
+  // ปฏิเสธด้วยข้อความพร้อมเหตุผล
+  await msg('Uceo', `ปฏิเสธ ${pr2.data.no} ราคาสูงไป`); await wait()
+  row = (await GET('/purchase-requests')).data.find((r) => r.id === pr2.data.id)
+  assert.equal(row.status, 'ปฏิเสธ')
+  assert.equal(row.approval.rejectNote, 'ราคาสูงไป')
+  await DEL('/line-link')
+})
