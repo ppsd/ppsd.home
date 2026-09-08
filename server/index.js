@@ -394,28 +394,98 @@ async function lineSourceName(type, id, token) {
   } catch { return '' }
 }
 // ส่งข้อความ LINE (push ถึง user/group) — ไม่มี token = ไม่ส่ง ไม่พัง
-async function linePush(to, text) {
+// แปลง text หรือ array ของข้อความ/การ์ด (Flex) ให้เป็น messages ของ LINE (สูงสุด 5 ต่อครั้ง)
+const lineMessages = (m) => (Array.isArray(m) ? m : [m]).slice(0, 5).map((x) => (typeof x === 'string' ? { type: 'text', text: x.slice(0, 4900) } : x))
+async function linePush(to, msg) {
   const token = getSetting('line_token', '')
   if (!token || !to) return false
   try {
     const r = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: JSON.stringify({ to, messages: [{ type: 'text', text: String(text).slice(0, 4900) }] }), signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ to, messages: lineMessages(msg) }), signal: AbortSignal.timeout(10000),
     })
+    if (!r.ok) console.error('[line push]', r.status, (await r.text()).slice(0, 200))
     return r.ok
   } catch { return false }
 }
-async function lineReply(replyToken, text) {
+async function lineReply(replyToken, msg) {
   const token = getSetting('line_token', '')
   if (!token || !replyToken) return false
   try {
     const r = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: JSON.stringify({ replyToken, messages: [{ type: 'text', text: String(text).slice(0, 4900) }] }), signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ replyToken, messages: lineMessages(msg) }), signal: AbortSignal.timeout(10000),
     })
+    if (!r.ok) console.error('[line reply]', r.status, (await r.text()).slice(0, 200))
     return r.ok
   } catch { return false }
 }
+// การ์ดใบสั่งงาน (Flex) — ส่งให้คนรับและผู้สั่งใน LINE แทนข้อความล้วน
+function woFlex(wo, opts = {}) {
+  const house = wo.house_code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(wo.house_code)?.name || wo.house_code) : '-'
+  const row = (label, value, color) => ({ type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+    { type: 'text', text: label, size: 'sm', color: '#94A0A8', flex: 2 },
+    { type: 'text', text: String(value || '-'), size: 'sm', color: color || '#1C2730', flex: 5, wrap: true }] })
+  const urgent = !!wo.urgent
+  const footerText = opts.footer || (opts.forAssignee ? "ตอบ 'รับ' ในแชทนี้เพื่อรับทราบ" : 'ส่งถึงผู้รับแล้ว · รอรับทราบ')
+  return {
+    type: 'flex', altText: `ใบสั่งงาน ${wo.no}: ${wo.project || wo.scope}`,
+    contents: { type: 'bubble', size: 'mega',
+      header: { type: 'box', layout: 'vertical', backgroundColor: urgent ? '#C24036' : '#30506A', paddingAll: '14px', contents: [
+        { type: 'text', text: `ใบสั่งงาน ${wo.no}`, color: '#FFFFFF', weight: 'bold', size: 'md' },
+        { type: 'text', text: urgent ? `🔴 ด่วน · ต้องรับทราบภายใน ${wo.deadline_min || 5} นาที` : 'PPSD Construction ERP', color: '#E6EDF3', size: 'xs' }] },
+      body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
+        { type: 'text', text: String(wo.scope || wo.project || '-'), wrap: true, weight: 'bold', size: 'md' },
+        { type: 'separator' },
+        row('ผู้รับ', wo.executor), row('บ้าน', house), row('กำหนดส่ง', wo.due_date || 'ไม่กำหนด', wo.due_date ? '#C0852C' : undefined),
+        row('สั่งโดย', wo.by), row('วันที่สั่ง', wo.issued_date), row('สถานะ', wo.ack ? 'รับทราบแล้ว' : 'รอรับทราบ', wo.ack ? '#2E7D55' : '#B7791F')] },
+      footer: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: footerText, size: 'sm', color: '#2E7D55', align: 'center', wrap: true }] } },
+  }
+}
+// LINE ของผู้รับงาน: ชื่อผู้ใช้ที่ผูก หรือพนักงานที่ผูก user_id ไว้
+function lineUidOfExecutor(executor, executorCode) {
+  const byName = lineUidOfName(executor)
+  if (byName) return byName
+  const e = executorCode ? db.prepare('SELECT user_id FROM employees WHERE code=?').get(executorCode) : null
+  return e?.user_id ? (db.prepare('SELECT line_uid FROM users WHERE id=?').get(e.user_id)?.line_uid || null) : null
+}
+// แปลงวันแบบพูด → YYYY-MM-DD: วันนี้ พรุ่งนี้ มะรืน · จันทร์นี้/ศุกร์หน้า · 15/9 · 15 ก.ย. · 15 กันยายน 2569 · สิ้นเดือน · ภายใน 3 วัน · ไม่กำหนด → ''
+function parseThaiDate(text) {
+  const t = String(text || '').trim()
+  if (!t) return null
+  const now = new Date(); now.setHours(0, 0, 0, 0)
+  const add = (d) => { const x = new Date(now); x.setDate(x.getDate() + d); return isoOf(x) }
+  if (/ไม่กำหนด|ไม่มีกำหนด|ไม่ระบุ|^ไม่$|^-$|ไม่ต้อง/.test(t)) return ''
+  if (/มะรืน/.test(t)) return add(2)
+  if (/พรุ่งนี้|พรุ่ง/.test(t)) return add(1)
+  if (/วันนี้|เดี๋ยวนี้|ทันที/.test(t)) return add(0)
+  let m = t.match(/ภายใน\s*(\d+)\s*วัน|อีก\s*(\d+)\s*วัน/); if (m) return add(Number(m[1] || m[2]))
+  m = t.match(/(\d+)\s*(สัปดาห์|อาทิตย์)/); if (m && /ภายใน|อีก/.test(t)) return add(Number(m[1]) * 7)
+  if (/สิ้นเดือน|ปลายเดือน/.test(t)) { const x = new Date(now.getFullYear(), now.getMonth() + 1, 0); return isoOf(x) }
+  const days = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์']
+  for (let i = 0; i < 7; i++) {
+    const re = new RegExp('(?:วัน)?' + days[i] + '(?:บดี)?\\s*(นี้|หน้า)?')
+    const mm = t.match(re)
+    if (mm) { let d = (i - now.getDay() + 7) % 7; if (d === 0 && !/นี้/.test(mm[1] || '')) d = 7; if (mm[1] === 'หน้า' && d < 7) d += 7; return add(d) }
+  }
+  const TH_M = { 'ม.ค': 0, 'มค': 0, 'มกรา': 0, 'ก.พ': 1, 'กพ': 1, 'กุมภา': 1, 'มี.ค': 2, 'มีค': 2, 'มีนา': 2, 'เม.ย': 3, 'เมย': 3, 'เมษา': 3, 'พ.ค': 4, 'พค': 4, 'พฤษภา': 4, 'มิ.ย': 5, 'มิย': 5, 'มิถุนา': 5, 'ก.ค': 6, 'กค': 6, 'กรกฎา': 6, 'ส.ค': 7, 'สค': 7, 'สิงหา': 7, 'ก.ย': 8, 'กย': 8, 'กันยา': 8, 'ต.ค': 9, 'ตค': 9, 'ตุลา': 9, 'พ.ย': 10, 'พย': 10, 'พฤศจิกา': 10, 'ธ.ค': 11, 'ธค': 11, 'ธันวา': 11 }
+  m = t.match(/(\d{1,2})\s*(ม\.ค|มค|มกรา|ก\.พ|กพ|กุมภา|มี\.ค|มีค|มีนา|เม\.ย|เมย|เมษา|พ\.ค|พค|พฤษภา|มิ\.ย|มิย|มิถุนา|ก\.ค|กค|กรกฎา|ส\.ค|สค|สิงหา|ก\.ย|กย|กันยา|ต\.ค|ตค|ตุลา|พ\.ย|พย|พฤศจิกา|ธ\.ค|ธค|ธันวา)[ก-๙.]*\s*(\d{2,4})?/)
+  if (m) {
+    const day = Number(m[1]); const mon = TH_M[m[2]]; let y = m[3] ? Number(m[3]) : now.getFullYear()
+    if (y > 2400) y -= 543; else if (y < 100) y += (y >= 60 ? 1900 + 543 - 543 : 2000) // 69 → 2569 → 2026
+    if (m[3] && Number(m[3]) < 100) y = Number(m[3]) + 2500 - 543
+    const x = new Date(y, mon, day); if (!m[3] && x < now) x.setFullYear(x.getFullYear() + 1)
+    return isoOf(x)
+  }
+  m = t.match(/(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?/)
+  if (m) {
+    const day = Number(m[1]); const mon = Number(m[2]) - 1; let y = m[3] ? Number(m[3]) : now.getFullYear()
+    if (y > 2400) y -= 543; else if (y < 100) y = y + 2500 - 543
+    if (day >= 1 && day <= 31 && mon >= 0 && mon <= 11) { const x = new Date(y, mon, day); if (!m[3] && x < now) x.setFullYear(x.getFullYear() + 1); return isoOf(x) }
+  }
+  return null
+}
+const thaiDateLabel = (iso) => { if (!iso) return 'ไม่กำหนด'; const [y, mo, d] = iso.split('-').map(Number); return `${d} ${['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][mo - 1]} ${String((y + 543) % 100).padStart(2, '0')}` }
 // ---- ผูกบัญชี: รหัส 6 หลัก อายุ 10 นาที (ขอจากหน้าผู้ใช้งาน แล้วส่งให้บอท) ----
 function lineLinkCodes() { try { return JSON.parse(getSetting('line_link_codes', '{}')) || {} } catch { return {} } }
 function issueLineLinkCode(userId) {
@@ -481,15 +551,20 @@ function parseLineCommand(t) {
   const h = houses.find((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code)))
   if (h) { found.house_code = h.code; found.house_name = h.name || h.code }
   if (/ด่วน|เร่งด่วน|urgent/i.test(t)) found.urgent = true
-  const now = new Date()
-  if (/มะรืน/.test(t)) { now.setDate(now.getDate() + 2); found.due_date = isoOf(now) }
-  else if (/พรุ่งนี้/.test(t)) { now.setDate(now.getDate() + 1); found.due_date = isoOf(now) }
-  else if (/วันนี้/.test(t)) found.due_date = isoOf(now)
+  const due = parseThaiDate(t)
+  if (due) found.due_date = due
+  found.pending = null
   return found
 }
 function draftText(d) {
-  return `📝 ร่างใบสั่งงาน\nงาน: ${d.scope}\nผู้รับ: ${d.executor ? d.executor + (d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : '') : '❓ ยังไม่รู้ว่าส่งให้ใคร — พิมพ์ชื่อคนรับได้เลย'}\nบ้าน: ${d.house_name || '-'}\nกำหนด: ${d.due_date || '-'}${d.urgent ? '\n🔴 ด่วน (นับถอยหลัง)' : ''}\n\n` +
-    (d.executor ? "ตอบ 'ตกลง' เพื่อออกใบสั่งงาน · 'ยกเลิก' เพื่อทิ้งร่าง · หรือพิมพ์ชื่อคนอื่นเพื่อเปลี่ยนผู้รับ" : "พิมพ์ชื่อผู้รับ (เช่น สมชาย) แล้วค่อยตอบ 'ตกลง' · 'ยกเลิก' เพื่อทิ้งร่าง")
+  return `📝 สรุปคำสั่งงาน\nงาน: ${d.scope}\nผู้รับ: ${d.executor || '-'}${d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : ''}\nบ้าน: ${d.house_name || '-'}\nกำหนดส่ง: ${thaiDateLabel(d.due_date)}${d.urgent ? '\n🔴 ด่วน (นับถอยหลังรับทราบ)' : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อออกใบสั่งงาน · พิมพ์ชื่อคนอื่นเพื่อเปลี่ยนผู้รับ · พิมพ์วันใหม่เพื่อเปลี่ยนกำหนด · 'ยกเลิก' เพื่อทิ้ง`
+}
+// ถามเก็บข้อมูลที่ขาดทีละอย่าง (ผู้รับ → กำหนดส่ง) แล้วค่อยสรุปให้ยืนยัน
+function askNextOrSummary(uid, d, replyToken) {
+  if (!d.executor) { setLineDraft(uid, { ...d, pending: 'executor' }); return lineReply(replyToken, `รับทราบค่ะ งาน: "${d.scope}"\nจะสั่งงานนี้ให้ใครคะ? (พิมพ์ชื่อจริงหรือชื่อเล่น เช่น สมชาย / พี่ต้น)`) }
+  if (!d.due_date && !d.due_asked) { setLineDraft(uid, { ...d, pending: 'due' }); return lineReply(replyToken, `ผู้รับ: ${d.executor}${d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : ''}\nกำหนดส่งงานเป็นวันไหนดีคะ? (เช่น วันนี้ / พรุ่งนี้ / ศุกร์นี้ / 15 ก.ย. หรือพิมพ์ 'ไม่กำหนด')`) }
+  setLineDraft(uid, { ...d, pending: null })
+  return lineReply(replyToken, draftText(d))
 }
 function myOpenWorkOrders(u) {
   const emp = empOfUser(u)
@@ -542,32 +617,39 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (!lineCanCommand(u)) return lineReply(replyToken, `บัญชี "${u.name}" ใช้ได้เฉพาะ: งาน / รับ — การสั่งงานผ่าน LINE ทำได้เฉพาะผู้บริหาร`)
   // ---- โหมดสั่งงาน (ผู้บริหาร) ----
   const draft = getLineDraft(uid)
-  if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineDraft(uid, null); return lineReply(replyToken, 'ทิ้งร่างแล้ว') }
-  if (/^(ตกลง|ok|โอเค|ยืนยัน|ใช่|confirm|ส่ง)$/i.test(low)) {
-    if (!draft) return lineReply(replyToken, 'ยังไม่มีร่างคำสั่งงาน — พิมพ์คำสั่งงานก่อน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน"')
-    if (!draft.executor) return lineReply(replyToken, 'ยังไม่รู้ว่าส่งให้ใคร — พิมพ์ชื่อผู้รับก่อน')
+  if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineDraft(uid, null); return lineReply(replyToken, 'ทิ้งร่างแล้วค่ะ') }
+  if (/^(ตกลง|ok|โอเค|ยืนยัน|ใช่|confirm|ส่ง|ส่งเลย)$/i.test(low)) {
+    if (!draft) return lineReply(replyToken, 'ยังไม่มีร่างคำสั่งงานค่ะ — พิมพ์คำสั่งงานก่อน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้"')
+    if (!draft.executor) { setLineDraft(uid, { ...draft, pending: 'executor' }); return lineReply(replyToken, 'ยังไม่รู้ว่าส่งให้ใครค่ะ — จะสั่งงานนี้ให้ใครคะ? (พิมพ์ชื่อจริงหรือชื่อเล่น)') }
     const wo = createWorkOrder({ scope: draft.scope, project: draft.scope.slice(0, 40), executor: draft.executor, executor_code: draft.executor_code, house_code: draft.house_code, due_date: draft.due_date, urgent: draft.urgent, source: 'line' }, u.name)
     setLineDraft(uid, null)
     audit({ user: u }, draft.urgent ? 'สั่งงานด่วน (LINE)' : 'สั่งงานผ่าน LINE', `${wo.no} → ${draft.executor}`)
-    const toUid = lineUidOfName(draft.executor) || (() => { const e = db.prepare('SELECT user_id FROM employees WHERE code=?').get(draft.executor_code); return e?.user_id ? db.prepare('SELECT line_uid FROM users WHERE id=?').get(e.user_id)?.line_uid : null })()
+    const toUid = lineUidOfExecutor(draft.executor, draft.executor_code)
     let sent = false
-    if (toUid) sent = await linePush(toUid, `📌 งานใหม่จาก ${u.name}${draft.urgent ? ' 🔴 ด่วน' : ''}\n${wo.no}: ${draft.scope}${draft.house_name ? '\nบ้าน: ' + draft.house_name : ''}${draft.due_date ? '\nกำหนด: ' + draft.due_date : ''}\n\nตอบ 'รับ' เพื่อรับทราบ`)
-    return lineReply(replyToken, `✅ ออกใบสั่งงาน ${wo.no} → ${draft.executor}${draft.urgent ? ' (ด่วน นับถอยหลัง)' : ''}\n` + (sent ? '📨 แจ้งผู้รับทาง LINE แล้ว' : `⚠ ${draft.executor} ยังไม่ได้ผูก LINE — เห็นได้ในระบบ ERP (แจ้งเตือนในแอป)`))
+    if (toUid) sent = await linePush(toUid, [`📌 งานใหม่จาก ${u.name}${draft.urgent ? ' 🔴 ด่วน' : ''} — ตอบ 'รับ' เพื่อรับทราบ`, woFlex(wo, { forAssignee: true })])
+    return lineReply(replyToken, [`✅ ออกใบสั่งงาน ${wo.no} → ${draft.executor}${draft.urgent ? ' (ด่วน นับถอยหลัง)' : ''}\n` + (sent ? '📨 ส่งใบสั่งงานถึงผู้รับทาง LINE แล้ว จะแจ้งทันทีที่เขาตอบรับ' : `⚠ ${draft.executor} ยังไม่ได้ผูก LINE — ใบสั่งงานอยู่ในระบบ ERP (แจ้งเตือนในแอป) · ให้เขาผูก LINE ที่ไอคอน 💬 มุมขวาบน`), woFlex(wo, { footer: sent ? 'สำเนาสำหรับผู้สั่ง' : 'สำเนาสำหรับผู้สั่ง · ผู้รับยังไม่ผูก LINE' })])
   }
-  // มีร่างอยู่ + พิมพ์ชื่อคน → เปลี่ยนผู้รับ
-  if (draft) {
+  // กำลังถามข้อมูลที่ขาดอยู่ → ข้อความนี้คือคำตอบ
+  if (draft && draft.pending === 'executor') {
     const p = parseLineCommand(t)
-    if (p.executor && t.length <= 40) {
-      const nd = { ...draft, executor: p.executor, executor_code: p.executor_code, matched_by: p.matched_by }
-      setLineDraft(uid, nd)
-      return lineReply(replyToken, draftText(nd))
-    }
+    if (!p.executor) return lineReply(replyToken, `ไม่พบชื่อ "${t}" ในทะเบียนพนักงานค่ะ ลองพิมพ์ชื่อจริงหรือชื่อเล่นตามที่ลงทะเบียนไว้ (หรือ 'ยกเลิก')`)
+    return askNextOrSummary(uid, { ...draft, executor: p.executor, executor_code: p.executor_code, matched_by: p.matched_by, pending: null }, replyToken)
+  }
+  if (draft && draft.pending === 'due') {
+    const d = parseThaiDate(t)
+    if (d === null) return lineReply(replyToken, `ยังอ่านวันไม่ออกค่ะ ลองพิมพ์ เช่น วันนี้ / พรุ่งนี้ / มะรืน / ศุกร์นี้ / 15 ก.ย. / 15/9 หรือ 'ไม่กำหนด'`)
+    return askNextOrSummary(uid, { ...draft, due_date: d, due_asked: true, pending: null }, replyToken)
+  }
+  // มีร่างสรุปอยู่ + พิมพ์ชื่อคน/วันใหม่ → แก้ร่าง
+  if (draft && t.length <= 40) {
+    const p = parseLineCommand(t)
+    if (p.executor) return askNextOrSummary(uid, { ...draft, executor: p.executor, executor_code: p.executor_code, matched_by: p.matched_by, pending: null }, replyToken)
+    const d = parseThaiDate(t)
+    if (d !== null && !/[ก-๙]{6,}/.test(t.replace(/วันนี้|พรุ่งนี้|มะรืน|ไม่กำหนด|สิ้นเดือน|จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|เสาร์|อาทิตย์|นี้|หน้า|วัน/g, ''))) return askNextOrSummary(uid, { ...draft, due_date: d, due_asked: true, pending: null }, replyToken)
   }
   // ข้อความใหม่ = คำสั่งงานใหม่
-  if (t.length < 4) return lineReply(replyToken, "พิมพ์คำสั่งงานให้ชัดขึ้นหน่อยครับ เช่น \"ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้\" (พิมพ์ 'ช่วย' ดูคำสั่ง)")
-  const nd = parseLineCommand(t)
-  setLineDraft(uid, nd)
-  return lineReply(replyToken, draftText(nd))
+  if (t.length < 4) return lineReply(replyToken, "พิมพ์คำสั่งงานให้ชัดขึ้นหน่อยค่ะ เช่น \"ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้\" (พิมพ์ 'ช่วย' ดูคำสั่ง)")
+  return askNextOrSummary(uid, parseLineCommand(t), replyToken)
 }
 function lineSignatureOk(req) {
   const secret = getSetting('line_secret', '')
@@ -608,7 +690,7 @@ api.post('/line/webhook', async (req, res) => {
       // บอทเพิ่งถูกเชิญเข้ากลุ่ม (หรือมีคนพิมพ์ id ในกลุ่ม) → ตอบ ID กลับในกลุ่ม ให้ก็อปจากมือถือได้เลย
       if (token && ev.replyToken && (ev.type === 'join' || /^(id|ไอดี|group ?id)$/i.test(text))) {
         const label = type === 'group' ? 'Group ID' : 'Room ID'
-        lineReply(ev.replyToken, `สวัสดีครับ บอท PPSD ERP พร้อมส่งสรุปเช้าแล้ว\n${label}:\n${id}\n\nนำ ID นี้ไปวางที่ ผู้ใช้งาน → แจ้งเตือน LINE (หรือกดเลือกจากรายการ "กลุ่มที่บอทเห็น")`)
+        lineReply(ev.replyToken, `สวัสดีค่ะ บอท PPSD ERP พร้อมส่งสรุปเช้าแล้ว\n${label}:\n${id}\n\nนำ ID นี้ไปวางที่ ผู้ใช้งาน → แจ้งเตือน LINE (หรือกดเลือกจากรายการ "กลุ่มที่บอทเห็น")`)
       }
     }
     setSetting('line_seen', JSON.stringify(seen.slice(0, 20)))
@@ -3907,8 +3989,10 @@ function createWorkOrder(b, byName) {
   const wo = db.prepare('SELECT * FROM work_orders WHERE id=?').get(info.lastInsertRowid)
   // แจ้งผู้รับทาง LINE ถ้าผูกไว้ (สั่งจากหน้าเว็บ/เสียงก็แจ้ง — บอท LINE แจ้งเองอยู่แล้ว)
   if (b.source !== 'line' && wo.executor) {
-    const toUid = lineUidOfName(wo.executor)
-    if (toUid) linePush(toUid, `📌 งานใหม่จาก ${byName}${urgent ? ' 🔴 ด่วน' : ''}\n${no}: ${wo.project || wo.scope}${wo.due_date ? '\nกำหนด: ' + wo.due_date : ''}\n\nตอบ 'รับ' เพื่อรับทราบ`)
+    const toUid = lineUidOfExecutor(wo.executor, wo.executor_code)
+    if (toUid) linePush(toUid, [`📌 งานใหม่จาก ${byName}${urgent ? ' 🔴 ด่วน' : ''} — ตอบ 'รับ' เพื่อรับทราบ`, woFlex(wo, { forAssignee: true })])
+    // สำเนาให้ผู้สั่งใน LINE ด้วย (ถ้าผูกไว้) — สั่งจากหน้าเว็บ/เสียงก็ได้การ์ดเหมือนกัน
+    const byUid = lineUidOfName(byName); if (byUid && byUid !== toUid) linePush(byUid, woFlex(wo, { footer: toUid ? 'สำเนาสำหรับผู้สั่ง · ส่งถึงผู้รับทาง LINE แล้ว' : 'สำเนาสำหรับผู้สั่ง · ผู้รับยังไม่ผูก LINE' }))
   }
   return wo
 }
@@ -4052,6 +4136,7 @@ function safeJson(s) { try { return JSON.parse(s || '[]') } catch { return [] } 
 setInterval(escalateUrgent, 20 * 1000) // ตรวจทุก 20 วินาที
 // ฟีดสถานะงานด่วนสำหรับ CEO — เวลา ส่ง/เห็น/รับทราบ + สายไล่ระดับ + นับถอยหลัง
 // เดาผู้รับจากข้อความ (ชื่อเต็ม/ชื่อจริง/ชื่อเล่น) — หน้าสั่งงานด้วยเสียงใช้กติกาเดียวกับบอท LINE
+api.post('/line/parse', requireAuth, (req, res) => res.json(parseLineCommand(String(req.body?.text || ''))))
 api.post('/employees/match', requireAuth, (req, res) => {
   const emps = db.prepare("SELECT code, name, nickname FROM employees WHERE status IS NULL OR status NOT IN ('ลาออก')").all()
   res.json({ match: matchEmployee(String(req.body?.text || ''), emps) })
