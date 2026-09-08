@@ -149,6 +149,13 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const requestLinkCode = async () => {
     try { const r = await api.post<{ code: string; expires_min: number }>('/line-link/code', {}); setLinkCode(r) } catch (e) { window.alert((e as Error).message) }
   }
+  // แอดมินขอรหัสผูก LINE แทนคนอื่น (คนนั้นไม่ต้องเข้าหน้านี้) แล้วบอกรหัสให้เขาส่งในแชทบอท
+  const codeFor = async (u: ApiUser) => {
+    try {
+      const r = await api.post<{ code: string; expires_min: number }>('/line-link/code', { user_id: u.id })
+      window.alert(`รหัสผูก LINE ของ ${u.name}: ${r.code}\n\nบอกให้ ${u.name} เพิ่มบอท PPSD Assistant เป็นเพื่อน แล้วพิมพ์รหัสนี้ส่งในแชทบอทภายใน ${r.expires_min} นาที\n(ทุกคนขอรหัสเองได้จากไอคอน 💬 มุมขวาบนของระบบด้วย)`)
+    } catch (e) { window.alert((e as Error).message) }
+  }
   const unlinkLine = async (u: ApiUser) => {
     if (!window.confirm(`ยกเลิกการผูก LINE ของ ${u.name}?`)) return
     try { await api.del('/line-link?user_id=' + u.id); window.location.reload() } catch (e) { window.alert((e as Error).message) }
@@ -358,7 +365,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
           <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.7, marginBottom: 10 }}>
             <b>ผู้บริหาร</b>: พิมพ์คำสั่งในแชทบอท เช่น “ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้” → บอททำร่าง → ตอบ <b>ตกลง</b> → ออกใบสั่งงานและแจ้งคนรับทาง LINE ทันที · พิมพ์ <b>สรุป</b> = เรื่องค้างวันนี้ · <b>งานด่วน</b> = งานด่วนที่ยังไม่รับ<br />
             <b>พนักงาน</b>: ได้รับแจ้งงานในแชท → ตอบ <b>รับ</b> = รับทราบ (CEO เห็นทันที) · พิมพ์ <b>งาน</b> = งานที่ค้างของฉัน<br />
-            วิธีผูก: เพิ่มบอทเป็นเพื่อน (QR ในแท็บ Messaging API) → กดปุ่มด้านล่าง → ส่งรหัส 6 หลักไปในแชทบอท (รหัสใช้ได้ 10 นาที)
+            วิธีผูก: เพิ่มบอทเป็นเพื่อน (QR ในแท็บ Messaging API) → กดไอคอน 💬 มุมขวาบนของระบบ (ทุกคนกดได้ ไม่ต้องเข้าหน้านี้) หรือปุ่มด้านล่าง → ส่งรหัส 6 หลักไปในแชทบอท (รหัสใช้ได้ 10 นาที) · แอดมินกด “ขอรหัส” ในคอลัมน์ LINE ของตารางด้านล่างแทนคนอื่นได้
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <button onClick={requestLinkCode} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>{user?.lineLinked ? '🔁 ผูก LINE ใหม่' : '🔗 ผูก LINE ของฉัน'}</button>
@@ -483,8 +490,8 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                   <td style={{ ...td, textAlign: 'center' }}><SignatureCell userId={u.id} signature={u.signature} /></td>
                   <td style={{ ...td, textAlign: 'center' }}>
                     {u.line_uid
-                      ? <span title="ผูก LINE แล้ว — รับแจ้งงาน/ตอบ 'รับ' ผ่านบอทได้" style={{ fontSize: 10.5, fontWeight: 700, color: '#2E7D55', background: '#E2F1EA', padding: '2px 9px', borderRadius: 20, cursor: 'pointer' }} onClick={() => unlinkLine(u)}>✓ ผูกแล้ว</span>
-                      : <span style={{ fontSize: 10.5, color: '#94A0A8' }}>—</span>}
+                      ? <span title="ผูก LINE แล้ว — กดเพื่อยกเลิกผูก" style={{ fontSize: 10.5, fontWeight: 700, color: '#2E7D55', background: '#E2F1EA', padding: '2px 9px', borderRadius: 20, cursor: 'pointer' }} onClick={() => unlinkLine(u)}>✓ ผูกแล้ว</span>
+                      : <button onClick={() => codeFor(u)} title={`ขอรหัสผูก LINE ให้ ${u.name} แล้วบอกรหัสให้เขาส่งในแชทบอท`} style={{ fontFamily: 'inherit', fontSize: 10.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 20, padding: '2px 9px', cursor: 'pointer' }}>ขอรหัส</button>}
                   </td>
                   <td style={{ ...td, padding: '11px 18px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>

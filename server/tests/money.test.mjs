@@ -764,3 +764,19 @@ test('เวอร์ชันเซิร์ฟเวอร์: /version สา
   assert.equal((await POST('/restart', {})).status, 403, 'พนักงานสั่งรีสตาร์ทไม่ได้')
   token = adminToken
 })
+
+test('ผูก LINE: แอดมินขอรหัสแทนคนอื่นได้ · พนักงานขอได้เฉพาะของตัวเอง', async () => {
+  const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
+  const r = await POST('/line-link/code', { user_id: som.id })
+  assert.equal(r.status, 200); assert.equal(r.data.name, 'สมชาย ช่างหลังคา')
+  // ใครส่งรหัสนี้ → ผูกกับสมชาย (ไม่ใช่แอดมิน)
+  await api('POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r', source: { type: 'user', userId: 'Usom2' }, message: { type: 'text', text: r.data.code } }] })
+  await new Promise((x) => setTimeout(x, 300))
+  assert.ok((await GET('/users')).data.find((u) => u.id === som.id).line_uid === 'Usom2')
+  // พนักงานส่ง user_id ของคนอื่น → ได้รหัสของตัวเองแทน
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const me = await POST('/line-link/code', { user_id: 1 })
+  assert.equal(me.data.name, 'สมชาย ช่างหลังคา')
+  token = adminToken
+})

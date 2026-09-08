@@ -4819,8 +4819,14 @@ api.get('/line-settings', adminOnly, (_req, res) => res.json({
 }))
 // ผูก LINE ของฉัน: ขอรหัส 6 หลัก → ส่งให้บอทในแชทส่วนตัว → บอทผูกให้ (อายุ 10 นาที)
 api.post('/line-link/code', requireAuth, (req, res) => {
-  const code = issueLineLinkCode(req.user.id)
-  res.json({ code, expires_min: 10, linked: !!db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid })
+  // แอดมินขอรหัสแทนคนอื่นได้ (user_id) — คนที่ส่งรหัสนั้นให้บอทจะถูกผูกกับบัญชีนั้น
+  const want = Number(req.body?.user_id) || 0
+  const targetId = want && req.user.role === 'admin' ? want : req.user.id
+  const target = db.prepare('SELECT id, name, line_uid FROM users WHERE id=?').get(targetId)
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
+  const code = issueLineLinkCode(target.id)
+  if (target.id !== req.user.id) audit(req, 'ขอรหัสผูก LINE แทน', target.name)
+  res.json({ code, expires_min: 10, linked: !!target.line_uid, name: target.name })
 })
 api.delete('/line-link', requireAuth, (req, res) => {
   const want = Number(req.query?.user_id || req.body?.user_id) || 0
