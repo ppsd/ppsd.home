@@ -562,6 +562,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS qc_inspections (
 ensureColumn('qc_inspections', 'images', 'TEXT')      // รูปแนบ (JSON array ของ data URL สูงสุด 3 รูป)
 ensureColumn('qc_inspections', 'start_date', 'TEXT')  // วันเริ่มตรวจ/เริ่มงาน (ISO)
 ensureColumn('qc_inspections', 'end_date', 'TEXT')    // วันกำหนดเสร็จ (ISO) — ใช้เตือนเลยกำหนด
+// ชุดฟอร์ม PPSD (งวด → หมวด → ฟอร์ม) — ใบเก่าที่ไม่มีค่าเหล่านี้ยังเปิด/พิมพ์ได้ตามเดิม
+ensureColumn('qc_inspections', 'phase', 'TEXT')       // งวดงาน '0'..'9'
+ensureColumn('qc_inspections', 'form_id', 'TEXT')     // รหัสฟอร์มใน src/qcTemplates.ts เช่น f018
+ensureColumn('qc_inspections', 'kind', 'TEXT')        // 'ผ่าน/ไม่ผ่าน' | 'มี/ไม่มี'
+ensureColumn('qc_inspections', 'extra', 'TEXT')       // ช่องกรอกพิเศษของฟอร์ม (JSON object: {label: value}) เช่น วันเทปูน / คิวปูน
+ensureColumn('qc_inspections', 'worker', 'TEXT')      // ช่างหน้างาน (ลงชื่อร่วมกับผู้ตรวจ)
+ensureColumn('qc_inspections', 'std', 'TEXT')         // ติ๊กท้ายใบ: 'ผ่านมาตรฐาน' | 'ไม่ผ่านตามมาตรฐาน' | ''
+ensureColumn('qc_inspections', 'fix_date', 'TEXT')    // กำหนดการแก้ไขงาน (ถ้ามี)
+ensureColumn('qc_inspections', 'recheck_date', 'TEXT') // กำหนดการเข้าตรวจงานแก้ไข
 db.exec(`CREATE TABLE IF NOT EXISTS site_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT, no TEXT, house_code TEXT, date TEXT, data TEXT, by TEXT, created TEXT

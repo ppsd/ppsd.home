@@ -883,3 +883,26 @@ test('อนุมัติผ่าน LINE: PR ใหม่ → การ์�
   assert.equal(row.approval.rejectNote, 'ราคาสูงไป')
   await DEL('/line-link')
 })
+
+test('QC ชุดฟอร์ม PPSD: สร้างใบตามงวด/ฟอร์ม เก็บหัวข้อย่อย ช่องพิเศษ ช่างหน้างาน ติ๊กมาตรฐาน · ใบเก่าไม่มีฟิลด์ใหม่ยังอ่านได้', async () => {
+  const items = [
+    { section: '', text: 'เหล็กคานขนาดถูกต้องครบถ้วน', result: 'ผ่าน' },
+    { section: 'เข้าแบบก่อนเทปูน', text: 'ทำความสะอาดให้เรียบร้อย', result: 'ไม่ผ่าน', fix: 'มีเศษไม้ค้าง' },
+  ]
+  const c = await POST('/qc', { house_code: 'H-TEST', phase: '2', form_id: 'f031', kind: 'ผ่าน/ไม่ผ่าน', category: 'โครงสร้าง คสล.', type: 'งานผูกเหล็กคานคอดิน', zone: 'ชั้น 1', worker: 'ช่างสมศักดิ์', items, extra: { 'วันเทปูน': '12/09/69 09.00' } })
+  assert.equal(c.status, 201, JSON.stringify(c.data))
+  assert.equal(c.data.phase, '2'); assert.equal(c.data.form_id, 'f031'); assert.equal(c.data.kind, 'ผ่าน/ไม่ผ่าน')
+  assert.equal(c.data.items[1].section, 'เข้าแบบก่อนเทปูน', 'หัวข้อย่อยต้องติดไปกับข้อ')
+  assert.equal(c.data.worker, 'ช่างสมศักดิ์'); assert.equal(c.data.extra['วันเทปูน'], '12/09/69 09.00')
+  // บันทึกผล + ติ๊กท้ายใบ + กำหนดแก้ไข
+  const u = await PUT(`/qc/${c.data.id}`, { items, status: 'ต้องแก้ไข', std: 'ไม่ผ่านตามมาตรฐาน', fix_date: '2026-09-15', recheck_date: '2026-09-16', extra: { 'วันเทปูน': '13/09/69', 'คิวปูน': '6 คิว 240 ksc' } })
+  assert.equal(u.status, 200); assert.equal(u.data.std, 'ไม่ผ่านตามมาตรฐาน'); assert.equal(u.data.fix_date, '2026-09-15'); assert.equal(u.data.extra['คิวปูน'], '6 คิว 240 ksc')
+  // ค่าติ๊กที่ไม่รู้จักถูกปัดทิ้ง ไม่ทับของเดิม
+  const u2 = await PUT(`/qc/${c.data.id}`, { std: 'อะไรก็ได้' })
+  assert.equal(u2.data.std, 'ไม่ผ่านตามมาตรฐาน')
+  // ใบแบบเก่า (ไม่ส่ง phase/form_id) ยังสร้างและอ่านได้ — extra เป็น {} ไม่ใช่ null
+  const old = await POST('/qc', { house_code: 'H-TEST', category: 'โครงสร้าง', type: 'งานคอนกรีต (หลังเท)', items: [{ text: 'ผิวเรียบ', result: 'อนุมัติ' }] })
+  assert.equal(old.status, 201); assert.equal(old.data.phase, ''); assert.deepEqual(old.data.extra, {})
+  const list = await GET('/qc')
+  assert.ok(list.data.find((r) => r.id === old.data.id).items[0].section === '', 'ใบเก่าต้องมี section ว่าง ไม่พัง')
+})
