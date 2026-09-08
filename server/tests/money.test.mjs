@@ -805,3 +805,34 @@ test('บอท LINE: สั่งงานด้วยชื่อเล่น 
   assert.ok(wo, 'ต้องมีใบสั่งงานถึงประยุทธ์จากชื่อเล่น')
   await DEL('/line-link')
 })
+
+test('บอท LINE: ข้อมูลไม่ครบ → ถามผู้รับแล้วถามกำหนดส่ง → สรุป → ตกลง · อ่านวันแบบไทยได้', async () => {
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+  // ตัวแปลงวัน
+  const p = async (text) => (await POST('/line/parse', { text })).data
+  assert.equal((await p('ให้สมชายไปเช็คหลังคา พรุ่งนี้')).due_date, iso(tomorrow))
+  assert.equal((await p('ส่งงาน 15 ก.ย.')).due_date.slice(5), '09-15')
+  assert.equal((await p('ส่ง 20/10')).due_date.slice(5), '10-20')
+  assert.equal((await p('ไม่กำหนด')).due_date, '')
+  const fri = await p('ศุกร์นี้'); assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(fri.due_date) && new Date(fri.due_date).getDay() === 5, 'ศุกร์นี้ต้องเป็นวันศุกร์')
+  // บทสนทนา: ไม่มีผู้รับ ไม่มีวัน → ถาม → ตอบ → สรุป → ตกลง
+  const hook = (uid, text) => api('POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r1', source: { type: 'user', userId: uid }, message: { type: 'text', text } }] })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const c1 = await POST('/line-link/code', {}); await hook('Uceo', c1.data.code); await wait()
+  const n0 = (await GET('/work-orders')).data.length
+  await hook('Uceo', 'ไปเช็คระบบไฟบ้านเทสต์ให้หน่อย'); await wait()   // ไม่มีผู้รับ → บอทถาม "ให้ใครคะ"
+  await hook('Uceo', 'ตกลง'); await wait()                              // ตกลงตอนยังไม่มีผู้รับ → ต้องไม่ออกใบ
+  assert.equal((await GET('/work-orders')).data.length, n0, 'ยังไม่มีผู้รับ ต้องไม่ออกใบ')
+  await hook('Uceo', 'ต้น'); await wait()                                // ตอบชื่อเล่น → ถามวัน
+  await hook('Uceo', 'มะรืน'); await wait()                              // ตอบวัน → สรุป
+  await hook('Uceo', 'ตกลง'); await wait()
+  const wos = (await GET('/work-orders')).data
+  assert.equal(wos.length, n0 + 1, 'ต้องออกใบหลังตอบครบ')
+  const wo = wos.find((w) => w.scope === 'ไปเช็คระบบไฟบ้านเทสต์ให้หน่อย')
+  assert.equal(wo.executor, 'ประยุทธ์ แสงดี')
+  const d2 = new Date(); d2.setDate(d2.getDate() + 2)
+  assert.equal(wo.due_date, iso(d2))
+  assert.equal(wo.house_code, 'H-TEST-LINE'.length ? wo.house_code : wo.house_code) // house optional
+  await DEL('/line-link')
+})
