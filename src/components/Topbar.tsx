@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { roleLabel } from '../erpData'
 import { useApp } from '../store'
+import { api } from '../api'
 
 interface TopbarProps {
   crumb: string
@@ -13,6 +14,12 @@ interface TopbarProps {
 const notifColor = (icon: string) => (icon === 'danger' ? '#C24036' : icon === 'warn' ? '#B7791F' : '#30506A')
 
 export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onChangePin }: TopbarProps) {
+  // ผูก LINE ของฉัน (ทุกคนกดได้ ไม่ต้องเข้าหน้าผู้ใช้งาน)
+  const [lineCode, setLineCode] = useState<{ code: string; expires_min: number } | null>(null)
+  const requestLineCode = async () => {
+    if (lineCode) { setLineCode(null); return }
+    try { setLineCode(await api.post<{ code: string; expires_min: number }>('/line-link/code', {})) } catch (e) { window.alert((e as Error).message) }
+  }
   const { user, logout, data } = useApp()
   const notifs = data.notifications
   const [open, setOpen] = useState(false)
@@ -173,6 +180,20 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
           <div className="tb-profile" style={{ lineHeight: 1.15 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#1C2730' }}>{user?.name}</div>
             <div style={{ fontSize: 11, color: '#C0852C', fontWeight: 500 }}>{user ? roleLabel[user.role] : ''}</div>
+          </div>
+          <div style={{ position: 'relative' }}>
+            <button onClick={requestLineCode} title="ผูก LINE ของฉัน — รับแจ้งงาน / ตอบรับผ่านแชทบอท" className="hov-f3f5f7" style={{ marginLeft: 4, width: 34, height: 34, borderRadius: 9, border: '1px solid ' + (user?.lineLinked ? '#CDE3D6' : '#E1E5EA'), background: user?.lineLinked ? '#F2F8F4' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={user?.lineLinked ? '#2E7D55' : '#5C6770'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.4 8.4 0 01-9 8.3 9 9 0 01-2.6-.4L5 21l.9-3.4A8.2 8.2 0 013 11.5C3 6.8 7 3 12 3s9 3.8 9 8.5z" /></svg>
+            </button>
+            {lineCode && (
+              <div style={{ position: 'absolute', right: 0, top: 42, width: 320, background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, boxShadow: '0 16px 40px rgba(20,30,40,.2)', padding: '14px 16px', zIndex: 60 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2E7D55' }}>📱 ผูก LINE ของฉัน</div>
+                <div style={{ fontSize: 12, color: '#5C6770', marginTop: 4, lineHeight: 1.6 }}>1) เพิ่มบอท <b>PPSD Assistant</b> เป็นเพื่อนใน LINE<br />2) พิมพ์รหัสนี้ส่งในแชทบอท (ใช้ได้ {lineCode.expires_min} นาที)</div>
+                <div className="num" style={{ fontSize: 30, fontWeight: 800, letterSpacing: 6, color: '#1C2730', textAlign: 'center', margin: '10px 0', background: '#F2F8F4', borderRadius: 9, padding: '8px 0' }}>{lineCode.code}</div>
+                <div style={{ fontSize: 11.5, color: '#94A0A8' }}>ผูกเสร็จบอทจะตอบ ✅ ยืนยัน · หลังจากนั้นจะได้รับแจ้งงานในแชทและตอบ “รับ” ได้เลย</div>
+                <button onClick={() => setLineCode(null)} style={{ marginTop: 10, width: '100%', fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#EDF1F4', border: 'none', borderRadius: 8, padding: '7px 0', cursor: 'pointer' }}>ปิด</button>
+              </div>
+            )}
           </div>
           <button onClick={onChangePin} title="เปลี่ยน PIN ของฉัน" className="hov-f3f5f7" style={{ marginLeft: 4, width: 34, height: 34, borderRadius: 9, border: '1px solid #E1E5EA', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="15" r="4" /><path d="M10.85 12.15L19 4" /><path d="M18 5l2 2" /><path d="M15 8l2 2" /></svg>
