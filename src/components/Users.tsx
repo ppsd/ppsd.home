@@ -187,10 +187,12 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const [flowChecker, setFlowChecker] = useState<{ id: number; name: string; line: boolean } | null>(null)
   const [flowSel, setFlowSel] = useState('')
   const [flowMsg, setFlowMsg] = useState('')
-  const loadFlow = () => api.get<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow').then((r) => { setFlowChecker(r.checker); setFlowSel(r.checker ? String(r.checker.id) : '') }).catch(() => {})
+  const [docRecips, setDocRecips] = useState<number[]>([]) // ผู้รับใบ PR (รูป) ทาง LINE หลังอนุมัติครบ
+  const [flowPublic, setFlowPublic] = useState('')
+  const loadFlow = () => api.get<{ checker: { id: number; name: string; line: boolean } | null; doc_recipients?: { id: number }[]; public_url?: string }>('/procurement/flow').then((r) => { setFlowChecker(r.checker); setFlowSel(r.checker ? String(r.checker.id) : ''); setDocRecips((r.doc_recipients || []).map((x) => x.id)); setFlowPublic(r.public_url || '') }).catch(() => {})
   useEffect(() => { if (users && isAdmin) loadFlow() /* eslint-disable-next-line */ }, [users])
   const saveFlow = async () => {
-    try { const r = await api.put<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow', { checker_user_id: Number(flowSel) || 0 }); setFlowChecker(r.checker); setFlowMsg(r.checker ? `บันทึกแล้ว — ใบขอซื้อใหม่ทุกใบจะส่งให้ ${r.checker.name} ตรวจก่อนออก PR${r.checker.line ? '' : ' (ยังไม่ผูก LINE — จะเห็นเฉพาะในเว็บ)'}` : 'ยกเลิกขั้นตรวจสอบแล้ว — ใบขอซื้อไปรออนุมัติทันที') }
+    try { const r = await api.put<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow', { checker_user_id: Number(flowSel) || 0, doc_recipients: docRecips }); setFlowChecker(r.checker); setFlowMsg(r.checker ? `บันทึกแล้ว — ใบขอซื้อใหม่ทุกใบจะส่งให้ ${r.checker.name} ตรวจก่อนออก PR${r.checker.line ? '' : ' (ยังไม่ผูก LINE — จะเห็นเฉพาะในเว็บ)'}` : 'ยกเลิกขั้นตรวจสอบแล้ว — ใบขอซื้อไปรออนุมัติทันที') }
     catch (e) { setFlowMsg((e as Error).message) }
   }
   const loadMirror = () => api.get<{ dir: string; status: MirrorStatus | null; last?: BackupLast | null }>('/backup-mirror').then((r) => { setMirrorDir(r.dir || ''); setMirrorStat(r.status); setBkLast(r.last || null) }).catch(() => {})
@@ -438,6 +440,16 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               </select>
               <button onClick={saveFlow} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 15px', cursor: 'pointer' }}>บันทึก</button>
             </div>
+            <div style={{ marginTop: 12, fontSize: 12.5, color: '#5C6770' }}>ขั้น 3: PR ที่อนุมัติครบแล้ว ระบบสร้างเป็นรูปใบ PR แล้วส่งเข้า LINE ของ (เลือกได้หลายคน เช่น จัดซื้อ):</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+              {users.filter((u) => u.status !== 'ปิดใช้งาน').map((u) => {
+                const on = docRecips.includes(u.id)
+                return <label key={u.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, padding: '5px 10px', borderRadius: 8, border: '1px solid ' + (on ? '#30506A' : '#D2DAE1'), background: on ? '#E2E9EF' : '#fff', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={on} onChange={() => setDocRecips((cur) => on ? cur.filter((x) => x !== u.id) : [...cur, u.id])} />{u.name}{u.line_uid ? ' · LINE ✓' : ' · ยังไม่ผูก LINE'}
+                </label>
+              })}
+            </div>
+            <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 6 }}>รูปใบ PR สร้างด้วย Google Chrome/Edge ในเครื่องเซิร์ฟเวอร์ · LINE ดึงรูปผ่านลิงก์สาธารณะ{flowPublic ? ` (${flowPublic})` : ' — ยังไม่มีลิงก์: เปิด "ลิงก์สาธารณะอัตโนมัติ" ที่การ์ดแจ้งเตือน LINE ก่อน ไม่งั้นจะส่งเป็นข้อความสรุปแทน'} · กด "บันทึก" ด้านบนเพื่อบันทึกผู้รับ</div>
             {flowMsg && <div style={{ fontSize: 12, marginTop: 8, color: '#2E7D55' }}>{flowMsg}</div>}
             {flowChecker && !flowChecker.line && (
               <div style={{ fontSize: 12.5, marginTop: 10, color: '#8A2A22', background: '#FBEEEC', border: '1px solid #EDD3CE', borderRadius: 8, padding: '9px 12px' }}>

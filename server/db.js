@@ -263,6 +263,12 @@ ensureColumn('purchase_requests', 'checked_date', 'TEXT')
 ensureColumn('purchase_requests', 'check_note', 'TEXT')   // เหตุผลส่งกลับแก้ไข / หมายเหตุผู้ตรวจ
 ensureColumn('purchase_requests', 'ai_compare', 'TEXT')
 ensureColumn('purchase_requests', 'check_notify', 'TEXT') // ผลส่งการ์ดให้ผู้ตรวจสอบทาง LINE: sent:<เวลา> | no_line | no_token | failed   // ผล AI เทียบใบเสนอราคา (JSON: best_vendor, reason, summary, at, model)
+ensureColumn('purchase_requests', 'doc_key', 'TEXT')      // กุญแจลิงก์สาธารณะของรูปใบ PR (ส่งเข้า LINE)
+ensureColumn('purchase_requests', 'doc_sent', 'TEXT')     // ผลส่งใบ PR เป็นรูปเข้า LINE: sent:<เวลา>|no_recipients|no_public_url|render_failed:…|push_failed
+db.exec(`CREATE TABLE IF NOT EXISTS doc_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT, doc_id INTEGER, key TEXT, png BLOB, created TEXT
+)`) // รูปเอกสารที่ระบบสร้าง (PNG) สำหรับส่งเข้า LINE / ดูย้อนหลัง
 ensureColumn('pr_quotes', 'ai', 'INTEGER')                // 1 = AI อ่านจากรูปใบเสนอราคา
 ensureColumn('pr_quotes', 'items', 'TEXT')                // รายการในใบเสนอราคา (JSON [{name,qty,unit,price,amount}])
 ensureColumn('pr_quotes', 'recommended', 'INTEGER')       // 1 = AI แนะนำว่าคุ้มสุด

@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
+import { renderElementPng } from './render.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -34,7 +35,7 @@ app.use(express.json({ limit: '30mb', verify: (req, _res, buf) => { req.rawBody 
 app.use((req, res, next) => {
   const host = String(req.headers.host || '')
   if (!/\.trycloudflare\.com$/i.test(host) && !req.headers['cf-connecting-ip']) return next()
-  if (req.path.startsWith('/api/line/webhook')) return next()
+  if (req.path.startsWith('/api/line/webhook') || req.path.startsWith('/api/pub/')) return next()
   if (getSetting('tunnel_expose', '0') === '1') return next()
   res.status(404).type('text/plain').send('ลิงก์นี้เปิดไว้สำหรับ LINE webhook เท่านั้น — ถ้าต้องการใช้ ERP นอกออฟฟิศ ให้แอดมินเปิดที่ ผู้ใช้งาน → แจ้งเตือน LINE → "อนุญาตเปิด ERP ผ่านลิงก์นี้"')
 })
@@ -819,6 +820,51 @@ function issuePoFromPr(pr, quote, user) {
   const b = { vendor: quote.vendor, item: pr.item, amount, pr_no: pr.no, house_code: pr.house_code || '', items, payment_type: v && v.credit_days > 0 ? 'credit' : 'cash', credit_days: v?.credit_days || 0, vat_amount: v?.vat_registered ? Math.round((amount * 7 / 107) * 100) / 100 : 0 }
   return createPurchaseOrder(b, user)
 }
+// ===== ใบ PR ที่อนุมัติครบ → สร้างรูปใบ (Chrome ในเครื่อง) → ส่งเข้า LINE ของผู้รับที่ตั้งไว้ (เช่น จัดซื้อ/ชมภู่) =====
+function docRecipients() {
+  let ids = []
+  try { ids = JSON.parse(getSetting('pr_doc_recipients', '[]')) || [] } catch { ids = [] }
+  if (!ids.length) return []
+  return db.prepare(`SELECT id, name, line_uid FROM users WHERE id IN (${ids.map(() => '?').join(',')}) AND status<>'ปิดใช้งาน'`).all(...ids.map(Number))
+}
+const publicBaseUrl = () => String((typeof tunnel !== 'undefined' && tunnel?.state?.url) || getSetting('public_url', '') || '').replace(/\/$/, '')
+// สร้างรูปใบ PR (PNG) เก็บใน doc_images + ตั้งกุญแจลิงก์ — คืน { key, png }
+async function renderPrImage(pr) {
+  const token = issueDocViewToken('pr', pr.id)
+  const url = `http://127.0.0.1:${PORT}/#docview/${token}`
+  const png = await renderElementPng(url, '#doc-sheet', { width: 860, scale: 1.5 })
+  const key = randomBytes(12).toString('hex')
+  db.prepare('DELETE FROM doc_images WHERE kind=? AND doc_id=?').run('pr', pr.id)
+  db.prepare('INSERT INTO doc_images (kind,doc_id,key,png,created) VALUES (?,?,?,?,?)').run('pr', pr.id, key, png, nowTS())
+  db.prepare('UPDATE purchase_requests SET doc_key=? WHERE id=?').run(key, pr.id)
+  return { key, png }
+}
+const DOC_SENT_MSG = { no_recipients: 'ยังไม่ได้ตั้งผู้รับใบ PR (ผู้ใช้งาน → ขั้นตอนจัดซื้อ → ส่งใบ PR ไปที่ LINE ของ…)', no_line: 'ผู้รับที่ตั้งไว้ยังไม่ได้ผูก LINE', no_token: 'ยังไม่ได้ตั้ง LINE token', no_public_url: 'ไม่มีลิงก์สาธารณะสำหรับให้ LINE ดึงรูป — เปิด "ลิงก์สาธารณะอัตโนมัติ" ที่ ผู้ใช้งาน → แจ้งเตือน LINE (ส่งเป็นข้อความสรุปแทนแล้ว)', push_failed: 'LINE ตอบกลับผิดพลาด (ดู [line push] ในหน้าต่างเซิร์ฟเวอร์)' }
+async function sendPrDoc(prId, byName) {
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(Number(prId))
+  if (!pr) return { status: 'not_found' }
+  const save = (st) => { try { db.prepare('UPDATE purchase_requests SET doc_sent=? WHERE id=?').run(st, pr.id) } catch { /* ignore */ } ; return { status: st, message: st.startsWith('sent') ? `ส่งใบ ${pr.no} เข้า LINE แล้ว` : (DOC_SENT_MSG[st] || st) } }
+  const recips = docRecipients()
+  if (!recips.length) return save('no_recipients')
+  const withLine = recips.filter((u) => u.line_uid)
+  if (!withLine.length) return save('no_line')
+  if (!getSetting('line_token', '')) return save('no_token')
+  let img = null
+  try { img = await renderPrImage(pr) } catch (e) { console.error('[pr-doc] render:', e.message); const st = 'render_failed:' + String(e.message).slice(0, 160); db.prepare('UPDATE purchase_requests SET doc_sent=? WHERE id=?').run(st, pr.id); return { status: st, message: 'สร้างรูปใบ PR ไม่สำเร็จ — ' + e.message } }
+  const base = publicBaseUrl()
+  const imgUrl = base ? `${base}/api/pub/doc/pr/${pr.id}/${img.key}.png` : ''
+  const st = approvalState('pr', pr.id)
+  const head = `📄 ใบขอซื้อ ${pr.no} อนุมัติครบแล้ว (${st.approvals.map((a) => a.approver).join(', ') || byName || '-'})\nบ้าน: ${pr.house || '-'} · ผู้ขอ: ${pr.by || '-'}\n${approvalLines('pr', pr).filter(([l]) => /^\d+\.$|^รายการ$|^รวม$/.test(l)).map(([l, v]) => `${l} ${v}`).join('\n')}`
+  const msgs = imgUrl
+    ? [head, { type: 'image', originalContentUrl: imgUrl, previewImageUrl: imgUrl }]
+    : [head + '\n\n(ระบบสร้างรูปใบ PR ไว้แล้ว แต่ยังไม่มีลิงก์สาธารณะให้ LINE ดึงรูป — ดูใบได้ในหน้า จัดซื้อ)']
+  let ok = 0
+  for (const u of withLine) { if (await linePush(u.line_uid, msgs)) ok++ }
+  if (!ok) return save('push_failed')
+  if (!imgUrl) return save('no_public_url')
+  audit({ user: { name: byName || 'ระบบ' } }, 'ส่งใบ PR เข้า LINE', `${pr.no} → ${withLine.map((u) => u.name).join(', ')}`)
+  return save('sent:' + nowTS())
+}
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 // หาพนักงานจากข้อความ: ชื่อเต็ม > ชื่อจริง (คำแรก) > ชื่อเล่น (รองรับ "พี่ต้น" "ช่างต้น" "คุณต้น" "น้องต้น") — ยาวสุดก่อน กันชื่อซ้อน
 // คืน { code, name, nickname, matched_by } หรือ null · ใช้ทั้งบอท LINE และ API /employees/match
@@ -1195,6 +1241,32 @@ api.post('/kiosk/punch', (req, res) => {
 })
 
 // everything below requires a session
+// ---------- เอกสารเป็นรูป (ส่งเข้า LINE) ----------
+// โทเคนชั่วคราวให้ Chrome (ในเครื่อง) เปิดหน้าเอกสารโดยไม่ต้องล็อกอิน — อายุ 3 นาที ใช้ครั้งเดียว
+const docViewTokens = new Map()
+function issueDocViewToken(kind, id) {
+  const t = randomBytes(18).toString('hex')
+  docViewTokens.set(t, { kind, id: Number(id), exp: Date.now() + 3 * 60 * 1000 })
+  for (const [k, v] of docViewTokens) if (v.exp < Date.now()) docViewTokens.delete(k)
+  return t
+}
+api.get('/doc-view/:token', (req, res) => {
+  const v = docViewTokens.get(req.params.token)
+  if (!v || v.exp < Date.now()) return res.status(404).json({ error: 'ลิงก์หมดอายุ' })
+  if (v.kind === 'pr') {
+    const r = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(v.id)
+    if (!r) return res.status(404).json({ error: 'ไม่พบเอกสาร' })
+    return res.json({ kind: 'pr', doc: { ...prRow(r), approval: approvalState('pr', r.id) } })
+  }
+  res.status(400).json({ error: 'ชนิดเอกสารไม่รองรับ' })
+})
+// รูปเอกสารสาธารณะ (ลิงก์มีกุญแจสุ่ม) — LINE ดึงรูปจากที่นี่ผ่านลิงก์สาธารณะ
+api.get('/pub/doc/:kind/:id/:key.png', (req, res) => {
+  const row = db.prepare('SELECT png FROM doc_images WHERE kind=? AND doc_id=? AND key=? ORDER BY id DESC LIMIT 1').get(req.params.kind, Number(req.params.id), req.params.key)
+  if (!row) return res.status(404).type('text/plain').send('ไม่พบรูป')
+  res.setHeader('Content-Type', 'image/png'); res.setHeader('Cache-Control', 'public, max-age=86400')
+  res.send(row.png)
+})
 api.use(requireAuth)
 
 // ===== สิทธิ์รายโมดูล: แอดมินปิดการเข้าถึงบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (users.deny_mods) =====
@@ -1328,6 +1400,8 @@ function doApprove(docType, docId, req) {
   const now = approvalState(docType, docId)
   setDocStatus(docType, docId, now.done ? 'อนุมัติ' : 'รออนุมัติ')
   audit(req, `อนุมัติ ${cfg.label} (ขั้น ${step}/${now.required})`, doc.no || String(docId))
+  // PR อนุมัติครบ → ออกเป็นใบ (รูป) ส่งเข้า LINE ของผู้รับที่ตั้งไว้ (ทำเบื้องหลัง ไม่หน่วงการอนุมัติ)
+  if (docType === 'pr' && now.done) setImmediate(() => sendPrDoc(docId, me.name).catch((e) => console.error('[pr-doc]', e.message)))
   return now
 }
 function doReject(docType, docId, req) {
@@ -3184,14 +3258,37 @@ api.post('/purchase-requests/:id/check', canWrite, (req, res) => {
   catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) }
 })
 // ตั้งค่าขั้นตอนจัดซื้อ: ใครเป็นผู้ตรวจสอบใบขอซื้อก่อนออก PR (ว่าง = ข้ามขั้นตรวจสอบ ไปรออนุมัติเลย)
-api.get('/procurement/flow', canWrite, (_req, res) => { const c = prChecker(); res.json({ checker: c ? { id: c.id, name: c.name, line: !!c.line_uid } : null, line_token: !!getSetting('line_token', '') }) })
+const flowInfo = () => { const c = prChecker(); return { checker: c ? { id: c.id, name: c.name, line: !!c.line_uid } : null, line_token: !!getSetting('line_token', ''), doc_recipients: docRecipients().map((u) => ({ id: u.id, name: u.name, line: !!u.line_uid })), public_url: publicBaseUrl() } }
+api.get('/procurement/flow', canWrite, (_req, res) => res.json(flowInfo()))
 api.put('/procurement/flow', adminOnly, (req, res) => {
-  const id = Number(req.body?.checker_user_id) || 0
-  if (id && !db.prepare('SELECT id FROM users WHERE id=?').get(id)) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
-  setSetting('pr_checker_user', id ? String(id) : '')
-  const c = prChecker()
-  audit(req, 'ตั้งผู้ตรวจสอบใบขอซื้อ', c ? c.name : 'ยกเลิก (ข้ามขั้นตรวจสอบ)')
-  res.json({ checker: c ? { id: c.id, name: c.name, line: !!c.line_uid } : null })
+  const b = req.body || {}
+  if (b.checker_user_id !== undefined) {
+    const id = Number(b.checker_user_id) || 0
+    if (id && !db.prepare('SELECT id FROM users WHERE id=?').get(id)) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
+    setSetting('pr_checker_user', id ? String(id) : '')
+    audit(req, 'ตั้งผู้ตรวจสอบใบขอซื้อ', prChecker()?.name || 'ยกเลิก (ข้ามขั้นตรวจสอบ)')
+  }
+  if (Array.isArray(b.doc_recipients)) {
+    const ids = b.doc_recipients.map(Number).filter((n) => n > 0 && db.prepare('SELECT id FROM users WHERE id=?').get(n))
+    setSetting('pr_doc_recipients', JSON.stringify(ids))
+    audit(req, 'ตั้งผู้รับใบ PR ทาง LINE', docRecipients().map((u) => u.name).join(', ') || 'ไม่มี')
+  }
+  if (b.public_url !== undefined) setSetting('public_url', String(b.public_url || '').trim())
+  res.json(flowInfo())
+})
+// ส่งใบ PR (รูป) เข้า LINE อีกครั้ง / ครั้งแรกสำหรับใบเก่า
+api.post('/purchase-requests/:id/send-doc', canWrite, async (req, res) => {
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
+  if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
+  if (!approvalState('pr', pr.id).done) return res.status(409).json({ error: `${pr.no} ยังอนุมัติไม่ครบ` })
+  const r = await sendPrDoc(pr.id, req.user.name)
+  res.json({ ...r, ok: String(r.status).startsWith('sent') })
+})
+// รูปใบ PR ล่าสุด (ดูในเว็บ)
+api.get('/purchase-requests/:id/doc.png', canWrite, (req, res) => {
+  const row = db.prepare('SELECT png FROM doc_images WHERE kind=? AND doc_id=? ORDER BY id DESC LIMIT 1').get('pr', Number(req.params.id))
+  if (!row) return res.status(404).json({ error: 'ยังไม่มีรูปใบนี้' })
+  res.setHeader('Content-Type', 'image/png'); res.send(row.png)
 })
 // รูปใบเสนอราคาของ PR (อัปโหลดจากเว็บ หรือส่งมาทาง LINE) + AI เทียบราคา + ออก PO จากร้านที่เลือก
 api.get('/purchase-requests/:id/quote-files', canWrite, (req, res) => res.json(db.prepare('SELECT * FROM pr_quote_files WHERE pr_id=? ORDER BY id').all(req.params.id)))

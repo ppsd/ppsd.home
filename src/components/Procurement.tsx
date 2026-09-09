@@ -157,6 +157,16 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     if (st === 'failed') return { t: '⚠ ส่ง LINE ไม่สำเร็จ', c: '#C24036' }
     return null
   }
+  const sendDoc = async (r: ApiPR) => {
+    try { const x = await api.post<{ ok: boolean; message: string }>('/purchase-requests/' + r.id + '/send-doc', {}); alert((x.ok ? '✓ ' : '✗ ') + x.message); await reloadData('prs', '/purchase-requests') } catch (e) { alert((e as Error).message) }
+  }
+  const docLabel = (r: ApiPR) => {
+    const st = r.doc_sent || ''
+    if (st.startsWith('sent')) return { t: '📄 ส่งใบเข้า LINE แล้ว ' + st.slice(5, 16), c: '#2E7D55' }
+    if (!st) return null
+    if (st.startsWith('render_failed')) return { t: '⚠ สร้างรูปใบไม่สำเร็จ', c: '#C24036', title: st }
+    return { t: '⚠ ' + ({ no_recipients: 'ยังไม่ตั้งผู้รับใบ PR', no_line: 'ผู้รับยังไม่ผูก LINE', no_token: 'ยังไม่ตั้ง LINE token', no_public_url: 'ส่งข้อความแทนรูป (ไม่มีลิงก์สาธารณะ)', push_failed: 'ส่ง LINE ไม่สำเร็จ' } as Record<string, string>)[st] || st, c: '#B7791F' }
+  }
   const resendCheck = async (r: ApiPR) => {
     try { const x = await api.post<{ ok: boolean; message: string }>('/purchase-requests/' + r.id + '/notify-check', {}); alert((x.ok ? '✓ ' : '✗ ') + x.message); await reloadData('prs', '/purchase-requests') } catch (e) { alert((e as Error).message) }
   }
@@ -510,6 +520,10 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                         <ApprovalBar docType="pr" docId={r.id} approval={r.approval} onDone={() => reloadData('prs', '/purchase-requests')} />
                       )}
                       {r.checked_by && r.status !== 'ส่งกลับแก้ไข' && <span style={{ fontSize: 10, color: '#94A0A8' }}>ตรวจโดย {r.checked_by}</span>}
+                      {(r.approval?.done || r.status === 'อนุมัติ') && (() => { const d = docLabel(r); return <>
+                        {d && <span title={d.title || ''} style={{ fontSize: 10.5, color: d.c }}>{d.t}</span>}
+                        <button onClick={() => sendDoc(r)} title="สร้างรูปใบ PR แล้วส่งเข้า LINE ของผู้รับที่ตั้งไว้ (อีกครั้ง)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 10.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 8px', cursor: 'pointer' }}>📤 ส่งใบเข้า LINE</button>
+                      </> })()}
                       <button onClick={() => setQuoteFor(quoteFor === r.id ? null : r.id)} className="hov-f3f5f7" title="เปรียบเทียบราคาผู้ขาย" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>⚖ เทียบราคา</button>
                       <button onClick={() => setDocPr(r)} className="hov-f3f5f7" title="ดู/พิมพ์ใบ PR" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨 ใบ PR</button>
                       {(r.approval?.done || r.status === 'อนุมัติ') && <button onClick={() => makePoFromPr(r)} title="สร้างใบสั่งซื้อจาก PR นี้" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>→ PO</button>}

@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,6 +40,7 @@ before(async () => {
   child = spawn(process.execPath, [join(serverDir, 'index.js')], {
     env: {
       ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1',
+      PPSD_CHROME: process.env.PPSD_CHROME || '/opt/pw-browsers/chromium', // สร้างรูปใบ PR (เทสต์ข้ามถ้าไม่มี Chrome)
       // AI เทียบใบเสนอราคา: ใช้ผลจำลองแทนการยิง API จริง
       PPSD_AI_MOCK_COMPARE: JSON.stringify({ quotes: [
         { vendor: 'ร้าน A', total: 9500, vat_included: true, items: [{ name: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 950, amount: 9500 }], terms: 'เงินสด' },
@@ -1039,4 +1040,39 @@ test('การ์ดตรวจสอบ: บันทึกสถานะก
   const re = await POST(`/purchase-requests/${pr.data.id}/notify-check`, {})
   assert.equal(re.status, 200); assert.equal(re.data.ok, false); assert.match(re.data.message, /LINE/)
   await PUT('/procurement/flow', { checker_user_id: 0 })
+})
+
+test('ใบ PR อนุมัติครบ → สร้างรูปใบด้วย Chrome → ส่งเข้า LINE ผู้รับที่ตั้งไว้ (บันทึกผล/สาเหตุ) · รูปเปิดดูได้ผ่านลิงก์สาธารณะ', { skip: !existsSync(process.env.PPSD_CHROME || '/opt/pw-browsers/chromium') && 'ไม่มี Chrome ในเครื่องทดสอบ' }, async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = (ms = 300) => new Promise((r) => setTimeout(r, ms))
+  const adminToken = token
+  const me = (await GET('/me')).data
+  // ยังไม่ตั้งผู้รับ → บอกสาเหตุ
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'สีทาบ้าน', qty: 4, unit: 'ถัง', price: 1200 }] })
+  token = adminToken
+  assert.equal((await POST(`/approve/pr/${pr.data.id}`)).status, 200)
+  await wait(1500)
+  let row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.doc_sent, 'no_recipients')
+  // ตั้งผู้รับ (แอดมิน ผูก LINE) + ลิงก์สาธารณะ + token → ส่งใหม่ → รูปถูกสร้าง แม้ LINE ส่งไม่ผ่านในเครื่องทดสอบ
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  await PUT('/line-settings', { token: 'test-token' })
+  const f = await PUT('/procurement/flow', { doc_recipients: [me.id], public_url: 'https://erp.example.test' })
+  assert.equal(f.data.doc_recipients[0].id, me.id); assert.equal(f.data.public_url, 'https://erp.example.test')
+  const s = await POST(`/purchase-requests/${pr.data.id}/send-doc`, {})
+  assert.equal(s.status, 200)
+  assert.ok(['push_failed', 'sent'].some((k) => String(s.data.status).startsWith(k)), 'ต้องไปถึงขั้นส่ง LINE (ไม่ใช่ render_failed): ' + s.data.status)
+  row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.ok(row.doc_key, 'ต้องมีกุญแจลิงก์รูป')
+  const img = await fetch(`${BASE}/purchase-requests/${pr.data.id}/doc.png`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(img.status, 200); assert.equal(img.headers.get('content-type'), 'image/png'); assert.ok((await img.arrayBuffer()).byteLength > 20000, 'รูปใบต้องมีเนื้อหา')
+  // ลิงก์สาธารณะ (ไม่ต้องล็อกอิน) ใช้กุญแจถูกต้องเท่านั้น
+  const pub = await fetch(`${BASE}/pub/doc/pr/${pr.data.id}/${row.doc_key}.png`)
+  assert.equal(pub.status, 200)
+  assert.equal((await fetch(`${BASE}/pub/doc/pr/${pr.data.id}/wrongkey.png`)).status, 404)
+  await PUT('/line-settings', { token: '' })
+  await PUT('/procurement/flow', { doc_recipients: [], public_url: '' })
+  await DEL('/line-link')
 })
