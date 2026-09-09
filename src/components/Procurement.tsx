@@ -149,6 +149,17 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const canCheck = user?.role === 'admin' || user?.role === 'accounting' || (!!flow?.checker && flow.checker.id === user?.id)
   const canIssuePo = user?.role === 'admin' || user?.role === 'accounting' || !!user?.isManager || (!!flow?.checker && flow.checker.id === user?.id)
   const [checkBusy, setCheckBusy] = useState<number | null>(null)
+  const notifyLabel = (r: ApiPR) => {
+    const st = r.check_notify || ''
+    if (st.startsWith('sent')) return { t: '📨 ส่งการ์ด LINE แล้ว ' + st.slice(5, 16), c: '#2E7D55' }
+    if (st === 'no_line') return { t: `⚠ ${flow?.checker?.name || 'ผู้ตรวจสอบ'} ยังไม่ผูก LINE`, c: '#C24036' }
+    if (st === 'no_token') return { t: '⚠ ยังไม่ตั้ง LINE token', c: '#C24036' }
+    if (st === 'failed') return { t: '⚠ ส่ง LINE ไม่สำเร็จ', c: '#C24036' }
+    return null
+  }
+  const resendCheck = async (r: ApiPR) => {
+    try { const x = await api.post<{ ok: boolean; message: string }>('/purchase-requests/' + r.id + '/notify-check', {}); alert((x.ok ? '✓ ' : '✗ ') + x.message); await reloadData('prs', '/purchase-requests') } catch (e) { alert((e as Error).message) }
+  }
   const checkPr = async (r: ApiPR, ok: boolean) => {
     let note = ''
     if (!ok) { const n = prompt(`ส่ง ${r.no} กลับให้ ${r.by} แก้ไข — เหตุผล:`); if (n === null) return; note = n }
@@ -486,6 +497,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                       {r.status === 'รอตรวจสอบ' ? (
                         <>
                           <span title={r.checked_by ? '' : `รอ ${flow?.checker?.name || 'ผู้ตรวจสอบ'} ตรวจก่อนออก PR`} style={{ fontSize: 11, fontWeight: 600, color: '#30506A', background: '#E2E9EF', padding: '2px 9px', borderRadius: 20 }}>🔍 รอตรวจสอบ{flow?.checker ? ` · ${flow.checker.name}` : ''}</span>
+                          {(() => { const n = notifyLabel(r); return n ? <span style={{ fontSize: 10.5, color: n.c }}>{n.t}</span> : null })()}
+                          <button onClick={() => resendCheck(r)} title="ส่งการ์ดตรวจสอบให้ผู้ตรวจสอบทาง LINE อีกครั้ง (บอกสาเหตุถ้าส่งไม่ได้)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 10.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 8px', cursor: 'pointer' }}>↻ ส่ง LINE อีกครั้ง</button>
                           {canCheck && <>
                             <button onClick={() => checkPr(r, true)} disabled={checkBusy === r.id} title="ตรวจแล้ว → ออก PR + ส่งขออนุมัติทาง LINE" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>✓ ตรวจแล้ว ออก PR</button>
                             <button onClick={() => checkPr(r, false)} disabled={checkBusy === r.id} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#C24036', background: '#FBEEEC', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>↩ ส่งกลับ</button>

@@ -290,6 +290,7 @@ export interface ApiPR {
   checked_by?: string | null
   checked_date?: string | null
   check_note?: string | null
+  check_notify?: string | null // ผลส่งการ์ดให้ผู้ตรวจสอบทาง LINE (sent:<เวลา> | no_line | no_token | failed)
   ai_compare?: { at: string; model: string; files: number; best_vendor: string; reason: string; summary: string; by?: string } | null
 }
 export interface ApiPayment {

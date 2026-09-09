@@ -439,6 +439,11 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <button onClick={saveFlow} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 15px', cursor: 'pointer' }}>บันทึก</button>
             </div>
             {flowMsg && <div style={{ fontSize: 12, marginTop: 8, color: '#2E7D55' }}>{flowMsg}</div>}
+            {flowChecker && !flowChecker.line && (
+              <div style={{ fontSize: 12.5, marginTop: 10, color: '#8A2A22', background: '#FBEEEC', border: '1px solid #EDD3CE', borderRadius: 8, padding: '9px 12px' }}>
+                ⚠ <b>{flowChecker.name} ยังไม่ได้ผูก LINE</b> — การ์ด "ตรวจสอบใบขอซื้อ" จะยังไม่เด้งในไลน์ (ใบรออยู่ในเว็บแทน) · แก้โดยกด <b>ขอรหัส</b> ที่คอลัมน์ LINE ของ {flowChecker.name} ในตารางด้านล่าง แล้วให้เขาส่งรหัส 6 หลักไปที่แชทบอท
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -261,7 +261,8 @@ ensureColumn('purchase_requests', 'checked_by', 'TEXT')   // ผู้ตรว�
 ensureColumn('purchase_requests', 'checked_sig', 'TEXT')
 ensureColumn('purchase_requests', 'checked_date', 'TEXT')
 ensureColumn('purchase_requests', 'check_note', 'TEXT')   // เหตุผลส่งกลับแก้ไข / หมายเหตุผู้ตรวจ
-ensureColumn('purchase_requests', 'ai_compare', 'TEXT')   // ผล AI เทียบใบเสนอราคา (JSON: best_vendor, reason, summary, at, model)
+ensureColumn('purchase_requests', 'ai_compare', 'TEXT')
+ensureColumn('purchase_requests', 'check_notify', 'TEXT') // ผลส่งการ์ดให้ผู้ตรวจสอบทาง LINE: sent:<เวลา> | no_line | no_token | failed   // ผล AI เทียบใบเสนอราคา (JSON: best_vendor, reason, summary, at, model)
 ensureColumn('pr_quotes', 'ai', 'INTEGER')                // 1 = AI อ่านจากรูปใบเสนอราคา
 ensureColumn('pr_quotes', 'items', 'TEXT')                // รายการในใบเสนอราคา (JSON [{name,qty,unit,price,amount}])
 ensureColumn('pr_quotes', 'recommended', 'INTEGER')       // 1 = AI แนะนำว่าคุ้มสุด

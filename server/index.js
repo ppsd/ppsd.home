@@ -704,11 +704,19 @@ function checkFlex(pr) {
         { type: 'button', style: 'secondary', height: 'sm', action: { type: 'postback', label: 'ส่งกลับแก้ไข', data: `chk:${pr.id}:back`, displayText: `ส่งกลับ ${pr.no}` } }] } },
   }
 }
+// คืนสถานะการส่ง (บันทึกไว้ในใบด้วย ให้หน้าเว็บบอกได้ว่าเด้งหรือไม่ เพราะอะไร)
 async function notifyChecker(pr) {
   const c = prChecker()
-  if (!c?.line_uid || !getSetting('line_token', '')) return false
-  return linePush(c.line_uid, [`มีใบขอซื้อรอตรวจสอบค่ะ — ${pr.no} จาก ${pr.by || '-'} ยอด ${fmtMoney(pr.amount)} บาท`, checkFlex(pr)])
+  let st
+  if (!c) st = 'no_checker'
+  else if (!getSetting('line_token', '')) st = 'no_token'
+  else if (!c.line_uid) st = 'no_line'
+  else st = (await linePush(c.line_uid, [`มีใบขอซื้อรอตรวจสอบค่ะ — ${pr.no} จาก ${pr.by || '-'} ยอด ${fmtMoney(pr.amount)} บาท`, checkFlex(pr)])) ? 'sent:' + nowTS() : 'failed'
+  try { db.prepare('UPDATE purchase_requests SET check_notify=? WHERE id=?').run(st, pr.id) } catch { /* ignore */ }
+  if (st !== 'sent:' + st.slice(5)) console.log(`[pr-check] ${pr.no} ไม่ได้ส่งการ์ดให้ผู้ตรวจสอบ: ${st}`)
+  return st
 }
+const CHECK_NOTIFY_MSG = { no_checker: 'ยังไม่ได้ตั้งผู้ตรวจสอบ', no_token: 'ยังไม่ได้ตั้ง LINE Channel access token (ผู้ใช้งาน → แจ้งเตือน LINE)', no_line: 'ผู้ตรวจสอบยังไม่ได้ผูก LINE กับบัญชี (ไอคอน 💬 มุมขวาบน หรือแอดมินกด "ขอรหัส" ในหน้าผู้ใช้งาน)', failed: 'LINE ตอบกลับผิดพลาด (token หมดอายุ/ผิด หรือผู้ตรวจสอบบล็อกบอท) — ดู log ของเซิร์ฟเวอร์' }
 // ผู้ตรวจสอบยืนยัน → ออก PR (สถานะ รออนุมัติ) + ส่งการ์ดอนุมัติทาง LINE · หรือส่งกลับให้แก้ไข
 function doPrCheck(pr, user, ok, note) {
   if (pr.status !== 'รอตรวจสอบ') throw { code: 409, msg: `ใบขอซื้อ ${pr.no} ไม่ได้อยู่ในขั้นรอตรวจสอบ (สถานะ: ${pr.status})` }
@@ -1076,7 +1084,7 @@ function submitLineOrder(uid, u, d, replyToken) {
     audit({ user: u }, 'สั่งของผ่าน LINE', `${pr.no} · ${pr.item}`)
     const checker = prChecker()
     return lineReply(replyToken, pr.status === 'รอตรวจสอบ'
-      ? `✅ สร้างใบขอซื้อ ${pr.no} แล้ว\n📨 ส่งให้ ${checker?.name || 'ผู้ตรวจสอบ'} ตรวจสอบทาง LINE แล้ว — ผ่านแล้วระบบจะออก PR ส่งขออนุมัติ และแจ้งคุณกลับมาที่นี่ค่ะ`
+      ? `✅ สร้างใบขอซื้อ ${pr.no} แล้ว\n${checker?.line_uid ? `📨 ส่งให้ ${checker.name} ตรวจสอบทาง LINE แล้ว` : `⚠ ${checker?.name || 'ผู้ตรวจสอบ'} ยังไม่ผูก LINE — ใบรออยู่ในระบบ ให้ตรวจในเว็บ`} — ผ่านแล้วระบบจะออก PR ส่งขออนุมัติ และแจ้งคุณกลับมาที่นี่ค่ะ`
       : `✅ สร้างใบขอซื้อ ${pr.no} แล้ว — ส่งขออนุมัติให้ผู้บริหารทาง LINE แล้วค่ะ`)
   } catch (e) { return lineReply(replyToken, '❌ สร้างใบขอซื้อไม่สำเร็จ: ' + (e.msg || e.message)) }
 }
@@ -3160,6 +3168,14 @@ function createPurchaseRequest(body, user) {
   return row
 }
 // ขั้น 2: ผู้ตรวจสอบ (ที่ตั้งไว้) / บัญชี / แอดมิน ตรวจใบขอซื้อ → ok=true ออก PR + ส่งอนุมัติทาง LINE · ok=false ส่งกลับให้แก้ไขพร้อมเหตุผล
+// ส่งการ์ดตรวจสอบให้ผู้ตรวจสอบอีกครั้ง (ใช้เช็คว่าทำไมไม่เด้ง)
+api.post('/purchase-requests/:id/notify-check', canWrite, async (req, res) => {
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
+  if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
+  if (pr.status !== 'รอตรวจสอบ') return res.status(409).json({ error: `ใบนี้ไม่ได้รอตรวจสอบ (สถานะ: ${pr.status})` })
+  const st = await notifyChecker(pr)
+  res.json({ status: st, ok: st.startsWith('sent'), message: st.startsWith('sent') ? `ส่งการ์ดให้ ${prChecker()?.name} ทาง LINE แล้ว` : CHECK_NOTIFY_MSG[st] || st })
+})
 api.post('/purchase-requests/:id/check', canWrite, (req, res) => {
   const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
   if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
@@ -3168,7 +3184,7 @@ api.post('/purchase-requests/:id/check', canWrite, (req, res) => {
   catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) }
 })
 // ตั้งค่าขั้นตอนจัดซื้อ: ใครเป็นผู้ตรวจสอบใบขอซื้อก่อนออก PR (ว่าง = ข้ามขั้นตรวจสอบ ไปรออนุมัติเลย)
-api.get('/procurement/flow', canWrite, (_req, res) => { const c = prChecker(); res.json({ checker: c ? { id: c.id, name: c.name, line: !!c.line_uid } : null }) })
+api.get('/procurement/flow', canWrite, (_req, res) => { const c = prChecker(); res.json({ checker: c ? { id: c.id, name: c.name, line: !!c.line_uid } : null, line_token: !!getSetting('line_token', '') }) })
 api.put('/procurement/flow', adminOnly, (req, res) => {
   const id = Number(req.body?.checker_user_id) || 0
   if (id && !db.prepare('SELECT id FROM users WHERE id=?').get(id)) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
