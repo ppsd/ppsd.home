@@ -1243,3 +1243,34 @@ test('เพิ่มผู้ใช้ให้ผูกกับพนัก�
   assert.equal(emps.find((e) => e.code === e2.data.code).user_id, null, 'คนเดิมต้องถูกปลดผูก')
   assert.equal(emps.find((e) => e.code === e3.data.code).user_id, u2.data.id)
 })
+
+test('บอท LINE: ชื่อเล่นของคนสั่งเองอยู่ในประโยค ("เจพี่แมน…" ส่งโดยแมน) → ผู้รับต้องเป็นเจ ไม่ใช่ตัวเอง และแจ้งเจทาง LINE', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 400))
+  const adminToken = token
+  const me = (await GET('/me')).data
+  // พนักงาน "ธวัช วรรณสุข (เจ)" ผูกกับแอดมิน · "ณัฐพล เทพวีระ (แมน)" ผูกกับ man1 (CEO — สั่งงานผ่าน LINE ได้)
+  const ej = await POST('/employees', { name: 'ธวัช วรรณสุข', nickname: 'เจ', role: 'ผู้จัดการ', pay_type: 'รายเดือน', base: 1 })
+  await PUT(`/users/${me.id}`, { employee_code: ej.data.code })
+  const man = (await GET('/users')).data.find((u) => u.username === 'man1')
+  const em = (await GET('/employees')).data.find((e) => e.code === man.employee_code)
+  await PUT(`/employees/${em.id}`, { nickname: 'แมน' })
+  // ผูก LINE ทั้งสองคน
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  const c2 = await POST('/line-link/code', { user_id: man.id }); await msg('Uman', c2.data.code); await wait()
+  const w0 = (await GET('/work-orders')).data.length
+  await msg('Uman', 'เจพี่แมนต้องการให้โทรติดต่อกลับมาด่วนมีเรื่องจะปรึกษาด่วน'); await wait()
+  await msg('Uman', 'วันนี้'); await wait()
+  await msg('Uman', 'ตกลง'); await wait()
+  const wos = (await GET('/work-orders')).data
+  assert.equal(wos.length, w0 + 1)
+  assert.equal(wos[0].executor, 'ธวัช วรรณสุข', 'ผู้รับต้องเป็น "เจ" ไม่ใช่คนสั่ง (แมน)')
+  assert.equal(wos[0].by, man.name)
+  // สั่งโดยไม่มีชื่อใครเลยนอกจากตัวเอง → ต้องถามว่าให้ใคร ไม่ใช่สั่งตัวเอง
+  await msg('Uman', 'แมนต้องเช็คหลังคาบ้านให้เสร็จ'); await wait()
+  assert.equal((await GET('/work-orders')).data.length, w0 + 1)
+  await msg('Uman', 'ยกเลิก'); await wait()
+  token = adminToken
+  await DEL('/line-link'); await DEL('/line-link?user_id=' + man.id)
+})
