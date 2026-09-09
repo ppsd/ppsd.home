@@ -1118,3 +1118,21 @@ test('ผู้บริหารพิมพ์ "เปิด PR …" / "ขอ
   await PUT('/procurement/flow', { checker_user_id: 0 })
   await DEL('/line-link')
 })
+
+test('LINE: ข้อความที่ฟังดูเหมือนซื้อ/จ้างแต่ไม่ขึ้นต้นด้วยคำสั่ง → บอทถาม 1 (PR) / 2 (สั่งงาน) ก่อน', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  const w0 = (await GET('/work-orders')).data.length
+  await msg('Uceo', 'หาช่างทาสีเก็บสีที่ออฟฟิศตึกมังกรฟ้า'); await wait()
+  assert.equal((await GET('/work-orders')).data.length, w0, 'ต้องยังไม่ออกใบสั่งงาน — ต้องถามก่อน')
+  await msg('Uceo', '1'); await wait()
+  await msg('Uceo', '4'); await wait() // หมวดออฟฟิศ อื่นๆ
+  await msg('Uceo', 'ตกลง'); await wait()
+  const prs = (await GET('/purchase-requests')).data
+  assert.equal(prs.length, n0 + 1); assert.equal(prs[0].house_code, 'OFFICE'); assert.equal(prs[0].category, 'other')
+  assert.equal((await GET('/work-orders')).data.length, w0)
+  await DEL('/line-link')
+})

@@ -937,6 +937,14 @@ async function handleLineUserMessage(uid, text, replyToken) {
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
   const ctx = getLineCtx(uid)
   if (ORDER_CMD_RE.test(t) || (/^สั่ง\s+[ก-๙a-zA-Z]/.test(t) && !lineCanCommand(u))) return handleLineOrder(uid, u, t, replyToken, ctx)
+  if (ctx?.kind === 'clarify') {
+    setLineCtx(uid, null)
+    if (/^(1|pr|ขอซื้อ|ใบขอซื้อ|ซื้อ|จ้าง)$/i.test(t)) return handleLineOrder(uid, u, 'สั่งของ ' + ctx.text, replyToken, null)
+    if (/^(2|สั่งงาน|ใบสั่งงาน|งาน)$/i.test(t)) return askNextOrSummary(uid, parseLineCommand(ctx.text), replyToken)
+    if (/^(ยกเลิก|cancel)$/i.test(t)) return lineReply(replyToken, 'ยกเลิกแล้วค่ะ')
+    setLineCtx(uid, ctx) // ยังไม่ตอบ 1/2 → ถามซ้ำ
+    return lineReply(replyToken, "ตอบ 1 (ใบขอซื้อ) หรือ 2 (ใบสั่งงาน) ค่ะ")
+  }
   if (ctx?.kind === 'order') {
     if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineCtx(uid, null); return lineReply(replyToken, 'ทิ้งร่างใบขอซื้อแล้วค่ะ') }
     if (ctx.pending === 'house' || ctx.pending === 'ocat') return handleLineOrder(uid, u, t, replyToken, ctx)
@@ -1057,11 +1065,18 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   // ข้อความใหม่ = คำสั่งงานใหม่
   if (t.length < 4) return lineReply(replyToken, "พิมพ์คำสั่งงานให้ชัดขึ้นหน่อยค่ะ เช่น \"ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้\" (พิมพ์ 'ช่วย' ดูคำสั่ง)")
+  // ฟังดูเหมือนเรื่องซื้อ/จ้าง แต่ไม่ได้ขึ้นต้นด้วยคำสั่งชัดๆ → ถามก่อน จะได้ไม่ออกใบสั่งงานผิด
+  if (PURCHASE_HINT_RE.test(t) && !draft) {
+    setLineCtx(uid, { kind: 'clarify', text: t })
+    return lineReply(replyToken, `ข้อความนี้ต้องการทำอะไรคะ?\n1 = ใบขอซื้อ/ขอจ้าง (PR) — ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อน\n2 = ใบสั่งงานให้พนักงาน\nตอบ 1 หรือ 2 ค่ะ (หรือ 'ยกเลิก')`)
+  }
   return askNextOrSummary(uid, parseLineCommand(t), replyToken)
 }
 // ===== โฟร์แมนสั่งของผ่าน LINE: "สั่งของ ปูน 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร" → ร่าง → 'ตกลง' → ใบขอซื้อ (รอผู้ตรวจสอบ) =====
 // คำขึ้นต้นที่ถือว่าเป็นการขอซื้อ/ขอจ้าง: สั่งของ · ขอซื้อ · เปิด PR · ออก PR · ขอเปิดใบขอซื้อ · PR … · ขอจ้าง …
-const ORDER_CMD_RE = /^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง|ขอจ้าง|จัดซื้อ|(?:ขอ|ช่วย)?\s*(?:เปิด|ออก|ทำ|สร้าง)\s*(?:ใบ\s*)?(?:pr|ขอซื้อ|ขอจ้าง)|pr)(?=\s|$|[ก-๙])/i
+const ORDER_CMD_RE = /^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง|ขอจ้าง|จัดซื้อ|ซื้อ|จ้าง|(?:ขอ|ช่วย|อยาก|ต้องการ)?\s*(?:เปิด|ออก|ทำ|สร้าง|ขอ)?\s*(?:ใบ\s*)?(?:pr|ใบขอซื้อ|ขอซื้อ|ขอจ้าง)|pr)(?=\s|$|[ก-๙])/i
+// ข้อความที่ "น่าจะ" เป็นเรื่องซื้อ/จ้าง แต่ไม่ได้ขึ้นต้นด้วยคำสั่ง → ถามก่อนว่าเป็นใบขอซื้อหรือใบสั่งงาน (กันออกใบสั่งงานผิด)
+const PURCHASE_HINT_RE = /ซื้อ|จ้าง|\bpr\b|สั่งของ|วัสดุ|จัดซื้อ|ใบเสนอราคา|หาช่าง|หาร้าน|ราคา/i
 const ORDER_UNITS = ['ถุง', 'เส้น', 'ก้อน', 'ตัว', 'แผ่น', 'ม้วน', 'คิว', 'ลูก', 'ชุด', 'กล่อง', 'ลัง', 'ตร.ม.', 'ตรม', 'เมตร', 'ม.', 'กก.', 'กิโลกรัม', 'กิโล', 'ตัน', 'อัน', 'ท่อน', 'ถัง', 'แกลลอน', 'กระป๋อง', 'มัด', 'แพ็ค', 'ขวด', 'ใบ', 'หลอด', 'ดอก', 'คัน', 'เที่ยว', 'แท่ง', 'คู่', 'บาน', 'ลิตร', 'ชิ้น', 'กระสอบ', 'โหล', 'แผง', 'ห่อ', 'เล่ม', 'ต้น', 'กอง', 'รีม', 'แกน', 'หน่วย', 'เครื่อง', 'ตู้', 'จุด']
 function matchHouseInText(t) {
   const houses = db.prepare('SELECT code, name, kind FROM houses').all()
