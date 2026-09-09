@@ -8,6 +8,8 @@ const buildStamp = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok'
 export default defineConfig({
   plugins: [react()],
   define: { __BUILD_STAMP__: JSON.stringify(buildStamp) },
+  // ไม่ลบ dist ก่อน build — ระหว่างที่ update.bat กำลัง build ผู้ใช้ยังเปิดหน้าเว็บเวอร์ชันเดิมได้ (ไฟล์ใหม่มีชื่อ hash ต่างกัน ไม่ทับกัน)
+  build: { emptyOutDir: false },
   server: {
     host: true, // expose the dev server on the LAN too
     proxy: {
