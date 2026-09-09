@@ -286,6 +286,11 @@ export interface ApiPR {
   approved_date?: string | null
   image?: string | null
   approval?: Approval
+  // ขั้นตอนจัดซื้อ: ตรวจสอบก่อนออก PR + ผล AI เทียบใบเสนอราคา
+  checked_by?: string | null
+  checked_date?: string | null
+  check_note?: string | null
+  ai_compare?: { at: string; model: string; files: number; best_vendor: string; reason: string; summary: string; by?: string } | null
 }
 export interface ApiPayment {
   id: number

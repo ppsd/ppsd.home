@@ -183,6 +183,16 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
     try { const r = await api.post<{ model: string; reply: string; ms: number }>('/ai-settings/test', {}); setAiMsg({ ok: true, text: `✓ ใช้งานได้ · รุ่น ${r.model} · ตอบว่า “${r.reply}” (${(r.ms / 1000).toFixed(1)} วิ)` }) }
     catch (e) { setAiMsg({ ok: false, text: '✗ ' + (e as Error).message }) } finally { setAiBusy(false) }
   }
+  // ขั้นตอนจัดซื้อ: ผู้ตรวจสอบใบขอซื้อก่อนออก PR (ขั้น 2)
+  const [flowChecker, setFlowChecker] = useState<{ id: number; name: string; line: boolean } | null>(null)
+  const [flowSel, setFlowSel] = useState('')
+  const [flowMsg, setFlowMsg] = useState('')
+  const loadFlow = () => api.get<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow').then((r) => { setFlowChecker(r.checker); setFlowSel(r.checker ? String(r.checker.id) : '') }).catch(() => {})
+  useEffect(() => { if (users && isAdmin) loadFlow() /* eslint-disable-next-line */ }, [users])
+  const saveFlow = async () => {
+    try { const r = await api.put<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow', { checker_user_id: Number(flowSel) || 0 }); setFlowChecker(r.checker); setFlowMsg(r.checker ? `บันทึกแล้ว — ใบขอซื้อใหม่ทุกใบจะส่งให้ ${r.checker.name} ตรวจก่อนออก PR${r.checker.line ? '' : ' (ยังไม่ผูก LINE — จะเห็นเฉพาะในเว็บ)'}` : 'ยกเลิกขั้นตรวจสอบแล้ว — ใบขอซื้อไปรออนุมัติทันที') }
+    catch (e) { setFlowMsg((e as Error).message) }
+  }
   const loadMirror = () => api.get<{ dir: string; status: MirrorStatus | null; last?: BackupLast | null }>('/backup-mirror').then((r) => { setMirrorDir(r.dir || ''); setMirrorStat(r.status); setBkLast(r.last || null) }).catch(() => {})
   useEffect(() => { if (users) loadMirror() /* eslint-disable-next-line */ }, [users])
   const saveMirror = async () => {
@@ -405,6 +415,30 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <button onClick={testAi} disabled={aiBusy || !aiCfg.hasKey} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#6B4E9E', background: '#fff', border: '1px solid #D9D2EA', borderRadius: 8, padding: '9px 15px', cursor: aiCfg.hasKey ? 'pointer' : 'default', opacity: aiCfg.hasKey ? 1 : 0.5 }}>{aiBusy ? 'กำลังทดสอบ…' : '🧪 ทดสอบ'}</button>
             </div>
             {aiMsg && <div style={{ fontSize: 12, marginTop: 10, color: aiMsg.ok ? '#2E7D55' : '#C24036' }}>{aiMsg.text}</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ขั้นตอนจัดซื้อ: โฟร์แมนขอ → ผู้ตรวจสอบเช็ค → ออก PR + ส่งอนุมัติ LINE → รูปใบเสนอราคา (AI เทียบ) → ออก PO + ส่งอนุมัติ LINE */}
+      {isAdmin && users && (
+        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 14, fontWeight: 600, color: '#1C2730', background: '#F7F9FB', display: 'flex', alignItems: 'center', gap: 10 }}>
+            🛒 ขั้นตอนจัดซื้อ (PR → PO)
+            <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 600, color: flowChecker ? '#2E7D55' : '#B7791F', background: flowChecker ? '#E2F1EA' : '#F6ECD6', padding: '3px 10px', borderRadius: 20 }}>{flowChecker ? `ผู้ตรวจสอบ: ${flowChecker.name}${flowChecker.line ? ' · ผูก LINE แล้ว' : ' · ยังไม่ผูก LINE'}` : 'ยังไม่ตั้งผู้ตรวจสอบ (ข้ามขั้น 2)'}</span>
+          </div>
+          <div style={{ padding: '14px 18px' }}>
+            <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.7, marginBottom: 10 }}>
+              1) โฟร์แมนคีย์ใบขอซื้อ → 2) <b>ผู้ตรวจสอบ</b> ได้การ์ดใน LINE กด “ตรวจแล้ว ออก PR” → 3) ระบบออก PR + ส่งการ์ดขออนุมัติให้ผู้บริหารทาง LINE → 4) ส่งรูปใบเสนอราคาใน LINE (พิมพ์ “ใบเสนอราคา PR-…” แล้วส่งรูป → “เทียบราคา”) AI สรุปร้านที่คุ้มสุด → 5) กด “ออก PO ร้าน…” ระบบออก PO + ส่งขออนุมัติทาง LINE
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12.5, color: '#5C6770' }}>ผู้ตรวจสอบใบขอซื้อ (ขั้น 2)</span>
+              <select value={flowSel} onChange={(e) => setFlowSel(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px', minWidth: 220 }}>
+                <option value="">— ไม่ต้องตรวจสอบ (ไปรออนุมัติเลย) —</option>
+                {users.filter((u) => u.status !== 'ปิดใช้งาน').map((u) => <option key={u.id} value={u.id}>{u.name}{u.position ? ` · ${u.position}` : ''}{u.line_uid ? ' · LINE ✓' : ''}</option>)}
+              </select>
+              <button onClick={saveFlow} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 15px', cursor: 'pointer' }}>บันทึก</button>
+            </div>
+            {flowMsg && <div style={{ fontSize: 12, marginTop: 8, color: '#2E7D55' }}>{flowMsg}</div>}
           </div>
         </div>
       )}

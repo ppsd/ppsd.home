@@ -256,6 +256,20 @@ db.exec(`CREATE TABLE IF NOT EXISTS pr_quotes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   pr_id INTEGER, vendor TEXT, price INTEGER, terms TEXT, note TEXT, chosen INTEGER
 )`)
+// ขั้นตอนจัดซื้อ: โฟร์แมนขอ → ผู้ตรวจสอบเช็ค → ออก PR อัตโนมัติ + ส่งอนุมัติ LINE → รูปใบเสนอราคา (AI เทียบ) → ออก PO + ส่งอนุมัติ LINE
+ensureColumn('purchase_requests', 'checked_by', 'TEXT')   // ผู้ตรวจสอบก่อนออก PR
+ensureColumn('purchase_requests', 'checked_sig', 'TEXT')
+ensureColumn('purchase_requests', 'checked_date', 'TEXT')
+ensureColumn('purchase_requests', 'check_note', 'TEXT')   // เหตุผลส่งกลับแก้ไข / หมายเหตุผู้ตรวจ
+ensureColumn('purchase_requests', 'ai_compare', 'TEXT')   // ผล AI เทียบใบเสนอราคา (JSON: best_vendor, reason, summary, at, model)
+ensureColumn('pr_quotes', 'ai', 'INTEGER')                // 1 = AI อ่านจากรูปใบเสนอราคา
+ensureColumn('pr_quotes', 'items', 'TEXT')                // รายการในใบเสนอราคา (JSON [{name,qty,unit,price,amount}])
+ensureColumn('pr_quotes', 'recommended', 'INTEGER')       // 1 = AI แนะนำว่าคุ้มสุด
+ensureColumn('pr_quotes', 'reason', 'TEXT')
+db.exec(`CREATE TABLE IF NOT EXISTS pr_quote_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pr_id INTEGER, image TEXT, by TEXT, source TEXT, created TEXT
+)`) // รูปใบเสนอราคาที่ส่งมา (เว็บ/LINE) — pr_id=0 = ส่งมาทาง LINE แต่ยังไม่บอกว่าของ PR ไหน
 
 // ===== ชั้นควบคุมภายใน / กันโกง (Internal Control) =====
 // PR: อนุมัติ 2 ชั้น (สำหรับยอดสูง) — ผู้อนุมัติชั้นที่ 2 ต้องเป็นคนละคน
