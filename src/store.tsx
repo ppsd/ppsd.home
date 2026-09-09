@@ -294,6 +294,12 @@ export interface ApiPR {
   doc_sent?: string | null // ผลส่งใบ PR (รูป) เข้า LINE หลังอนุมัติครบ (sent:<เวลา> | no_recipients | no_public_url | render_failed:… | push_failed)
   doc_key?: string | null
   ai_compare?: { at: string; model: string; files: number; best_vendor: string; reason: string; summary: string; by?: string } | null
+  // ความคืบหน้าขั้นตอนหลังอนุมัติ (จากเซิร์ฟเวอร์)
+  quote_files?: number
+  chosen_vendor?: string
+  po_no?: string
+  po_vendor?: string
+  po_approved?: boolean
 }
 export interface ApiPayment {
   id: number
@@ -531,6 +537,8 @@ export const useApp = () => {
   if (!c) throw new Error('useApp must be used inside AppProvider')
   return c
 }
+// ใช้ในหน้าเอกสารเปล่า (docview) ที่ไม่มี AppProvider
+export const useAppOptional = () => useContext(Ctx)
 
 // fetch a dataset, returning fallback if access is denied / fails
 async function tryGet<T>(path: string, fallback: T): Promise<T> {

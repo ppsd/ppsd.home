@@ -515,6 +515,17 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                         <ApprovalBar docType="pr" docId={r.id} approval={r.approval} onDone={() => reloadData('prs', '/purchase-requests')} />
                       )}
                       {r.checked_by && r.status !== 'ส่งกลับแก้ไข' && <span style={{ fontSize: 10, color: '#94A0A8' }}>ตรวจโดย {r.checked_by}</span>}
+                      {(r.approval?.done || r.status === 'อนุมัติ') && (() => {
+                        // แถบขั้นตอนหลังอนุมัติ: เทียบราคา → PO → PO อนุมัติ
+                        const steps = [
+                          { t: `เทียบราคา${r.quote_files ? ` (${r.quote_files} รูป)` : ''}${r.chosen_vendor ? ' ⭐' + r.chosen_vendor : ''}`, on: !!r.quote_files || !!r.chosen_vendor },
+                          { t: r.po_no ? `PO ${r.po_no}` : 'รอออก PO', on: !!r.po_no },
+                          { t: r.po_approved ? 'PO อนุมัติแล้ว' : 'รออนุมัติ PO', on: !!r.po_approved },
+                        ]
+                        return <div style={{ width: '100%', display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap', fontSize: 10 }}>
+                          {steps.map((st, i) => <span key={i} style={{ padding: '1px 7px', borderRadius: 10, background: st.on ? '#E2F1EA' : '#F1F4F6', color: st.on ? '#2E7D55' : '#94A0A8', fontWeight: 600 }}>{st.on ? '✓ ' : ''}{st.t}</span>)}
+                        </div>
+                      })()}
                       {(r.approval?.done || r.status === 'อนุมัติ') && (() => { const d = docLabel(r); return <>
                         {d && <span title={d.title || ''} style={{ fontSize: 10.5, color: d.c }}>{d.t}</span>}
                         <button onClick={() => sendDoc(r)} title="สร้างรูปใบ PR แล้วส่งเข้า LINE ของผู้รับที่ตั้งไว้ (อีกครั้ง)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 10.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 8px', cursor: 'pointer' }}>📤 ส่งใบเข้า LINE</button>

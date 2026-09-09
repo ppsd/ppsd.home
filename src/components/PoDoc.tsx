@@ -1,8 +1,8 @@
 import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import { bahtText } from '../data'
-import { useApp } from '../store'
-import type { ApiPO } from '../store'
+import { useAppOptional } from '../store'
+import type { ApiPO, ApiVendor } from '../store'
 import ApproverSigns from './ApproverSigns'
 
 // ใบสั่งซื้อ (PO) — เลย์เอาต์ตามแบบเอกสารบริษัท (โปรแกรมบัญชี)
@@ -11,26 +11,27 @@ const bd = '1px solid #333'
 const th: React.CSSProperties = { border: bd, padding: '5px 6px', fontSize: 12, fontWeight: 700, background: '#F2F2F2' }
 const td: React.CSSProperties = { border: bd, padding: '5px 6px', fontSize: 12, verticalAlign: 'top' }
 
-export default function PoDoc({ po, houseName, onClose }: { po: ApiPO; houseName?: string; onClose: () => void }) {
+// standalone = หน้าเอกสารเปล่า (ไม่มีฉากหลัง/ปุ่ม) ใช้ให้ระบบถ่ายรูปใบส่งเข้า LINE · vendorInfo = ข้อมูลผู้ขายที่ส่งมาให้ตรงๆ (ไม่มี AppProvider)
+export default function PoDoc({ po, houseName, onClose, standalone, vendorInfo }: { po: ApiPO; houseName?: string; onClose: () => void; standalone?: boolean; vendorInfo?: ApiVendor | null }) {
   // ดึงที่อยู่/เลขภาษีผู้ขายจากทะเบียน (ถ้ากรอกไว้) มาแสดงบนเอกสาร
-  const { data } = useApp()
-  const vend = (data.vendors || []).find((v) => v.name === po.vendor)
+  const app = useAppOptional()
+  const vend = vendorInfo ?? (app?.data.vendors || []).find((v) => v.name === po.vendor)
   const net = po.amount || 0
   const vat = Math.round(net * 0.07 * 100) / 100
   const grand = net + vat
   const credit = po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'
   const lbl: React.CSSProperties = { color: '#333', width: 78, display: 'inline-block', verticalAlign: 'top' }
   return (
-    <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
-      <div className="no-print" style={{ maxWidth: 780, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div className="printdoc-backdrop" style={standalone ? { background: '#fff', padding: 8, width: 796 } : { position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
+      {!standalone && <div className="no-print" style={{ maxWidth: 780, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>ใบสั่งซื้อ {po.no}</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
           <button onClick={() => window.print()} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>🖨 พิมพ์</button>
           <button onClick={onClose} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 500, color: '#1C2730', background: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ปิด</button>
         </div>
-      </div>
+      </div>}
 
-      <div className="print-area doc-sheet" style={{ maxWidth: 780, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 12 }}>
+      <div id="doc-sheet" className="print-area doc-sheet" style={{ maxWidth: 780, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: standalone ? 'none' : '0 24px 70px rgba(20,30,40,.3)', fontSize: 12 }}>
         {/* หัวเอกสาร */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 54, height: 54, objectFit: 'cover' }} />
