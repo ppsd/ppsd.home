@@ -9,6 +9,7 @@ import {
 import { useApp } from '../store'
 import type { ApiHouse } from '../store'
 import { api } from '../api'
+import { OFFICE_CATS } from '../data'
 import FilesPanel from './FilesPanel'
 import ContractorsPanel from './ContractorsPanel'
 import InstallmentSection from './InstallmentSection'
@@ -132,6 +133,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         </div>
         <span style={{ fontSize: 12, fontWeight: 600, color: ss.c, background: ss.bg, padding: '5px 13px', borderRadius: 20 }}>{house.status}</span>
         {house.kind === 'cm' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#C0852C', padding: '5px 13px', borderRadius: 20 }}>ควบคุมงาน (CM)</span>}
+        {house.kind === 'office' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#30506A', padding: '5px 13px', borderRadius: 20 }}>🏢 ออฟฟิศ / ค่าใช้จ่ายภายใน</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 500, color: '#1C2730', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>พิมพ์สรุป</button>
           <button onClick={onEditHouse} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>แก้ไขข้อมูล</button>
@@ -154,6 +156,9 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         </div>
       )}
 
+      {house.kind === 'office' ? (
+        <OfficeSummary house={house} expenses={houseExp} prs={(data.prs || []).filter((r) => (r.house_code || '') === house.code)} pos={(data.purchaseOrders || []).filter((o) => o.house_code === house.code)} />
+      ) : (<>
       {/* financial summary: customer vs contractor + profit */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 0, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }}>
         <Cell label={house.kind === 'cm' ? 'ค่าบริการควบคุมงาน' : 'ขายลูกค้า (มูลค่าสัญญา)'} value={baht(house.value)} color="#1C2730" sub={house.area || undefined} br bb />
@@ -211,6 +216,8 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
           </tfoot>
         </table>
       </div>
+
+      </>)}
 
       {/* two columns: info+files / main tabs */}
       <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
@@ -381,5 +388,59 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
 
       {importing && <ImportInstallments houseCode={house.code} houseName={house.name} onClose={() => setImporting(false)} onDone={() => { reloadData('installments', '/installments'); reloadData('houses', '/houses') }} />}
     </div>
+  )
+}
+
+// สรุปค่าใช้จ่ายของโครงการ "ออฟฟิศ" แยกตามหมวด (เบิกค่าน้ำมัน / ซ่อมแซมออฟฟิศ / ของใช้สำนักงาน / อื่นๆ)
+// ใบขอซื้อ (อนุมัติแล้ว) นับตามหมวดในใบ · ใบสั่งซื้อผูกหมวดผ่านเลข PR · รายจ่ายจับคู่จากชื่อหมวดในรายจ่าย (ไม่ตรงหมวดไหน = อื่นๆ)
+function OfficeSummary({ house, expenses, prs, pos }: { house: ApiHouse; expenses: { cat: string; amount: number }[]; prs: { no: string; category?: string; amount: number; status: string; approval?: { done: boolean } }[]; pos: { pr_no?: string; amount: number }[] }) {
+  const catOfPr = (no?: string) => prs.find((r) => r.no === no)?.category || 'other'
+  const rows = OFFICE_CATS.map((c) => {
+    const pr = prs.filter((r) => (r.category || 'other') === c.key && (r.approval?.done || r.status === 'อนุมัติ')).reduce((s, r) => s + r.amount, 0)
+    const po = pos.filter((o) => catOfPr(o.pr_no) === c.key).reduce((s, o) => s + o.amount, 0)
+    const exp = expenses.filter((e) => (OFFICE_CATS.some((x) => x.label === e.cat) ? e.cat : 'อื่นๆ') === c.label).reduce((s, e) => s + e.amount, 0)
+    return { ...c, pr, po, exp }
+  })
+  const tot = (k: 'pr' | 'po' | 'exp') => rows.reduce((s, r) => s + r[k], 0)
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 0, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }}>
+        <Cell label="รายจ่ายออฟฟิศที่บันทึกแล้ว" value={baht(tot('exp'))} color="#1C2730" sub={`รหัส ${house.code} · ประเภท: ออฟฟิศ / ค่าใช้จ่ายภายใน`} br />
+        <Cell label="ใบขอซื้อที่อนุมัติแล้ว" value={baht(tot('pr'))} color="#30506A" sub={`${prs.filter((r) => r.approval?.done || r.status === 'อนุมัติ').length} ใบ`} br />
+        <Cell label="ใบสั่งซื้อ (PO)" value={baht(tot('po'))} color="#C0852C" sub={`${pos.length} ใบ`} />
+      </div>
+      <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }}>
+        <div style={{ padding: '13px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>ค่าใช้จ่ายแยกตามหมวด (ออฟฟิศ)</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
+              <th style={{ ...th, padding: '9px 18px' }}>หมวด</th>
+              <th style={{ ...th, textAlign: 'right' }}>ใบขอซื้อ (อนุมัติ)</th>
+              <th style={{ ...th, textAlign: 'right' }}>ใบสั่งซื้อ</th>
+              <th style={{ ...th, padding: '9px 18px', textAlign: 'right' }}>รายจ่ายที่บันทึก</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
+                <td style={{ padding: '10px 18px', fontWeight: 500 }}>{r.label}</td>
+                <td className="num" style={{ padding: '10px 12px', textAlign: 'right' }}>{baht(r.pr)}</td>
+                <td className="num" style={{ padding: '10px 12px', textAlign: 'right', color: '#C0852C' }}>{baht(r.po)}</td>
+                <td className="num" style={{ padding: '10px 18px', textAlign: 'right', fontWeight: 600 }}>{baht(r.exp)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{ borderTop: '2px solid #E1E5EA', background: '#F7F9FB' }}>
+              <td style={{ padding: '11px 18px', fontWeight: 700 }}>รวม</td>
+              <td className="num" style={{ padding: '11px 12px', textAlign: 'right', fontWeight: 700 }}>{baht(tot('pr'))}</td>
+              <td className="num" style={{ padding: '11px 12px', textAlign: 'right', fontWeight: 700, color: '#C0852C' }}>{baht(tot('po'))}</td>
+              <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 700, fontSize: 14 }}>{baht(tot('exp'))}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <div style={{ fontSize: 11.5, color: '#94A0A8', padding: '8px 18px' }}>ตอนขอซื้อของเข้าออฟฟิศ เลือกหมวด เบิกค่าน้ำมัน / ซ่อมแซมออฟฟิศ / ของใช้สำนักงาน / อื่นๆ ในใบขอซื้อ · บันทึกรายจ่ายให้ใส่ชื่อหมวดเดียวกันในช่อง "หมวด"</div>
+      </div>
+    </>
   )
 }

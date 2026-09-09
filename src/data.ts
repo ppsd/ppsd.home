@@ -546,3 +546,20 @@ export function matchMaterial<T extends { name: string; unit?: string }>(desc: s
   }
   return best && best.score >= 0.5 ? best : null
 }
+
+// ===== หมวดงานตามประเภทโครงการ =====
+// บ้านขาย/CM: ตัวบ้าน / โรงจอดรถ / ถนน-รั้ว · โครงการ "ออฟฟิศ" (ค่าใช้จ่ายภายใน): เบิกค่าน้ำมัน / ซ่อมแซมออฟฟิศ / ของใช้สำนักงาน / อื่นๆ
+export const HOUSE_CATS = [
+  { key: 'house', label: 'ตัวบ้าน' },
+  { key: 'carport', label: 'โรงจอดรถ' },
+  { key: 'road', label: 'ถนน / รั้ว' },
+]
+export const OFFICE_CATS = [
+  { key: 'fuel', label: 'เบิกค่าน้ำมัน' },
+  { key: 'repair', label: 'ซ่อมแซมออฟฟิศ' },
+  { key: 'supplies', label: 'ของใช้สำนักงาน' },
+  { key: 'other', label: 'อื่นๆ' },
+]
+export const isOfficeKind = (kind?: string | null) => kind === 'office'
+export const catsOfKind = (kind?: string | null) => (isOfficeKind(kind) ? OFFICE_CATS : HOUSE_CATS)
+export const catLabelOf = (key?: string | null) => [...HOUSE_CATS, ...OFFICE_CATS].find((c) => c.key === key)?.label || key || ''

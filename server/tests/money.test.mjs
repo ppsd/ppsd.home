@@ -1076,3 +1076,24 @@ test('ใบ PR อนุมัติครบ → สร้างรูปใ�
   await PUT('/procurement/flow', { doc_recipients: [], public_url: '' })
   await DEL('/line-link')
 })
+
+test('โครงการ "ออฟฟิศ": ใบขอซื้อใช้หมวด น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ · สั่งของทาง LINE ถามหมวดแล้วบันทึกให้', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const h = await POST('/houses', { name: 'PPSD office', code: 'OFFICE', kind: 'office' })
+  assert.equal(h.status, 201); assert.equal(h.data.kind, 'office')
+  const pr = await POST('/purchase-requests', { house_code: 'OFFICE', category: 'supplies', items: [{ desc: 'กระดาษ A4', qty: 5, unit: 'รีม', price: 120 }] })
+  assert.equal(pr.data.category, 'supplies'); assert.equal(pr.data.house, 'PPSD office')
+  assert.equal((await POST('/purchase-requests', { house_code: 'OFFICE', category: 'weird', item: 'x', amount: 1 })).data.category, '', 'หมวดที่ไม่รู้จักถูกตัดทิ้ง')
+  // สั่งของทาง LINE เข้าออฟฟิศ → ถามหมวด → ตอบ 1 = เบิกค่าน้ำมัน
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  await msg('Uceo', 'สั่งของ น้ำมันดีเซล 40 ลิตร PPSD office'); await wait()
+  await msg('Uceo', '1'); await wait()
+  await msg('Uceo', 'ตกลง'); await wait()
+  const rows = (await GET('/purchase-requests')).data
+  assert.equal(rows.length, n0 + 1)
+  assert.equal(rows[0].house_code, 'OFFICE'); assert.equal(rows[0].category, 'fuel'); assert.equal(rows[0].items[0].desc, 'น้ำมันดีเซล')
+  await DEL('/line-link')
+})
