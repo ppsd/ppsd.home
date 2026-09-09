@@ -1097,3 +1097,24 @@ test('โครงการ "ออฟฟิศ": ใบขอซื้อใช
   assert.equal(rows[0].house_code, 'OFFICE'); assert.equal(rows[0].category, 'fuel'); assert.equal(rows[0].items[0].desc, 'น้ำมันดีเซล')
   await DEL('/line-link')
 })
+
+test('ผู้บริหารพิมพ์ "เปิด PR …" / "ขอจ้าง … ที่ออฟฟิศ" ใน LINE → เป็นใบขอซื้อ (ไม่ใช่ใบสั่งงาน) และไปหาผู้ตรวจสอบ', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
+  await PUT('/procurement/flow', { checker_user_id: som.id })
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  const w0 = (await GET('/work-orders')).data.length
+  await msg('Uceo', 'เปิดpr หาช่างทาสีเก็บสีที่ออฟฟิศตึกมังกรฟ้า'); await wait()
+  await msg('Uceo', '2'); await wait() // หมวดออฟฟิศ: ซ่อมแซมออฟฟิศ
+  await msg('Uceo', 'ตกลง'); await wait()
+  const prs = (await GET('/purchase-requests')).data
+  assert.equal(prs.length, n0 + 1, 'ต้องได้ใบขอซื้อ')
+  assert.equal((await GET('/work-orders')).data.length, w0, 'ต้องไม่กลายเป็นใบสั่งงาน')
+  assert.equal(prs[0].house_code, 'OFFICE'); assert.equal(prs[0].category, 'repair'); assert.equal(prs[0].status, 'รอตรวจสอบ')
+  assert.match(prs[0].item, /ช่างทาสี/)
+  await PUT('/procurement/flow', { checker_user_id: 0 })
+  await DEL('/line-link')
+})

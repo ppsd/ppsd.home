@@ -932,11 +932,11 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (/^(ช่วย|help|\?|คำสั่ง)$/i.test(t)) {
     return lineReply(replyToken, (lineCanCommand(u)
       ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• รออนุมัติ — เอกสารที่รอคุณอนุมัติ (กดปุ่มในการ์ดได้เลย) · อนุมัติ PR-69-0144 / ปฏิเสธ PR-69-0144 เหตุผล\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
-      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ`)
+      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ / เปิด PR / ขอจ้าง … เช่น "เปิด PR ปูนซีเมนต์ 50 ถุง บ้านคุณพร" หรือ "ขอจ้าง ช่างทาสีเก็บงานที่ออฟฟิศ" → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ`)
   }
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
   const ctx = getLineCtx(uid)
-  if (/^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง)(?=\s|$)/i.test(t) || (/^สั่ง\s+[ก-๙a-zA-Z]/.test(t) && !lineCanCommand(u))) return handleLineOrder(uid, u, t, replyToken, ctx)
+  if (ORDER_CMD_RE.test(t) || (/^สั่ง\s+[ก-๙a-zA-Z]/.test(t) && !lineCanCommand(u))) return handleLineOrder(uid, u, t, replyToken, ctx)
   if (ctx?.kind === 'order') {
     if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineCtx(uid, null); return lineReply(replyToken, 'ทิ้งร่างใบขอซื้อแล้วค่ะ') }
     if (ctx.pending === 'house' || ctx.pending === 'ocat') return handleLineOrder(uid, u, t, replyToken, ctx)
@@ -1060,11 +1060,19 @@ async function handleLineUserMessage(uid, text, replyToken) {
   return askNextOrSummary(uid, parseLineCommand(t), replyToken)
 }
 // ===== โฟร์แมนสั่งของผ่าน LINE: "สั่งของ ปูน 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร" → ร่าง → 'ตกลง' → ใบขอซื้อ (รอผู้ตรวจสอบ) =====
+// คำขึ้นต้นที่ถือว่าเป็นการขอซื้อ/ขอจ้าง: สั่งของ · ขอซื้อ · เปิด PR · ออก PR · ขอเปิดใบขอซื้อ · PR … · ขอจ้าง …
+const ORDER_CMD_RE = /^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง|ขอจ้าง|จัดซื้อ|(?:ขอ|ช่วย)?\s*(?:เปิด|ออก|ทำ|สร้าง)\s*(?:ใบ\s*)?(?:pr|ขอซื้อ|ขอจ้าง)|pr)(?=\s|$|[ก-๙])/i
 const ORDER_UNITS = ['ถุง', 'เส้น', 'ก้อน', 'ตัว', 'แผ่น', 'ม้วน', 'คิว', 'ลูก', 'ชุด', 'กล่อง', 'ลัง', 'ตร.ม.', 'ตรม', 'เมตร', 'ม.', 'กก.', 'กิโลกรัม', 'กิโล', 'ตัน', 'อัน', 'ท่อน', 'ถัง', 'แกลลอน', 'กระป๋อง', 'มัด', 'แพ็ค', 'ขวด', 'ใบ', 'หลอด', 'ดอก', 'คัน', 'เที่ยว', 'แท่ง', 'คู่', 'บาน', 'ลิตร', 'ชิ้น', 'กระสอบ', 'โหล', 'แผง', 'ห่อ', 'เล่ม', 'ต้น', 'กอง', 'รีม', 'แกน', 'หน่วย', 'เครื่อง', 'ตู้', 'จุด']
 function matchHouseInText(t) {
-  const houses = db.prepare('SELECT code, name FROM houses').all()
+  const houses = db.prepare('SELECT code, name, kind FROM houses').all()
   const hit = houses.filter((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code))).sort((a, b) => (b.name || '').length - (a.name || '').length)[0]
   if (hit) return { code: hit.code, name: hit.name || hit.code, text: t.replace(hit.name || hit.code, ' ') }
+  // พูดถึง "ออฟฟิศ/สำนักงาน/office" → โครงการออฟฟิศ (ค่าใช้จ่ายภายใน)
+  const om = t.match(/(?:ที่|ของ|เข้า|ใน)?\s*(ออฟฟิศ|สำนักงาน|office)/i)
+  if (om) {
+    const o = houses.find((x) => x.kind === 'office') || houses.find((x) => /office|ออฟฟิศ|สำนักงาน/i.test(x.name || ''))
+    if (o) return { code: o.code, name: o.name || o.code, text: t.replace(om[0], ' ') }
+  }
   // "บ้านคุณพร" / "บ้านพร" → หาบ้านที่ชื่อมีคำนั้น
   const m = t.match(/บ้าน\s*(?:คุณ|ของ)?\s*([ก-๙a-zA-Z0-9]+)/)
   if (m) {
@@ -1082,7 +1090,7 @@ function materialPriceFor(desc) {
   return rows.find((r) => r.nkey === k) || rows.find((r) => k.includes(r.nkey) || r.nkey.includes(k)) || null
 }
 function parseOrderText(text) {
-  let t = String(text || '').replace(/^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง|สั่ง)\s*/i, '').trim()
+  let t = String(text || '').replace(ORDER_CMD_RE, '').replace(/^(?:สั่ง)\s*/i, '').replace(/^(?:ให้|ว่า|:)\s*/, '').trim()
   const h = matchHouseInText(t); t = h.text
   const parts = t.split(/[,\n;]|\s+และ\s+|\s+กับ\s+/).map((x) => x.trim()).filter(Boolean)
   const unitRe = ORDER_UNITS.map((u) => u.replace('.', '\\.')).join('|')
