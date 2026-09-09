@@ -939,7 +939,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (/^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง)(?=\s|$)/i.test(t) || (/^สั่ง\s+[ก-๙a-zA-Z]/.test(t) && !lineCanCommand(u))) return handleLineOrder(uid, u, t, replyToken, ctx)
   if (ctx?.kind === 'order') {
     if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineCtx(uid, null); return lineReply(replyToken, 'ทิ้งร่างใบขอซื้อแล้วค่ะ') }
-    if (ctx.pending === 'house') return handleLineOrder(uid, u, t, replyToken, ctx)
+    if (ctx.pending === 'house' || ctx.pending === 'ocat') return handleLineOrder(uid, u, t, replyToken, ctx)
     if (/^(ตกลง|ok|โอเค|ยืนยัน|ใช่|confirm|ส่ง|ส่งเลย)$/i.test(t)) return submitLineOrder(uid, u, ctx, replyToken)
     // พิมพ์รายการใหม่ = แก้ร่างทั้งหมด
     if (parseOrderText(t).items.length) return handleLineOrder(uid, u, t, replyToken, ctx)
@@ -1060,7 +1060,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   return askNextOrSummary(uid, parseLineCommand(t), replyToken)
 }
 // ===== โฟร์แมนสั่งของผ่าน LINE: "สั่งของ ปูน 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร" → ร่าง → 'ตกลง' → ใบขอซื้อ (รอผู้ตรวจสอบ) =====
-const ORDER_UNITS = ['ถุง', 'เส้น', 'ก้อน', 'ตัว', 'แผ่น', 'ม้วน', 'คิว', 'ลูก', 'ชุด', 'กล่อง', 'ลัง', 'ตร.ม.', 'ตรม', 'เมตร', 'ม.', 'กก.', 'กิโล', 'ตัน', 'อัน', 'ท่อน', 'ถัง', 'แกลลอน', 'กระป๋อง', 'มัด', 'แพ็ค', 'ขวด', 'ใบ', 'หลอด', 'ดอก', 'คัน', 'เที่ยว', 'แท่ง', 'คู่', 'บาน']
+const ORDER_UNITS = ['ถุง', 'เส้น', 'ก้อน', 'ตัว', 'แผ่น', 'ม้วน', 'คิว', 'ลูก', 'ชุด', 'กล่อง', 'ลัง', 'ตร.ม.', 'ตรม', 'เมตร', 'ม.', 'กก.', 'กิโลกรัม', 'กิโล', 'ตัน', 'อัน', 'ท่อน', 'ถัง', 'แกลลอน', 'กระป๋อง', 'มัด', 'แพ็ค', 'ขวด', 'ใบ', 'หลอด', 'ดอก', 'คัน', 'เที่ยว', 'แท่ง', 'คู่', 'บาน', 'ลิตร', 'ชิ้น', 'กระสอบ', 'โหล', 'แผง', 'ห่อ', 'เล่ม', 'ต้น', 'กอง', 'รีม', 'แกน', 'หน่วย', 'เครื่อง', 'ตู้', 'จุด']
 function matchHouseInText(t) {
   const houses = db.prepare('SELECT code, name FROM houses').all()
   const hit = houses.filter((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code))).sort((a, b) => (b.name || '').length - (a.name || '').length)[0]
@@ -1104,9 +1104,15 @@ function orderSummary(d) {
   const lines = d.items.map((it, i) => `${i + 1}. ${it.desc}${it.qty ? ' ' + it.qty + ' ' + (it.unit || '') : ''}${it.price ? ` (ราคากลาง ${fmtMoney(it.price)}${it.qty ? ' → ' + fmtMoney(it.qty * it.price) : ''})` : ''}`)
   const total = d.items.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : it.price), 0)
   const checker = prChecker()
-  return `🛒 ร่างใบขอซื้อ\nบ้าน: ${d.house_name || 'ไม่ระบุ'}\n${lines.join('\n')}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
+  return `🛒 ร่างใบขอซื้อ\nบ้าน: ${d.house_name || 'ไม่ระบุ'}${d.category_label ? ' · หมวด ' + d.category_label : ''}\n${lines.join('\n')}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
 }
 async function handleLineOrder(uid, u, t, replyToken, ctx) {
+  // ตอบหมวดของออฟฟิศ (1-4 หรือพิมพ์ชื่อหมวด)
+  if (ctx?.kind === 'order' && ctx.pending === 'ocat') {
+    const n = Number(t.trim()); const hit = OFFICE_CATS[n - 1] || OFFICE_CATS.find(([, l]) => t.includes(l) || l.includes(t.trim()))
+    if (!hit) return lineReply(replyToken, `ตอบเป็นตัวเลข 1-${OFFICE_CATS.length} ค่ะ (${OFFICE_CATS.map(([, l], i) => `${i + 1}=${l}`).join(' ')})`)
+    return finishOrderAsk(uid, { ...ctx, category: hit[0], category_label: hit[1], pending: null }, replyToken)
+  }
   // ตอบคำถาม "ของบ้านไหน"
   if (ctx?.kind === 'order' && ctx.pending === 'house') {
     if (/^(ไม่ระบุ|ไม่มี|-|ข้าม)$/i.test(t)) return finishOrderAsk(uid, { ...ctx, pending: null, house_asked: true }, replyToken)
@@ -1118,14 +1124,18 @@ async function handleLineOrder(uid, u, t, replyToken, ctx) {
   if (!d.items.length) return lineReply(replyToken, 'พิมพ์รายการที่จะสั่งด้วยค่ะ เช่น "สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร"')
   return finishOrderAsk(uid, { kind: 'order', ...d, images: ctx?.kind === 'order' ? ctx.images || [] : [], pending: null, house_asked: false }, replyToken)
 }
+const OFFICE_CATS = [['fuel', 'เบิกค่าน้ำมัน'], ['repair', 'ซ่อมแซมออฟฟิศ'], ['supplies', 'ของใช้สำนักงาน'], ['other', 'อื่นๆ']]
+const isOfficeHouse = (code) => !!code && db.prepare('SELECT kind FROM houses WHERE code=?').get(code)?.kind === 'office'
 function finishOrderAsk(uid, d, replyToken) {
   if (!d.house_name && !d.house_asked && db.prepare('SELECT COUNT(*) c FROM houses').get().c) { setLineCtx(uid, { ...d, pending: 'house' }); return lineReply(replyToken, `📝 รับรายการ ${d.items.length} รายการแล้ว — ของบ้านไหนคะ? (พิมพ์ชื่อบ้าน หรือ 'ไม่ระบุ')`) }
+  // โครงการออฟฟิศ → ถามหมวด (น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ) เพื่อแยกค่าใช้จ่าย
+  if (isOfficeHouse(d.house_code) && !d.category) { setLineCtx(uid, { ...d, pending: 'ocat' }); return lineReply(replyToken, `🏢 ของออฟฟิศ — หมวดไหนคะ? ตอบตัวเลข\n${OFFICE_CATS.map(([, l], i) => `${i + 1}. ${l}`).join('\n')}`) }
   setLineCtx(uid, { ...d, pending: 'confirm' })
   return lineReply(replyToken, orderSummary(d))
 }
 function submitLineOrder(uid, u, d, replyToken) {
   try {
-    const pr = createPurchaseRequest({ house: d.house_name, house_code: d.house_code, items: d.items.map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })), images: d.images || [] }, u)
+    const pr = createPurchaseRequest({ house: d.house_name, house_code: d.house_code, category: d.category || '', items: d.items.map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })), images: d.images || [] }, u)
     setLineCtx(uid, null)
     audit({ user: u }, 'สั่งของผ่าน LINE', `${pr.no} · ${pr.item}`)
     const checker = prChecker()
@@ -1545,7 +1555,7 @@ api.post('/houses', canWrite, (req, res) => {
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อบ้าน' })
   const v = Number(b.value) || 0
   const code = b.code?.trim() || 'NEW-' + String(Date.now()).slice(-4)
-  const kind = b.kind === 'cm' ? 'cm' : 'sale'
+  const kind = ['cm', 'office'].includes(b.kind) ? b.kind : 'sale'
   const info = db
     .prepare('INSERT INTO houses (code,name,project,customer,value,pct,collected,remain,status,area,design,start_date,deliver_date,manager,kind,owner,contract_no,scope,engineer,supervisor,service_fee,site_location) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(code, b.name, b.project || '', b.customer || '', v, Number(b.pct) || 0, 0, v, b.status || 'เพิ่งเริ่ม', b.area || '', b.design || '', b.start_date || '', b.deliver_date || '', b.manager || '', kind, b.owner || '', b.contract_no || '', b.scope || '', b.engineer || '', b.supervisor || '', Number(b.service_fee) || 0, b.site_location || '')
@@ -1561,7 +1571,7 @@ api.put('/houses/:id', canWrite, (req, res) => {
   const b = req.body || {}
   const f = (k, num) => (b[k] != null && b[k] !== '' ? (num ? Number(b[k]) : b[k]) : h[k])
   db.prepare(`UPDATE houses SET name=?, project=?, customer=?, value=?, pct=?, status=?, area=?, design=?, start_date=?, deliver_date=?, manager=?, kind=?, owner=?, contract_no=?, scope=?, engineer=?, supervisor=?, service_fee=?, site_location=?, photo=? WHERE id=?`)
-    .run(f('name'), f('project'), f('customer'), f('value', true), b.pct != null && b.pct !== '' ? Number(b.pct) : h.pct, f('status'), f('area'), f('design'), f('start_date'), f('deliver_date'), f('manager'), b.kind === 'cm' || b.kind === 'sale' ? b.kind : h.kind, f('owner'), f('contract_no'), f('scope'), f('engineer'), f('supervisor'), f('service_fee', true), f('site_location'), b.photo != null ? b.photo : h.photo, h.id)
+    .run(f('name'), f('project'), f('customer'), f('value', true), b.pct != null && b.pct !== '' ? Number(b.pct) : h.pct, f('status'), f('area'), f('design'), f('start_date'), f('deliver_date'), f('manager'), ['cm', 'sale', 'office'].includes(b.kind) ? b.kind : h.kind, f('owner'), f('contract_no'), f('scope'), f('engineer'), f('supervisor'), f('service_fee', true), f('site_location'), b.photo != null ? b.photo : h.photo, h.id)
   for (const k of HOUSE_NUM_FIELDS) db.prepare(`UPDATE houses SET ${k}=? WHERE id=?`).run(f(k, true) || 0, h.id)
   recomputeHouse(h.code)
   audit(req, 'แก้ไขบ้าน', h.name)
@@ -3232,7 +3242,7 @@ function createPurchaseRequest(body, user) {
   const seq = nextSeq('pr', () => Math.max(maxNoSuffix('purchase_requests'), db.prepare('SELECT COUNT(*) c FROM purchase_requests').get().c + 142))
   const no = `PR-${docYear()}-${String(seq).padStart(4, '0')}`
   const hName = house_code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(house_code)?.name || house_code) : (house || '')
-  const cat = ['house', 'carport', 'road'].includes(category) ? category : ''
+  const cat = ['house', 'carport', 'road', 'fuel', 'repair', 'supplies', 'other'].includes(category) ? category : '' // บ้าน: ตัวบ้าน/โรงจอดรถ/ถนน · ออฟฟิศ: น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ
   const info = db
     .prepare('INSERT INTO purchase_requests (no,date,house,by,item,amount,status,requester_sig,image,house_code,category,items,images) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, todayTH(), hName, me.name, summary, total, needCheck ? 'รอตรวจสอบ' : 'รออนุมัติ', me.signature || null, imgs[0] || null, house_code || '', cat, lineItems ? JSON.stringify(lineItems) : null, imgs.length ? JSON.stringify(imgs) : null)

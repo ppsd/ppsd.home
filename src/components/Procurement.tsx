@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { procurementTabs } from '../erpData'
-import { baht, unMoney, matchMaterial } from '../data'
+import { baht, unMoney, matchMaterial, catsOfKind, catLabelOf } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
 import type { ApiPR, ApiPO, ApiPayment, ApiVendor } from '../store'
@@ -18,12 +18,7 @@ const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '
 const td: React.CSSProperties = { padding: '10px 14px' }
 
 const prField: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', outline: 'none' }
-const PR_CATS = [
-  { key: 'house', label: 'ตัวบ้าน' },
-  { key: 'carport', label: 'โรงจอดรถ' },
-  { key: 'road', label: 'ถนน / รั้ว' },
-]
-const catLabel = (k?: string) => PR_CATS.find((c) => c.key === k)?.label || ''
+const catLabel = (k?: string) => catLabelOf(k)
 
 interface Quote { id: number; pr_id: number; vendor: string; price: number; terms: string; note: string; chosen: number; ai?: number; recommended?: number; reason?: string; items?: string | null }
 interface QuoteFile { id: number; pr_id: number; image: string; by: string; source: string; created: string }
@@ -425,7 +420,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                     </select>}
                 <select style={prField} value={prForm.category} onChange={(e) => setPrForm({ ...prForm, category: e.target.value })}>
                   <option value="">— หมวด —</option>
-                  {PR_CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                  {catsOfKind(houses.find((h) => h.code === (houseCode || prForm.house_code))?.kind).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
               </div>
               {/* หลายรายการในใบเดียว */}

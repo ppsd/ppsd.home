@@ -2,6 +2,7 @@ import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import type { ApiPR } from '../store'
 import ApproverSigns from './ApproverSigns'
+import { catLabelOf } from '../data'
 
 // ใบขอซื้อ / ขอจ้าง (PR) — เลย์เอาต์ตามแบบฟอร์มบริษัท
 const bd = '1px solid #333'
@@ -14,7 +15,7 @@ export default function PrApprovalDoc({ pr, onClose, standalone }: { pr: ApiPR; 
   const approved = !!pr.approval?.done || pr.status === 'อนุมัติ'
   const rejected = !!pr.approval?.rejected || pr.status === 'ปฏิเสธ'
   const items = pr.items && pr.items.length ? pr.items : [{ desc: pr.item, qty: 0, unit: '', price: pr.amount }]
-  const catLabel = ({ house: 'ตัวบ้าน', carport: 'โรงจอดรถ', road: 'ถนน/รั้ว' } as Record<string, string>)[pr.category || ''] || pr.category || ''
+  const catLabel = catLabelOf(pr.category)
   return (
     <div className="printdoc-backdrop" style={standalone ? { background: '#fff', padding: 8, width: 776 } : { position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
       {!standalone && <div className="no-print" style={{ maxWidth: 760, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>

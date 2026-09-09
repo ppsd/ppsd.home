@@ -33,7 +33,7 @@ export interface ApiHouse {
   profit?: number
   breakdown?: { key: string; label: string; customer: number; contractor: number }[]
   // Phase 1: ประเภทโครงการ + ข้อมูลแบบ CM (ควบคุมงาน)
-  kind?: string // 'sale' | 'cm'
+  kind?: string // 'sale' | 'cm' | 'office' (ออฟฟิศ/ค่าใช้จ่ายภายใน — หมวดเป็น น้ำมัน/ซ่อม/ของใช้/อื่นๆ)
   owner?: string
   contract_no?: string
   scope?: string
