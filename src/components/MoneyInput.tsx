@@ -1,8 +1,8 @@
-import { fmtMoney, fmtMoneyDecimal } from '../data'
+import { fmtMoneyDecimal } from '../data'
 
 // A text input that shows live thousands separators (1,000,000) and numeric keypad.
 // Stores the formatted string; parse with unMoney() on submit.
-// decimal=true → อนุญาตจุดทศนิยม (สูงสุด 2 ตำแหน่ง) เช่น ค่าแรงรายวัน 1,166.67
+// ทุกช่องเงินใส่จุดทศนิยมได้ (สูงสุด 2 ตำแหน่ง) เช่น 1,166.67 — บางรายการมีเศษสตางค์ · prop decimal คงไว้เพื่อความเข้ากันได้
 export default function MoneyInput({
   value,
   onChange,
@@ -16,7 +16,8 @@ export default function MoneyInput({
   placeholder?: string
   decimal?: boolean
 }) {
-  const fmt = decimal ? fmtMoneyDecimal : fmtMoney
+  void decimal
+  const fmt = fmtMoneyDecimal
   return (
     <input
       inputMode="decimal"

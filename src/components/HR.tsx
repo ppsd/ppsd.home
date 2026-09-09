@@ -551,7 +551,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                         : (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end' }} title="กรอกภาษีเอง">
                             <span style={{ color: '#C0852C', fontSize: 12 }}>฿</span>
-                            <input key={p.id + '-tax-' + (p.tax || 0)} type="text" inputMode="numeric" defaultValue={String(p.tax || 0)}
+                            <input key={p.id + '-tax-' + (p.tax || 0)} type="text" inputMode="decimal" defaultValue={String(p.tax || 0)}
                               disabled={taxSaving === p.id}
                               onFocus={(e) => e.currentTarget.select()}
                               onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
@@ -567,7 +567,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                         : (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end' }} title="แก้ยอดหักต่อเดือนได้ · คนที่หักครบแล้วใส่ 0">
                             <span style={{ color: (p.retention_monthly ?? ret) ? '#C24036' : '#94A0A8', fontSize: 12 }}>-฿</span>
-                            <input key={p.id + '-' + (p.retention_monthly ?? ret)} type="text" inputMode="numeric" defaultValue={String(p.retention_monthly ?? ret ?? 0)}
+                            <input key={p.id + '-' + (p.retention_monthly ?? ret)} type="text" inputMode="decimal" defaultValue={String(p.retention_monthly ?? ret ?? 0)}
                               disabled={retSaving === p.id}
                               onFocus={(e) => e.currentTarget.select()}
                               onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
@@ -583,7 +583,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                         : (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end' }} title="แก้ยอดหัก กยศ ต่อเดือนได้ · ไม่มีให้ใส่ 0">
                             <span style={{ color: loan ? '#C24036' : '#94A0A8', fontSize: 12 }}>-฿</span>
-                            <input key={p.id + '-loan-' + loan} type="text" inputMode="numeric" defaultValue={String(loan ?? 0)}
+                            <input key={p.id + '-loan-' + loan} type="text" inputMode="decimal" defaultValue={String(loan ?? 0)}
                               disabled={loanSaving === p.id}
                               onFocus={(e) => e.currentTarget.select()}
                               onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}

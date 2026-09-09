@@ -33,7 +33,8 @@ export const houses: House[] = [
   { id: 'h8', code: 'ST-015', name: 'บ้านพิมพ์มาดา', project: 'โครงการสิริทรัพย์', customer: 'คุณศิริพร เจริญ', value: 5200000, pct: 48, collected: 2496000, remain: 2704000, status: 'กำลังสร้าง' },
 ]
 
-export const baht = (n: number) => '฿' + n.toLocaleString('en-US')
+// แสดงทศนิยมเมื่อมีเศษสตางค์ (เช่น ฿1,234.50) · จำนวนเต็มแสดงแบบเดิม
+export const baht = (n: number) => '฿' + (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
 // money input helpers: format digits with thousands separators / parse back to a number
 export const fmtMoney = (v: string | number) => {
   const d = String(v).replace(/[^\d]/g, '')
