@@ -3810,9 +3810,21 @@ api.post('/users', adminOnly, (req, res) => {
 api.put('/users/:id', adminOnly, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
   if (!u) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
-  const { role, status, deny_mods } = req.body || {}
+  const { role, status, deny_mods, name, username, position } = req.body || {}
   const newRole = ['admin', 'accounting', 'site', 'viewer'].includes(role) ? role : u.role
-  const newStatus = status ?? u.status
+  const newStatus = ['ใช้งาน', 'ปิดใช้งาน'].includes(status) ? status : u.status
+  // แก้ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง
+  if (name !== undefined || username !== undefined || position !== undefined) {
+    const nName = name !== undefined ? String(name).trim() : u.name
+    const nUser = username !== undefined ? String(username).trim() : u.username
+    if (!nName) return res.status(400).json({ error: 'กรุณากรอกชื่อ' })
+    if (!nUser) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ใช้' })
+    if (nUser !== u.username && db.prepare('SELECT id FROM users WHERE username=? AND id<>?').get(nUser, u.id)) return res.status(409).json({ error: `ชื่อผู้ใช้ "${nUser}" มีคนใช้แล้ว` })
+    db.prepare('UPDATE users SET name=?, username=?, position=? WHERE id=?').run(nName, nUser, position !== undefined ? String(position || '').trim() : (u.position || ''), u.id)
+    // พนักงานที่ผูกบัญชีนี้ → เปลี่ยนชื่อตาม (ให้ชื่อในใบสั่งงาน/ลงเวลาตรงกัน)
+    if (nName !== u.name) db.prepare('UPDATE employees SET name=? WHERE user_id=?').run(nName, u.id)
+    audit(req, 'แก้ไขข้อมูลผู้ใช้', `${u.name} → ${nName} (${nUser}${position !== undefined ? ' · ' + position : ''})`)
+  }
   // กันล็อกทั้งบริษัทออกจากระบบ: ต้องเหลือผู้ดูแลที่ใช้งานได้อย่างน้อย 1 คนเสมอ
   if (u.role === 'admin' && (newRole !== 'admin' || newStatus !== 'ใช้งาน')) {
     const admins = db.prepare("SELECT COUNT(*) c FROM users WHERE role='admin' AND status='ใช้งาน' AND id != ?").get(u.id).c
@@ -3825,7 +3837,19 @@ api.put('/users/:id', adminOnly, (req, res) => {
     db.prepare('UPDATE users SET deny_mods=? WHERE id=?').run(JSON.stringify(clean), u.id)
     audit(req, 'ตั้งสิทธิ์รายโมดูล', `${u.name}: ปิด [${clean.join(', ') || 'ไม่มี'}]`)
   }
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active,deny_mods FROM users WHERE id=?').get(u.id))
+  res.json(db.prepare('SELECT id,name,username,role,status,last_active,deny_mods,position FROM users WHERE id=?').get(u.id))
+})
+// ลบผู้ใช้ (แอดมิน) — ห้ามลบตัวเอง / ห้ามลบผู้ดูแลคนสุดท้าย · เอกสารเก่ายังเก็บชื่อไว้เป็นข้อความ ไม่หาย
+api.delete('/users/:id', adminOnly, (req, res) => {
+  const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
+  if (!u) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
+  if (u.id === req.user.id) return res.status(400).json({ error: 'ลบบัญชีที่กำลังใช้งานอยู่ไม่ได้' })
+  if (u.role === 'admin' && db.prepare("SELECT COUNT(*) c FROM users WHERE role='admin' AND status='ใช้งาน' AND id<>?").get(u.id).c === 0) return res.status(400).json({ error: 'ลบไม่ได้ — ต้องเหลือผู้ดูแลระบบอย่างน้อย 1 คน' })
+  db.prepare('UPDATE employees SET user_id=NULL WHERE user_id=?').run(u.id)
+  db.prepare('DELETE FROM users WHERE id=?').run(u.id)
+  if (String(getSetting('pr_checker_user', '')) === String(u.id)) setSetting('pr_checker_user', '')
+  audit(req, 'ลบผู้ใช้', `${u.name} (${u.username})`)
+  res.json({ ok: true })
 })
 // ---------- job positions (ตำแหน่งงาน) — shared by users + employees ----------
 api.get('/positions', (_req, res) =>

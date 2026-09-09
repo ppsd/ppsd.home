@@ -1207,3 +1207,17 @@ test('ตำแหน่ง CEO = สิทธิ์เท่าผู้จั�
   assert.equal(row.status, 'ยกเลิก'); assert.equal(row.approval.rejected, true)
   assert.equal((await GET('/purchase-requests')).data.find((r) => r.id === pr2.data.id).status, 'ปฏิเสธ')
 })
+
+test('ผู้ใช้งาน: แก้ชื่อ/ชื่อผู้ใช้/ตำแหน่งได้ (กันชื่อผู้ใช้ซ้ำ) · ปิด-เปิดใช้งาน · ลบได้ (ห้ามลบตัวเอง/แอดมินคนสุดท้าย)', async () => {
+  const nu = await POST('/users', { name: 'ทดสอบ แก้ไข', username: 'edit1', pin: '1212', role: 'site', position: 'โฟร์แมน' })
+  assert.equal(nu.status, 201)
+  const up = await PUT(`/users/${nu.data.id}`, { name: 'ทดสอบ แก้แล้ว', username: 'edit2', position: 'จัดซื้อ' })
+  assert.equal(up.status, 200); assert.equal(up.data.name, 'ทดสอบ แก้แล้ว'); assert.equal(up.data.username, 'edit2'); assert.equal(up.data.position, 'จัดซื้อ')
+  assert.equal((await PUT(`/users/${nu.data.id}`, { username: 'somchai' })).status, 409, 'ชื่อผู้ใช้ซ้ำต้องถูกกัน')
+  assert.equal((await PUT(`/users/${nu.data.id}`, { status: 'ปิดใช้งาน' })).data.status, 'ปิดใช้งาน')
+  assert.ok([401, 403].includes((await POST('/login', { username: 'edit2', pin: '1212' })).status), 'บัญชีที่ปิดใช้งานต้องล็อกอินไม่ได้')
+  const me = (await GET('/me')).data
+  assert.equal((await DEL(`/users/${me.id}`)).status, 400, 'ห้ามลบตัวเอง')
+  assert.equal((await DEL(`/users/${nu.data.id}`)).status, 200)
+  assert.ok(!(await GET('/users')).data.some((u) => u.id === nu.data.id))
+})

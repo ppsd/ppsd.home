@@ -30,7 +30,24 @@ function PermCell({ level }: { level: string }) {
 }
 
 export default function Users({ onAddUser }: { onAddUser: () => void }) {
-  const { data, user, updateUser, downloadBackup, resetUserPin, addPosition, restoreBackup } = useApp()
+  const { data, user, updateUser, removeUser, downloadBackup, resetUserPin, addPosition, restoreBackup } = useApp()
+  // แก้ไขรายชื่อ: ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง · ลบ · เปิด-ปิดใช้งาน
+  const [editU, setEditU] = useState<{ id: number; name: string; username: string; position: string } | null>(null)
+  const [editErr, setEditErr] = useState('')
+  const saveEdit = async () => {
+    if (!editU) return
+    setEditErr('')
+    try { await updateUser(editU.id, { name: editU.name, username: editU.username, position: editU.position }); setEditU(null) } catch (e) { setEditErr((e as Error).message) }
+  }
+  const delUser = async (u: { id: number; name: string }) => {
+    if (!window.confirm(`ลบผู้ใช้ "${u.name}" ออกจากระบบ?\n(เอกสารเก่าที่มีชื่อนี้ยังอยู่ครบ แต่บัญชีนี้จะเข้าระบบไม่ได้อีก)`)) return
+    try { await removeUser(u.id) } catch (e) { window.alert((e as Error).message) }
+  }
+  const toggleActive = async (u: { id: number; name: string; status: string }) => {
+    const next = u.status === 'ใช้งาน' ? 'ปิดใช้งาน' : 'ใช้งาน'
+    if (!window.confirm(`${next === 'ปิดใช้งาน' ? 'ปิดการใช้งาน' : 'เปิดใช้งาน'}บัญชี "${u.name}"?`)) return
+    try { await updateUser(u.id, { status: next }) } catch (e) { window.alert((e as Error).message) }
+  }
   const isAdmin = user?.role === 'admin'
   // เปิด/ปิดโมดูลรายคน — บันทึกทันที
   const toggleMod = async (u: ApiUser, key: string) => {
@@ -517,7 +534,10 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                 <tr key={i} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ ...td, padding: '11px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ width: 30, height: 30, borderRadius: '50%', background: '#30506A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 12.5, flexShrink: 0 }}>{u.name[0]}</span>
-                    <span style={{ fontWeight: 500 }}>{u.name}</span>
+                    <div>
+                      <div style={{ fontWeight: 500 }}>{u.name}</div>
+                      {u.position && <div style={{ fontSize: 11, color: '#94A0A8' }}>{u.position}</div>}
+                    </div>
                   </td>
                   <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{u.username}</td>
                   <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: rs.c, background: rs.bg, padding: '3px 11px', borderRadius: 20 }}>{rs.label}</span></td>
@@ -557,7 +577,28 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                         ))}
                       </select>
                       <button onClick={() => doResetPin(u.id, u.name)} title="ตั้ง PIN ใหม่ให้ผู้ใช้นี้" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>รีเซ็ต PIN</button>
+                      <button onClick={() => { setEditErr(''); setEditU({ id: u.id, name: u.name, username: u.username, position: u.position || '' }) }} title="แก้ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>✎ แก้ไข</button>
+                      {u.id !== user?.id && <>
+                        <button onClick={() => toggleActive(u)} title={active ? 'ปิดการใช้งานบัญชีนี้ (เข้าระบบไม่ได้ แต่ข้อมูลยังอยู่)' : 'เปิดใช้งานบัญชีนี้'} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: active ? '#5C6770' : '#2E7D55', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>{active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</button>
+                        <button onClick={() => delUser(u)} title="ลบผู้ใช้ออกจากระบบ" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #EDD3CE', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>🗑 ลบ</button>
+                      </>}
                     </div>
+                    {editU?.id === u.id && (
+                      <div style={{ marginTop: 8, background: '#F7F9FB', border: '1px solid #E1E5EA', borderRadius: 9, padding: 10, display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left' }}>
+                        <input value={editU.name} onChange={(e) => setEditU({ ...editU, name: e.target.value })} placeholder="ชื่อ-สกุล" style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }} />
+                        <input value={editU.username} onChange={(e) => setEditU({ ...editU, username: e.target.value })} placeholder="ชื่อผู้ใช้ (ล็อกอิน)" style={{ fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }} />
+                        <select value={editU.position} onChange={(e) => setEditU({ ...editU, position: e.target.value })} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }}>
+                          <option value="">— ตำแหน่ง —</option>
+                          {data.positions.map((p) => <option key={p} value={p}>{p}</option>)}
+                          {editU.position && !data.positions.includes(editU.position) && <option value={editU.position}>{editU.position}</option>}
+                        </select>
+                        {editErr && <div style={{ fontSize: 11.5, color: '#C24036' }}>{editErr}</div>}
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                          <button onClick={() => setEditU(null)} style={{ fontFamily: 'inherit', fontSize: 11.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>ยกเลิก</button>
+                          <button onClick={saveEdit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>บันทึก</button>
+                        </div>
+                      </div>
+                    )}
                   </td>
                 </tr>
               )
