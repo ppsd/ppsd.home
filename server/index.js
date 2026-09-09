@@ -571,7 +571,7 @@ async function lineApprovalAction(u, docType, docId, action, note, replyToken) {
     }
     doReject(docType, doc.id, fakeReq)
     const reqUid = lineUidOfName(doc.by); if (reqUid && reqUid !== u.line_uid) linePush(reqUid, `❌ ${cfg.label} ${no} ของคุณถูกปฏิเสธโดย ${u.name}${note ? '\nเหตุผล: ' + note : ''}`)
-    return lineReply(replyToken, `❌ ปฏิเสธ ${cfg.label} ${no} แล้ว${note ? ' (' + note + ')' : ''}`)
+    return lineReply(replyToken, `❌ ปฏิเสธ ${cfg.label} ${no} แล้ว${note ? ' (' + note + ')' : ''}${docType === 'po' || docType === 'pr' ? ' — ใบนี้ยกเลิกทันที แจ้งจัดซื้อ/ผู้ขอแล้วค่ะ' : ''}`)
   } catch (e) { return lineReply(replyToken, `ทำรายการไม่ได้ค่ะ: ${e.msg || e.message}`) }
 }
 async function handleLinePostback(uid, data, replyToken) {
@@ -615,7 +615,7 @@ function pendingApprovals() {
   for (const [docType, cfg] of Object.entries(APPROVE_DOCS)) {
     let rows = []
     try { rows = cfg.noStatus ? db.prepare(`SELECT * FROM ${cfg.table} ORDER BY id DESC LIMIT 100`).all() : db.prepare(`SELECT * FROM ${cfg.table} WHERE status='รออนุมัติ' ORDER BY id DESC LIMIT 30`).all() } catch { continue }
-    for (const r of rows) { const st = approvalState(docType, r.id); if (!st.done && !st.rejected) out.push({ docType, doc: r, st }) }
+    for (const r of rows) { if (r.status === 'ยกเลิก') continue; const st = approvalState(docType, r.id); if (!st.done && !st.rejected) out.push({ docType, doc: r, st }) }
   }
   return out.slice(0, 30)
 }
@@ -1607,6 +1607,16 @@ function doReject(docType, docId, req) {
   db.prepare('INSERT INTO doc_approvals (doc_type,doc_id,step,decision,approver,approver_sig,role,note,date,ts) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(docType, Number(docId), st.approvals.length + 1, 'reject', me.name, me.signature || null, me.role || '', req.body?.note || '', todayTH(), nowTS())
   setDocStatus(docType, docId, 'ปฏิเสธ')
+  // ใบสั่งซื้อถูกปฏิเสธ = ยกเลิกทันที (สถานะ "ยกเลิก" — ไม่รับของ/ไม่ตั้งหนี้/ไม่จ่าย) และแจ้งจัดซื้อ+ผู้ขอ · ใบขอซื้อถูกปฏิเสธ → PO ร่างของใบนั้นยกเลิกตาม
+  if (docType === 'po') cancelPo(doc, me.name, req.body?.note || '')
+  if (docType === 'pr') {
+    for (const po of db.prepare("SELECT * FROM purchase_orders WHERE pr_no=? AND status<>'ยกเลิก'").all(doc.no)) {
+      if (approvalState('po', po.id).done) continue
+      db.prepare('INSERT INTO doc_approvals (doc_type,doc_id,step,decision,approver,approver_sig,role,note,date,ts) VALUES (?,?,?,?,?,?,?,?,?,?)').run('po', po.id, 1, 'reject', me.name, me.signature || null, me.role || '', `ยกเลิกตาม ${doc.no} ที่ถูกปฏิเสธ`, todayTH(), nowTS())
+      cancelPo(po, me.name, `ยกเลิกตาม ${doc.no} ที่ถูกปฏิเสธ`)
+    }
+    const reqUid = lineUidOfName(doc.by); if (reqUid) linePush(reqUid, `❌ ใบขอซื้อ ${doc.no} ถูกปฏิเสธโดย ${me.name}${req.body?.note ? '\nเหตุผล: ' + req.body.note : ''} — ใบนี้ยกเลิกแล้ว ถ้ายังต้องการให้ขอซื้อใหม่`)
+  }
   // ปฏิเสธแล้ว = เอกสารเป็นโมฆะ → ถอนรายการบัญชีที่ลงไว้ตอนสร้างออกด้วย ไม่งั้นยอดค้างอยู่ในบัญชีตลอด
   try {
     if (docType === 'payment') acct.removeAutoJournal('pay', Number(docId))
@@ -1617,6 +1627,18 @@ function doReject(docType, docId, req) {
   }
   audit(req, `ปฏิเสธ ${cfg.label}`, doc.no || String(docId))
   return approvalState(docType, docId)
+}
+// ยกเลิกใบสั่งซื้อ: สถานะ "ยกเลิก" + ถอนรายจ่ายที่ผูก (ถ้ามี) + แจ้ง LINE จัดซื้อและผู้ขอ PR
+function cancelPo(po, byName, note) {
+  db.prepare("UPDATE purchase_orders SET status='ยกเลิก' WHERE id=?").run(po.id)
+  try { const exp = db.prepare('SELECT id FROM expenses WHERE po_id=?').get(po.id); if (exp) { acct.removeAutoJournal('exp', exp.id); db.prepare('DELETE FROM expenses WHERE id=?').run(exp.id) } } catch (e) { console.error('cancelPo expense:', e.message) }
+  const pr = po.pr_no ? db.prepare('SELECT * FROM purchase_requests WHERE no=?').get(po.pr_no) : null
+  const text = `❌ ใบสั่งซื้อ ${po.no} ร้าน ${po.vendor} ยอด ${fmtMoney(po.amount)} บาท ถูกปฏิเสธโดย ${byName} — ยกเลิกแล้ว${note ? '\nเหตุผล: ' + note : ''}${pr ? `\n${pr.no} กลับไปรอเทียบราคา/ออก PO ใหม่ (ส่งรูปใบเสนอราคาร้านอื่น หรือกด "เลือกร้านอื่น" ในการ์ดเทียบราคา)` : ''}`
+  const uids = new Set(docRecipients().filter((u) => u.line_uid).map((u) => u.line_uid))
+  if (pr) { const r = lineUidOfName(pr.by); if (r) uids.add(r) }
+  const byUid = lineUidOfName(byName); if (byUid) uids.delete(byUid)
+  for (const uid of uids) linePush(uid, text)
+  audit({ user: { name: byName } }, 'ยกเลิกใบสั่งซื้อ (ถูกปฏิเสธ)', `${po.no}${note ? ' · ' + note : ''}`)
 }
 const attachApproval = (docType) => (r) => r ? { ...r, approval: approvalState(docType, r.id) } : r
 // กติกาจำนวนผู้อนุมัติเปลี่ยน (เช่น 3 → 1) → เอกสารที่ "รออนุมัติ" แต่ตอนนี้นับว่าครบแล้ว ต้องเปลี่ยนสถานะเป็น "อนุมัติ" ให้ตรง
@@ -3165,6 +3187,7 @@ function syncPoExpense(po) {
 }
 api.post('/purchase-orders/:id/status', financeOnly, (req, res) => {
   const st = ['รอส่งของ', 'รับของแล้ว', 'ปิดงาน'].includes(req.body?.status) ? req.body.status : 'รอส่งของ'
+  if (db.prepare('SELECT status FROM purchase_orders WHERE id=?').get(req.params.id)?.status === 'ยกเลิก') return res.status(409).json({ error: 'ใบสั่งซื้อนี้ถูกปฏิเสธ/ยกเลิกแล้ว — ออกใบใหม่แทน' })
   // ต้องอนุมัติ PO ครบก่อน ถึงจะรับของ/ปิดงานได้
   if (controls().enforce_approval_flow && (st === 'รับของแล้ว' || st === 'ปิดงาน') && !approvalState('po', req.params.id).done)
     return res.status(409).json({ error: 'อัปเดตสถานะไม่ได้ — ใบสั่งซื้อยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PO ก่อน)' })
@@ -3276,6 +3299,7 @@ api.post('/purchase-orders/:id/extract-receipt', canWrite, express.raw({ type: '
 // ตรวจรับของ: เทียบ PO.items กับรายการในใบส่งของ (ที่ผู้ใช้ยืนยันแล้ว) → บันทึกผล + อัปเดตสถานะ PO
 api.post('/purchase-orders/:id/receive', canWrite, (req, res) => {
   const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id)
+  if (po?.status === 'ยกเลิก') return res.status(409).json({ error: `${po.no} ถูกปฏิเสธ/ยกเลิกแล้ว — ตรวจรับไม่ได้` })
   if (!po) return res.status(404).json({ error: 'ไม่พบใบสั่งซื้อ' })
   if (controls().enforce_approval_flow && !approvalState('po', po.id).done)
     return res.status(409).json({ error: `ตรวจรับของไม่ได้ — ใบสั่งซื้อ ${po.no} ยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PO ก่อน)` })

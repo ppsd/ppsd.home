@@ -558,7 +558,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const role = me.role
     const finance = role === 'admin' || role === 'accounting'
     // salary/payroll visible to: บัญชี (accounting) + ผู้จัดการ + HR (บุคคล) + admin
-    const salary = finance || me.position === 'ผู้จัดการ' || me.position === 'บุคคล'
+    const salary = finance || me.position === 'ผู้จัดการ' || me.position === 'CEO' || !!me.isManager || me.position === 'บุคคล'
     const [houses, installments, issues, expenses, employees, ot, dashboard] = await Promise.all([
       tryGet<ApiHouse[]>('/houses', []),
       tryGet<ApiInstallment[]>('/installments', []),
