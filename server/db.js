@@ -527,6 +527,8 @@ if (db.prepare('SELECT COUNT(*) c FROM labor_rates').get().c === 0) {
 ensureColumn('purchase_orders', 'items', 'TEXT')     // รายการที่สั่งในใบเดียว (JSON: [{desc,qty,unit,price}]) — สำเนาไว้ในตัว PO เพื่อเทียบใบส่งของ
 ensureColumn('purchase_orders', 'gr_status', 'TEXT') // ผลตรวจรับของ: 'ผ่าน' / 'ไม่ผ่าน' / '' (ยังไม่ตรวจ)
 ensureColumn('purchase_orders', 'gr_date', 'TEXT')   // วันที่ตรวจรับล่าสุด
+ensureColumn('purchase_orders', 'doc_key', 'TEXT')   // กุญแจลิงก์สาธารณะของรูปใบ PO (ส่งเข้า LINE)
+ensureColumn('purchase_orders', 'doc_sent', 'TEXT')  // ผลส่งใบ PO เป็นรูปเข้า LINE
 db.exec(`CREATE TABLE IF NOT EXISTS goods_receipts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   po_id INTEGER, po_no TEXT,

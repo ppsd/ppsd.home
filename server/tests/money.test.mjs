@@ -41,13 +41,14 @@ before(async () => {
     env: {
       ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1',
       PPSD_CHROME: process.env.PPSD_CHROME || '/opt/pw-browsers/chromium', // สร้างรูปใบ PR (เทสต์ข้ามถ้าไม่มี Chrome)
+      PPSD_AUTOCOMPARE_MS: '400', // เทียบราคาอัตโนมัติหลังรูปสุดท้าย (จริง 60 วิ)
       // AI เทียบใบเสนอราคา: ใช้ผลจำลองแทนการยิง API จริง
       PPSD_AI_MOCK_COMPARE: JSON.stringify({ quotes: [
         { vendor: 'ร้าน A', total: 9500, vat_included: true, items: [{ name: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 950, amount: 9500 }], terms: 'เงินสด' },
         { vendor: 'ร้าน B', total: 9000, vat_included: true, items: [{ name: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 900, amount: 9000 }], terms: 'เครดิต 30 วัน ส่งฟรี' },
       ], best_vendor: 'ร้าน B', reason: 'ถูกกว่า 500 บาท และให้เครดิต 30 วัน', summary: 'ร้าน B คุ้มสุด' }),
     },
-    stdio: 'ignore',
+    stdio: process.env.PPSD_TEST_STDIO ? 'inherit' : 'ignore', // PPSD_TEST_STDIO=1 เพื่อดู log เซิร์ฟเวอร์ตอนดีบักเทสต์
   })
   // รอเซิร์ฟเวอร์พร้อม
   for (let i = 0; i < 60; i++) {
@@ -826,7 +827,7 @@ test('บอท LINE: ข้อมูลไม่ครบ → ถามผู�
   const fri = await p('ศุกร์นี้'); assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(fri.due_date) && new Date(fri.due_date).getDay() === 5, 'ศุกร์นี้ต้องเป็นวันศุกร์')
   // บทสนทนา: ไม่มีผู้รับ ไม่มีวัน → ถาม → ตอบ → สรุป → ตกลง
   const hook = (uid, text) => api('POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r1', source: { type: 'user', userId: uid }, message: { type: 'text', text } }] })
-  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const wait = () => new Promise((r) => setTimeout(r, 600))
   const c1 = await POST('/line-link/code', {}); await hook('Uceo', c1.data.code); await wait()
   const n0 = (await GET('/work-orders')).data.length
   await hook('Uceo', 'ไปเช็คระบบไฟบ้านเทสต์ให้หน่อย'); await wait()   // ไม่มีผู้รับ → บอทถาม "ให้ใครคะ"
@@ -849,7 +850,7 @@ test('อนุมัติผ่าน LINE: PR ใหม่ → การ์�
   const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
   const postback = (uid, data) => hook(uid, { type: 'postback', postback: { data } })
-  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const wait = () => new Promise((r) => setTimeout(r, 600))
   // ผูก CEO
   const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
   // พนักงาน (somchai, site) ขอซื้อ → PR รออนุมัติ
@@ -952,7 +953,7 @@ test('ขั้นตอนจัดซื้อ 4-5: ส่งรูปใบ�
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
   const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
   const postback = (uid, data) => hook(uid, { type: 'postback', postback: { data } })
-  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const wait = () => new Promise((r) => setTimeout(r, 600))
   const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
   // PR จากโฟร์แมน (somchai) → แอดมินอนุมัติ
   const adminToken = token
@@ -989,16 +990,16 @@ test('ขั้นตอนจัดซื้อ 4-5: ส่งรูปใบ�
   assert.ok(po, 'ต้องมี PO ที่อ้าง PR นี้')
   assert.equal(po.vendor, 'ร้าน B'); assert.equal(po.amount, 9000); assert.equal(po.items[0].desc, 'เหล็กเส้น 12 มม.'); assert.equal(po.items[0].price, 900)
   assert.equal(po.approval.count, 0, 'PO ใหม่ต้องรออนุมัติ (การ์ดส่งถึงผู้อนุมัติ)')
-  // ทางเว็บ: ออก PO จากร้านที่เลือกโดยไม่ระบุ quote_id
+  // ทางเว็บ: ออก PO ร้านเดิมซ้ำ → ระบบกัน (มีใบร้านนี้รออนุมัติอยู่แล้ว)
   const web = await POST(`/purchase-requests/${pr.data.id}/issue-po`, {})
-  assert.equal(web.status, 201); assert.equal(web.data.vendor, 'ร้าน B')
+  assert.equal(web.status, 409); assert.match(web.data.error, /ร่างไว้แล้ว/)
   await DEL('/line-link')
 })
 
 test('โฟร์แมนสั่งของผ่าน LINE: "สั่งของ …" → ร่าง (ถามบ้าน) → ตกลง → ใบขอซื้อรอผู้ตรวจสอบ · ราคากลางเติมให้ · ผู้บริหารได้การ์ดเมื่อผ่านตรวจ', async () => {
   const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
-  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const wait = () => new Promise((r) => setTimeout(r, 600))
   const adminToken = token
   const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
   await PUT('/procurement/flow', { checker_user_id: som.id })
@@ -1045,7 +1046,7 @@ test('การ์ดตรวจสอบ: บันทึกสถานะก
 test('ใบ PR อนุมัติครบ → สร้างรูปใบด้วย Chrome → ส่งเข้า LINE ผู้รับที่ตั้งไว้ (บันทึกผล/สาเหตุ) · รูปเปิดดูได้ผ่านลิงก์สาธารณะ', { skip: !existsSync(process.env.PPSD_CHROME || '/opt/pw-browsers/chromium') && 'ไม่มี Chrome ในเครื่องทดสอบ' }, async () => {
   const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
-  const wait = (ms = 300) => new Promise((r) => setTimeout(r, ms))
+  const wait = (ms = 600) => new Promise((r) => setTimeout(r, ms))
   const adminToken = token
   const me = (await GET('/me')).data
   // ยังไม่ตั้งผู้รับ → บอกสาเหตุ
@@ -1080,7 +1081,7 @@ test('ใบ PR อนุมัติครบ → สร้างรูปใ�
 test('โครงการ "ออฟฟิศ": ใบขอซื้อใช้หมวด น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ · สั่งของทาง LINE ถามหมวดแล้วบันทึกให้', async () => {
   const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
-  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const wait = () => new Promise((r) => setTimeout(r, 600))
   const h = await POST('/houses', { name: 'PPSD office', code: 'OFFICE', kind: 'office' })
   assert.equal(h.status, 201); assert.equal(h.data.kind, 'office')
   const pr = await POST('/purchase-requests', { house_code: 'OFFICE', category: 'supplies', items: [{ desc: 'กระดาษ A4', qty: 5, unit: 'รีม', price: 120 }] })
@@ -1101,7 +1102,7 @@ test('โครงการ "ออฟฟิศ": ใบขอซื้อใช
 test('ผู้บริหารพิมพ์ "เปิด PR …" / "ขอจ้าง … ที่ออฟฟิศ" ใน LINE → เป็นใบขอซื้อ (ไม่ใช่ใบสั่งงาน) และไปหาผู้ตรวจสอบ', async () => {
   const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
-  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const wait = () => new Promise((r) => setTimeout(r, 600))
   const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
   await PUT('/procurement/flow', { checker_user_id: som.id })
   const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
@@ -1122,7 +1123,7 @@ test('ผู้บริหารพิมพ์ "เปิด PR …" / "ขอ
 test('LINE: ข้อความที่ฟังดูเหมือนซื้อ/จ้างแต่ไม่ขึ้นต้นด้วยคำสั่ง → บอทถาม 1 (PR) / 2 (สั่งงาน) ก่อน', async () => {
   const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
-  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const wait = () => new Promise((r) => setTimeout(r, 600))
   const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
   const n0 = (await GET('/purchase-requests')).data.length
   const w0 = (await GET('/work-orders')).data.length
@@ -1134,5 +1135,41 @@ test('LINE: ข้อความที่ฟังดูเหมือนซ�
   const prs = (await GET('/purchase-requests')).data
   assert.equal(prs.length, n0 + 1); assert.equal(prs[0].house_code, 'OFFICE'); assert.equal(prs[0].category, 'other')
   assert.equal((await GET('/work-orders')).data.length, w0)
+  await DEL('/line-link')
+})
+
+test('เทียบราคาอัตโนมัติ: ส่งรูปครบ → AI เทียบเอง → ร่าง PO จากร้านที่แนะนำ + การ์ดอนุมัติมีตารางเทียบราคา · เปลี่ยนร้านแล้วใบเดิมถูกยกเลิก', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
+  const postback = (uid, data) => hook(uid, { type: 'postback', postback: { data } })
+  const wait = (ms = 600) => new Promise((r) => setTimeout(r, ms))
+  const adminToken = token
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 1000 }] })
+  token = adminToken
+  assert.equal((await POST(`/approve/pr/${pr.data.id}`)).status, 200)
+  // ระบุใบแล้วส่งรูป 2 ร้าน → ไม่ต้องพิมพ์ 'เทียบราคา' ระบบเทียบเองหลังหน่วง (PPSD_AUTOCOMPARE_MS)
+  await msg('Uceo', `ใบเสนอราคา ${pr.data.no}`); await wait()
+  await img('Uceo', 'a1'); await wait()
+  await img('Uceo', 'a2'); await wait(1500)
+  const quotes = (await GET(`/purchase-requests/${pr.data.id}/quotes`)).data
+  assert.equal(quotes.filter((q) => q.ai).length, 2, 'AI ต้องเทียบเองเมื่อรูปครบ')
+  let row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.quote_files, 2); assert.equal(row.chosen_vendor, 'ร้าน B')
+  assert.ok(row.po_no, 'ต้องร่าง PO ให้อัตโนมัติ'); assert.equal(row.po_vendor, 'ร้าน B'); assert.equal(row.po_approved, false)
+  const po = (await GET('/purchase-orders')).data.find((o) => o.no === row.po_no)
+  assert.equal(po.amount, 9000); assert.equal(po.approval.count, 0)
+  // เปลี่ยนร้านผ่านปุ่ม → ใบเดิมถูกปฏิเสธ ใบใหม่ร้าน A
+  const qa = quotes.find((q) => q.vendor === 'ร้าน A')
+  await postback('Uceo', `po:${pr.data.id}:${qa.id}`); await wait()
+  row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.po_vendor, 'ร้าน A')
+  const oldPo = (await GET('/purchase-orders')).data.find((o) => o.no === po.no)
+  assert.equal(oldPo.approval.rejected, true, 'PO ร้านเดิมต้องถูกยกเลิก')
+  // กดร้านเดิมซ้ำ → ไม่ออกซ้ำ
+  await postback('Uceo', `po:${pr.data.id}:${qa.id}`); await wait()
+  assert.equal((await GET('/purchase-orders')).data.filter((o) => o.pr_no === pr.data.no).length, 2)
   await DEL('/line-link')
 })
