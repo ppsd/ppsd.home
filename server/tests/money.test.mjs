@@ -1173,3 +1173,37 @@ test('เทียบราคาอัตโนมัติ: ส่งรูป
   assert.equal((await GET('/purchase-orders')).data.filter((o) => o.pr_no === pr.data.no).length, 2)
   await DEL('/line-link')
 })
+
+test('ตำแหน่ง CEO = สิทธิ์เท่าผู้จัดการ (อนุมัติได้) · ปฏิเสธ PO → ยกเลิกทันที รับของ/เปลี่ยนสถานะไม่ได้ · ปฏิเสธ PR → PO ร่างของใบนั้นยกเลิกตาม', async () => {
+  const adminToken = token
+  await POST('/users', { name: 'ซีอีโอ ทดสอบ', username: 'ceo2', pin: '7777', role: 'site', position: 'CEO' })
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'อิฐมอญ', amount: 5000 })
+  token = (await POST('/login', { username: 'ceo2', pin: '7777' })).data.token
+  const me = (await GET('/me')).data
+  assert.equal(me.isManager, true, 'ตำแหน่ง CEO ต้องนับเป็นผู้จัดการ')
+  assert.equal((await POST(`/approve/pr/${pr.data.id}`)).status, 200, 'CEO ต้องอนุมัติ PR ได้')
+  token = adminToken
+  const po = await POST('/purchase-orders', { vendor: 'ร้านอิฐ', item: 'อิฐมอญ', amount: 5000, pr_no: pr.data.no })
+  assert.equal(po.status, 201)
+  // CEO ปฏิเสธ PO → ยกเลิกทันที
+  token = (await POST('/login', { username: 'ceo2', pin: '7777' })).data.token
+  const rj = await POST(`/reject/po/${po.data.id}`, { note: 'ราคาแพงไป' })
+  assert.equal(rj.status, 200)
+  token = adminToken
+  let row = (await GET('/purchase-orders')).data.find((o) => o.id === po.data.id)
+  assert.equal(row.status, 'ยกเลิก'); assert.equal(row.approval.rejected, true)
+  assert.equal((await POST(`/purchase-orders/${po.data.id}/status`, { status: 'รับของแล้ว' })).status, 409)
+  assert.equal((await POST(`/purchase-orders/${po.data.id}/receive`, { items: [] })).status, 409)
+  // ปฏิเสธ PR ที่มี PO ร่างอยู่ → PO ยกเลิกตาม
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr2 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'หินคลุก', amount: 3000 })
+  token = adminToken
+  await PUT('/controls', { enforce_approval_flow: false })
+  const po2 = await POST('/purchase-orders', { vendor: 'ร้านหิน', item: 'หินคลุก', amount: 3000, pr_no: pr2.data.no })
+  assert.equal(po2.status, 201, JSON.stringify(po2.data))
+  assert.equal((await POST(`/reject/pr/${pr2.data.id}`, { note: 'ไม่จำเป็น' })).status, 200)
+  row = (await GET('/purchase-orders')).data.find((o) => o.id === po2.data.id)
+  assert.equal(row.status, 'ยกเลิก'); assert.equal(row.approval.rejected, true)
+  assert.equal((await GET('/purchase-requests')).data.find((r) => r.id === pr2.data.id).status, 'ปฏิเสธ')
+})

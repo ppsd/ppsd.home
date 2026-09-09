@@ -667,9 +667,11 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                     )}
                   </td>
                   <td style={{ ...td, textAlign: 'center' }}>
-                    <select value={r.status} onChange={(e) => setPOStatus(r.id, e.target.value)} style={{ fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 7px', outline: 'none' }}>
+                    {r.status === 'ยกเลิก'
+                      ? <span title="ถูกปฏิเสธ — ยกเลิกทันที" style={{ fontSize: 11, fontWeight: 600, color: '#8A2A22', background: '#FBEEEC', padding: '2px 9px', borderRadius: 20 }}>✗ ยกเลิก</span>
+                      : <select value={r.status} onChange={(e) => setPOStatus(r.id, e.target.value)} style={{ fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 7px', outline: 'none' }}>
                       {['รอส่งของ', 'รับของแล้ว', 'ปิดงาน'].map((s) => <option key={s}>{s}</option>)}
-                    </select>
+                    </select>}
                   </td>
                   <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -679,7 +681,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                         : r.gr_status === 'ไม่ผ่าน'
                           ? <span title={'ตรวจรับของไม่ผ่าน ' + (r.gr_date || '')} style={{ fontSize: 11, fontWeight: 700, color: '#C24036', background: '#FBEAE7', padding: '2px 9px', borderRadius: 20 }}>✗ ไม่ตรง</span>
                           : null}
-                      <button onClick={() => setDocReceive(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#2E7D55', background: '#fff', border: '1px solid #B5DDC8', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>📦 ตรวจรับของ</button>
+                      {r.status !== 'ยกเลิก' && <button onClick={() => setDocReceive(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#2E7D55', background: '#fff', border: '1px solid #B5DDC8', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>📦 ตรวจรับของ</button>}
                       <button onClick={() => setDocPo(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>🖨 พิมพ์ PO</button>
                     </div>
                   </td>

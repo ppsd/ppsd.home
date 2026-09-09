@@ -46,16 +46,19 @@ export function requireRole(...allowed) {
 }
 
 // salary/payroll data is restricted to บัญชี + ผู้จัดการ + HR (บุคคล) + admin
+// ตำแหน่งระดับผู้บริหาร = สิทธิ์อนุมัติ/เห็นกำไร/สั่งงานผ่าน LINE เท่ากับผู้จัดการ (CEO ก็อยู่ในกลุ่มนี้)
+export const MANAGER_POSITIONS = ['ผู้จัดการ', 'CEO', 'ซีอีโอ', 'ประธาน', 'กรรมการผู้จัดการ', 'ผู้บริหาร', 'เจ้าของ']
+export const isManagerPosition = (p) => MANAGER_POSITIONS.includes(String(p || '').trim())
 export const canSeeSalary = (user) =>
-  !!user && (user.role === 'admin' || user.role === 'accounting' || user.position === 'ผู้จัดการ' || user.position === 'บุคคล')
+  !!user && (user.role === 'admin' || user.role === 'accounting' || isManagerPosition(user.position) || user.position === 'บุคคล')
 export function requireSalary(req, res, next) {
   if (!canSeeSalary(req.user)) return res.status(403).json({ error: 'ไม่มีสิทธิ์ดูข้อมูลเงินเดือน' })
   next()
 }
 
 // only managers (ตำแหน่งผู้จัดการ) or admins may approve leave / OT / PR / time adjustments
-export const isManager = (user) => !!user && (user.role === 'admin' || user.position === 'ผู้จัดการ')
+export const isManager = (user) => !!user && (user.role === 'admin' || isManagerPosition(user.position))
 export function requireManager(req, res, next) {
-  if (!isManager(req.user)) return res.status(403).json({ error: 'อนุมัติได้เฉพาะตำแหน่งผู้จัดการเท่านั้น' })
+  if (!isManager(req.user)) return res.status(403).json({ error: 'อนุมัติได้เฉพาะตำแหน่งผู้จัดการ/CEO เท่านั้น' })
   next()
 }
