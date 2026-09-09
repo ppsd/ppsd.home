@@ -5423,6 +5423,7 @@ if (existsSync(join(distDir, 'index.html'))) {
   app.use((req, res, next) => {
     if (req.method === 'GET' && !req.path.startsWith('/api')) {
       res.setHeader('Cache-Control', 'no-cache, must-revalidate')
+      if (!existsSync(join(distDir, 'index.html'))) return res.status(503).type('text/html; charset=utf-8').send('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="5"><body style="font-family:sans-serif;padding:40px;text-align:center;color:#30506A"><h2>ระบบกำลังอัปเดต (build หน้าเว็บ)…</h2><p>รอสักครู่ หน้านี้จะโหลดใหม่เองทุก 5 วินาที<br>ถ้าค้างเกิน 3 นาที ให้ดูหน้าต่าง update.bat ว่าขึ้น "build ไม่ผ่าน" หรือไม่ แล้วรัน update.bat อีกครั้ง</p></body>')
       return res.sendFile(join(distDir, 'index.html'))
     }
     next()
