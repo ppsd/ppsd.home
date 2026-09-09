@@ -248,11 +248,18 @@ export default function App() {
           label: 'ตำแหน่งงาน',
           value: '',
           ph: '',
-          hint: 'ตำแหน่ง "ผู้จัดการ" = มีสิทธิ์อนุมัติ ลา/PR/OT/เวลา · เพิ่มตำแหน่งใหม่ได้ที่หน้าผู้ดูแล',
+          hint: 'ตำแหน่ง "ผู้จัดการ/CEO" = มีสิทธิ์อนุมัติ ลา/PR/OT/เวลา · เพิ่มตำแหน่งใหม่ได้ที่หน้าผู้ดูแล',
           options: [{ value: '', label: '— เลือกตำแหน่ง —' }, ...posList.map((p) => ({ value: p, label: p }))],
         },
+        {
+          label: 'ผูกกับพนักงานที่มีอยู่ใน HR',
+          value: '',
+          ph: '',
+          hint: 'ถ้าเพิ่มชื่อไว้ในทะเบียนพนักงานแล้ว ให้เลือกคนนั้น — ระบบจะใช้ชื่อ/ลายเซ็น/ลงเวลาเดิม ไม่สร้างซ้ำ (ไม่เลือก = จับชื่อให้อัตโนมัติ)',
+          options: [{ value: '', label: '— จับคู่ชื่อให้อัตโนมัติ —' }, ...app.data.employees.filter((e) => !e.user_id).map((e) => ({ value: e.code, label: `${e.code} · ${e.name}${e.nickname ? ` (${e.nickname})` : ''}` }))],
+        },
       ],
-      onSubmit: ([name, username, pin, role, position]) => app.addUser({ name, username, pin, role, position }),
+      onSubmit: ([name, username, pin, role, position, employee_code]) => app.addUser({ name, username, pin, role, position, employee_code }),
     })
   }
 

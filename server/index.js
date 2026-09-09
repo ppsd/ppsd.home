@@ -2253,7 +2253,7 @@ api.get('/health', (req, res) => {
 
 // ---------- HR ----------
 // list excludes the PIN; includes signature + computed sso/tax for display
-const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname,no_sso'
+const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname,no_sso,user_id'
 api.get('/employees', (req, res) => {
   const rows = db.prepare(`SELECT ${EMP_COLS} FROM employees ORDER BY id`).all()
   const showSalary = canSeeSalary(req.user)
@@ -2368,11 +2368,20 @@ function splitTitle(raw) {
   }
   return { title: '', rest: s }
 }
+// ชื่อสำหรับเทียบว่า "คนเดียวกัน": ตัดคำนำหน้า · รวมสระอำที่พิมพ์แยก (ํ+า) · ตัดช่องว่าง/ตัวพิมพ์
+const normName = (s) => splitTitle(String(s || '').normalize('NFC').replace(/\u0E4D\u0E32/g, 'ำ')).rest.replace(/\s+/g, '').toLowerCase()
+// หาพนักงานที่ชื่อเดียวกับผู้ใช้ (ยังไม่ผูกบัญชีก่อน) — ใช้ตอนสร้าง/ผูกผู้ใช้ กันสร้างพนักงานซ้ำ
+function findEmployeeByName(name) {
+  const k = normName(name)
+  if (!k) return null
+  const all = db.prepare('SELECT * FROM employees').all().filter((e) => normName(e.name) === k)
+  return all.find((e) => !e.user_id) || all[0] || null
+}
 function runEmpDedup() {
   const emps = db.prepare('SELECT * FROM employees').all()
   const groups = {}
   for (const e of emps) {
-    const key = splitTitle(e.name).rest // จับกลุ่มด้วยชื่อที่ตัดคำนำหน้าออกแล้ว
+    const key = normName(e.name) // จับกลุ่มด้วยชื่อที่ตัดคำนำหน้า/ช่องว่างออกแล้ว
     if (!key) continue
     ;(groups[key] = groups[key] || []).push(e)
   }
@@ -2396,7 +2405,7 @@ function runEmpDedup() {
   let mergedGroups = 0, removed = 0, tidied = 0, skippedReal = 0
   const detail = []
   db.transaction(() => {
-    for (const [rest, list] of Object.entries(groups)) {
+    for (const list of Object.values(groups)) {
       list.sort((a, b) => score(b) - score(a) || a.id - b.id)
       const keep = list[0]
       let title = '' // คำนำหน้าของกลุ่ม — จากช่อง prefix หรือจากชื่อที่ติดคำนำหน้า
@@ -2410,13 +2419,14 @@ function runEmpDedup() {
         db.prepare('DELETE FROM employees WHERE id=?').run(d.id)
         removed++; removedCodes.push(d.code)
       }
-      if (removedCodes.length) { mergedGroups++; detail.push({ name: rest, kept: keep.code, removed: removedCodes }) }
+      if (removedCodes.length) { mergedGroups++; detail.push({ name: splitTitle(keep.name).rest, kept: keep.code, removed: removedCodes }) }
       // เก็บชื่อให้สะอาด (ตัดคำนำหน้า) + ใส่คำนำหน้าในช่อง prefix
       const newPrefix = keep.prefix || title || ''
-      if (rest !== keep.name || newPrefix !== (keep.prefix || '')) {
-        db.prepare('UPDATE employees SET name=?, prefix=? WHERE id=?').run(rest, newPrefix, keep.id)
+      const cleanName = splitTitle(keep.name).rest
+      if (cleanName !== keep.name || newPrefix !== (keep.prefix || '')) {
+        db.prepare('UPDATE employees SET name=?, prefix=? WHERE id=?').run(cleanName, newPrefix, keep.id)
         for (const [t, cCol, nCol] of [['attendance', 'emp_code', 'emp_name'], ['leaves', 'emp_code', 'emp_name'], ['salary_advances', 'emp_code', 'emp_name'], ['deductions', 'emp_code', 'emp_name'], ['pms_reviews', 'emp_code', 'emp_name']]) {
-          try { db.prepare(`UPDATE ${t} SET ${nCol}=? WHERE ${cCol}=?`).run(rest, keep.code) } catch { /* ignore */ }
+          try { db.prepare(`UPDATE ${t} SET ${nCol}=? WHERE ${cCol}=?`).run(cleanName, keep.code) } catch { /* ignore */ }
         }
         tidied++
       }
@@ -3756,7 +3766,7 @@ api.get('/payables', financeOnly, (_req, res) => {
 
 // ---------- users (admin only) ----------
 api.get('/users', adminOnly, (_req, res) =>
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods,line_uid FROM users ORDER BY id').all().map((u) => ({ ...u, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })() })))
+  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods,line_uid FROM users ORDER BY id').all().map((u) => ({ ...u, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })(), employee_code: db.prepare('SELECT code FROM employees WHERE user_id=?').get(u.id)?.code || '' })))
 )
 // upload/replace a signature image (admin can set anyone's; users can set their own)
 api.put('/users/:id/signature', (req, res) => {
@@ -3773,8 +3783,11 @@ api.put('/users/:id/signature', (req, res) => {
   res.json({ ok: true, filled })
 })
 api.post('/users', adminOnly, (req, res) => {
-  const { name, username, pin, role, position } = req.body || {}
+  const { name, username, pin, role, position, employee_code } = req.body || {}
   if (!name || !username) return res.status(400).json({ error: 'กรุณากรอกชื่อและชื่อผู้ใช้' })
+  const linkEmp = employee_code ? db.prepare('SELECT * FROM employees WHERE code=?').get(String(employee_code)) : null
+  if (employee_code && !linkEmp) return res.status(404).json({ error: 'ไม่พบพนักงานรหัส ' + employee_code })
+  if (linkEmp?.user_id && db.prepare('SELECT id FROM users WHERE id=?').get(linkEmp.user_id)) return res.status(409).json({ error: `พนักงาน ${linkEmp.name} ผูกกับบัญชีอื่นอยู่แล้ว` })
   const hashed = hashPin(String(pin || '0000'))
   let userId
   try {
@@ -3787,10 +3800,11 @@ api.post('/users', adminOnly, (req, res) => {
   }
   // เชื่อมกับ HR: สร้างพนักงานให้อัตโนมัติ (ถ้ายังไม่มีชื่อนี้) เพื่อไม่ต้องกรอกซ้ำ — วันลา/เงินเดือนไปเติมทีหลัง
   let employeeCreated = false
-  const existingEmp = db.prepare('SELECT id FROM employees WHERE name=?').get(name)
+  const existingEmp = linkEmp || findEmployeeByName(name) // จับชื่อแบบไม่สนคำนำหน้า/ช่องว่าง (นาย สมพล = สมพล)
   if (existingEmp) {
-    // มีพนักงานชื่อนี้อยู่แล้ว → ผูกบัญชี (PIN จะถูก sync ให้ตรงกับผู้ใช้ด้านล่าง)
-    db.prepare('UPDATE employees SET user_id=COALESCE(user_id,?) WHERE id=?').run(userId, existingEmp.id)
+    // มีพนักงานชื่อนี้อยู่แล้ว → ผูกบัญชี (PIN จะถูก sync ให้ตรงกับผู้ใช้ด้านล่าง) · ชื่อบัญชีใช้ตามทะเบียนพนักงาน
+    db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(userId, existingEmp.id)
+    if (existingEmp.name !== name) db.prepare('UPDATE users SET name=? WHERE id=?').run(existingEmp.name, userId)
   } else {
     const maxNum = db.prepare("SELECT code FROM employees WHERE code LIKE 'EMP-%'").all()
       .reduce((m, r) => Math.max(m, parseInt(String(r.code).slice(4), 10) || 0), 0)
@@ -3803,14 +3817,24 @@ api.post('/users', adminOnly, (req, res) => {
     employeeCreated = true
   }
   syncEmployeePin({ id: userId, name }, hashed) // PIN ลงเวลา = PIN ผู้ใช้
-  audit(req, 'เพิ่มผู้ใช้', name + (employeeCreated ? ' (สร้างพนักงาน HR ให้อัตโนมัติ)' : ''))
+  audit(req, 'เพิ่มผู้ใช้', name + (employeeCreated ? ' (สร้างพนักงาน HR ให้อัตโนมัติ)' : existingEmp ? ` (ผูกกับพนักงาน ${existingEmp.code})` : ''))
   const out = db.prepare('SELECT id,name,username,role,status,last_active,position FROM users WHERE id=?').get(userId)
-  res.status(201).json({ ...out, employeeCreated })
+  res.status(201).json({ ...out, employeeCreated, employee_code: existingEmp?.code || db.prepare('SELECT code FROM employees WHERE user_id=?').get(userId)?.code || '' })
 })
 api.put('/users/:id', adminOnly, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
   if (!u) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
-  const { role, status, deny_mods, name, username, position } = req.body || {}
+  const { role, status, deny_mods, name, username, position, employee_code } = req.body || {}
+  // ผูกบัญชีนี้กับพนักงานในทะเบียน HR (เปลี่ยนคนได้ · '' = ปลดผูก) — พนักงานที่ผูกคนเดิมถูกปลดให้
+  if (employee_code !== undefined) {
+    const code = String(employee_code || '')
+    const emp = code ? db.prepare('SELECT * FROM employees WHERE code=?').get(code) : null
+    if (code && !emp) return res.status(404).json({ error: 'ไม่พบพนักงานรหัส ' + code })
+    if (emp?.user_id && emp.user_id !== u.id && db.prepare('SELECT id FROM users WHERE id=?').get(emp.user_id)) return res.status(409).json({ error: `พนักงาน ${emp.name} ผูกกับบัญชีอื่นอยู่แล้ว` })
+    db.prepare('UPDATE employees SET user_id=NULL WHERE user_id=?').run(u.id)
+    if (emp) { db.prepare('UPDATE employees SET user_id=?, pin=? WHERE id=?').run(u.id, u.pin, emp.id); if (name === undefined) db.prepare('UPDATE users SET name=? WHERE id=?').run(emp.name, u.id) }
+    audit(req, 'ผูกผู้ใช้กับพนักงาน', `${u.name} → ${emp ? emp.code + ' ' + emp.name : 'ปลดผูก'}`)
+  }
   const newRole = ['admin', 'accounting', 'site', 'viewer'].includes(role) ? role : u.role
   const newStatus = ['ใช้งาน', 'ปิดใช้งาน'].includes(status) ? status : u.status
   // แก้ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง
@@ -3837,7 +3861,7 @@ api.put('/users/:id', adminOnly, (req, res) => {
     db.prepare('UPDATE users SET deny_mods=? WHERE id=?').run(JSON.stringify(clean), u.id)
     audit(req, 'ตั้งสิทธิ์รายโมดูล', `${u.name}: ปิด [${clean.join(', ') || 'ไม่มี'}]`)
   }
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active,deny_mods,position FROM users WHERE id=?').get(u.id))
+  res.json({ ...db.prepare('SELECT id,name,username,role,status,last_active,deny_mods,position FROM users WHERE id=?').get(u.id), employee_code: db.prepare('SELECT code FROM employees WHERE user_id=?').get(u.id)?.code || '' })
 })
 // ลบผู้ใช้ (แอดมิน) — ห้ามลบตัวเอง / ห้ามลบผู้ดูแลคนสุดท้าย · เอกสารเก่ายังเก็บชื่อไว้เป็นข้อความ ไม่หาย
 api.delete('/users/:id', adminOnly, (req, res) => {
