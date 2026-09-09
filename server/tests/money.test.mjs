@@ -993,3 +993,38 @@ test('ขั้นตอนจัดซื้อ 4-5: ส่งรูปใบ�
   assert.equal(web.status, 201); assert.equal(web.data.vendor, 'ร้าน B')
   await DEL('/line-link')
 })
+
+test('โฟร์แมนสั่งของผ่าน LINE: "สั่งของ …" → ร่าง (ถามบ้าน) → ตกลง → ใบขอซื้อรอผู้ตรวจสอบ · ราคากลางเติมให้ · ผู้บริหารได้การ์ดเมื่อผ่านตรวจ', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const adminToken = token
+  const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
+  await PUT('/procurement/flow', { checker_user_id: som.id })
+  await POST('/houses', { name: 'บ้านคุณพร', code: 'H-PORN' })
+  await POST('/material-prices', { name: 'ปูนซีเมนต์', unit: 'ถุง', central: 140 })
+  // ผูก LINE ให้โฟร์แมน (ประยุทธ์ = site) — ขอรหัสแทนโดยแอดมิน
+  const fore = (await GET('/users')).data.find((u) => u.username === 'prayut') || (await GET('/users')).data.find((u) => u.role === 'site')
+  assert.ok(fore, 'ต้องมีผู้ใช้หน้างานในระบบทดสอบ')
+  const code = await POST('/line-link/code', { user_id: fore.id })
+  await msg('Ufore', code.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  await msg('Ufore', 'สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น'); await wait()
+  await msg('Ufore', 'บ้านคุณพร'); await wait() // ตอบคำถาม "ของบ้านไหน"
+  assert.equal((await GET('/purchase-requests')).data.length, n0, 'ยังไม่ตกลง ต้องไม่สร้างใบ')
+  await msg('Ufore', 'ตกลง'); await wait()
+  const prs = (await GET('/purchase-requests')).data
+  assert.equal(prs.length, n0 + 1)
+  const pr = prs[0]
+  assert.equal(pr.by, fore.name); assert.equal(pr.status, 'รอตรวจสอบ', 'สั่งของต้องผ่านผู้ตรวจสอบก่อน'); assert.equal(pr.house_code, 'H-PORN')
+  assert.equal(pr.items.length, 2); assert.equal(pr.items[0].desc, 'ปูนซีเมนต์'); assert.equal(pr.items[0].qty, 50); assert.equal(pr.items[0].unit, 'ถุง'); assert.equal(pr.items[0].price, 140, 'ต้องเติมราคากลาง')
+  assert.equal(pr.items[1].desc, 'เหล็กเส้น 12 มม.'); assert.equal(pr.items[1].qty, 10); assert.equal(pr.items[1].unit, 'เส้น')
+  assert.equal(pr.amount, 7000)
+  // สั่งแบบระบุบ้านในประโยค + ยกเลิก
+  await msg('Ufore', 'สั่งของ ทรายหยาบ 2 คิว บ้านคุณพร'); await wait()
+  await msg('Ufore', 'ยกเลิก'); await wait()
+  assert.equal((await GET('/purchase-requests')).data.length, n0 + 1)
+  token = adminToken
+  await PUT('/procurement/flow', { checker_user_id: 0 })
+  await DEL('/line-link?user_id=' + fore.id)
+})
