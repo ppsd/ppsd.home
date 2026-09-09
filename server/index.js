@@ -999,11 +999,13 @@ async function pushQuoteReminders() {
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 // หาพนักงานจากข้อความ: ชื่อเต็ม > ชื่อจริง (คำแรก) > ชื่อเล่น (รองรับ "พี่ต้น" "ช่างต้น" "คุณต้น" "น้องต้น") — ยาวสุดก่อน กันชื่อซ้อน
 // คืน { code, name, nickname, matched_by } หรือ null · ใช้ทั้งบอท LINE และ API /employees/match
-function matchEmployee(text, emps) {
+function matchEmployee(text, emps, exclude = []) {
   const t = String(text || '')
   const norm = (x) => String(x || '').trim()
   const cands = []
+  const skip = new Set(exclude.filter(Boolean).map((x) => normName(x)))
   for (const e of emps) {
+    if (skip.has(normName(e.name)) || (e.code && skip.has(normName(e.code)))) continue // คนสั่งเอง (ชื่อเล่นตัวเองอยู่ในประโยค เช่น "เจพี่แมนต้องการให้โทร…") ไม่ใช่ผู้รับ
     const full = norm(e.name); const first = full.split(/\s+/)[0]; const nick = norm(e.nickname)
     if (full && t.includes(full)) cands.push({ e, len: full.length + 100, by: 'ชื่อเต็ม' })
     if (first && first.length >= 2 && t.includes(first)) cands.push({ e, len: first.length + 50, by: 'ชื่อจริง' })
@@ -1019,11 +1021,13 @@ function matchEmployee(text, emps) {
   return top ? { code: top.e.code, name: top.e.name, nickname: top.e.nickname || '', matched_by: top.by } : null
 }
 // เดาผู้รับ/บ้าน/ด่วน/กำหนดส่ง จากข้อความ (กติกาเดียวกับหน้า "สั่งงานด้วยเสียง")
-function parseLineCommand(t) {
+function parseLineCommand(t, sender) {
   const emps = db.prepare("SELECT code, name, nickname FROM employees WHERE status IS NULL OR status NOT IN ('ลาออก')").all()
   const houses = db.prepare('SELECT code, name FROM houses').all()
   const found = { scope: t, executor: '', executor_code: '', house_code: '', house_name: '', urgent: false, due_date: '', matched_by: '' }
-  const emp = matchEmployee(t, emps)
+  // ผู้สั่งไม่ใช่ผู้รับงานของตัวเอง: ตัดชื่อ/ชื่อเล่นของคนสั่ง (บัญชี + พนักงานที่ผูก) ออกจากการจับคู่
+  const exclude = sender ? [sender.name, empOfUser(sender)?.name, empOfUser(sender)?.code] : []
+  const emp = matchEmployee(t, emps, exclude)
   if (emp) { found.executor = emp.name; found.executor_code = emp.code; found.matched_by = emp.matched_by }
   const h = houses.find((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code)))
   if (h) { found.house_code = h.code; found.house_name = h.name || h.code }
@@ -1071,7 +1075,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (ctx?.kind === 'clarify') {
     setLineCtx(uid, null)
     if (/^(1|pr|ขอซื้อ|ใบขอซื้อ|ซื้อ|จ้าง)$/i.test(t)) return handleLineOrder(uid, u, 'สั่งของ ' + ctx.text, replyToken, null)
-    if (/^(2|สั่งงาน|ใบสั่งงาน|งาน)$/i.test(t)) return askNextOrSummary(uid, parseLineCommand(ctx.text), replyToken)
+    if (/^(2|สั่งงาน|ใบสั่งงาน|งาน)$/i.test(t)) return askNextOrSummary(uid, parseLineCommand(ctx.text, u), replyToken)
     if (/^(ยกเลิก|cancel)$/i.test(t)) return lineReply(replyToken, 'ยกเลิกแล้วค่ะ')
     setLineCtx(uid, ctx) // ยังไม่ตอบ 1/2 → ถามซ้ำ
     return lineReply(replyToken, "ตอบ 1 (ใบขอซื้อ) หรือ 2 (ใบสั่งงาน) ค่ะ")
@@ -1189,7 +1193,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   // กำลังถามข้อมูลที่ขาดอยู่ → ข้อความนี้คือคำตอบ
   if (draft && draft.pending === 'executor') {
-    const p = parseLineCommand(t)
+    const p = parseLineCommand(t, u)
     if (!p.executor) return lineReply(replyToken, `ไม่พบชื่อ "${t}" ในทะเบียนพนักงานค่ะ ลองพิมพ์ชื่อจริงหรือชื่อเล่นตามที่ลงทะเบียนไว้ (หรือ 'ยกเลิก')`)
     return askNextOrSummary(uid, { ...draft, executor: p.executor, executor_code: p.executor_code, matched_by: p.matched_by, pending: null }, replyToken)
   }
@@ -1200,7 +1204,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   // มีร่างสรุปอยู่ + พิมพ์ชื่อคน/วันใหม่ → แก้ร่าง
   if (draft && t.length <= 40) {
-    const p = parseLineCommand(t)
+    const p = parseLineCommand(t, u)
     if (p.executor) return askNextOrSummary(uid, { ...draft, executor: p.executor, executor_code: p.executor_code, matched_by: p.matched_by, pending: null }, replyToken)
     const d = parseThaiDate(t)
     if (d !== null && !/[ก-๙]{6,}/.test(t.replace(/วันนี้|พรุ่งนี้|มะรืน|ไม่กำหนด|สิ้นเดือน|จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|เสาร์|อาทิตย์|นี้|หน้า|วัน/g, ''))) return askNextOrSummary(uid, { ...draft, due_date: d, due_asked: true, pending: null }, replyToken)
@@ -1212,7 +1216,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
     setLineCtx(uid, { kind: 'clarify', text: t })
     return lineReply(replyToken, `ข้อความนี้ต้องการทำอะไรคะ?\n1 = ใบขอซื้อ/ขอจ้าง (PR) — ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อน\n2 = ใบสั่งงานให้พนักงาน\nตอบ 1 หรือ 2 ค่ะ (หรือ 'ยกเลิก')`)
   }
-  return askNextOrSummary(uid, parseLineCommand(t), replyToken)
+  return askNextOrSummary(uid, parseLineCommand(t, u), replyToken)
 }
 // ===== โฟร์แมนสั่งของผ่าน LINE: "สั่งของ ปูน 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร" → ร่าง → 'ตกลง' → ใบขอซื้อ (รอผู้ตรวจสอบ) =====
 // คำขึ้นต้นที่ถือว่าเป็นการขอซื้อ/ขอจ้าง: สั่งของ · ขอซื้อ · เปิด PR · ออก PR · ขอเปิดใบขอซื้อ · PR … · ขอจ้าง …
