@@ -38,7 +38,14 @@ const DEL = (p) => api('DELETE', p)
 before(async () => {
   tmp = mkdtempSync(join(tmpdir(), 'ppsd-test-'))
   child = spawn(process.execPath, [join(serverDir, 'index.js')], {
-    env: { ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1' },
+    env: {
+      ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1',
+      // AI เทียบใบเสนอราคา: ใช้ผลจำลองแทนการยิง API จริง
+      PPSD_AI_MOCK_COMPARE: JSON.stringify({ quotes: [
+        { vendor: 'ร้าน A', total: 9500, vat_included: true, items: [{ name: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 950, amount: 9500 }], terms: 'เงินสด' },
+        { vendor: 'ร้าน B', total: 9000, vat_included: true, items: [{ name: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 900, amount: 9000 }], terms: 'เครดิต 30 วัน ส่งฟรี' },
+      ], best_vendor: 'ร้าน B', reason: 'ถูกกว่า 500 บาท และให้เครดิต 30 วัน', summary: 'ร้าน B คุ้มสุด' }),
+    },
     stdio: 'ignore',
   })
   // รอเซิร์ฟเวอร์พร้อม
@@ -905,4 +912,84 @@ test('QC ชุดฟอร์ม PPSD: สร้างใบตามงวด/
   assert.equal(old.status, 201); assert.equal(old.data.phase, ''); assert.deepEqual(old.data.extra, {})
   const list = await GET('/qc')
   assert.ok(list.data.find((r) => r.id === old.data.id).items[0].section === '', 'ใบเก่าต้องมี section ว่าง ไม่พัง')
+})
+
+test('ขั้นตอนจัดซื้อ 1-3: โฟร์แมนขอ → ผู้ตรวจสอบเช็ค (อนุมัติข้ามขั้นไม่ได้) → ออก PR รออนุมัติ · ส่งกลับแก้ไขได้', async () => {
+  const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
+  const f = await PUT('/procurement/flow', { checker_user_id: som.id })
+  assert.equal(f.status, 200); assert.equal(f.data.checker.name, som.name)
+  assert.equal((await GET('/procurement/flow')).data.checker.id, som.id)
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ปูนซีเมนต์', qty: 20, unit: 'ถุง', price: 150 }] })
+  assert.equal(pr.status, 201); assert.equal(pr.data.status, 'รอตรวจสอบ', 'ตั้งผู้ตรวจสอบไว้ → ใบใหม่ต้องรอตรวจก่อน')
+  const early = await POST(`/approve/pr/${pr.data.id}`)
+  assert.equal(early.status, 409, 'ยังไม่ผ่านการตรวจสอบ ต้องอนุมัติไม่ได้')
+  // คนที่ไม่ใช่ผู้ตรวจสอบ/บัญชี/แอดมิน กดตรวจไม่ได้
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const chk = await POST(`/purchase-requests/${pr.data.id}/check`, { ok: true })
+  assert.equal(chk.status, 200, JSON.stringify(chk.data)); assert.equal(chk.data.status, 'รออนุมัติ'); assert.equal(chk.data.checked_by, som.name)
+  assert.ok(chk.data.checked_date, 'ต้องมีวันที่ตรวจ')
+  const again = await POST(`/purchase-requests/${pr.data.id}/check`, { ok: true })
+  assert.equal(again.status, 409, 'ตรวจซ้ำไม่ได้')
+  token = adminToken
+  // ส่งกลับแก้ไขพร้อมเหตุผล
+  const pr2 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ทรายหยาบ', amount: 3000 })
+  const back = await POST(`/purchase-requests/${pr2.data.id}/check`, { ok: false, note: 'จำนวนไม่ตรงแบบ' })
+  assert.equal(back.data.status, 'ส่งกลับแก้ไข'); assert.equal(back.data.check_note, 'จำนวนไม่ตรงแบบ')
+  assert.equal((await POST(`/approve/pr/${pr2.data.id}`)).status, 409)
+  // ผู้ตรวจสอบขอเอง → ไม่ต้องรอตัวเองตรวจ
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const own = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ตะปู', amount: 500 })
+  assert.equal(own.data.status, 'รออนุมัติ')
+  token = adminToken
+  await PUT('/procurement/flow', { checker_user_id: 0 })
+  assert.equal((await GET('/procurement/flow')).data.checker, null)
+})
+
+test('ขั้นตอนจัดซื้อ 4-5: ส่งรูปใบเสนอราคาทาง LINE → AI เทียบ (เลือกร้านคุ้มสุด) → กดปุ่มออก PO + ส่งอนุมัติ', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
+  const postback = (uid, data) => hook(uid, { type: 'postback', postback: { data } })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  // PR จากโฟร์แมน (somchai) → แอดมินอนุมัติ
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 1000 }] })
+  token = adminToken
+  assert.equal(pr.data.status, 'รออนุมัติ')
+  assert.equal((await POST(`/approve/pr/${pr.data.id}`)).status, 200)
+  // ส่งรูปก่อนบอกเลข PR → ระบบเก็บไว้แล้วถาม · บอกเลข PR → ผูกรูปให้ · ส่งรูปเพิ่ม
+  await img('Uceo', 'm1'); await wait()
+  await msg('Uceo', `ใบเสนอราคา ${pr.data.no}`); await wait()
+  await img('Uceo', 'm2'); await wait()
+  const files = (await GET(`/purchase-requests/${pr.data.id}/quote-files`)).data
+  assert.equal(files.length, 2, 'รูปที่ส่งก่อนและหลังบอกเลข PR ต้องผูกครบ')
+  assert.ok(files[0].image.startsWith('data:image/png;base64,'))
+  assert.equal(files[0].source, 'line:Uceo')
+  // AI เทียบ (ผลจำลอง) → ใบเทียบราคา 2 ร้าน · ร้าน B แนะนำและถูกเลือก
+  await msg('Uceo', 'เทียบราคา'); await wait()
+  const quotes = (await GET(`/purchase-requests/${pr.data.id}/quotes`)).data
+  assert.equal(quotes.filter((q) => q.ai).length, 2)
+  const b = quotes.find((q) => q.vendor === 'ร้าน B')
+  assert.equal(b.price, 9000); assert.equal(b.recommended, 1); assert.equal(b.chosen, 1)
+  assert.equal(quotes.find((q) => q.vendor === 'ร้าน A').chosen, 0)
+  const prRow = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(prRow.ai_compare.best_vendor, 'ร้าน B')
+  // เทียบซ้ำต้องไม่เบิ้ลรายการ AI
+  const rc = await POST(`/purchase-requests/${pr.data.id}/ai-compare`, {})
+  assert.equal(rc.status, 200)
+  assert.equal((await GET(`/purchase-requests/${pr.data.id}/quotes`)).data.filter((q) => q.ai).length, 2)
+  // กดปุ่ม "ออก PO ร้าน B" ในการ์ด → PO ออกจริง อ้าง PR ยอด 9,000 พร้อมรายการจากใบเสนอราคา
+  const q2 = (await GET(`/purchase-requests/${pr.data.id}/quotes`)).data.find((q) => q.vendor === 'ร้าน B')
+  await postback('Uceo', `po:${pr.data.id}:${q2.id}`); await wait()
+  const po = (await GET('/purchase-orders')).data.find((o) => o.pr_no === pr.data.no)
+  assert.ok(po, 'ต้องมี PO ที่อ้าง PR นี้')
+  assert.equal(po.vendor, 'ร้าน B'); assert.equal(po.amount, 9000); assert.equal(po.items[0].desc, 'เหล็กเส้น 12 มม.'); assert.equal(po.items[0].price, 900)
+  assert.equal(po.approval.count, 0, 'PO ใหม่ต้องรออนุมัติ (การ์ดส่งถึงผู้อนุมัติ)')
+  // ทางเว็บ: ออก PO จากร้านที่เลือกโดยไม่ระบุ quote_id
+  const web = await POST(`/purchase-requests/${pr.data.id}/issue-po`, {})
+  assert.equal(web.status, 201); assert.equal(web.data.vendor, 'ร้าน B')
+  await DEL('/line-link')
 })

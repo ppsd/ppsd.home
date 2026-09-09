@@ -2,20 +2,23 @@ import type { Approval } from '../store'
 
 // บล็อกลายเซ็นมาตรฐานของเอกสารอนุมัติทุกใบ: ผู้จัดทำ/ผู้สั่ง 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติ 3 ช่อง (รวม 5)
 // 3 ช่องผู้อนุมัติดึงชื่อ/ลายเซ็น/วันที่จริงจากผู้ที่กดอนุมัติในระบบ (approval.approvals) — ว่างไว้ถ้ายังไม่อนุมัติ
-export default function ApproverSigns({ approval, makerLabel = 'ผู้จัดทำ', makerName, makerSig, makerDate, checker = true }: {
+export default function ApproverSigns({ approval, makerLabel = 'ผู้จัดทำ', makerName, makerSig, makerDate, checker = true, checkerName, checkerSig, checkerDate }: {
   approval?: Approval
   makerLabel?: string
   makerName?: string | null
   makerSig?: string | null
   makerDate?: string | null
   checker?: boolean
+  checkerName?: string | null
+  checkerSig?: string | null
+  checkerDate?: string | null
 }) {
   const appr = approval?.approvals || []
   // จำนวนช่องผู้อนุมัติตามกติกาของเอกสารนั้น (PR คนเดียวพอ = 1 ช่อง) — อย่างน้อยเท่าที่อนุมัติไปแล้ว
   const n = Math.max(1, Math.min(3, Number(approval?.required) || 3, appr.length || 1), appr.length)
   const slots: { label: string; name?: string | null; sig?: string | null; date?: string | null }[] = [
     { label: makerLabel, name: makerName, sig: makerSig, date: makerDate },
-    ...(checker ? [{ label: 'ผู้ตรวจสอบ', name: '', sig: null, date: '' }] : []),
+    ...(checker ? [{ label: 'ผู้ตรวจสอบ', name: checkerName || '', sig: checkerSig || null, date: checkerDate || '' }] : []),
     ...Array.from({ length: n }, (_, i) => ({ label: n === 1 ? 'ผู้อนุมัติ' : `ผู้อนุมัติคนที่ ${i + 1}`, name: appr[i]?.approver, sig: appr[i]?.sig, date: appr[i]?.date })),
   ]
   return (

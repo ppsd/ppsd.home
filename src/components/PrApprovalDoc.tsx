@@ -100,7 +100,7 @@ export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () 
             <b>ผลการพิจารณา</b> &nbsp;&nbsp; {chk(approved)} อนุมัติ &nbsp;&nbsp;&nbsp; {chk(rejected)} ไม่อนุมัติ
           </div>
           {/* ลายเซ็น: ผู้ขอซื้อ 1 + ผู้ตรวจสอบ 1 + ผู้อนุมัติตามกติกา (PR คนเดียวพอ) */}
-          <ApproverSigns approval={pr.approval} makerLabel="ผู้ขอซื้อ/ขอจ้าง" makerName={pr.by} makerSig={pr.requester_sig} makerDate={pr.date} />
+          <ApproverSigns approval={pr.approval} makerLabel="ผู้ขอซื้อ/ขอจ้าง" makerName={pr.by} makerSig={pr.requester_sig} makerDate={pr.date} checkerName={pr.checked_by} checkerSig={(pr as { checked_sig?: string | null }).checked_sig} checkerDate={pr.checked_date} />
           <div style={{ textAlign: 'center', fontSize: 9, color: '#B0B8BF', marginTop: 14, borderTop: '1px solid #EEF1F4', paddingTop: 6 }}>เอกสารจัดทำโดยระบบ PPSD Construction ERP</div>
           {!pr.requester_sig && (
             <div className="no-print" style={{ marginTop: 12, fontSize: 12, color: '#8A6A1F', background: '#FBF4E1', border: '1px solid #ECDCB8', borderRadius: 8, padding: '9px 14px', textAlign: 'center' }}>

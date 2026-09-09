@@ -25,14 +25,41 @@ const PR_CATS = [
 ]
 const catLabel = (k?: string) => PR_CATS.find((c) => c.key === k)?.label || ''
 
-interface Quote { id: number; pr_id: number; vendor: string; price: number; terms: string; note: string; chosen: number }
-// ใบเปรียบเทียบราคา (price comparison) ของ PR หนึ่งใบ
-function QuotePanel({ prId }: { prId: number }) {
+interface Quote { id: number; pr_id: number; vendor: string; price: number; terms: string; note: string; chosen: number; ai?: number; recommended?: number; reason?: string; items?: string | null }
+interface QuoteFile { id: number; pr_id: number; image: string; by: string; source: string; created: string }
+type AiCompare = NonNullable<ApiPR['ai_compare']> & { quotes?: { vendor: string; total: number }[] }
+// ใบเปรียบเทียบราคา (price comparison) ของ PR หนึ่งใบ — ขั้น 4: รูปใบเสนอราคา (เว็บ/LINE) → AI เทียบ → ขั้น 5: ออก PO จากร้านที่เลือก
+function QuotePanel({ pr, canIssuePo, onIssued }: { pr: ApiPR; canIssuePo: boolean; onIssued?: () => void }) {
+  const prId = pr.id
   const [rows, setRows] = useState<Quote[]>([])
+  const [files, setFiles] = useState<QuoteFile[]>([])
+  const [ai, setAi] = useState<AiCompare | null>(pr.ai_compare || null)
+  const [busy, setBusy] = useState('')
   const [f, setF] = useState({ vendor: '', price: '', terms: '' })
   const [err, setErr] = useState('')
-  const load = () => api.get<Quote[]>('/purchase-requests/' + prId + '/quotes').then(setRows).catch(() => {})
+  const load = () => {
+    api.get<Quote[]>('/purchase-requests/' + prId + '/quotes').then(setRows).catch(() => {})
+    api.get<QuoteFile[]>('/purchase-requests/' + prId + '/quote-files').then(setFiles).catch(() => {})
+  }
   useEffect(() => { load() /* eslint-disable-next-line */ }, [prId])
+  const pickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const list = Array.from(e.target.files || []).filter((x) => x.type.startsWith('image/')); e.target.value = ''
+    if (!list.length) return
+    setBusy('upload'); setErr('')
+    Promise.all(list.map((file) => new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(file) })))
+      .then((images) => api.post('/purchase-requests/' + prId + '/quote-files', { images }))
+      .then(() => load()).catch((e) => setErr((e as Error).message)).finally(() => setBusy(''))
+  }
+  const delFile = async (id: number) => { await api.del('/pr-quote-files/' + id); load() }
+  const compare = async () => {
+    setBusy('ai'); setErr('')
+    try { const r = await api.post<AiCompare>('/purchase-requests/' + prId + '/ai-compare', {}); setAi(r); load() } catch (e) { setErr((e as Error).message) } finally { setBusy('') }
+  }
+  const issuePo = async (q: Quote) => {
+    if (!confirm(`ออกใบสั่งซื้อจากร้าน ${q.vendor} ยอด ${baht(q.price || pr.amount)} แล้วส่งขออนุมัติทาง LINE?`)) return
+    setBusy('po'); setErr('')
+    try { const po = await api.post<{ no: string }>('/purchase-requests/' + prId + '/issue-po', { quote_id: q.id }); alert(`ออก ${po.no} แล้ว — ส่งขออนุมัติ PO ทาง LINE ให้ผู้บริหารแล้ว`); onIssued?.() } catch (e) { setErr((e as Error).message) } finally { setBusy('') }
+  }
   const add = async () => {
     if (!f.vendor.trim()) { setErr('กรอกชื่อผู้ขาย'); return }
     setErr('')
@@ -41,8 +68,34 @@ function QuotePanel({ prId }: { prId: number }) {
   const choose = async (id: number) => { await api.post('/pr-quotes/' + id + '/choose', {}); load() }
   const del = async (id: number) => { await api.del('/pr-quotes/' + id); load() }
   const best = rows.length ? Math.min(...rows.filter((r) => r.price > 0).map((r) => r.price)) : 0
+  const prApproved = !!pr.approval?.done || pr.status === 'อนุมัติ'
+  const smallBtn: React.CSSProperties = { fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }
   return (
     <div style={{ background: '#FBFCFD', border: '1px solid #E7ECF0', borderRadius: 10, padding: 14 }}>
+      {/* ขั้น 4: รูปใบเสนอราคา + AI เทียบ */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600 }}>รูปใบเสนอราคา ({files.length})</div>
+        <label style={{ ...smallBtn, display: 'inline-flex', alignItems: 'center', gap: 4 }}>📷 อัปโหลดรูปใบเสนอราคา<input type="file" accept="image/*" multiple onChange={pickFiles} style={{ display: 'none' }} /></label>
+        <button onClick={compare} disabled={!!busy || !files.length} style={{ ...smallBtn, color: '#fff', background: files.length ? '#6B4E9E' : '#B9C6D0', border: 'none' }}>{busy === 'ai' ? '🤖 AI กำลังอ่าน…' : '🤖 AI เทียบราคา'}</button>
+        <span style={{ fontSize: 11, color: '#94A0A8' }}>หรือส่งรูปทาง LINE: พิมพ์ "ใบเสนอราคา {pr.no}" แล้วส่งรูป → 'เทียบราคา'</span>
+      </div>
+      {files.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {files.map((fl) => (
+            <div key={fl.id} style={{ position: 'relative' }} title={`${fl.by} · ${fl.source.startsWith('line') ? 'LINE' : 'เว็บ'} · ${fl.created}`}>
+              <a href={fl.image} target="_blank" rel="noreferrer"><img src={fl.image} alt="ใบเสนอราคา" style={{ height: 64, borderRadius: 6, border: '1px solid #E1E5EA' }} /></a>
+              <button onClick={() => delFile(fl.id)} title="ลบรูป" style={{ position: 'absolute', top: -6, right: -6, width: 16, height: 16, borderRadius: 8, border: 'none', background: '#C24036', color: '#fff', fontSize: 10, lineHeight: '16px', cursor: 'pointer', padding: 0 }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {ai && (
+        <div style={{ background: '#F6F3FB', border: '1px solid #D9D2EA', borderRadius: 8, padding: '9px 12px', marginBottom: 10, fontSize: 12.5 }}>
+          <div style={{ fontWeight: 700, color: '#6B4E9E' }}>🤖 AI แนะนำ: {ai.best_vendor} <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11 }}>· {ai.files} รูป · {ai.at}</span></div>
+          {ai.reason && <div style={{ color: '#3C4750', marginTop: 3 }}>{ai.reason}</div>}
+          {ai.summary && <div style={{ color: '#5C6770', marginTop: 3, whiteSpace: 'pre-wrap' }}>{ai.summary}</div>}
+        </div>
+      )}
       <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>เปรียบเทียบราคาผู้ขาย</div>
       {rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginBottom: 8 }}>
@@ -50,11 +103,17 @@ function QuotePanel({ prId }: { prId: number }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.id} style={{ borderTop: '1px solid #EEF1F4', background: r.chosen ? '#E2F1EA' : undefined }}>
-                <td style={{ padding: '5px 8px', fontWeight: 500 }}>{r.vendor}{r.price > 0 && r.price === best && <span style={{ marginLeft: 6, fontSize: 10, color: '#2E7D55', fontWeight: 600 }}>ถูกสุด</span>}</td>
+                <td style={{ padding: '5px 8px', fontWeight: 500 }}>
+                  {r.recommended ? '⭐ ' : ''}{r.vendor}
+                  {r.price > 0 && r.price === best && <span style={{ marginLeft: 6, fontSize: 10, color: '#2E7D55', fontWeight: 600 }}>ถูกสุด</span>}
+                  {r.ai ? <span style={{ marginLeft: 6, fontSize: 10, color: '#6B4E9E', background: '#EFEAF7', padding: '1px 6px', borderRadius: 10 }}>AI</span> : null}
+                  {r.note && <div style={{ fontSize: 10.5, color: '#94A0A8', fontWeight: 400 }}>{r.note.replace(/^AI อ่านจากรูปใบเสนอราคา · /, '')}</div>}
+                </td>
                 <td className="num" style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600 }}>{baht(r.price)}</td>
                 <td style={{ padding: '5px 8px', color: '#5C6770' }}>{r.terms || '-'}</td>
-                <td style={{ padding: '5px 8px', textAlign: 'center' }}>
+                <td style={{ padding: '5px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                   {r.chosen ? <span style={{ fontSize: 11, fontWeight: 600, color: '#2E7D55' }}>✓ เลือกแล้ว</span> : <button onClick={() => choose(r.id)} style={{ fontFamily: 'inherit', fontSize: 11, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>เลือก</button>}
+                  {canIssuePo && prApproved && <button onClick={() => issuePo(r)} disabled={!!busy} title="ออกใบสั่งซื้อจากร้านนี้ + ส่งขออนุมัติ PO ทาง LINE" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>→ ออก PO</button>}
                   <button onClick={() => del(r.id)} style={{ marginLeft: 6, border: 'none', background: 'none', color: '#C24036', cursor: 'pointer' }}>✕</button>
                 </td>
               </tr>
@@ -69,6 +128,7 @@ function QuotePanel({ prId }: { prId: number }) {
         <button onClick={add} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 7, padding: '6px 12px', cursor: 'pointer' }}>+ เพิ่ม</button>
       </div>
       {err && <div style={{ fontSize: 12, color: '#C24036', marginTop: 6 }}>{err}</div>}
+      {canIssuePo && !prApproved && rows.some((r) => r.chosen) && <div style={{ fontSize: 11.5, color: '#B7791F', marginTop: 8 }}>เลือกร้านแล้ว — ปุ่ม “ออก PO” จะขึ้นเมื่อ PR นี้อนุมัติครบ</div>}
     </div>
   )
 }
@@ -83,6 +143,19 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const [docReceive, setDocReceive] = useState<ApiPO | null>(null)
   const { data, user, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor, reloadData } = useApp()
   const isAdmin = user?.role === 'admin'
+  // ขั้นตอนจัดซื้อ: ใครเป็นผู้ตรวจสอบใบขอซื้อ (ตั้งที่หน้า ผู้ใช้งาน) — ผู้ตรวจสอบ/บัญชี/แอดมิน กด "ตรวจแล้ว ออก PR" ได้
+  const [flow, setFlow] = useState<{ checker: { id: number; name: string; line: boolean } | null } | null>(null)
+  useEffect(() => { api.get<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow').then(setFlow).catch(() => {}) }, [])
+  const canCheck = user?.role === 'admin' || user?.role === 'accounting' || (!!flow?.checker && flow.checker.id === user?.id)
+  const canIssuePo = user?.role === 'admin' || user?.role === 'accounting' || !!user?.isManager || (!!flow?.checker && flow.checker.id === user?.id)
+  const [checkBusy, setCheckBusy] = useState<number | null>(null)
+  const checkPr = async (r: ApiPR, ok: boolean) => {
+    let note = ''
+    if (!ok) { const n = prompt(`ส่ง ${r.no} กลับให้ ${r.by} แก้ไข — เหตุผล:`); if (n === null) return; note = n }
+    else if (!confirm(`ยืนยันว่าตรวจสอบ ${r.no} แล้ว → ระบบจะออก PR และส่งขออนุมัติทาง LINE ให้ผู้บริหารทันที`)) return
+    setCheckBusy(r.id)
+    try { await api.post('/purchase-requests/' + r.id + '/check', { ok, note }); await reloadData('prs', '/purchase-requests') } catch (e) { alert((e as Error).message) } finally { setCheckBusy(null) }
+  }
   const clearProcurement = async () => {
     if (!window.confirm('ล้างข้อมูลจัดซื้อทั้งหมด (ใบขอซื้อ PR + ใบสั่งซื้อ PO + ใบเทียบราคา + การตรวจรับ + รายจ่ายที่มาจาก PO)?\nข้อมูลนี้จะถูกลบถาวร (ราคากลางวัสดุ/ผู้ขาย/รายจ่ายอื่นไม่ถูกลบ)')) return
     if (!window.confirm('ยืนยันอีกครั้ง — ลบข้อมูล PR/PO เดิมทั้งหมดออกจริงหรือไม่?')) return
@@ -410,7 +483,20 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(r.amount)}</td>
                   <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <ApprovalBar docType="pr" docId={r.id} approval={r.approval} onDone={() => reloadData('prs', '/purchase-requests')} />
+                      {r.status === 'รอตรวจสอบ' ? (
+                        <>
+                          <span title={r.checked_by ? '' : `รอ ${flow?.checker?.name || 'ผู้ตรวจสอบ'} ตรวจก่อนออก PR`} style={{ fontSize: 11, fontWeight: 600, color: '#30506A', background: '#E2E9EF', padding: '2px 9px', borderRadius: 20 }}>🔍 รอตรวจสอบ{flow?.checker ? ` · ${flow.checker.name}` : ''}</span>
+                          {canCheck && <>
+                            <button onClick={() => checkPr(r, true)} disabled={checkBusy === r.id} title="ตรวจแล้ว → ออก PR + ส่งขออนุมัติทาง LINE" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>✓ ตรวจแล้ว ออก PR</button>
+                            <button onClick={() => checkPr(r, false)} disabled={checkBusy === r.id} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#C24036', background: '#FBEEEC', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>↩ ส่งกลับ</button>
+                          </>}
+                        </>
+                      ) : r.status === 'ส่งกลับแก้ไข' ? (
+                        <span title={r.check_note || ''} style={{ fontSize: 11, fontWeight: 600, color: '#C24036', background: '#FBEEEC', padding: '2px 9px', borderRadius: 20 }}>↩ ส่งกลับแก้ไข{r.checked_by ? ` · ${r.checked_by}` : ''}{r.check_note ? ` — ${r.check_note}` : ''}</span>
+                      ) : (
+                        <ApprovalBar docType="pr" docId={r.id} approval={r.approval} onDone={() => reloadData('prs', '/purchase-requests')} />
+                      )}
+                      {r.checked_by && r.status !== 'ส่งกลับแก้ไข' && <span style={{ fontSize: 10, color: '#94A0A8' }}>ตรวจโดย {r.checked_by}</span>}
                       <button onClick={() => setQuoteFor(quoteFor === r.id ? null : r.id)} className="hov-f3f5f7" title="เปรียบเทียบราคาผู้ขาย" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>⚖ เทียบราคา</button>
                       <button onClick={() => setDocPr(r)} className="hov-f3f5f7" title="ดู/พิมพ์ใบ PR" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨 ใบ PR</button>
                       {(r.approval?.done || r.status === 'อนุมัติ') && <button onClick={() => makePoFromPr(r)} title="สร้างใบสั่งซื้อจาก PR นี้" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>→ PO</button>}
@@ -419,7 +505,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 </tr>
                 {quoteFor === r.id && (
                   <tr style={{ background: '#F7F9FB' }}>
-                    <td colSpan={7} style={{ padding: '10px 18px' }}>{financeOk ? <QuotePanel prId={r.id} /> : <div style={{ fontSize: 12, color: '#94A0A8' }}>ใบเทียบราคา — จัดการโดยฝ่ายบัญชี/จัดซื้อ</div>}</td>
+                    <td colSpan={7} style={{ padding: '10px 18px' }}>{financeOk || canCheck ? <QuotePanel pr={r} canIssuePo={canIssuePo} onIssued={() => { reloadData('purchaseOrders', '/purchase-orders'); reloadData('prs', '/purchase-requests') }} /> : <div style={{ fontSize: 12, color: '#94A0A8' }}>ใบเทียบราคา — จัดการโดยฝ่ายบัญชี/จัดซื้อ (ส่งรูปใบเสนอราคาทาง LINE ได้: พิมพ์ "ใบเสนอราคา {r.no}" แล้วส่งรูป)</div>}</td>
                   </tr>
                 )}
                 </Fragment>
