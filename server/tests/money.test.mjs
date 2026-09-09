@@ -1221,3 +1221,25 @@ test('ผู้ใช้งาน: แก้ชื่อ/ชื่อผู้�
   assert.equal((await DEL(`/users/${nu.data.id}`)).status, 200)
   assert.ok(!(await GET('/users')).data.some((u) => u.id === nu.data.id))
 })
+
+test('เพิ่มผู้ใช้ให้ผูกกับพนักงานเดิม (ชื่อมีคำนำหน้า/ช่องว่างต่างกันก็จับได้ · หรือเลือกรหัสพนักงาน) ไม่สร้างพนักงานซ้ำ · แก้ไขเปลี่ยนคนที่ผูกได้', async () => {
+  const e1 = await POST('/employees', { name: 'นาย ณัฐพล เทพวีระ', role: 'CEO', pay_type: 'รายเดือน', base: 50000 })
+  assert.equal(e1.status, 201)
+  const n0 = (await GET('/employees')).data.length
+  const u1 = await POST('/users', { name: 'ณัฐพล  เทพวีระ', username: 'man1', pin: '3333', role: 'site', position: 'CEO' })
+  assert.equal(u1.status, 201); assert.equal(u1.data.employeeCreated, false, 'ต้องผูกกับพนักงานเดิม ไม่สร้างใหม่'); assert.equal(u1.data.employee_code, e1.data.code)
+  assert.equal((await GET('/employees')).data.length, n0)
+  assert.equal((await GET('/employees')).data.find((e) => e.code === e1.data.code).user_id, u1.data.id)
+  // เลือกรหัสพนักงานตรงๆ
+  const e2 = await POST('/employees', { name: 'น.ส. ลลดา เทพวีระ', role: 'CEO', pay_type: 'รายเดือน', base: 40000 })
+  const u2 = await POST('/users', { name: 'เฟรน', username: 'fern1', pin: '4444', role: 'site', employee_code: e2.data.code })
+  assert.equal(u2.status, 201); assert.equal(u2.data.employee_code, e2.data.code); assert.equal(u2.data.name, e2.data.name, 'ชื่อบัญชีต้องตามทะเบียนพนักงาน')
+  // ผูกซ้ำคนที่มีบัญชีแล้ว → กัน · แก้ไขเปลี่ยนคนที่ผูก
+  assert.equal((await POST('/users', { name: 'x', username: 'dupx', pin: '1111', employee_code: e2.data.code })).status, 409)
+  const e3 = await POST('/employees', { name: 'สมชาย ทดสอบผูก', role: 'ช่าง', pay_type: 'รายวัน', base: 500 })
+  const up = await PUT(`/users/${u2.data.id}`, { employee_code: e3.data.code })
+  assert.equal(up.status, 200); assert.equal(up.data.employee_code, e3.data.code)
+  const emps = (await GET('/employees')).data
+  assert.equal(emps.find((e) => e.code === e2.data.code).user_id, null, 'คนเดิมต้องถูกปลดผูก')
+  assert.equal(emps.find((e) => e.code === e3.data.code).user_id, u2.data.id)
+})

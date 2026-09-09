@@ -121,6 +121,7 @@ export interface ApiEmployee {
   bank_acct?: string
   prefix?: string
   nickname?: string
+  user_id?: number | null // บัญชีผู้ใช้ที่ผูก
   no_sso?: number
 }
 export interface ApiPayroll extends ApiEmployee {
@@ -329,6 +330,7 @@ export interface ApiUser {
   position?: string
   deny_mods?: string[]
   line_uid?: string | null // ผูก LINE แล้ว (สั่งงาน/รับงานผ่านบอท)
+  employee_code?: string // พนักงาน HR ที่ผูกกับบัญชีนี้
 }
 export interface Dashboard {
   building: number

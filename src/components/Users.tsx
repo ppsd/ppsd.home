@@ -32,12 +32,12 @@ function PermCell({ level }: { level: string }) {
 export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const { data, user, updateUser, removeUser, downloadBackup, resetUserPin, addPosition, restoreBackup } = useApp()
   // แก้ไขรายชื่อ: ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง · ลบ · เปิด-ปิดใช้งาน
-  const [editU, setEditU] = useState<{ id: number; name: string; username: string; position: string } | null>(null)
+  const [editU, setEditU] = useState<{ id: number; name: string; username: string; position: string; employee_code: string } | null>(null)
   const [editErr, setEditErr] = useState('')
   const saveEdit = async () => {
     if (!editU) return
     setEditErr('')
-    try { await updateUser(editU.id, { name: editU.name, username: editU.username, position: editU.position }); setEditU(null) } catch (e) { setEditErr((e as Error).message) }
+    try { await updateUser(editU.id, { name: editU.name, username: editU.username, position: editU.position, employee_code: editU.employee_code }); setEditU(null) } catch (e) { setEditErr((e as Error).message) }
   }
   const delUser = async (u: { id: number; name: string }) => {
     if (!window.confirm(`ลบผู้ใช้ "${u.name}" ออกจากระบบ?\n(เอกสารเก่าที่มีชื่อนี้ยังอยู่ครบ แต่บัญชีนี้จะเข้าระบบไม่ได้อีก)`)) return
@@ -536,7 +536,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                     <span style={{ width: 30, height: 30, borderRadius: '50%', background: '#30506A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 12.5, flexShrink: 0 }}>{u.name[0]}</span>
                     <div>
                       <div style={{ fontWeight: 500 }}>{u.name}</div>
-                      {u.position && <div style={{ fontSize: 11, color: '#94A0A8' }}>{u.position}</div>}
+                      {(u.position || u.employee_code) && <div style={{ fontSize: 11, color: '#94A0A8' }}>{[u.position, u.employee_code ? 'HR ' + u.employee_code : ''].filter(Boolean).join(' · ')}</div>}
                     </div>
                   </td>
                   <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{u.username}</td>
@@ -577,7 +577,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                         ))}
                       </select>
                       <button onClick={() => doResetPin(u.id, u.name)} title="ตั้ง PIN ใหม่ให้ผู้ใช้นี้" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>รีเซ็ต PIN</button>
-                      <button onClick={() => { setEditErr(''); setEditU({ id: u.id, name: u.name, username: u.username, position: u.position || '' }) }} title="แก้ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>✎ แก้ไข</button>
+                      <button onClick={() => { setEditErr(''); setEditU({ id: u.id, name: u.name, username: u.username, position: u.position || '', employee_code: u.employee_code || '' }) }} title="แก้ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>✎ แก้ไข</button>
                       {u.id !== user?.id && <>
                         <button onClick={() => toggleActive(u)} title={active ? 'ปิดการใช้งานบัญชีนี้ (เข้าระบบไม่ได้ แต่ข้อมูลยังอยู่)' : 'เปิดใช้งานบัญชีนี้'} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: active ? '#5C6770' : '#2E7D55', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>{active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</button>
                         <button onClick={() => delUser(u)} title="ลบผู้ใช้ออกจากระบบ" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #EDD3CE', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>🗑 ลบ</button>
@@ -591,6 +591,10 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                           <option value="">— ตำแหน่ง —</option>
                           {data.positions.map((p) => <option key={p} value={p}>{p}</option>)}
                           {editU.position && !data.positions.includes(editU.position) && <option value={editU.position}>{editU.position}</option>}
+                        </select>
+                        <select value={editU.employee_code} onChange={(e) => setEditU({ ...editU, employee_code: e.target.value })} title="ผูกบัญชีนี้กับพนักงานในทะเบียน HR (ชื่อ/ลายเซ็น/ลงเวลา ใช้ร่วมกัน)" style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }}>
+                          <option value="">— ไม่ผูกกับพนักงาน HR —</option>
+                          {data.employees.filter((e) => !e.user_id || e.user_id === u.id || e.code === editU.employee_code).map((e) => <option key={e.code} value={e.code}>{e.code} · {e.name}{e.nickname ? ` (${e.nickname})` : ''}{e.user_id && e.user_id !== u.id ? ' · ผูกคนอื่น' : ''}</option>)}
                         </select>
                         {editErr && <div style={{ fontSize: 11.5, color: '#C24036' }}>{editErr}</div>}
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
