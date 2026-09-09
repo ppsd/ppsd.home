@@ -410,6 +410,7 @@ async function linePush(to, msg) {
 }
 async function lineReply(replyToken, msg) {
   const token = getSetting('line_token', '')
+  if (process.env.PPSD_LINE_DEBUG) console.log('[line reply]', typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 400))
   if (!token || !replyToken) return false
   try {
     const r = await fetch('https://api.line.me/v2/bot/message/reply', {
@@ -877,10 +878,18 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (/^(ช่วย|help|\?|คำสั่ง)$/i.test(t)) {
     return lineReply(replyToken, (lineCanCommand(u)
       ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• รออนุมัติ — เอกสารที่รอคุณอนุมัติ (กดปุ่มในการ์ดได้เลย) · อนุมัติ PR-69-0144 / ปฏิเสธ PR-69-0144 เหตุผล\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
-      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ`)
+      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ`)
   }
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
   const ctx = getLineCtx(uid)
+  if (/^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง)(?=\s|$)/i.test(t) || (/^สั่ง\s+[ก-๙a-zA-Z]/.test(t) && !lineCanCommand(u))) return handleLineOrder(uid, u, t, replyToken, ctx)
+  if (ctx?.kind === 'order') {
+    if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineCtx(uid, null); return lineReply(replyToken, 'ทิ้งร่างใบขอซื้อแล้วค่ะ') }
+    if (ctx.pending === 'house') return handleLineOrder(uid, u, t, replyToken, ctx)
+    if (/^(ตกลง|ok|โอเค|ยืนยัน|ใช่|confirm|ส่ง|ส่งเลย)$/i.test(t)) return submitLineOrder(uid, u, ctx, replyToken)
+    // พิมพ์รายการใหม่ = แก้ร่างทั้งหมด
+    if (parseOrderText(t).items.length) return handleLineOrder(uid, u, t, replyToken, ctx)
+  }
   if (ctx?.kind === 'chk_note') {
     setLineCtx(uid, null)
     const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id)
@@ -996,6 +1005,81 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (t.length < 4) return lineReply(replyToken, "พิมพ์คำสั่งงานให้ชัดขึ้นหน่อยค่ะ เช่น \"ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้\" (พิมพ์ 'ช่วย' ดูคำสั่ง)")
   return askNextOrSummary(uid, parseLineCommand(t), replyToken)
 }
+// ===== โฟร์แมนสั่งของผ่าน LINE: "สั่งของ ปูน 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร" → ร่าง → 'ตกลง' → ใบขอซื้อ (รอผู้ตรวจสอบ) =====
+const ORDER_UNITS = ['ถุง', 'เส้น', 'ก้อน', 'ตัว', 'แผ่น', 'ม้วน', 'คิว', 'ลูก', 'ชุด', 'กล่อง', 'ลัง', 'ตร.ม.', 'ตรม', 'เมตร', 'ม.', 'กก.', 'กิโล', 'ตัน', 'อัน', 'ท่อน', 'ถัง', 'แกลลอน', 'กระป๋อง', 'มัด', 'แพ็ค', 'ขวด', 'ใบ', 'หลอด', 'ดอก', 'คัน', 'เที่ยว', 'แท่ง', 'คู่', 'บาน']
+function matchHouseInText(t) {
+  const houses = db.prepare('SELECT code, name FROM houses').all()
+  const hit = houses.filter((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code))).sort((a, b) => (b.name || '').length - (a.name || '').length)[0]
+  if (hit) return { code: hit.code, name: hit.name || hit.code, text: t.replace(hit.name || hit.code, ' ') }
+  // "บ้านคุณพร" / "บ้านพร" → หาบ้านที่ชื่อมีคำนั้น
+  const m = t.match(/บ้าน\s*(?:คุณ|ของ)?\s*([ก-๙a-zA-Z0-9]+)/)
+  if (m) {
+    const h = houses.find((x) => x.name && x.name.replace(/\s/g, '').includes(m[1]))
+    if (h) return { code: h.code, name: h.name, text: t.replace(m[0], ' ') }
+    return { code: '', name: m[0].trim(), text: t.replace(m[0], ' ') } // ไม่พบในทะเบียน → เก็บชื่อที่พิมพ์
+  }
+  return { code: '', name: '', text: t }
+}
+// ราคากลางวัสดุ (จากประวัติซื้อ) เติมให้เป็นราคาประเมิน — โฟร์แมนไม่ต้องรู้ราคา
+function materialPriceFor(desc) {
+  const k = nkeyOf(desc)
+  if (!k) return null
+  const rows = db.prepare('SELECT name, nkey, unit, central FROM material_prices WHERE active=1 AND central>0 ORDER BY po_count DESC').all()
+  return rows.find((r) => r.nkey === k) || rows.find((r) => k.includes(r.nkey) || r.nkey.includes(k)) || null
+}
+function parseOrderText(text) {
+  let t = String(text || '').replace(/^(?:สั่งของ|สั่งซื้อ|ขอซื้อ|ขอสั่ง|สั่ง)\s*/i, '').trim()
+  const h = matchHouseInText(t); t = h.text
+  const parts = t.split(/[,\n;]|\s+และ\s+|\s+กับ\s+/).map((x) => x.trim()).filter(Boolean)
+  const unitRe = ORDER_UNITS.map((u) => u.replace('.', '\\.')).join('|')
+  const items = []
+  for (const part of parts) {
+    // "ปูน 50 ถุง" · "เหล็กเส้น 12 มม. 10 เส้น" · "ทราย 2 คิว" · "ตะปู" (ไม่ระบุจำนวน)
+    let m = part.match(new RegExp('^(.+?)\\s*(\\d+(?:[.,]\\d+)?)\\s*(' + unitRe + ')\\s*$', 'i'))
+    let desc, qty = 0, unit = ''
+    if (m) { desc = m[1]; qty = Number(m[2].replace(',', '')); unit = m[3] }
+    else { m = part.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*$/); if (m) { desc = m[1]; qty = Number(m[2].replace(',', '')) } else desc = part }
+    desc = desc.replace(/\s+/g, ' ').trim()
+    if (!desc) continue
+    const mp = materialPriceFor(desc)
+    items.push({ desc, qty, unit: unit || (mp?.unit || ''), price: mp ? mp.central : 0, est: !!mp })
+  }
+  return { items, house_code: h.code, house_name: h.name }
+}
+function orderSummary(d) {
+  const lines = d.items.map((it, i) => `${i + 1}. ${it.desc}${it.qty ? ' ' + it.qty + ' ' + (it.unit || '') : ''}${it.price ? ` (ราคากลาง ${fmtMoney(it.price)}${it.qty ? ' → ' + fmtMoney(it.qty * it.price) : ''})` : ''}`)
+  const total = d.items.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : it.price), 0)
+  const checker = prChecker()
+  return `🛒 ร่างใบขอซื้อ\nบ้าน: ${d.house_name || 'ไม่ระบุ'}\n${lines.join('\n')}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
+}
+async function handleLineOrder(uid, u, t, replyToken, ctx) {
+  // ตอบคำถาม "ของบ้านไหน"
+  if (ctx?.kind === 'order' && ctx.pending === 'house') {
+    if (/^(ไม่ระบุ|ไม่มี|-|ข้าม)$/i.test(t)) return finishOrderAsk(uid, { ...ctx, pending: null, house_asked: true }, replyToken)
+    const h = matchHouseInText(t)
+    if (!h.name) return lineReply(replyToken, `ไม่พบบ้าน "${t}" ในทะเบียนค่ะ พิมพ์ชื่อบ้านอีกครั้ง หรือ 'ไม่ระบุ'`)
+    return finishOrderAsk(uid, { ...ctx, house_code: h.code, house_name: h.name, pending: null, house_asked: true }, replyToken)
+  }
+  const d = parseOrderText(t)
+  if (!d.items.length) return lineReply(replyToken, 'พิมพ์รายการที่จะสั่งด้วยค่ะ เช่น "สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร"')
+  return finishOrderAsk(uid, { kind: 'order', ...d, images: ctx?.kind === 'order' ? ctx.images || [] : [], pending: null, house_asked: false }, replyToken)
+}
+function finishOrderAsk(uid, d, replyToken) {
+  if (!d.house_name && !d.house_asked && db.prepare('SELECT COUNT(*) c FROM houses').get().c) { setLineCtx(uid, { ...d, pending: 'house' }); return lineReply(replyToken, `📝 รับรายการ ${d.items.length} รายการแล้ว — ของบ้านไหนคะ? (พิมพ์ชื่อบ้าน หรือ 'ไม่ระบุ')`) }
+  setLineCtx(uid, { ...d, pending: 'confirm' })
+  return lineReply(replyToken, orderSummary(d))
+}
+function submitLineOrder(uid, u, d, replyToken) {
+  try {
+    const pr = createPurchaseRequest({ house: d.house_name, house_code: d.house_code, items: d.items.map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })), images: d.images || [] }, u)
+    setLineCtx(uid, null)
+    audit({ user: u }, 'สั่งของผ่าน LINE', `${pr.no} · ${pr.item}`)
+    const checker = prChecker()
+    return lineReply(replyToken, pr.status === 'รอตรวจสอบ'
+      ? `✅ สร้างใบขอซื้อ ${pr.no} แล้ว\n📨 ส่งให้ ${checker?.name || 'ผู้ตรวจสอบ'} ตรวจสอบทาง LINE แล้ว — ผ่านแล้วระบบจะออก PR ส่งขออนุมัติ และแจ้งคุณกลับมาที่นี่ค่ะ`
+      : `✅ สร้างใบขอซื้อ ${pr.no} แล้ว — ส่งขออนุมัติให้ผู้บริหารทาง LINE แล้วค่ะ`)
+  } catch (e) { return lineReply(replyToken, '❌ สร้างใบขอซื้อไม่สำเร็จ: ' + (e.msg || e.message)) }
+}
 // รูปที่ส่งมาในแชท = รูปใบเสนอราคา → ผูกกับ PR ที่กำลังคุยอยู่ หรือถามว่าของ PR ไหน
 async function handleLineUserImage(uid, message, replyToken) {
   const u = userByLine(uid)
@@ -1003,6 +1087,11 @@ async function handleLineUserImage(uid, message, replyToken) {
   const img = await lineFetchImage(message)
   if (!img) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง')
   const ctx = getLineCtx(uid)
+  if (ctx?.kind === 'order') {
+    const images = [...(ctx.images || []), img].slice(0, 3)
+    setLineCtx(uid, { ...ctx, images })
+    return lineReply(replyToken, `📎 แนบรูปสินค้ากับร่างใบขอซื้อแล้ว (${images.length}/3)${ctx.pending === 'confirm' ? " — ตอบ 'ตกลง' เพื่อส่ง" : ''}`)
+  }
   if (ctx?.kind === 'quote') {
     const pr = db.prepare('SELECT id, no FROM purchase_requests WHERE id=?').get(ctx.pr_id)
     if (pr) {
@@ -3036,7 +3125,11 @@ api.get('/purchase-requests', canWrite, (_req, res) => // โฟร์แมน 
 // create a PR — requester = current user, snapshot their signature, optional product image
 // รองรับหลายรายการในใบเดียว: ส่ง items: [{desc,qty,unit,price}] มา (จำนวนเงินรวม = ผลรวมของทุกรายการ)
 api.post('/purchase-requests', canWrite, (req, res) => {
-  const { house, house_code, category, item, amount, image, items, images } = req.body || {}
+  try { res.status(201).json(prRow(createPurchaseRequest(req.body || {}, req.user))) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) }
+})
+// สร้างใบขอซื้อ (ใช้ทั้งฟอร์มในเว็บ และสั่งของผ่าน LINE) — ตั้งผู้ตรวจสอบไว้ → สถานะ "รอตรวจสอบ" + ส่งการ์ดให้ผู้ตรวจสอบ · ไม่ตั้ง → รออนุมัติ + ส่งการ์ดอนุมัติ
+function createPurchaseRequest(body, user) {
+  const { house, house_code, category, item, amount, image, items, images } = body || {}
   // รูปแนบ: รับได้สูงสุด 3 รูป (data URL รูปภาพ)
   const imgs = (Array.isArray(images) ? images : (image ? [image] : []))
     .filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, 3)
@@ -3048,12 +3141,12 @@ api.post('/purchase-requests', canWrite, (req, res) => {
     total = lineItems.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : it.price), 0)
     summary = lineItems.map((it) => it.desc).join(', ')
   } else {
-    if (!item) return res.status(400).json({ error: 'กรุณากรอกรายการ' })
+    if (!item) throw { code: 400, msg: 'กรุณากรอกรายการ' }
     total = Number(amount) || 0; summary = item; lineItems = null
   }
-  const me = { ...db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id), signature: sigOfUser(req.user.id) }
+  const me = { ...db.prepare('SELECT name FROM users WHERE id = ?').get(user.id), signature: sigOfUser(user.id) }
   const checker = prChecker()
-  const needCheck = !!checker && checker.id !== req.user.id // ตั้งผู้ตรวจสอบไว้ → ทุกใบต้องผ่านการตรวจก่อนออก PR (ยกเว้นผู้ตรวจสอบขอเอง)
+  const needCheck = !!checker && checker.id !== user.id // ตั้งผู้ตรวจสอบไว้ → ทุกใบต้องผ่านการตรวจก่อนออก PR (ยกเว้นผู้ตรวจสอบขอเอง)
   const seq = nextSeq('pr', () => Math.max(maxNoSuffix('purchase_requests'), db.prepare('SELECT COUNT(*) c FROM purchase_requests').get().c + 142))
   const no = `PR-${docYear()}-${String(seq).padStart(4, '0')}`
   const hName = house_code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(house_code)?.name || house_code) : (house || '')
@@ -3064,8 +3157,8 @@ api.post('/purchase-requests', canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(info.lastInsertRowid)
   if (needCheck) notifyChecker(row) // ขั้น 2: ส่งการ์ดให้ผู้ตรวจสอบก่อน (ออก PR + ส่งอนุมัติเมื่อผู้ตรวจสอบยืนยัน)
   else notifyApprovers('pr', info.lastInsertRowid, me.name)
-  res.status(201).json(prRow(row))
-})
+  return row
+}
 // ขั้น 2: ผู้ตรวจสอบ (ที่ตั้งไว้) / บัญชี / แอดมิน ตรวจใบขอซื้อ → ok=true ออก PR + ส่งอนุมัติทาง LINE · ok=false ส่งกลับให้แก้ไขพร้อมเหตุผล
 api.post('/purchase-requests/:id/check', canWrite, (req, res) => {
   const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
