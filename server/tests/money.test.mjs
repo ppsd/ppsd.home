@@ -1028,3 +1028,15 @@ test('โฟร์แมนสั่งของผ่าน LINE: "สั่ง
   await PUT('/procurement/flow', { checker_user_id: 0 })
   await DEL('/line-link?user_id=' + fore.id)
 })
+
+test('การ์ดตรวจสอบ: บันทึกสถานะการส่ง LINE ในใบ (ยังไม่ผูก LINE = no_line) · ส่งซ้ำได้พร้อมบอกสาเหตุ', async () => {
+  const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
+  await PUT('/procurement/flow', { checker_user_id: som.id })
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ทรายละเอียด', amount: 900 })
+  await new Promise((r) => setTimeout(r, 200))
+  const row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.ok(['no_line', 'no_token'].includes(row.check_notify), 'ต้องบันทึกว่าทำไมไม่เด้ง: ' + row.check_notify)
+  const re = await POST(`/purchase-requests/${pr.data.id}/notify-check`, {})
+  assert.equal(re.status, 200); assert.equal(re.data.ok, false); assert.match(re.data.message, /LINE/)
+  await PUT('/procurement/flow', { checker_user_id: 0 })
+})
