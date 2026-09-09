@@ -497,6 +497,7 @@ interface AppCtx {
   decidePr: (id: number, status: string) => Promise<void>
   addUser: (b: Record<string, unknown>) => Promise<void>
   updateUser: (id: number, b: Record<string, unknown>) => Promise<void>
+  removeUser: (id: number) => Promise<void>
   changeMyPin: (currentPin: string, newPin: string) => Promise<void>
   resetUserPin: (id: number, pin: string) => Promise<void>
   addPosition: (name: string) => Promise<void>
@@ -728,6 +729,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         },
         updateUser: async (id, b) => {
           await api.put('/users/' + id, b)
+          await reload('users', '/users')
+        },
+        removeUser: async (id) => {
+          await api.del('/users/' + id)
           await reload('users', '/users')
         },
         changeMyPin: async (currentPin, newPin) => {
