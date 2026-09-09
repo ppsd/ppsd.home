@@ -8,23 +8,24 @@ const bd = '1px solid #333'
 const f2 = (n: number) => (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const chk = (on: boolean) => (on ? '☑' : '☐')
 
-export default function PrApprovalDoc({ pr, onClose }: { pr: ApiPR; onClose: () => void }) {
+// standalone = หน้าเอกสารเปล่าๆ (ไม่มีฉากหลัง/ปุ่ม) ใช้ให้ระบบถ่ายรูปใบส่งเข้า LINE
+export default function PrApprovalDoc({ pr, onClose, standalone }: { pr: ApiPR; onClose: () => void; standalone?: boolean }) {
   // ดูจากผลอนุมัติจริง (จำนวนคนที่กดครบตามกติกา) ก่อน — สถานะในใบอาจค้างถ้ากติกาจำนวนผู้อนุมัติเปลี่ยนหลังกดไปแล้ว
   const approved = !!pr.approval?.done || pr.status === 'อนุมัติ'
   const rejected = !!pr.approval?.rejected || pr.status === 'ปฏิเสธ'
   const items = pr.items && pr.items.length ? pr.items : [{ desc: pr.item, qty: 0, unit: '', price: pr.amount }]
   const catLabel = ({ house: 'ตัวบ้าน', carport: 'โรงจอดรถ', road: 'ถนน/รั้ว' } as Record<string, string>)[pr.category || ''] || pr.category || ''
   return (
-    <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
-      <div className="no-print" style={{ maxWidth: 760, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div className="printdoc-backdrop" style={standalone ? { background: '#fff', padding: 8, width: 776 } : { position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
+      {!standalone && <div className="no-print" style={{ maxWidth: 760, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>ใบขอซื้อ / ขอจ้าง {pr.no}</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
           <button onClick={() => window.print()} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>🖨 พิมพ์</button>
           <button onClick={onClose} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 500, color: '#1C2730', background: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ปิด</button>
         </div>
-      </div>
+      </div>}
 
-      <div className="print-area doc-sheet" style={{ maxWidth: 760, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
+      <div id="doc-sheet" className="print-area doc-sheet" style={{ maxWidth: 760, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '30px 34px', boxShadow: standalone ? 'none' : '0 24px 70px rgba(20,30,40,.3)', fontSize: 11.5 }}>
         {/* หัว */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, borderBottom: '2px solid #1E2E3B', paddingBottom: 10 }}>
           <img src={PPSD_LOGO_FULL} alt="PPSD" style={{ width: 52, height: 52, objectFit: 'cover' }} />

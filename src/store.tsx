@@ -291,6 +291,8 @@ export interface ApiPR {
   checked_date?: string | null
   check_note?: string | null
   check_notify?: string | null // ผลส่งการ์ดให้ผู้ตรวจสอบทาง LINE (sent:<เวลา> | no_line | no_token | failed)
+  doc_sent?: string | null // ผลส่งใบ PR (รูป) เข้า LINE หลังอนุมัติครบ (sent:<เวลา> | no_recipients | no_public_url | render_failed:… | push_failed)
+  doc_key?: string | null
   ai_compare?: { at: string; model: string; files: number; best_vendor: string; reason: string; summary: string; by?: string } | null
 }
 export interface ApiPayment {
