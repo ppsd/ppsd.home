@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { procurementTabs } from '../erpData'
-import { baht, unMoney, matchMaterial, catsOfKind, catLabelOf } from '../data'
+import { baht, unMoney, matchMaterial, catsOfHouse, catLabelOf } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
 import type { ApiPR, ApiPO, ApiPayment, ApiVendor } from '../store'
@@ -420,7 +420,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                     </select>}
                 <select style={prField} value={prForm.category} onChange={(e) => setPrForm({ ...prForm, category: e.target.value })}>
                   <option value="">— หมวด —</option>
-                  {catsOfKind(houses.find((h) => h.code === (houseCode || prForm.house_code))?.kind).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                  {catsOfHouse(houses.find((h) => h.code === (houseCode || prForm.house_code))).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
               </div>
               {/* หลายรายการในใบเดียว */}

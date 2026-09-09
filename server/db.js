@@ -236,6 +236,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS house_categories (
 // houses: ประเภทโครงการ (sale=ขายบ้าน / cm=ควบคุมงาน) + ข้อมูลสัญญา-ผู้เกี่ยวข้องแบบ CM
 ensureColumn('houses', 'kind', 'TEXT')
 db.prepare("UPDATE houses SET kind='sale' WHERE kind IS NULL OR kind=''").run()
+// โครงการที่ตั้งชื่อว่า office/ออฟฟิศ และไม่มีมูลค่าสัญญา = โครงการออฟฟิศ (ค่าใช้จ่ายภายใน) ให้เป็นประเภท office อัตโนมัติ
+db.prepare("UPDATE houses SET kind='office' WHERE kind='sale' AND COALESCE(value,0)=0 AND (lower(name) LIKE '%office%' OR name LIKE '%ออฟฟิศ%' OR name LIKE '%สำนักงาน%')").run()
 ensureColumn('houses', 'owner', 'TEXT') // เจ้าของโครงการ / ผู้ว่าจ้าง
 ensureColumn('houses', 'contract_no', 'TEXT') // เลขที่สัญญา
 ensureColumn('houses', 'scope', 'TEXT') // ขอบเขตงาน (Scope of Work)
