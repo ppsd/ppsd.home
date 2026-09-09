@@ -561,5 +561,8 @@ export const OFFICE_CATS = [
   { key: 'other', label: 'อื่นๆ' },
 ]
 export const isOfficeKind = (kind?: string | null) => kind === 'office'
+// ชื่อบ้านที่มีคำว่า office/ออฟฟิศ/สำนักงาน ถือเป็นออฟฟิศด้วย (กรณียังไม่ได้ตั้งประเภทในหน้าแก้ไข)
+export const isOfficeHouse = (h?: { kind?: string | null; name?: string } | null) => !!h && (isOfficeKind(h.kind) || /office|ออฟฟิศ|สำนักงาน/i.test(h.name || ''))
 export const catsOfKind = (kind?: string | null) => (isOfficeKind(kind) ? OFFICE_CATS : HOUSE_CATS)
+export const catsOfHouse = (h?: { kind?: string | null; name?: string } | null) => (isOfficeHouse(h) ? OFFICE_CATS : HOUSE_CATS)
 export const catLabelOf = (key?: string | null) => [...HOUSE_CATS, ...OFFICE_CATS].find((c) => c.key === key)?.label || key || ''
