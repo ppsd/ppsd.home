@@ -42,6 +42,12 @@ before(async () => {
       ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1',
       PPSD_CHROME: process.env.PPSD_CHROME || '/opt/pw-browsers/chromium', // สร้างรูปใบ PR (เทสต์ข้ามถ้าไม่มี Chrome)
       PPSD_AUTOCOMPARE_MS: '400', // เทียบราคาอัตโนมัติหลังรูปสุดท้าย (จริง 60 วิ)
+      // AI หาของออนไลน์ (ผลจำลอง)
+      PPSD_AI_MOCK_SEARCH: JSON.stringify({ items: [{ desc: 'สีทาบ้าน TOA', offers: [
+        { rank: 1, shop: 'HomePro', name: 'สี TOA ชิลด์ 1 ถัง', price: 1150, unit: 'ถัง', url: 'https://www.homepro.co.th/p/1', note: 'ส่งฟรี' },
+        { rank: 2, shop: 'Lazada', name: 'TOA ชิลด์', price: 1190, unit: 'ถัง', url: 'https://www.lazada.co.th/p/2', note: '' },
+        { rank: 3, shop: 'ไทวัสดุ', name: 'TOA', price: 1210, unit: 'ถัง', url: 'https://www.thaiwatsadu.com/p/3', note: '' },
+        { rank: 4, shop: 'ร้านที่ 4', name: 'x', price: 999, unit: 'ถัง', url: 'javascript:bad', note: '' }] }], summary: 'HomePro คุ้มสุด ส่งฟรี' }),
       // AI อ่านภาษาคนในแชท (ผลจำลอง: ข้อความ → JSON)
       PPSD_AI_MOCK_PARSE: JSON.stringify({
         'ขอปูนตราเสือซัก 30 ถุงกับเหล็ก 12 มิลอีก 10 เส้นไปที่บ้านคุณพรนะครับ': { intent: 'order', items: [{ desc: 'ปูนซีเมนต์ตราเสือ', qty: 30, unit: 'ถุง' }, { desc: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น' }], house_code: 'H-PORN' },
@@ -1394,4 +1400,31 @@ test('สั่งของทาง LINE: บอทถามรูปสิน�
   const prs2 = (await GET('/purchase-requests')).data
   assert.equal(prs2.length, n0 + 2); assert.equal((prs2[0].images || []).length, 0)
   await DEL('/line-link?user_id=' + fore.id)
+})
+
+test('หาของออนไลน์: ผู้ขอเลือกช่องทางหลังตกลง (LINE) · AI ค้นเว็บเลือก 3 ร้าน/รายการ · ใช้ตัวเลือกเป็นใบเทียบราคาได้', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 600))
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  await msg('Uceo', 'สั่งของ สีทาบ้าน TOA 4 ถัง บ้านคุณพร'); await wait()
+  await msg('Uceo', 'ไม่มี'); await wait()
+  await msg('Uceo', 'ตกลง'); await wait()
+  let pr = (await GET('/purchase-requests')).data[0]
+  assert.equal(pr.source_pref, 'shop', 'ค่าเริ่มต้นร้านค้าในระบบ')
+  await msg('Uceo', '3'); await wait() // ทั้งสองอย่าง
+  pr = (await GET('/purchase-requests')).data.find((r) => r.id === pr.id)
+  assert.equal(pr.source_pref, 'both')
+  // ค้นออนไลน์ (ผลจำลอง) → เก็บ 3 ร้าน ตัดลิงก์ไม่ถูกต้อง
+  const r = await POST(`/purchase-requests/${pr.id}/online-search`, { notify: false })
+  assert.equal(r.status, 200, JSON.stringify(r.data)); assert.equal(r.data.items[0].offers.length, 3); assert.equal(r.data.items[0].offers[0].shop, 'HomePro')
+  pr = (await GET('/purchase-requests')).data.find((x) => x.id === pr.id)
+  assert.equal(pr.online_options.items[0].offers.length, 3); assert.ok(String(pr.online_status).startsWith('done'))
+  // ใช้ตัวเลือกเป็นใบเทียบราคา: 1150 × 4 ถัง
+  const q = await POST(`/purchase-requests/${pr.id}/use-offer`, { item: 0, offer: 0 })
+  assert.equal(q.status, 201); assert.equal(q.data.vendor, 'HomePro'); assert.equal(q.data.price, 4600); assert.match(q.data.terms, /homepro/)
+  // ทางเว็บ: สร้างใบพร้อมช่องทาง
+  const w = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ตะปู', amount: 100, source_pref: 'online' })
+  assert.equal(w.data.source_pref, 'online')
+  await DEL('/line-link')
 })
