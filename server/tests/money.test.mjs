@@ -1020,6 +1020,7 @@ test('โฟร์แมนสั่งของผ่าน LINE: "สั่ง
   await msg('Ufore', 'สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น'); await wait()
   await msg('Ufore', 'บ้านคุณพร'); await wait() // ตอบคำถาม "ของบ้านไหน"
   assert.equal((await GET('/purchase-requests')).data.length, n0, 'ยังไม่ตกลง ต้องไม่สร้างใบ')
+  await msg('Ufore', 'ไม่มี'); await wait() // ไม่มีรูปสินค้า → สรุป
   await msg('Ufore', 'ตกลง'); await wait()
   const prs = (await GET('/purchase-requests')).data
   assert.equal(prs.length, n0 + 1)
@@ -1098,6 +1099,7 @@ test('โครงการ "ออฟฟิศ": ใบขอซื้อใช
   const n0 = (await GET('/purchase-requests')).data.length
   await msg('Uceo', 'สั่งของ น้ำมันดีเซล 40 ลิตร PPSD office'); await wait()
   await msg('Uceo', '1'); await wait()
+  await msg('Uceo', 'ไม่มี'); await wait()
   await msg('Uceo', 'ตกลง'); await wait()
   const rows = (await GET('/purchase-requests')).data
   assert.equal(rows.length, n0 + 1)
@@ -1116,6 +1118,7 @@ test('ผู้บริหารพิมพ์ "เปิด PR …" / "ขอ
   const w0 = (await GET('/work-orders')).data.length
   await msg('Uceo', 'เปิดพีอาร์จ้างช่างมาเก็บสีที่ออฟฟิศตึกมังกรฟ้า'); await wait() // พิมพ์ PR เป็นไทย
   await msg('Uceo', '2'); await wait() // หมวดออฟฟิศ: ซ่อมแซมออฟฟิศ
+  await msg('Uceo', 'ไม่มี'); await wait()
   await msg('Uceo', 'ตกลง'); await wait()
   const prs = (await GET('/purchase-requests')).data
   assert.equal(prs.length, n0 + 1, 'ต้องได้ใบขอซื้อ')
@@ -1137,6 +1140,7 @@ test('LINE: ข้อความที่ฟังดูเหมือนซ�
   assert.equal((await GET('/work-orders')).data.length, w0, 'ต้องยังไม่ออกใบสั่งงาน — ต้องถามก่อน')
   await msg('Uceo', '1'); await wait()
   await msg('Uceo', '4'); await wait() // หมวดออฟฟิศ อื่นๆ
+  await msg('Uceo', 'ไม่มี'); await wait()
   await msg('Uceo', 'ตกลง'); await wait()
   const prs = (await GET('/purchase-requests')).data
   assert.equal(prs.length, n0 + 1); assert.equal(prs[0].house_code, 'OFFICE'); assert.equal(prs[0].category, 'other')
@@ -1291,6 +1295,7 @@ test('โฟร์แมนพิมพ์รายการในไลน์�
   const code = await POST('/line-link/code', { user_id: fore.id }); await msg('Ufore2', code.data.code); await wait()
   const n0 = (await GET('/purchase-requests')).data.length
   await msg('Ufore2', 'ปูนซีเมนต์ 20 ถุง, ทรายหยาบ 1 คิว บ้านคุณพร'); await wait()
+  await msg('Ufore2', 'ไม่มี'); await wait()
   await msg('Ufore2', 'ตกลง'); await wait()
   const prs = (await GET('/purchase-requests')).data
   assert.equal(prs.length, n0 + 1, 'ข้อความรายการต้องกลายเป็นใบขอซื้อ')
@@ -1327,6 +1332,7 @@ test('AI อ่านภาษาคน: ประโยคพูดทั่ว
   const w0 = (await GET('/work-orders')).data.length
   // สั่งของแบบพูด (ผู้บริหารพิมพ์ ไม่มีคำว่า สั่งของ)
   await msg('Uceo', 'ขอปูนตราเสือซัก 30 ถุงกับเหล็ก 12 มิลอีก 10 เส้นไปที่บ้านคุณพรนะครับ'); await wait()
+  await msg('Uceo', 'ไม่มี'); await wait()
   await msg('Uceo', 'ตกลง'); await wait()
   const prs = (await GET('/purchase-requests')).data
   assert.equal(prs.length, n0 + 1, 'ต้องได้ใบขอซื้อ')
@@ -1361,4 +1367,31 @@ test('ลบใบขอซื้อ (แอดมิน): ลบได้พร
   assert.equal((await DEL(`/purchase-requests/${pr2.data.id}`)).status, 409)
   await POST(`/reject/po/${po.data.id}`, { note: 'ยกเลิก' })
   assert.equal((await DEL(`/purchase-requests/${pr2.data.id}`)).status, 200)
+})
+
+test('สั่งของทาง LINE: บอทถามรูปสินค้า → ส่งรูปในแชท → ครบ → ตกลง → รูปติดไปกับใบ PR', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
+  const wait = () => new Promise((r) => setTimeout(r, 600))
+  const fore = (await GET('/users')).data.find((u) => u.username === 'sitetest')
+  const code = await POST('/line-link/code', { user_id: fore.id }); await msg('Ufore3', code.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  await msg('Ufore3', 'สั่งของ กระเบื้องหลังคา 200 แผ่น บ้านคุณพร'); await wait() // ครบบ้าน → ถามรูป
+  assert.equal((await GET('/purchase-requests')).data.length, n0)
+  await img('Ufore3', 'p1'); await wait()
+  await img('Ufore3', 'p2'); await wait()
+  await msg('Ufore3', 'ครบ'); await wait() // → สรุป
+  assert.equal((await GET('/purchase-requests')).data.length, n0, 'ยังไม่สร้างจนกว่าจะตกลง')
+  await msg('Ufore3', 'ตกลง'); await wait()
+  const prs = (await GET('/purchase-requests')).data
+  assert.equal(prs.length, n0 + 1)
+  assert.equal(prs[0].images.length, 2, 'รูปสินค้าต้องติดไปกับใบ'); assert.ok(prs[0].images[0].startsWith('data:image/png'))
+  // ไม่มีรูป → พิมพ์ ไม่มี
+  await msg('Ufore3', 'สั่งของ ทรายละเอียด 1 คิว บ้านคุณพร'); await wait()
+  await msg('Ufore3', 'ไม่มี'); await wait()
+  await msg('Ufore3', 'ตกลง'); await wait()
+  const prs2 = (await GET('/purchase-requests')).data
+  assert.equal(prs2.length, n0 + 2); assert.equal((prs2[0].images || []).length, 0)
+  await DEL('/line-link?user_id=' + fore.id)
 })

@@ -275,6 +275,10 @@ ensureColumn('pr_quotes', 'ai', 'INTEGER')                // 1 = AI อ่าน
 ensureColumn('pr_quotes', 'items', 'TEXT')                // รายการในใบเสนอราคา (JSON [{name,qty,unit,price,amount}])
 ensureColumn('pr_quotes', 'recommended', 'INTEGER')       // 1 = AI แนะนำว่าคุ้มสุด
 ensureColumn('pr_quotes', 'reason', 'TEXT')
+db.exec(`CREATE TABLE IF NOT EXISTS line_order_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid TEXT, image TEXT, created TEXT
+)`) // รูปสินค้าที่ส่งมาในแชทระหว่างร่างใบขอซื้อ (ต่อคน) — ย้ายเข้าใบตอนตกลง
 db.exec(`CREATE TABLE IF NOT EXISTS pr_quote_files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   pr_id INTEGER, image TEXT, by TEXT, source TEXT, created TEXT

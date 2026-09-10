@@ -97,6 +97,14 @@ export default function PrApprovalDoc({ pr, onClose, standalone }: { pr: ApiPR; 
         <div style={{ border: bd, borderTop: 'none', padding: '5px 8px', fontSize: 10.5 }}>หมายเหตุ ................................................................................................................................................</div>
 
         {/* ท้ายเอกสาร: ผลการพิจารณา + ลายเซ็น (ดันไปอยู่ล่างสุดของหน้า) */}
+        {(pr.images && pr.images.length > 0) && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>รูปสินค้าแนบ ({pr.images.length})</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {pr.images.slice(0, 3).map((im, i) => <img key={i} src={im} alt={'รูปสินค้า ' + (i + 1)} style={{ height: 120, maxWidth: 220, objectFit: 'cover', border: '1px solid #C9D2DA', borderRadius: 4 }} />)}
+            </div>
+          </div>
+        )}
         <div className="doc-foot">
           <div style={{ border: bd, marginTop: 14, padding: '6px 10px', fontSize: 11.5 }}>
             <b>ผลการพิจารณา</b> &nbsp;&nbsp; {chk(approved)} อนุมัติ &nbsp;&nbsp;&nbsp; {chk(rejected)} ไม่อนุมัติ
