@@ -1038,12 +1038,12 @@ function parseLineCommand(t, sender) {
   return found
 }
 function draftText(d) {
-  return `📝 สรุปคำสั่งงาน\nงาน: ${d.scope}\nผู้รับ: ${d.executor || '-'}${d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : ''}\nบ้าน: ${d.house_name || '-'}\nกำหนดส่ง: ${thaiDateLabel(d.due_date)}${d.urgent ? '\n🔴 ด่วน (นับถอยหลังรับทราบ)' : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อออกใบสั่งงาน · พิมพ์ชื่อคนอื่นเพื่อเปลี่ยนผู้รับ · พิมพ์วันใหม่เพื่อเปลี่ยนกำหนด · 'ยกเลิก' เพื่อทิ้ง`
+  return `📝 สรุปคำสั่งงาน\nงาน: ${d.scope}\nผู้รับ: ${d.executor || '-'}${d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : d.matched_by === 'AI' ? ' (AI อ่านให้)' : ''}\nบ้าน: ${d.house_name || '-'}\nกำหนดส่ง: ${thaiDateLabel(d.due_date)}${d.urgent ? '\n🔴 ด่วน (นับถอยหลังรับทราบ)' : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อออกใบสั่งงาน · พิมพ์ชื่อคนอื่นเพื่อเปลี่ยนผู้รับ · พิมพ์วันใหม่เพื่อเปลี่ยนกำหนด · 'ยกเลิก' เพื่อทิ้ง`
 }
 // ถามเก็บข้อมูลที่ขาดทีละอย่าง (ผู้รับ → กำหนดส่ง) แล้วค่อยสรุปให้ยืนยัน
 function askNextOrSummary(uid, d, replyToken) {
   if (!d.executor) { setLineDraft(uid, { ...d, pending: 'executor' }); return lineReply(replyToken, `รับทราบค่ะ งาน: "${d.scope}"\nจะสั่งงานนี้ให้ใครคะ? (พิมพ์ชื่อจริงหรือชื่อเล่น เช่น สมชาย / พี่ต้น)`) }
-  if (!d.due_date && !d.due_asked) { setLineDraft(uid, { ...d, pending: 'due' }); return lineReply(replyToken, `ผู้รับ: ${d.executor}${d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : ''}\nกำหนดส่งงานเป็นวันไหนดีคะ? (เช่น วันนี้ / พรุ่งนี้ / ศุกร์นี้ / 15 ก.ย. หรือพิมพ์ 'ไม่กำหนด')`) }
+  if (!d.due_date && !d.due_asked) { setLineDraft(uid, { ...d, pending: 'due' }); return lineReply(replyToken, `ผู้รับ: ${d.executor}${d.matched_by === 'ชื่อเล่น' ? ' (จับจากชื่อเล่น)' : d.matched_by === 'AI' ? ' (AI อ่านให้)' : ''}\nกำหนดส่งงานเป็นวันไหนดีคะ? (เช่น วันนี้ / พรุ่งนี้ / ศุกร์นี้ / 15 ก.ย. หรือพิมพ์ 'ไม่กำหนด')`) }
   setLineDraft(uid, { ...d, pending: null })
   return lineReply(replyToken, draftText(d))
 }
@@ -1178,7 +1178,10 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   if (!lineCanCommand(u)) {
     // โฟร์แมน/พนักงาน: ข้อความอื่นที่ไม่ใช่คำสั่ง = รายการที่จะสั่งของ (ไม่ต้องพิมพ์ "สั่งของ" นำหน้าก็ได้) → ร่างใบขอซื้อให้ยืนยันก่อน
-    if (t.length >= 4 && !/^(ครับ|ค่ะ|คะ|ขอบคุณ|โอเค|ok|สวัสดี|หวัดดี)/i.test(t) && parseOrderText(t).items.length) return handleLineOrder(uid, u, t, replyToken, ctx)
+    if (t.length >= 4 && !/^(ครับ|ค่ะ|คะ|ขอบคุณ|โอเค|ok|สวัสดี|หวัดดี)/i.test(t)) {
+      const ai = await aiParseLine(t, u)
+      if (!ai || ai.intent !== 'other' || ai.items.length) return handleLineOrder(uid, u, t, replyToken, ctx, ai)
+    }
     return lineReply(replyToken, `บัญชี "${u.name}" ใช้ได้:\n• สั่งของ — พิมพ์รายการที่ต้องการได้เลย เช่น "ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร" → ระบบร่างใบขอซื้อให้ ตอบ 'ตกลง' เพื่อส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจ\n• งาน / รับ — ดู/รับทราบงานที่สั่งถึงฉัน\n(การสั่งงานคนอื่นผ่าน LINE ทำได้เฉพาะผู้บริหาร)`)
   }
   // ---- โหมดสั่งงาน (ผู้บริหาร) ----
@@ -1215,6 +1218,15 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   // ข้อความใหม่ = คำสั่งงานใหม่
   if (t.length < 4) return lineReply(replyToken, "พิมพ์คำสั่งงานให้ชัดขึ้นหน่อยค่ะ เช่น \"ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้\" (พิมพ์ 'ช่วย' ดูคำสั่ง)")
+  // AI อ่านภาษาคน: ตัดสินว่าเป็นสั่งของหรือสั่งงาน + ดึงคน/บ้าน/วัน/ของ ให้ (ถ้าตั้งกุญแจ AI ไว้)
+  if (!draft) {
+    const ai = await aiParseLine(t, u)
+    if (ai?.intent === 'order' && ai.items.length) return handleLineOrder(uid, u, t, replyToken, ctx, ai)
+    if (ai?.intent === 'work') {
+      const rule = parseLineCommand(t, u)
+      return askNextOrSummary(uid, { ...rule, scope: t, task: ai.task, executor: ai.executor || rule.executor, executor_code: ai.executor_code || rule.executor_code, matched_by: ai.executor ? 'AI' : rule.matched_by, house_code: ai.house_code || rule.house_code, house_name: ai.house_name || rule.house_name, due_date: ai.due_date || rule.due_date, urgent: ai.urgent || rule.urgent }, replyToken)
+    }
+  }
   // ฟังดูเหมือนเรื่องซื้อ/จ้าง แต่ไม่ได้ขึ้นต้นด้วยคำสั่งชัดๆ → ถามก่อน จะได้ไม่ออกใบสั่งงานผิด
   if (PURCHASE_HINT_RE.test(t) && !draft) {
     setLineCtx(uid, { kind: 'clarify', text: t })
@@ -1277,9 +1289,9 @@ function orderSummary(d) {
   const lines = d.items.map((it, i) => `${i + 1}. ${it.desc}${it.qty ? ' ' + it.qty + ' ' + (it.unit || '') : ''}${it.price ? ` (ราคากลาง ${fmtMoney(it.price)}${it.qty ? ' → ' + fmtMoney(it.qty * it.price) : ''})` : ''}`)
   const total = d.items.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : it.price), 0)
   const checker = prChecker()
-  return `🛒 ร่างใบขอซื้อ\nบ้าน: ${d.house_name || 'ไม่ระบุ'}${d.category_label ? ' · หมวด ' + d.category_label : ''}\n${lines.join('\n')}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
+  return `🛒 ร่างใบขอซื้อ${d.by_ai ? ' (AI อ่านรายการให้ — ตรวจดูก่อนนะคะ)' : ''}\nบ้าน: ${d.house_name || 'ไม่ระบุ'}${d.category_label ? ' · หมวด ' + d.category_label : ''}\n${lines.join('\n')}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
 }
-async function handleLineOrder(uid, u, t, replyToken, ctx) {
+async function handleLineOrder(uid, u, t, replyToken, ctx, pre) {
   // ตอบหมวดของออฟฟิศ (1-4 หรือพิมพ์ชื่อหมวด)
   if (ctx?.kind === 'order' && ctx.pending === 'ocat') {
     const n = Number(t.trim()); const hit = OFFICE_CATS[n - 1] || OFFICE_CATS.find(([, l]) => t.includes(l) || l.includes(t.trim()))
@@ -1293,11 +1305,78 @@ async function handleLineOrder(uid, u, t, replyToken, ctx) {
     if (!h.name) return lineReply(replyToken, `ไม่พบบ้าน "${t}" ในทะเบียนค่ะ พิมพ์ชื่อบ้านอีกครั้ง หรือ 'ไม่ระบุ'`)
     return finishOrderAsk(uid, { ...ctx, house_code: h.code, house_name: h.name, pending: null, house_asked: true }, replyToken)
   }
-  const d = parseOrderText(t)
+  const d = await parseOrderSmart(t, u, pre)
   if (!d.items.length) return lineReply(replyToken, 'พิมพ์รายการที่จะสั่งด้วยค่ะ เช่น "สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร"')
   return finishOrderAsk(uid, { kind: 'order', ...d, images: ctx?.kind === 'order' ? ctx.images || [] : [], pending: null, house_asked: false }, replyToken)
 }
 const OFFICE_CATS = [['fuel', 'เบิกค่าน้ำมัน'], ['repair', 'ซ่อมแซมออฟฟิศ'], ['supplies', 'ของใช้สำนักงาน'], ['other', 'อื่นๆ']]
+// ===== AI อ่านภาษาคนในแชท → รายการสั่งของ / คำสั่งงาน (ใช้แทนกติกาจับคำเมื่อตั้งกุญแจ AI แล้ว · ไม่มีกุญแจ/AI ล้ม → กติกาเดิม) =====
+const AI_PARSE_MODEL = process.env.PPSD_AI_PARSE_MODEL || 'claude-sonnet-5'
+const TH_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์']
+async function aiParseLine(text, sender) {
+  const t = String(text || '').trim()
+  if (!t) return null
+  if (process.env.PPSD_AI_MOCK_PARSE) { // ชุดทดสอบ: ตารางข้อความ → ผล
+    try { const m = JSON.parse(process.env.PPSD_AI_MOCK_PARSE); return Object.prototype.hasOwnProperty.call(m, t) ? normalizeAiParse(m[t], sender) : null } catch { return null }
+  }
+  if (!aiKey()) return null
+  const emps = db.prepare("SELECT code, name, nickname, role FROM employees WHERE status IS NULL OR status NOT IN ('ลาออก')").all()
+  const houses = db.prepare('SELECT code, name, kind FROM houses').all()
+  const senderEmp = sender ? empOfUser(sender) : null
+  const today = new Date()
+  const prompt = `คุณเป็นผู้ช่วยของบริษัทรับสร้างบ้าน อ่านข้อความแชทภาษาไทยจากพนักงาน (ภาษาพูด มีคำฟุ่มเฟือย) แล้วสรุปเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
+วันนี้: ${isoOf(today)} (วัน${TH_DAYS[today.getDay()]})
+ผู้ส่ง: ${sender?.name || '-'}${senderEmp ? ` (พนักงาน ${senderEmp.code}${senderEmp.nickname ? ' ชื่อเล่น ' + senderEmp.nickname : ''})` : ''} — ผู้ส่งไม่ใช่ผู้รับงานของตัวเอง
+พนักงาน (รหัส|ชื่อ|ชื่อเล่น|ตำแหน่ง):
+${emps.map((e) => `${e.code}|${e.name}|${e.nickname || ''}|${e.role || ''}`).join('\n')}
+บ้าน/โครงการ (รหัส|ชื่อ|ประเภท):
+${houses.map((h) => `${h.code}|${h.name}|${h.kind === 'office' ? 'ออฟฟิศ' : 'บ้านลูกค้า'}`).join('\n')}
+หมวดของออฟฟิศ: fuel=เบิกค่าน้ำมัน repair=ซ่อมแซมออฟฟิศ supplies=ของใช้สำนักงาน other=อื่นๆ
+
+ข้อความ: """${t}"""
+
+ตอบ JSON รูปแบบนี้:
+{"intent":"order|work|other","items":[{"desc":"ชื่อของ/งานที่จะซื้อหรือจ้าง","qty":0,"unit":"หน่วย"}],"house_code":"","category":"","executor_code":"","executor_name":"","task":"","due_iso":"","urgent":false}
+กติกา:
+- intent=order เมื่อขอซื้อ/สั่งของ/ขอจ้าง/เบิก (วัสดุ อุปกรณ์ น้ำมัน ช่างรับเหมา) · intent=work เมื่อสั่งให้ "คน" ไปทำงาน/ติดต่อ/ตรวจ/โทร · intent=other ถ้าไม่ใช่ทั้งสอง (ทักทาย ถาม)
+- items: แยกทีละรายการ ชื่อของให้สะอาดเป็นชื่อวัสดุ/งานมาตรฐาน (ตัดคำพูด เช่น ซัก/หน่อย/นะ/ครับ/อีก/กับ) ใส่ขนาด/สเปคไว้ในชื่อ เช่น "เหล็กเส้น 12 มม." · qty ตัวเลข (ไม่ระบุ = 0) · unit หน่วยไทย (ถุง/เส้น/คิว/ลิตร/ชิ้น/ชุด/เหมา…)
+- house_code: รหัสจากรายการบ้านถ้าข้อความพูดถึง (เรียกย่อได้ เช่น "บ้านคุณพร" = บ้านที่ชื่อมีคำว่า พร) · พูดถึงออฟฟิศ/สำนักงาน = โครงการประเภทออฟฟิศ · ไม่มี = ""
+- category: เฉพาะเมื่อบ้านเป็นออฟฟิศ (fuel/repair/supplies/other)
+- executor_code/executor_name: (intent=work) พนักงานที่ต้องไปทำ จับจากชื่อ/ชื่อเล่น/คำนำหน้า (พี่/ช่าง/คุณ/น้อง) ห้ามเป็นผู้ส่ง · ไม่ชัด = ""
+- task: (intent=work) สรุปงานที่ต้องทำสั้นๆ
+- due_iso: วันกำหนด YYYY-MM-DD จาก วันนี้/พรุ่งนี้/มะรืน/ศุกร์นี้/15 ก.ย. ฯลฯ · ไม่มี = ""
+- urgent: true ถ้ามี ด่วน/เร่ง/รีบ/ทันที`
+  const ai = await aiAsk({ prompt, maxTokens: 1200, model: AI_PARSE_MODEL })
+  if (!ai.ok) { console.error('[ai-parse]', ai.error); return null }
+  const parsed = extractJsonBlock(ai.text)
+  return parsed ? normalizeAiParse(parsed, sender) : null
+}
+// ตรวจผล AI กับทะเบียนจริง (บ้าน/พนักงาน/หมวด) — ไม่เชื่อรหัสที่ไม่มีอยู่ · ผู้ส่งไม่ใช่ผู้รับ
+function normalizeAiParse(p, sender) {
+  const num = (v) => Number(String(v ?? '').replace(/,/g, '')) || 0
+  const out = { intent: ['order', 'work', 'other'].includes(p?.intent) ? p.intent : 'other', items: [], house_code: '', house_name: '', category: '', category_label: '', executor: '', executor_code: '', matched_by: '', task: String(p?.task || '').trim(), due_date: '', urgent: !!p?.urgent, by_ai: true }
+  out.items = (Array.isArray(p?.items) ? p.items : []).map((it) => ({ desc: String(it?.desc || '').replace(/\s+/g, ' ').trim(), qty: num(it?.qty), unit: String(it?.unit || '').trim() })).filter((it) => it.desc)
+  if (p?.house_code) { const h = db.prepare('SELECT code, name FROM houses WHERE code=?').get(String(p.house_code)); if (h) { out.house_code = h.code; out.house_name = h.name || h.code } }
+  if (p?.category && OFFICE_CATS.some(([k]) => k === p.category)) { out.category = p.category; out.category_label = OFFICE_CATS.find(([k]) => k === p.category)[1] }
+  let e = p?.executor_code ? db.prepare("SELECT code, name FROM employees WHERE code=? AND (status IS NULL OR status NOT IN ('ลาออก'))").get(String(p.executor_code)) : null
+  if (!e && p?.executor_name) e = findEmployeeByName(String(p.executor_name))
+  if (e) {
+    const senderEmp = sender ? empOfUser(sender) : null
+    if (!(senderEmp && senderEmp.code === e.code) && !(sender && normName(e.name) === normName(sender.name))) { out.executor = e.name; out.executor_code = e.code; out.matched_by = 'AI' }
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(p?.due_iso || ''))) out.due_date = p.due_iso
+  return out
+}
+// รายการสั่งของ: ใช้ผล AI ถ้าอ่านได้ (เติมราคากลาง) ไม่งั้นกติกาจับคำ
+async function parseOrderSmart(text, sender, pre) {
+  const ai = pre || await aiParseLine(text, sender)
+  if (ai && ai.items.length) {
+    const items = ai.items.map((it) => { const mp = materialPriceFor(it.desc); return { desc: it.desc, qty: it.qty, unit: it.unit || mp?.unit || '', price: mp ? mp.central : 0, est: !!mp } })
+    return { items, house_code: ai.house_code, house_name: ai.house_name, category: ai.category || '', category_label: ai.category_label || '', by_ai: true }
+  }
+  return { ...parseOrderText(text), by_ai: false }
+}
+
 const isOfficeHouse = (code) => !!code && db.prepare('SELECT kind FROM houses WHERE code=?').get(code)?.kind === 'office'
 function finishOrderAsk(uid, d, replyToken) {
   if (!d.house_name && !d.house_asked && db.prepare('SELECT COUNT(*) c FROM houses').get().c) { setLineCtx(uid, { ...d, pending: 'house' }); return lineReply(replyToken, `📝 รับรายการ ${d.items.length} รายการแล้ว — ของบ้านไหนคะ? (พิมพ์ชื่อบ้าน หรือ 'ไม่ระบุ')`) }
