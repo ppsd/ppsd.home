@@ -3563,6 +3563,22 @@ function createPurchaseRequest(body, user) {
   else notifyApprovers('pr', info.lastInsertRowid, me.name)
   return row
 }
+// ลบใบขอซื้อ (แอดมิน) — ห้ามลบถ้ามี PO ที่ยังไม่ยกเลิกอ้างอิงอยู่ · ลบใบเทียบราคา/รูปใบเสนอราคา/ประวัติอนุมัติ/รูปใบตาม
+api.delete('/purchase-requests/:id', adminOnly, (req, res) => {
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
+  if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
+  const live = db.prepare("SELECT no FROM purchase_orders WHERE pr_no=? AND status<>'ยกเลิก'").all(pr.no)
+  if (live.length) return res.status(409).json({ error: `ลบไม่ได้ — มีใบสั่งซื้อ ${live.map((o) => o.no).join(', ')} อ้างอิงอยู่ (ปฏิเสธ/ยกเลิก PO ก่อน)` })
+  db.transaction(() => {
+    db.prepare('DELETE FROM pr_quotes WHERE pr_id=?').run(pr.id)
+    db.prepare('DELETE FROM pr_quote_files WHERE pr_id=?').run(pr.id)
+    db.prepare("DELETE FROM doc_approvals WHERE doc_type='pr' AND doc_id=?").run(pr.id)
+    db.prepare("DELETE FROM doc_images WHERE kind='pr' AND doc_id=?").run(pr.id)
+    db.prepare('DELETE FROM purchase_requests WHERE id=?').run(pr.id)
+  })()
+  audit(req, 'ลบใบขอซื้อ', `${pr.no} · ${pr.item} · ${fmtMoney(pr.amount)} บาท (${pr.status})`)
+  res.json({ ok: true })
+})
 // ขั้น 2: ผู้ตรวจสอบ (ที่ตั้งไว้) / บัญชี / แอดมิน ตรวจใบขอซื้อ → ok=true ออก PR + ส่งอนุมัติทาง LINE · ok=false ส่งกลับให้แก้ไขพร้อมเหตุผล
 // ส่งการ์ดตรวจสอบให้ผู้ตรวจสอบอีกครั้ง (ใช้เช็คว่าทำไมไม่เด้ง)
 api.post('/purchase-requests/:id/notify-check', canWrite, async (req, res) => {
