@@ -1345,3 +1345,20 @@ test('AI อ่านภาษาคน: ประโยคพูดทั่ว
   assert.equal((await GET('/purchase-requests')).data.length, n0 + 1); assert.equal((await GET('/work-orders')).data.length, w0 + 1)
   await DEL('/line-link')
 })
+
+test('ลบใบขอซื้อ (แอดมิน): ลบได้พร้อมใบเทียบราคา/รูป · มี PO ที่ยังไม่ยกเลิกอ้างอิง → ลบไม่ได้', async () => {
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ทดสอบลบ', amount: 100 })
+  await POST(`/purchase-requests/${pr.data.id}/quotes`, { vendor: 'ร้านลบ', price: 90 })
+  const d = await DEL(`/purchase-requests/${pr.data.id}`)
+  assert.equal(d.status, 200)
+  assert.ok(!(await GET('/purchase-requests')).data.some((r) => r.id === pr.data.id))
+  assert.equal((await GET(`/purchase-requests/${pr.data.id}/quotes`)).data.length, 0)
+  // มี PO อ้างอิง
+  const pr2 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ทดสอบลบ2', amount: 100 })
+  await POST(`/approve/pr/${pr2.data.id}`)
+  const po = await POST('/purchase-orders', { vendor: 'ร้านลบ', item: 'ทดสอบลบ2', amount: 100, pr_no: pr2.data.no })
+  assert.equal(po.status, 201)
+  assert.equal((await DEL(`/purchase-requests/${pr2.data.id}`)).status, 409)
+  await POST(`/reject/po/${po.data.id}`, { note: 'ยกเลิก' })
+  assert.equal((await DEL(`/purchase-requests/${pr2.data.id}`)).status, 200)
+})
