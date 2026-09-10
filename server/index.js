@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync, appendFileSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
-import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary } from './auth.js'
+import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin } from './security.js'
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -679,7 +679,7 @@ function consumeLineLinkCode(code, uid) {
   db.prepare('UPDATE users SET line_uid=? WHERE id=?').run(uid, u.id)
   return u
 }
-const userByLine = (uid) => db.prepare("SELECT * FROM users WHERE line_uid=? AND status<>'ปิดใช้งาน'").get(uid) || db.prepare('SELECT * FROM users WHERE line_uid=?').get(uid)
+const userByLine = (uid) => { const u = db.prepare("SELECT * FROM users WHERE line_uid=? AND status<>'ปิดใช้งาน'").get(uid) || db.prepare('SELECT * FROM users WHERE line_uid=?').get(uid); return u ? { ...u, position: effectivePosition(u) } : u }
 const lineUidOfName = (name) => db.prepare('SELECT line_uid FROM users WHERE name=? AND line_uid IS NOT NULL').get(name)?.line_uid || null
 // พนักงานที่ผูกกับบัญชีผู้ใช้ (employees.user_id หรือชื่อเดียวกัน) — ใช้หาว่างานถูกสั่งถึงคนนี้ไหม
 const empOfUser = (u) => db.prepare('SELECT code, name FROM employees WHERE user_id=? OR name=? ORDER BY CASE WHEN user_id=? THEN 0 ELSE 1 END LIMIT 1').get(u.id, u.name, u.id)
@@ -1176,7 +1176,11 @@ async function handleLineUserMessage(uid, text, replyToken) {
     const rest = list.slice(4).map(({ docType, doc, st }) => `• ${APPROVE_DOCS[docType].label} ${docNoOf(docType, doc)} ${fmtMoney(docType === 'payment' ? doc.net : doc.amount)} บาท (${st.count}/${st.required})`).join('\n')
     return lineReply(replyToken, [`📋 รออนุมัติ ${list.length} รายการ`, ...cards, ...(rest ? [rest + "\n\nพิมพ์ 'อนุมัติ PR-…' เพื่ออนุมัติใบที่ระบุ"] : [])])
   }
-  if (!lineCanCommand(u)) return lineReply(replyToken, `บัญชี "${u.name}" ใช้ได้เฉพาะ: งาน / รับ — การสั่งงานผ่าน LINE ทำได้เฉพาะผู้บริหาร`)
+  if (!lineCanCommand(u)) {
+    // โฟร์แมน/พนักงาน: ข้อความอื่นที่ไม่ใช่คำสั่ง = รายการที่จะสั่งของ (ไม่ต้องพิมพ์ "สั่งของ" นำหน้าก็ได้) → ร่างใบขอซื้อให้ยืนยันก่อน
+    if (t.length >= 4 && !/^(ครับ|ค่ะ|คะ|ขอบคุณ|โอเค|ok|สวัสดี|หวัดดี)/i.test(t) && parseOrderText(t).items.length) return handleLineOrder(uid, u, t, replyToken, ctx)
+    return lineReply(replyToken, `บัญชี "${u.name}" ใช้ได้:\n• สั่งของ — พิมพ์รายการที่ต้องการได้เลย เช่น "ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร" → ระบบร่างใบขอซื้อให้ ตอบ 'ตกลง' เพื่อส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจ\n• งาน / รับ — ดู/รับทราบงานที่สั่งถึงฉัน\n(การสั่งงานคนอื่นผ่าน LINE ทำได้เฉพาะผู้บริหาร)`)
+  }
   // ---- โหมดสั่งงาน (ผู้บริหาร) ----
   const draft = getLineDraft(uid)
   if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineDraft(uid, null); return lineReply(replyToken, 'ทิ้งร่างแล้วค่ะ') }
@@ -2331,6 +2335,7 @@ api.put('/employees/:id', requireSalary, (req, res) => {
   const retentionOpening = b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : e.retention_opening
   const workDays = b.work_days != null && b.work_days !== '' ? Number(b.work_days) : e.work_days
   const backupCode = b.backup_code != null ? b.backup_code : e.backup_code
+  if (e.user_id && b.role !== undefined && String(b.role || '') !== String(e.role || '')) db.prepare('UPDATE users SET position=? WHERE id=?').run(String(b.role || ''), e.user_id) // ตำแหน่งในบัญชีตาม HR
   db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=?, prefix=?, nickname=?, no_sso=? WHERE id=?')
     .run(b.name ?? e.name, b.role ?? e.role, b.dept ?? e.dept, b.status ?? e.status, payType, base, sso, tax, spouse, children,
       b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, b.prefix ?? e.prefix, b.nickname ?? e.nickname, noSso, e.id)
@@ -3809,6 +3814,7 @@ api.post('/users', adminOnly, (req, res) => {
     // มีพนักงานชื่อนี้อยู่แล้ว → ผูกบัญชี (PIN จะถูก sync ให้ตรงกับผู้ใช้ด้านล่าง) · ชื่อบัญชีใช้ตามทะเบียนพนักงาน
     db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(userId, existingEmp.id)
     if (existingEmp.name !== name) db.prepare('UPDATE users SET name=? WHERE id=?').run(existingEmp.name, userId)
+    if (!position && existingEmp.role) db.prepare('UPDATE users SET position=? WHERE id=?').run(existingEmp.role, userId) // ตำแหน่งตาม HR
   } else {
     const maxNum = db.prepare("SELECT code FROM employees WHERE code LIKE 'EMP-%'").all()
       .reduce((m, r) => Math.max(m, parseInt(String(r.code).slice(4), 10) || 0), 0)
@@ -3836,7 +3842,7 @@ api.put('/users/:id', adminOnly, (req, res) => {
     if (code && !emp) return res.status(404).json({ error: 'ไม่พบพนักงานรหัส ' + code })
     if (emp?.user_id && emp.user_id !== u.id && db.prepare('SELECT id FROM users WHERE id=?').get(emp.user_id)) return res.status(409).json({ error: `พนักงาน ${emp.name} ผูกกับบัญชีอื่นอยู่แล้ว` })
     db.prepare('UPDATE employees SET user_id=NULL WHERE user_id=?').run(u.id)
-    if (emp) { db.prepare('UPDATE employees SET user_id=?, pin=? WHERE id=?').run(u.id, u.pin, emp.id); if (name === undefined) db.prepare('UPDATE users SET name=? WHERE id=?').run(emp.name, u.id) }
+    if (emp) { db.prepare('UPDATE employees SET user_id=?, pin=? WHERE id=?').run(u.id, u.pin, emp.id); if (name === undefined) db.prepare('UPDATE users SET name=? WHERE id=?').run(emp.name, u.id); if (!u.position && emp.role && position === undefined) db.prepare('UPDATE users SET position=? WHERE id=?').run(emp.role, u.id) }
     audit(req, 'ผูกผู้ใช้กับพนักงาน', `${u.name} → ${emp ? emp.code + ' ' + emp.name : 'ปลดผูก'}`)
   }
   const newRole = ['admin', 'accounting', 'site', 'viewer'].includes(role) ? role : u.role

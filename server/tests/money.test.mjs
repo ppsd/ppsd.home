@@ -1274,3 +1274,40 @@ test('บอท LINE: ชื่อเล่นของคนสั่งเอ�
   token = adminToken
   await DEL('/line-link'); await DEL('/line-link?user_id=' + man.id)
 })
+
+test('โฟร์แมนพิมพ์รายการในไลน์โดยไม่ต้องขึ้นต้นด้วย "สั่งของ" → ร่างใบขอซื้อ → ตกลง → รอผู้ตรวจสอบ', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 500))
+  const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
+  await PUT('/procurement/flow', { checker_user_id: som.id })
+  const fore = (await GET('/users')).data.find((u) => u.username === 'sitetest')
+  const code = await POST('/line-link/code', { user_id: fore.id }); await msg('Ufore2', code.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  await msg('Ufore2', 'ปูนซีเมนต์ 20 ถุง, ทรายหยาบ 1 คิว บ้านคุณพร'); await wait()
+  await msg('Ufore2', 'ตกลง'); await wait()
+  const prs = (await GET('/purchase-requests')).data
+  assert.equal(prs.length, n0 + 1, 'ข้อความรายการต้องกลายเป็นใบขอซื้อ')
+  assert.equal(prs[0].status, 'รอตรวจสอบ'); assert.equal(prs[0].by, fore.name); assert.equal(prs[0].items.length, 2); assert.equal(prs[0].house_code, 'H-PORN')
+  // ทักทายเฉยๆ ไม่กลายเป็นใบ
+  await msg('Ufore2', 'ครับ'); await wait()
+  assert.equal((await GET('/purchase-requests')).data.length, n0 + 1)
+  await PUT('/procurement/flow', { checker_user_id: 0 })
+  await DEL('/line-link?user_id=' + fore.id)
+})
+
+test('ตำแหน่งตาม HR: บัญชีที่ผูกกับพนักงานตำแหน่ง CEO/ผู้จัดการ ได้สิทธิ์ผู้บริหารโดยไม่ต้องตั้งตำแหน่งซ้ำในผู้ใช้ · แก้ตำแหน่งใน HR แล้วบัญชีตาม', async () => {
+  const adminToken = token
+  const e = await POST('/employees', { name: 'วิภา ทดสอบตำแหน่ง', role: 'CEO', pay_type: 'รายเดือน', base: 1 })
+  const u = await POST('/users', { name: 'วิภา ทดสอบตำแหน่ง', username: 'wipa1', pin: '2525', role: 'site' })
+  assert.equal(u.data.employee_code, e.data.code)
+  token = (await POST('/login', { username: 'wipa1', pin: '2525' })).data.token
+  let me = (await GET('/me')).data
+  assert.equal(me.position, 'CEO'); assert.equal(me.isManager, true, 'ตำแหน่งจาก HR ต้องให้สิทธิ์ผู้บริหาร')
+  token = adminToken
+  await PUT(`/employees/${e.data.id}`, { role: 'โฟร์แมน' })
+  token = (await POST('/login', { username: 'wipa1', pin: '2525' })).data.token
+  me = (await GET('/me')).data
+  assert.equal(me.position, 'โฟร์แมน'); assert.equal(me.isManager, false)
+  token = adminToken
+})

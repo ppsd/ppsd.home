@@ -1,13 +1,19 @@
 import { db } from './db.js'
 import { verifyPin, signToken, verifyToken } from './security.js'
 
+// ตำแหน่งของบัญชี: ใช้ที่ตั้งในผู้ใช้ ถ้าว่างใช้ "ตำแหน่ง" ของพนักงาน HR ที่ผูกอยู่ (ตั้งที่เดียวพอ)
+export function effectivePosition(user) {
+  if (!user) return ''
+  if (user.position) return user.position
+  try { return db.prepare('SELECT role FROM employees WHERE user_id=? ORDER BY id LIMIT 1').get(user.id)?.role || '' } catch { return '' }
+}
 export function login(username, pin) {
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username)
   if (!user || !verifyPin(pin, user.pin)) return null
   if (user.status !== 'ใช้งาน') return { error: 'บัญชีถูกระงับการใช้งาน' }
   let deny = []
   try { deny = JSON.parse(user.deny_mods || '[]') } catch { deny = [] }
-  const safe = { id: user.id, name: user.name, username: user.username, role: user.role, position: user.position || '', mustChangePin: !!user.must_change_pin, deny_mods: Array.isArray(deny) ? deny : [] }
+  const safe = { id: user.id, name: user.name, username: user.username, role: user.role, position: effectivePosition(user), mustChangePin: !!user.must_change_pin, deny_mods: Array.isArray(deny) ? deny : [] }
   return { token: signToken({ id: user.id }), user: safe }
 }
 
@@ -23,7 +29,7 @@ function userFromToken(token) {
   if (!u || u.status !== 'ใช้งาน') return null
   let deny = []
   try { deny = JSON.parse(u.deny_mods || '[]') } catch { deny = [] }
-  return { id: u.id, name: u.name, username: u.username, role: u.role, position: u.position || '', deny_mods: Array.isArray(deny) ? deny : [] }
+  return { id: u.id, name: u.name, username: u.username, role: u.role, position: effectivePosition(u), deny_mods: Array.isArray(deny) ? deny : [] }
 }
 
 // Express middleware: attaches req.user or 401s
@@ -50,14 +56,14 @@ export function requireRole(...allowed) {
 export const MANAGER_POSITIONS = ['ผู้จัดการ', 'CEO', 'ซีอีโอ', 'ประธาน', 'กรรมการผู้จัดการ', 'ผู้บริหาร', 'เจ้าของ']
 export const isManagerPosition = (p) => MANAGER_POSITIONS.includes(String(p || '').trim())
 export const canSeeSalary = (user) =>
-  !!user && (user.role === 'admin' || user.role === 'accounting' || isManagerPosition(user.position) || user.position === 'บุคคล')
+  !!user && (user.role === 'admin' || user.role === 'accounting' || isManagerPosition(effectivePosition(user)) || effectivePosition(user) === 'บุคคล')
 export function requireSalary(req, res, next) {
   if (!canSeeSalary(req.user)) return res.status(403).json({ error: 'ไม่มีสิทธิ์ดูข้อมูลเงินเดือน' })
   next()
 }
 
 // only managers (ตำแหน่งผู้จัดการ) or admins may approve leave / OT / PR / time adjustments
-export const isManager = (user) => !!user && (user.role === 'admin' || isManagerPosition(user.position))
+export const isManager = (user) => !!user && (user.role === 'admin' || isManagerPosition(user.position) || isManagerPosition(effectivePosition(user)))
 export function requireManager(req, res, next) {
   if (!isManager(req.user)) return res.status(403).json({ error: 'อนุมัติได้เฉพาะตำแหน่งผู้จัดการ/CEO เท่านั้น' })
   next()
