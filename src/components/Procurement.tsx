@@ -50,6 +50,14 @@ function QuotePanel({ pr, canIssuePo, onIssued }: { pr: ApiPR; canIssuePo: boole
     setBusy('ai'); setErr('')
     try { const r = await api.post<AiCompare>('/purchase-requests/' + prId + '/ai-compare', {}); setAi(r); load() } catch (e) { setErr((e as Error).message) } finally { setBusy('') }
   }
+  const [online, setOnline] = useState<ApiPR['online_options']>(pr.online_options || null)
+  const searchOnline = async () => {
+    setBusy('online'); setErr('')
+    try { const r = await api.post<NonNullable<ApiPR['online_options']>>('/purchase-requests/' + prId + '/online-search', { notify: true }); setOnline(r) } catch (e) { setErr((e as Error).message) } finally { setBusy('') }
+  }
+  const useOffer = async (item: number, offer: number) => {
+    try { await api.post('/purchase-requests/' + prId + '/use-offer', { item, offer }); load() } catch (e) { setErr((e as Error).message) }
+  }
   const issuePo = async (q: Quote) => {
     if (!confirm(`ออกใบสั่งซื้อจากร้าน ${q.vendor} ยอด ${baht(q.price || pr.amount)} แล้วส่งขออนุมัติทาง LINE?`)) return
     setBusy('po'); setErr('')
@@ -82,6 +90,29 @@ function QuotePanel({ pr, canIssuePo, onIssued }: { pr: ApiPR; canIssuePo: boole
               <button onClick={() => delFile(fl.id)} title="ลบรูป" style={{ position: 'absolute', top: -6, right: -6, width: 16, height: 16, borderRadius: 8, border: 'none', background: '#C24036', color: '#fff', fontSize: 10, lineHeight: '16px', cursor: 'pointer', padding: 0 }}>✕</button>
             </div>
           ))}
+        </div>
+      )}
+      {/* ตัวเลือกออนไลน์จาก AI (ค้นเว็บ) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600 }}>ตัวเลือกออนไลน์ (AI ค้นทุกร้าน เลือกดีที่สุด 3 ร้าน/รายการ)</div>
+        <button onClick={searchOnline} disabled={!!busy} style={{ ...smallBtn, color: '#fff', background: '#6B4E9E', border: 'none' }}>{busy === 'online' ? '🔎 AI กำลังค้น (ราว 1 นาที)…' : online ? '🔎 ค้นใหม่' : '🔎 AI หาของออนไลน์'}</button>
+        {online && <span style={{ fontSize: 11, color: '#94A0A8' }}>ค้นเมื่อ {online.at}{online.by ? ` · ${online.by}` : ''} · ส่งลิงก์ให้จัดซื้อทาง LINE แล้ว</span>}
+      </div>
+      {online && (
+        <div style={{ background: '#F6F3FB', border: '1px solid #D9D2EA', borderRadius: 8, padding: '9px 12px', marginBottom: 10, fontSize: 12.5 }}>
+          {online.items.map((it, i) => (
+            <div key={i} style={{ marginBottom: 6 }}>
+              <div style={{ fontWeight: 600 }}>{i + 1}. {it.desc}{it.qty ? ` ${it.qty} ${it.unit}` : ''}</div>
+              {(it.not_found || !it.offers.length) ? <div style={{ color: '#94A0A8', fontSize: 11.5, paddingLeft: 14 }}>ไม่พบร้านออนไลน์ที่ตรง — ใช้ร้านค้าในระบบ</div> : it.offers.map((o, j) => (
+                <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'center', paddingLeft: 14, fontSize: 12, flexWrap: 'wrap' }}>
+                  <span>{o.rank === 1 ? '⭐' : '•'} <b>{o.shop}</b>{o.price ? ` ฿${o.price.toLocaleString('en-US')}/${o.unit || 'หน่วย'}` : ''}{o.price && it.qty ? <span style={{ color: '#5C6770' }}> (รวม ~฿{Math.round(o.price * it.qty).toLocaleString('en-US')})</span> : null}{o.note ? <span style={{ color: '#94A0A8' }}> — {o.note}</span> : null}</span>
+                  <a href={o.url} target="_blank" rel="noreferrer" style={{ color: '#30506A' }}>เปิดลิงก์ ↗</a>
+                  <button onClick={() => useOffer(i, j)} title="เพิ่มเป็นใบเทียบราคา (ราคา × จำนวน)" style={{ fontFamily: 'inherit', fontSize: 10.5, color: '#6B4E9E', background: '#fff', border: '1px solid #D9D2EA', borderRadius: 6, padding: '1px 7px', cursor: 'pointer' }}>+ ใช้เทียบราคา</button>
+                </div>
+              ))}
+            </div>
+          ))}
+          {online.summary && <div style={{ color: '#5C6770', marginTop: 4 }}>💡 {online.summary}</div>}
         </div>
       )}
       {ai && (
@@ -318,7 +349,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
 
   // inline PR create form (with optional product image) — หลายรายการในใบเดียว
   const [addingPr, setAddingPr] = useState(false)
-  const [prForm, setPrForm] = useState({ house_code: houseCode || '', category: '' })
+  const [prForm, setPrForm] = useState({ house_code: houseCode || '', category: '', source_pref: 'shop' })
   const emptyLine = { desc: '', qty: '', unit: '', price: '' }
   const [prLines, setPrLines] = useState<{ desc: string; qty: string; unit: string; price: string }[]>([{ ...emptyLine }])
   const lineAmt = (l: { qty: string; price: string }) => { const q = Number(l.qty.replace(/,/g, '')) || 0; const p = Number(l.price.replace(/,/g, '')) || 0; return q > 0 ? q * p : p }
@@ -345,8 +376,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     if (!items.length) { setPrErr('กรุณากรอกอย่างน้อย 1 รายการ'); return }
     setPrBusy(true); setPrErr('')
     try {
-      await addPr({ house_code: prForm.house_code, category: prForm.category, items, images: prImgs })
-      setAddingPr(false); setPrForm({ house_code: houseCode || '', category: '' }); setPrLines([{ ...emptyLine }]); setPrImgs([])
+      await addPr({ house_code: prForm.house_code, category: prForm.category, source_pref: prForm.source_pref, items, images: prImgs })
+      setAddingPr(false); setPrForm({ house_code: houseCode || '', category: '', source_pref: 'shop' }); setPrLines([{ ...emptyLine }]); setPrImgs([])
     } catch (e) { setPrErr((e as Error).message) } finally { setPrBusy(false) }
   }
 
@@ -423,6 +454,15 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   {catsOfHouse(houses.find((h) => h.code === (houseCode || prForm.house_code))).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 12.5, color: '#5C6770' }}>
+                ช่องทางจัดซื้อ
+                <select style={{ ...prField, padding: '6px 9px', fontSize: 12.5 }} value={prForm.source_pref} onChange={(e) => setPrForm({ ...prForm, source_pref: e.target.value })}>
+                  <option value="shop">ร้านค้าในระบบ (จัดซื้อติดต่อร้านเอง)</option>
+                  <option value="online">ออนไลน์ — AI ค้นทุกร้านออนไลน์ เลือกที่ดีที่สุด 3 ร้าน ส่งลิงก์ให้จัดซื้อ</option>
+                  <option value="both">ทั้งสองอย่าง</option>
+                </select>
+                <span style={{ fontSize: 11, color: '#94A0A8' }}>รูปใบ PR ส่งให้จัดซื้อทุกกรณีหลังอนุมัติ</span>
+              </div>
               {/* หลายรายการในใบเดียว */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '2.4fr 0.7fr 0.7fr 1fr 1fr 28px', gap: 8, fontSize: 11, color: '#94A0A8', padding: '0 2px' }}>
@@ -487,6 +527,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <td style={{ ...td, fontWeight: 500 }}>
                     <div>{r.house || '—'}</div>
                     {r.category && <div style={{ fontSize: 11, color: '#94A0A8' }}>{catLabel(r.category)}</div>}
+                    {(r.source_pref === 'online' || r.source_pref === 'both') && <div style={{ fontSize: 10.5, color: '#6B4E9E' }}>🔎 {r.source_pref === 'both' ? 'ร้านในระบบ + ออนไลน์' : 'ออนไลน์'}{r.online_status?.startsWith('done') ? ' · AI หาแล้ว' : r.online_status?.startsWith('failed') ? ' · หาไม่สำเร็จ' : ''}</div>}
                   </td>
                   <td style={{ ...td, color: '#5C6770' }}>{r.by}</td>
                   <td style={{ ...td, color: '#3C4750' }}>

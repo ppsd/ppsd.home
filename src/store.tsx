@@ -295,6 +295,10 @@ export interface ApiPR {
   doc_sent?: string | null // ผลส่งใบ PR (รูป) เข้า LINE หลังอนุมัติครบ (sent:<เวลา> | no_recipients | no_public_url | render_failed:… | push_failed)
   doc_key?: string | null
   ai_compare?: { at: string; model: string; files: number; best_vendor: string; reason: string; summary: string; by?: string } | null
+  // ช่องทางจัดซื้อที่ผู้ขอเลือก + ผล AI หาของออนไลน์
+  source_pref?: 'shop' | 'online' | 'both' | string
+  online_options?: { at: string; by?: string; summary: string; items: { desc: string; qty: number; unit: string; not_found?: boolean; offers: { rank: number; shop: string; name: string; price: number; unit: string; url: string; note: string }[] }[] } | null
+  online_status?: string | null
   // ความคืบหน้าขั้นตอนหลังอนุมัติ (จากเซิร์ฟเวอร์)
   quote_files?: number
   chosen_vendor?: string

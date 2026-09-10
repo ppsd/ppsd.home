@@ -893,6 +893,72 @@ async function sendPoDoc(poId, byName) {
   audit({ user: { name: byName || 'ระบบ' } }, 'ส่งใบ PO เข้า LINE', `${po.no} → ${targets.map((u) => u.name).join(', ')}`)
   return save('sent:' + nowTS())
 }
+// ===== หาของออนไลน์ด้วย AI (ค้นเว็บ): เลือกร้านที่ดีที่สุด 3 ร้านต่อรายการ → ส่งลิงก์ให้จัดซื้อ + ใช้เป็นใบเทียบราคาได้ =====
+const ONLINE_SHOPS = 'Lazada, Shopee, HomePro, ไทวัสดุ (Thai Watsadu), Global House, DoHome, บุญถาวร, NocNoc, OfficeMate, Mega Home, ร้านวัสดุก่อสร้าง/อุปกรณ์ออนไลน์อื่นๆ'
+async function aiSearchOnline(pr, byUser) {
+  const items = (jparse(pr.items) || []).filter((it) => it.desc)
+  const list = items.length ? items : [{ desc: pr.item, qty: 0, unit: '' }]
+  let parsed
+  if (process.env.PPSD_AI_MOCK_SEARCH) { try { parsed = JSON.parse(process.env.PPSD_AI_MOCK_SEARCH) } catch { parsed = null } }
+  else {
+    if (!aiKey()) throw { code: 400, msg: AI_NO_KEY }
+    const want = list.slice(0, 8).map((it, i) => `${i + 1}. ${it.desc}${it.qty ? ` จำนวน ${it.qty} ${it.unit || ''}` : ''}`).join('\n')
+    const prompt = `คุณเป็นฝ่ายจัดซื้อของบริษัทรับสร้างบ้านในไทย ใช้เครื่องมือค้นเว็บหาสินค้าต่อไปนี้จากร้านค้าออนไลน์ในไทย "ให้กว้างที่สุด" (${ONLINE_SHOPS}) แล้วคัดเลือก "ที่ดีที่สุด 3 ร้านต่อรายการ" โดยดูราคาต่อหน่วยรวมค่าส่ง/ความน่าเชื่อถือของร้าน/ตรงสเปค/มีของ
+รายการที่ต้องการ:
+${want}
+
+ค้นหลายคำค้นต่อรายการถ้าจำเป็น (ชื่อสินค้า + ร้าน) แล้วตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น:
+{"items":[{"desc":"ชื่อรายการตามที่ขอ","offers":[{"rank":1,"shop":"ชื่อร้าน/แพลตฟอร์ม","name":"ชื่อสินค้าตามหน้าร้าน","price":0,"unit":"หน่วย","url":"ลิงก์หน้าสินค้า","note":"ค่าส่ง/โปร/สต๊อก/ทำไมถึงแนะนำ"}],"not_found":false}],"summary":"สรุปสั้นๆ ว่าร้านไหนคุ้มสุดโดยรวม"}
+กติกา: price เป็นตัวเลขบาทต่อหน่วยไม่มีคอมม่า (ไม่รู้ = 0) · url ต้องเป็นลิงก์จริงจากผลค้น · ถ้าหาไม่เจอจริงๆ ให้ not_found=true และ offers=[] · เรียง rank 1 = ดีที่สุด`
+    const ai = await aiAsk({ prompt, maxTokens: 8000, model: process.env.PPSD_AI_SEARCH_MODEL || 'claude-sonnet-5', tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.min(20, list.length * 3 + 2) }] })
+    if (!ai.ok) throw { code: ai.code || 502, msg: ai.error }
+    parsed = extractJsonBlock(ai.text)
+  }
+  const num = (v) => Number(String(v ?? '').replace(/,/g, '')) || 0
+  const out = (Array.isArray(parsed?.items) ? parsed.items : []).map((it, i) => ({
+    desc: String(it.desc || list[i]?.desc || ''), qty: list[i]?.qty || 0, unit: list[i]?.unit || '',
+    not_found: !!it.not_found,
+    offers: (Array.isArray(it.offers) ? it.offers : []).filter((o) => /^https?:\/\//i.test(String(o.url || ''))).slice(0, 3)
+      .map((o, j) => ({ rank: j + 1, shop: String(o.shop || '').trim() || 'ร้านออนไลน์', name: String(o.name || '').trim(), price: num(o.price), unit: String(o.unit || list[i]?.unit || ''), url: String(o.url).trim(), note: String(o.note || '').trim() })),
+  }))
+  if (!out.length) throw { code: 422, msg: 'AI ค้นออนไลน์ไม่ได้ผล — ลองใหม่ หรือใช้ร้านค้าในระบบ' }
+  const result = { at: nowTS(), by: byUser?.name || 'ระบบ', summary: String(parsed?.summary || ''), items: out }
+  db.prepare("UPDATE purchase_requests SET online_options=?, online_status=? WHERE id=?").run(JSON.stringify(result), 'done:' + nowTS(), pr.id)
+  audit({ user: byUser || { name: 'ระบบ' } }, 'AI หาของออนไลน์', `${pr.no} · ${out.reduce((s, it) => s + it.offers.length, 0)} ตัวเลือก`)
+  return result
+}
+// ข้อความส่งใน LINE (แบ่งเป็นหลายข้อความถ้ายาว)
+function onlineOptionsMessages(pr, r) {
+  const head = `🔎 ตัวเลือกออนไลน์สำหรับ ${pr.no} (AI ค้นจากร้านออนไลน์ เลือกที่ดีที่สุด 3 ร้านต่อรายการ — กดลิงก์เช็คราคา/ค่าส่งจริงก่อนสั่ง)`
+  const blocks = r.items.map((it, i) => {
+    const line = `${i + 1}. ${it.desc}${it.qty ? ` ${it.qty} ${it.unit}` : ''}`
+    if (it.not_found || !it.offers.length) return line + '\n   ไม่พบร้านออนไลน์ที่ตรง — ใช้ร้านค้าในระบบ'
+    return line + '\n' + it.offers.map((o) => `   ${o.rank === 1 ? '⭐' : '•'} ${o.shop}${o.price ? ` ฿${fmtMoney(o.price)}/${o.unit || 'หน่วย'}` : ''}${o.price && it.qty ? ` (รวม ~฿${fmtMoney(Math.round(o.price * it.qty))})` : ''}${o.note ? ' — ' + o.note.slice(0, 60) : ''}\n   ${o.url}`).join('\n')
+  })
+  const msgs = []
+  let cur = head
+  for (const b of blocks) { if ((cur + '\n\n' + b).length > 4500) { msgs.push(cur); cur = b } else cur += '\n\n' + b }
+  if (r.summary) cur += `\n\n💡 ${r.summary}`
+  msgs.push(cur)
+  return msgs.slice(0, 5)
+}
+async function runOnlineSearchAndNotify(prId, extraUids = []) {
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(Number(prId))
+  if (!pr) return
+  let r
+  try { r = await aiSearchOnline(pr, null) } catch (e) {
+    db.prepare('UPDATE purchase_requests SET online_status=? WHERE id=?').run('failed:' + String(e.msg || e.message).slice(0, 160), pr.id)
+    const uids = new Set([...docRecipients().filter((u) => u.line_uid).map((u) => u.line_uid), ...extraUids])
+    for (const uid of uids) linePush(uid, `⚠ ${pr.no}: AI หาของออนไลน์ไม่สำเร็จ — ${e.msg || e.message}`)
+    return
+  }
+  const msgs = onlineOptionsMessages(pr, r)
+  const uids = new Set([...docRecipients().filter((u) => u.line_uid).map((u) => u.line_uid), ...extraUids])
+  const reqUid = lineUidOfName(pr.by); if (reqUid) uids.add(reqUid)
+  for (const uid of uids) await linePush(uid, msgs)
+}
+const SRC_PREF_LABEL = { shop: 'ร้านค้าในระบบ', online: 'ออนไลน์ (AI หาลิงก์)', both: 'ร้านค้าในระบบ + ออนไลน์' }
+
 const DOC_SENT_MSG = { no_recipients: 'ยังไม่ได้ตั้งผู้รับใบ PR (ผู้ใช้งาน → ขั้นตอนจัดซื้อ → ส่งใบ PR ไปที่ LINE ของ…)', no_line: 'ผู้รับที่ตั้งไว้ยังไม่ได้ผูก LINE', no_token: 'ยังไม่ได้ตั้ง LINE token', no_public_url: 'ไม่มีลิงก์สาธารณะสำหรับให้ LINE ดึงรูป — เปิด "ลิงก์สาธารณะอัตโนมัติ" ที่ ผู้ใช้งาน → แจ้งเตือน LINE (ส่งเป็นข้อความสรุปแทนแล้ว)', push_failed: 'LINE ตอบกลับผิดพลาด (ดู [line push] ในหน้าต่างเซิร์ฟเวอร์)' }
 async function sendPrDoc(prId, byName) {
   const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(Number(prId))
@@ -919,6 +985,11 @@ async function sendPrDoc(prId, byName) {
   if (!ok) return save('push_failed')
   if (!imgUrl) return save('no_public_url')
   audit({ user: { name: byName || 'ระบบ' } }, 'ส่งใบ PR เข้า LINE', `${pr.no} → ${withLine.map((u) => u.name).join(', ')}`)
+  // ผู้ขอเลือก ออนไลน์/ทั้งสองอย่าง → AI ค้นร้านออนไลน์ให้จัดซื้อต่อ (เบื้องหลัง)
+  if (pr.source_pref === 'online' || pr.source_pref === 'both') {
+    for (const u of withLine) linePush(u.line_uid, `🔎 ${pr.no} ผู้ขอเลือก "${SRC_PREF_LABEL[pr.source_pref]}" — AI กำลังค้นร้านออนไลน์ให้ (ประมาณ 1 นาที) จะส่งลิงก์ที่ดีที่สุด 3 ร้านต่อรายการมาที่นี่ค่ะ`)
+    setImmediate(() => runOnlineSearchAndNotify(pr.id).catch((e) => console.error('[online-search]', e.message)))
+  }
   return save('sent:' + nowTS())
 }
 // ===== เทียบราคาอัตโนมัติ: รูปครบ → AI เทียบ → ร่าง PO จากร้านที่แนะนำ → ส่งการ์ดอนุมัติ PO (CEO กดครั้งเดียว) =====
@@ -1071,6 +1142,16 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
   const ctx = getLineCtx(uid)
+  // คำตอบช่องทางจัดซื้อหลังสร้างใบ (1/2/3) — ตอบอย่างอื่น = ข้าม (ค่าเริ่มต้นร้านค้าในระบบ)
+  if (ctx?.kind === 'srcpref') {
+    setLineCtx(uid, null)
+    const m = /^\s*(1|ร้าน|ในระบบ)/.test(t) ? 'shop' : /^\s*(2|ออนไลน์|online)/i.test(t) ? 'online' : /^\s*(3|ทั้ง|both)/i.test(t) ? 'both' : null
+    if (m) {
+      db.prepare('UPDATE purchase_requests SET source_pref=? WHERE id=?').run(m, ctx.pr_id)
+      const pr = db.prepare('SELECT no FROM purchase_requests WHERE id=?').get(ctx.pr_id)
+      return lineReply(replyToken, `รับทราบค่ะ ${pr?.no || ''}: ${SRC_PREF_LABEL[m]}${m !== 'shop' ? ' — พอใบอนุมัติครบ AI จะค้นร้านออนไลน์แล้วส่งลิงก์ให้จัดซื้อ (และคุณ) ทาง LINE' : ''}`)
+    }
+  }
   if (ORDER_CMD_RE.test(t) || (/^สั่ง\s+[ก-๙a-zA-Z]/.test(t) && !lineCanCommand(u))) return handleLineOrder(uid, u, t, replyToken, ctx)
   if (ctx?.kind === 'clarify') {
     setLineCtx(uid, null)
@@ -1404,9 +1485,11 @@ function submitLineOrder(uid, u, d, replyToken) {
     setLineCtx(uid, null)
     audit({ user: u }, 'สั่งของผ่าน LINE', `${pr.no} · ${pr.item}`)
     const checker = prChecker()
-    return lineReply(replyToken, pr.status === 'รอตรวจสอบ'
+    setLineCtx(uid, { kind: 'srcpref', pr_id: pr.id }) // ถามช่องทางจัดซื้อต่อ
+    return lineReply(replyToken, [pr.status === 'รอตรวจสอบ'
       ? `✅ สร้างใบขอซื้อ ${pr.no} แล้ว\n${checker?.line_uid ? `📨 ส่งให้ ${checker.name} ตรวจสอบทาง LINE แล้ว` : `⚠ ${checker?.name || 'ผู้ตรวจสอบ'} ยังไม่ผูก LINE — ใบรออยู่ในระบบ ให้ตรวจในเว็บ`} — ผ่านแล้วระบบจะออก PR ส่งขออนุมัติ และแจ้งคุณกลับมาที่นี่ค่ะ`
-      : `✅ สร้างใบขอซื้อ ${pr.no} แล้ว — ส่งขออนุมัติให้ผู้บริหารทาง LINE แล้วค่ะ`)
+      : `✅ สร้างใบขอซื้อ ${pr.no} แล้ว — ส่งขออนุมัติให้ผู้บริหารทาง LINE แล้วค่ะ`,
+      `🛍 จะให้จัดซื้อสั่งจากที่ไหนดีคะ? ตอบตัวเลข\n1 ร้านค้าในระบบ\n2 ออนไลน์ — AI ค้นทุกร้านออนไลน์ เลือกที่ดีที่สุด 3 ร้าน ส่งลิงก์ให้จัดซื้อ\n3 ทั้งสองอย่าง\n(ไม่ตอบ = ร้านค้าในระบบ · ส่งรูปใบ PR ให้จัดซื้อทุกกรณี)`])
   } catch (e) { return lineReply(replyToken, '❌ สร้างใบขอซื้อไม่สำเร็จ: ' + (e.msg || e.message)) }
 }
 // รูปที่ส่งมาในแชท = รูปใบเสนอราคา → ผูกกับ PR ที่กำลังคุยอยู่ หรือถามว่าของ PR ไหน
@@ -1966,11 +2049,12 @@ const AI_NO_KEY = 'ยังไม่ได้ตั้งค่ากุญแ�
 // ส่งรูป/PDF + คำสั่งให้ Claude แล้วคืนข้อความตอบ (media = content block รูปหรือเอกสาร, หรือ null ถ้ามีแต่ข้อความ)
 // รุ่น Opus 5 / Sonnet 5 "คิด" ก่อนตอบและใช้ token ส่วนนั้นจาก max_tokens ด้วย → ต้องเผื่อ max_tokens ให้พอ
 // และตั้ง effort ต่ำสำหรับงานอ่านเอกสาร (ไม่งั้นคิดนานและกิน token จนไม่เหลือให้ตอบ) — Haiku 4.5 ไม่รับ effort
-async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel() }) {
+async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools }) {
   if (!key) return { ok: false, error: AI_NO_KEY, code: 400 }
   const mediaArr = Array.isArray(media) ? media : media ? [media] : []
   const content = [...mediaArr, { type: 'text', text: prompt }]
   const body = { model, max_tokens: maxTokens, messages: [{ role: 'user', content }] }
+  if (Array.isArray(tools) && tools.length) body.tools = tools // เช่น web_search (AI ค้นเว็บเอง)
   if (!/haiku/.test(model)) body.output_config = { effort: 'low' }
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -3530,7 +3614,7 @@ api.put('/vendors/:id', financeOnly, (req, res) => {
 })
 // parse the items/images JSON columns into arrays for the client
 function jparse(s) { if (!s) return null; try { return JSON.parse(s) } catch { return null } }
-function prRow(r) { return r ? { ...r, items: jparse(r.items), images: jparse(r.images), ai_compare: jparse(r.ai_compare) } : r }
+function prRow(r) { return r ? { ...r, items: jparse(r.items), images: jparse(r.images), ai_compare: jparse(r.ai_compare), online_options: jparse(r.online_options) } : r }
 function poRow(r) { return r ? { ...r, items: jparse(r.items) || [] } : r }
 api.get('/purchase-requests', canWrite, (_req, res) => // โฟร์แมน (หน้างาน) เข้าดู/คีย์ใบขอซื้อได้ — ส่วนเงินจริง (PO/จ่าย) ยังเป็น financeOnly
   res.json(db.prepare('SELECT * FROM purchase_requests ORDER BY id DESC').all().map((r) => {
@@ -3548,7 +3632,8 @@ api.post('/purchase-requests', canWrite, (req, res) => {
 })
 // สร้างใบขอซื้อ (ใช้ทั้งฟอร์มในเว็บ และสั่งของผ่าน LINE) — ตั้งผู้ตรวจสอบไว้ → สถานะ "รอตรวจสอบ" + ส่งการ์ดให้ผู้ตรวจสอบ · ไม่ตั้ง → รออนุมัติ + ส่งการ์ดอนุมัติ
 function createPurchaseRequest(body, user) {
-  const { house, house_code, category, item, amount, image, items, images } = body || {}
+  const { house, house_code, category, item, amount, image, items, images, source_pref } = body || {}
+  const srcPref = ['shop', 'online', 'both'].includes(source_pref) ? source_pref : 'shop'
   // รูปแนบ: รับได้สูงสุด 3 รูป (data URL รูปภาพ)
   const imgs = (Array.isArray(images) ? images : (image ? [image] : []))
     .filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, 3)
@@ -3573,6 +3658,7 @@ function createPurchaseRequest(body, user) {
   const info = db
     .prepare('INSERT INTO purchase_requests (no,date,house,by,item,amount,status,requester_sig,image,house_code,category,items,images) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, todayTH(), hName, me.name, summary, total, needCheck ? 'รอตรวจสอบ' : 'รออนุมัติ', me.signature || null, imgs[0] || null, house_code || '', cat, lineItems ? JSON.stringify(lineItems) : null, imgs.length ? JSON.stringify(imgs) : null)
+  db.prepare('UPDATE purchase_requests SET source_pref=? WHERE id=?').run(srcPref, info.lastInsertRowid)
   const row = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(info.lastInsertRowid)
   if (needCheck) notifyChecker(row) // ขั้น 2: ส่งการ์ดให้ผู้ตรวจสอบก่อน (ออก PR + ส่งอนุมัติเมื่อผู้ตรวจสอบยืนยัน)
   else notifyApprovers('pr', info.lastInsertRowid, me.name)
@@ -3666,6 +3752,33 @@ api.post('/purchase-requests/:id/ai-compare', canWrite, async (req, res) => {
   const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
   if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
   try { res.json(await aiCompareQuotes(pr, req.user)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) }
+})
+// AI หาของออนไลน์ (ทุกร้าน → ดีที่สุด 3 ร้านต่อรายการ) — เรียกซ้ำได้จากเว็บ · ส่งลิงก์ให้จัดซื้อทาง LINE ด้วย
+api.post('/purchase-requests/:id/online-search', canWrite, async (req, res) => {
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
+  if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
+  try {
+    const r = await aiSearchOnline(pr, req.user)
+    if (req.body?.notify !== false) { const msgs = onlineOptionsMessages(pr, r); for (const u of docRecipients().filter((u) => u.line_uid)) linePush(u.line_uid, msgs) }
+    res.json(r)
+  } catch (e) { db.prepare('UPDATE purchase_requests SET online_status=? WHERE id=?').run('failed:' + String(e.msg || e.message).slice(0, 160), pr.id); res.status(e.code || 400).json({ error: e.msg || e.message }) }
+})
+// ใช้ตัวเลือกออนไลน์เป็นใบเทียบราคา (ราคาต่อหน่วย × จำนวน)
+api.post('/purchase-requests/:id/use-offer', canWrite, (req, res) => {
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
+  if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
+  const r = jparse(pr.online_options); const it = r?.items?.[Number(req.body?.item)]; const o = it?.offers?.[Number(req.body?.offer)]
+  if (!o) return res.status(400).json({ error: 'ไม่พบตัวเลือกนี้' })
+  const total = Math.round((o.price || 0) * (it.qty || 1))
+  const info = db.prepare('INSERT INTO pr_quotes (pr_id,vendor,price,terms,note,chosen,ai,items,recommended,reason) VALUES (?,?,?,?,?,0,0,?,0,?)')
+    .run(pr.id, o.shop, total, 'ออนไลน์ · ' + o.url, `จาก AI ค้นออนไลน์ · ${o.name || it.desc}${o.note ? ' · ' + o.note : ''}`, JSON.stringify([{ name: it.desc, qty: it.qty || 1, unit: it.unit || o.unit, price: o.price, amount: total }]), '')
+  audit(req, 'ใช้ตัวเลือกออนไลน์เป็นใบเทียบราคา', `${pr.no} · ${o.shop} ${fmtMoney(total)}`)
+  res.status(201).json(db.prepare('SELECT * FROM pr_quotes WHERE id=?').get(info.lastInsertRowid))
+})
+api.put('/purchase-requests/:id/source-pref', canWrite, (req, res) => {
+  const v = ['shop', 'online', 'both'].includes(req.body?.source_pref) ? req.body.source_pref : 'shop'
+  db.prepare('UPDATE purchase_requests SET source_pref=? WHERE id=?').run(v, req.params.id)
+  res.json({ ok: true, source_pref: v })
 })
 api.post('/purchase-requests/:id/issue-po', canWrite, (req, res) => {
   if (!canRunPurchasing(req.user)) return res.status(403).json({ error: 'ออก PO ได้เฉพาะจัดซื้อ/บัญชี/ผู้ตรวจสอบ/ผู้บริหาร' })
