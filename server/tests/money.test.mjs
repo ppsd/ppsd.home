@@ -42,6 +42,12 @@ before(async () => {
       ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1',
       PPSD_CHROME: process.env.PPSD_CHROME || '/opt/pw-browsers/chromium', // สร้างรูปใบ PR (เทสต์ข้ามถ้าไม่มี Chrome)
       PPSD_AUTOCOMPARE_MS: '400', // เทียบราคาอัตโนมัติหลังรูปสุดท้าย (จริง 60 วิ)
+      // AI อ่านภาษาคนในแชท (ผลจำลอง: ข้อความ → JSON)
+      PPSD_AI_MOCK_PARSE: JSON.stringify({
+        'ขอปูนตราเสือซัก 30 ถุงกับเหล็ก 12 มิลอีก 10 เส้นไปที่บ้านคุณพรนะครับ': { intent: 'order', items: [{ desc: 'ปูนซีเมนต์ตราเสือ', qty: 30, unit: 'ถุง' }, { desc: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น' }], house_code: 'H-PORN' },
+        'ฝากพี่ต้นแวะไปดูหลังคาบ้านคุณพรให้หน่อย รีบนะ พรุ่งนี้เช้า': { intent: 'work', executor_name: 'ประยุทธ์ แสงดี', task: 'ไปดูหลังคาบ้านคุณพร', house_code: 'H-PORN', due_iso: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })(), urgent: true },
+        'สวัสดีครับ วันนี้อากาศดีนะ': { intent: 'other', items: [] },
+      }),
       // AI เทียบใบเสนอราคา: ใช้ผลจำลองแทนการยิง API จริง
       PPSD_AI_MOCK_COMPARE: JSON.stringify({ quotes: [
         { vendor: 'ร้าน A', total: 9500, vat_included: true, items: [{ name: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 950, amount: 9500 }], terms: 'เงินสด' },
@@ -1310,4 +1316,32 @@ test('ตำแหน่งตาม HR: บัญชีที่ผูกกั
   me = (await GET('/me')).data
   assert.equal(me.position, 'โฟร์แมน'); assert.equal(me.isManager, false)
   token = adminToken
+})
+
+test('AI อ่านภาษาคน: ประโยคพูดทั่วไป → รายการสั่งของสะอาด/บ้านถูก · สั่งงานแบบพูด → ผู้รับ/วัน/ด่วน ถูก · ทักทายไม่กลายเป็นใบ', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 600))
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  const w0 = (await GET('/work-orders')).data.length
+  // สั่งของแบบพูด (ผู้บริหารพิมพ์ ไม่มีคำว่า สั่งของ)
+  await msg('Uceo', 'ขอปูนตราเสือซัก 30 ถุงกับเหล็ก 12 มิลอีก 10 เส้นไปที่บ้านคุณพรนะครับ'); await wait()
+  await msg('Uceo', 'ตกลง'); await wait()
+  const prs = (await GET('/purchase-requests')).data
+  assert.equal(prs.length, n0 + 1, 'ต้องได้ใบขอซื้อ')
+  assert.deepEqual(prs[0].items.map((i) => [i.desc, i.qty, i.unit]), [['ปูนซีเมนต์ตราเสือ', 30, 'ถุง'], ['เหล็กเส้น 12 มม.', 10, 'เส้น']])
+  assert.equal(prs[0].house_code, 'H-PORN')
+  // สั่งงานแบบพูด → สรุปทันที (ครบทั้งคน วัน ด่วน)
+  await msg('Uceo', 'ฝากพี่ต้นแวะไปดูหลังคาบ้านคุณพรให้หน่อย รีบนะ พรุ่งนี้เช้า'); await wait()
+  await msg('Uceo', 'ตกลง'); await wait()
+  const wos = (await GET('/work-orders')).data
+  assert.equal(wos.length, w0 + 1)
+  assert.equal(wos[0].executor, 'ประยุทธ์ แสงดี'); assert.equal(wos[0].urgent, 1); assert.equal(wos[0].house_code, 'H-PORN')
+  const d = new Date(); d.setDate(d.getDate() + 1)
+  assert.equal(wos[0].due_date, iso(d))
+  // ทักทาย → ไม่สร้างอะไร
+  await msg('Uceo', 'สวัสดีครับ วันนี้อากาศดีนะ'); await wait()
+  assert.equal((await GET('/purchase-requests')).data.length, n0 + 1); assert.equal((await GET('/work-orders')).data.length, w0 + 1)
+  await DEL('/line-link')
 })
