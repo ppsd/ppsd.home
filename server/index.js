@@ -1081,8 +1081,13 @@ async function handleLineUserMessage(uid, text, replyToken) {
     return lineReply(replyToken, "ตอบ 1 (ใบขอซื้อ) หรือ 2 (ใบสั่งงาน) ค่ะ")
   }
   if (ctx?.kind === 'order') {
-    if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineCtx(uid, null); return lineReply(replyToken, 'ทิ้งร่างใบขอซื้อแล้วค่ะ') }
+    if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineCtx(uid, null); clearOrderFiles(uid); return lineReply(replyToken, 'ทิ้งร่างใบขอซื้อแล้วค่ะ') }
     if (ctx.pending === 'house' || ctx.pending === 'ocat') return handleLineOrder(uid, u, t, replyToken, ctx)
+    // ขั้นถามรูปสินค้า: 'ไม่มี' ข้าม · 'ครบ/ตกลง' ไปสรุป
+    if (ctx.pending === 'photos') {
+      if (/^(ไม่มี|ไม่|ข้าม|no|ไม่มีรูป|ครบ|พอ|ตกลง|ok|โอเค|เสร็จ|ส่ง)/i.test(t)) return finishOrderAsk(uid, { ...ctx, photos_asked: true, pending: null }, replyToken)
+      if (!parseOrderText(t).items.length) return lineReply(replyToken, "ส่งรูปสินค้ามาได้เลยค่ะ พอครบพิมพ์ 'ครบ' หรือพิมพ์ 'ไม่มี' ถ้าไม่มีรูป")
+    }
     if (/^(ตกลง|ok|โอเค|ยืนยัน|ใช่|confirm|ส่ง|ส่งเลย)$/i.test(t)) return submitLineOrder(uid, u, ctx, replyToken)
     // พิมพ์รายการใหม่ = แก้ร่างทั้งหมด
     if (parseOrderText(t).items.length) return handleLineOrder(uid, u, t, replyToken, ctx)
@@ -1289,7 +1294,7 @@ function orderSummary(d) {
   const lines = d.items.map((it, i) => `${i + 1}. ${it.desc}${it.qty ? ' ' + it.qty + ' ' + (it.unit || '') : ''}${it.price ? ` (ราคากลาง ${fmtMoney(it.price)}${it.qty ? ' → ' + fmtMoney(it.qty * it.price) : ''})` : ''}`)
   const total = d.items.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : it.price), 0)
   const checker = prChecker()
-  return `🛒 ร่างใบขอซื้อ${d.by_ai ? ' (AI อ่านรายการให้ — ตรวจดูก่อนนะคะ)' : ''}\nบ้าน: ${d.house_name || 'ไม่ระบุ'}${d.category_label ? ' · หมวด ' + d.category_label : ''}\n${lines.join('\n')}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
+  return `🛒 ร่างใบขอซื้อ${d.by_ai ? ' (AI อ่านรายการให้ — ตรวจดูก่อนนะคะ)' : ''}\nบ้าน: ${d.house_name || 'ไม่ระบุ'}${d.category_label ? ' · หมวด ' + d.category_label : ''}\n${lines.join('\n')}${d.photo_count ? `\n📷 รูปสินค้าแนบ ${d.photo_count} รูป` : ''}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
 }
 async function handleLineOrder(uid, u, t, replyToken, ctx, pre) {
   // ตอบหมวดของออฟฟิศ (1-4 หรือพิมพ์ชื่อหมวด)
@@ -1307,6 +1312,7 @@ async function handleLineOrder(uid, u, t, replyToken, ctx, pre) {
   }
   const d = await parseOrderSmart(t, u, pre)
   if (!d.items.length) return lineReply(replyToken, 'พิมพ์รายการที่จะสั่งด้วยค่ะ เช่น "สั่งของ ปูนซีเมนต์ 50 ถุง, เหล็กเส้น 12 มม. 10 เส้น บ้านคุณพร"')
+  if (ctx?.kind !== 'order') clearOrderFiles(uid) // เริ่มร่างใหม่ → ทิ้งรูปค้างของร่างเก่า
   return finishOrderAsk(uid, { kind: 'order', ...d, images: ctx?.kind === 'order' ? ctx.images || [] : [], pending: null, house_asked: false }, replyToken)
 }
 const OFFICE_CATS = [['fuel', 'เบิกค่าน้ำมัน'], ['repair', 'ซ่อมแซมออฟฟิศ'], ['supplies', 'ของใช้สำนักงาน'], ['other', 'อื่นๆ']]
@@ -1382,12 +1388,19 @@ function finishOrderAsk(uid, d, replyToken) {
   if (!d.house_name && !d.house_asked && db.prepare('SELECT COUNT(*) c FROM houses').get().c) { setLineCtx(uid, { ...d, pending: 'house' }); return lineReply(replyToken, `📝 รับรายการ ${d.items.length} รายการแล้ว — ของบ้านไหนคะ? (พิมพ์ชื่อบ้าน หรือ 'ไม่ระบุ')`) }
   // โครงการออฟฟิศ → ถามหมวด (น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ) เพื่อแยกค่าใช้จ่าย
   if (isOfficeHouse(d.house_code) && !d.category) { setLineCtx(uid, { ...d, pending: 'ocat' }); return lineReply(replyToken, `🏢 ของออฟฟิศ — หมวดไหนคะ? ตอบตัวเลข\n${OFFICE_CATS.map(([, l], i) => `${i + 1}. ${l}`).join('\n')}`) }
-  setLineCtx(uid, { ...d, pending: 'confirm' })
-  return lineReply(replyToken, orderSummary(d))
+  // ถามรูปสินค้า (แนบเข้าใบ PR ให้จัดซื้อเห็นของที่ต้องการ) — ส่งรูปในแชทได้เลย
+  if (!d.photos_asked && orderFilesOf(uid).length === 0) { setLineCtx(uid, { ...d, pending: 'photos' }); return lineReply(replyToken, `📷 มีรูปสินค้า/ตัวอย่างของที่ต้องการไหมคะ? ส่งรูปมาในแชทนี้ได้เลย (สูงสุด 3 รูป) พอครบพิมพ์ 'ครบ' · ถ้าไม่มีพิมพ์ 'ไม่มี'`) }
+  setLineCtx(uid, { ...d, photos_asked: true, pending: 'confirm' })
+  return lineReply(replyToken, orderSummary({ ...d, photo_count: orderFilesOf(uid).length }))
 }
+// รูปสินค้าที่ส่งมาระหว่างร่าง (ต่อคน) — เก็บในตารางแยก ไม่ให้บริบทบวม
+const orderFilesOf = (uid) => db.prepare('SELECT id, image FROM line_order_files WHERE uid=? ORDER BY id').all(uid)
+const clearOrderFiles = (uid) => db.prepare('DELETE FROM line_order_files WHERE uid=?').run(uid)
 function submitLineOrder(uid, u, d, replyToken) {
   try {
-    const pr = createPurchaseRequest({ house: d.house_name, house_code: d.house_code, category: d.category || '', items: d.items.map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })), images: d.images || [] }, u)
+    const images = orderFilesOf(uid).slice(0, 3).map((f) => f.image)
+    const pr = createPurchaseRequest({ house: d.house_name, house_code: d.house_code, category: d.category || '', items: d.items.map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })), images }, u)
+    clearOrderFiles(uid)
     setLineCtx(uid, null)
     audit({ user: u }, 'สั่งของผ่าน LINE', `${pr.no} · ${pr.item}`)
     const checker = prChecker()
@@ -1404,9 +1417,11 @@ async function handleLineUserImage(uid, message, replyToken) {
   if (!img) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง')
   const ctx = getLineCtx(uid)
   if (ctx?.kind === 'order') {
-    const images = [...(ctx.images || []), img].slice(0, 3)
-    setLineCtx(uid, { ...ctx, images })
-    return lineReply(replyToken, `📎 แนบรูปสินค้ากับร่างใบขอซื้อแล้ว (${images.length}/3)${ctx.pending === 'confirm' ? " — ตอบ 'ตกลง' เพื่อส่ง" : ''}`)
+    if (orderFilesOf(uid).length >= 3) return lineReply(replyToken, "แนบได้สูงสุด 3 รูปค่ะ — พิมพ์ 'ครบ' เพื่อดูสรุป")
+    db.prepare('INSERT INTO line_order_files (uid,image,created) VALUES (?,?,?)').run(uid, img, todayTH())
+    const n = orderFilesOf(uid).length
+    setLineCtx(uid, ctx)
+    return lineReply(replyToken, `📷 รับรูปสินค้าที่ ${n}/3 แล้วค่ะ${ctx.pending === 'photos' ? " — ส่งเพิ่มได้ หรือพิมพ์ 'ครบ' เพื่อดูสรุป" : ctx.pending === 'confirm' ? " — ตอบ 'ตกลง' เพื่อส่ง" : ''}`)
   }
   const attach = (pr) => {
     db.prepare('INSERT INTO pr_quote_files (pr_id,image,by,source,created) VALUES (?,?,?,?,?)').run(pr.id, img, u.name, 'line:' + uid, todayTH())
