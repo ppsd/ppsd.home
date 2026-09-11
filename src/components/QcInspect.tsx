@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { useApp } from '../store'
+import { useApp, useLiveRefresh } from '../store'
 import { QC_PHASES, qcCategoriesOfPhase, qcFormsOf, qcFormById, qcFormItems, qcFormCount, qcLabels, qcIsPass, qcIsFail, qcDeriveStatus, qcPhaseName, qcPhaseProgress } from '../qcTemplates'
 import QcPrint from './QcPrint'
 
@@ -40,6 +40,7 @@ export default function QcInspect({ houseCode }: { houseCode?: string }) {
 
   const load = () => api.get<QcInspection[]>('/qc').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
+  useLiveRefresh(['qc'], load) // อัปเดตสดเมื่อคนอื่นบันทึกใบตรวจ
 
   const form = f.form_id ? qcFormById(f.form_id) : undefined
   const progress = useMemo(() => houseCode ? qcPhaseProgress(rows) : [], [rows, houseCode])

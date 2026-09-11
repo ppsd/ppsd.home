@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdir
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
-import { hashPin, verifyPin } from './security.js'
+import { hashPin, verifyPin, verifyToken } from './security.js'
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
@@ -210,6 +210,53 @@ const api = express.Router()
 
 // ทุก API = ข้อมูลสด ห้ามเบราว์เซอร์แคช (กด F5 แล้วเห็นข้อมูลล่าสุดเสมอ)
 api.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next() })
+
+// ===== อัปเดตสด (SSE): ทุกหน้าที่เปิดอยู่รู้ทันทีเมื่อข้อมูลเปลี่ยน (จากคนอื่น/บอท LINE/ระบบ) → โหลดเฉพาะส่วนที่เปลี่ยน ไม่ต้องกด F5 =====
+const sseClients = new Set()
+let changeSeq = 0
+// เส้นทาง API ที่เขียนข้อมูล → ชุดข้อมูลในหน้าเว็บที่ต้องโหลดใหม่
+const CHANGE_MAP = [
+  [/^\/(purchase-requests|pr-quotes|pr-quote-files|approve\/pr|reject\/pr|procurement\/flow)/, ['prs', 'purchaseOrders', 'notifications']],
+  [/^\/(purchase-orders|approve\/po|reject\/po|goods-receipts|payables)/, ['purchaseOrders', 'prs', 'expenses', 'dashboard', 'notifications']],
+  [/^\/(payments|approve\/payment|reject\/payment)/, ['payments', 'expenses', 'dashboard', 'notifications']],
+  [/^\/(expenses|approve\/expense|reject\/expense)/, ['expenses', 'dashboard', 'notifications']],
+  [/^\/(houses|installments|boq|acceptance)/, ['houses', 'installments', 'dashboard']],
+  [/^\/work-orders/, ['workOrders', 'notifications']],
+  [/^\/qc/, ['qc']],
+  [/^\/(employees|kiosk|attendance|payroll|ot)/, ['employees', 'attendance', 'kioskEmployees', 'ot', 'timeAdjustments']],
+  [/^\/(time-adjustments|leaves)/, ['timeAdjustments', 'leaves', 'attendance', 'notifications']],
+  [/^\/(users|line-link|positions)/, ['users', 'employees']],
+  [/^\/line\/webhook/, ['prs', 'purchaseOrders', 'workOrders', 'notifications', 'users']],
+  [/^\/vendors/, ['vendors']],
+  [/^\/(material-prices|labor-rates)/, ['materialPrices', 'laborRates']],
+  [/^\/stock/, ['stock']],
+  [/^\/issues/, ['issues', 'dashboard']],
+  [/^\/customers/, ['customers']],
+  [/^\/(tasks|sales-docs)/, ['tasks', 'salesDocs']],
+  [/^\/notifications/, ['notifications']],
+]
+function keysForPath(p) { for (const [re, keys] of CHANGE_MAP) if (re.test(p)) return keys; return ['dashboard', 'notifications'] }
+function notifyChange(keys) {
+  if (!sseClients.size) return
+  const msg = `event: changed\ndata: ${JSON.stringify({ seq: ++changeSeq, keys: [...new Set(keys)], at: Date.now() })}\n\n`
+  for (const res of sseClients) { try { res.write(msg) } catch { sseClients.delete(res) } }
+}
+api.use((req, res, next) => {
+  if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return next()
+  res.on('finish', () => { if (res.statusCode < 400) notifyChange(keysForPath(req.path)) })
+  next()
+})
+// ช่องรับอัปเดตสด (EventSource ใส่ header ไม่ได้ → รับโทเคนทาง query)
+api.get('/events', (req, res) => {
+  const tok = String(req.query.token || '')
+  if (!verifyToken(tok)) return res.status(401).end()
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' })
+  res.write(`retry: 3000\nevent: hello\ndata: ${JSON.stringify({ seq: changeSeq })}\n\n`)
+  sseClients.add(res)
+  const hb = setInterval(() => { try { res.write(': ping\n\n') } catch { /* ignore */ } }, 25000)
+  req.on('close', () => { clearInterval(hb); sseClients.delete(res) })
+})
+api.get('/events/status', (_req, res) => res.json({ clients: sseClients.size, seq: changeSeq }))
 
 // ---------- auth ----------
 // brute-force guard: lock an account for a while after too many wrong PINs
@@ -890,7 +937,7 @@ const renderPrImage = (pr) => renderDocImage('pr', pr)
 async function sendPoDoc(poId, byName) {
   const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(Number(poId))
   if (!po) return { status: 'not_found' }
-  const save = (st) => { try { db.prepare('UPDATE purchase_orders SET doc_sent=? WHERE id=?').run(st, po.id) } catch { /* ignore */ } ; return { status: st, message: st.startsWith('sent') ? `ส่งใบ ${po.no} เข้า LINE แล้ว` : (DOC_SENT_MSG[st] || st) } }
+  const save = (st) => { try { db.prepare('UPDATE purchase_orders SET doc_sent=? WHERE id=?').run(st, po.id) } catch { /* ignore */ } ; notifyChange(['purchaseOrders']); return { status: st, message: st.startsWith('sent') ? `ส่งใบ ${po.no} เข้า LINE แล้ว` : (DOC_SENT_MSG[st] || st) } }
   const pr = po.pr_no ? db.prepare('SELECT * FROM purchase_requests WHERE no=?').get(po.pr_no) : null
   const targets = [...docRecipients().filter((u) => u.line_uid)]
   const reqUid = pr ? lineUidOfName(pr.by) : null
@@ -974,6 +1021,7 @@ async function runOnlineSearchAndNotify(prId, extraUids = []) {
   const uids = new Set([...docRecipients().filter((u) => u.line_uid).map((u) => u.line_uid), ...extraUids])
   const reqUid = lineUidOfName(pr.by); if (reqUid) uids.add(reqUid)
   for (const uid of uids) await linePush(uid, msgs)
+  notifyChange(['prs'])
 }
 const SRC_PREF_LABEL = { shop: 'ร้านค้าในระบบ', online: 'ออนไลน์ (AI หาลิงก์)', both: 'ร้านค้าในระบบ + ออนไลน์' }
 
@@ -981,7 +1029,7 @@ const DOC_SENT_MSG = { no_recipients: 'ยังไม่ได้ตั้ง�
 async function sendPrDoc(prId, byName) {
   const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(Number(prId))
   if (!pr) return { status: 'not_found' }
-  const save = (st) => { try { db.prepare('UPDATE purchase_requests SET doc_sent=? WHERE id=?').run(st, pr.id) } catch { /* ignore */ } ; return { status: st, message: st.startsWith('sent') ? `ส่งใบ ${pr.no} เข้า LINE แล้ว` : (DOC_SENT_MSG[st] || st) } }
+  const save = (st) => { try { db.prepare('UPDATE purchase_requests SET doc_sent=? WHERE id=?').run(st, pr.id) } catch { /* ignore */ } ; notifyChange(['prs']); return { status: st, message: st.startsWith('sent') ? `ส่งใบ ${pr.no} เข้า LINE แล้ว` : (DOC_SENT_MSG[st] || st) } }
   const recips = docRecipients()
   if (!recips.length) return save('no_recipients')
   const withLine = recips.filter((u) => u.line_uid)
@@ -1047,6 +1095,7 @@ async function autoCompare(prId, uid) {
   await linePush(uid, msgs)
   for (const a of lineApprovers('')) if (a.line_uid !== uid) linePush(a.line_uid, msgs)
   await autoIssuePo(pr, r, u, uid)
+  notifyChange(['prs', 'purchaseOrders', 'notifications'])
 }
 // ร่าง PO จากร้านที่ AI แนะนำ (ถ้า PR อนุมัติแล้วและยังไม่มี PO ที่ยังไม่ถูกปฏิเสธ) → การ์ดอนุมัติ PO ถึงผู้บริหาร
 async function autoIssuePo(pr, r, u, uid) {
@@ -1600,6 +1649,7 @@ api.post('/line/webhook', async (req, res) => {
       }
     }
     setSetting('line_seen', JSON.stringify(seen.slice(0, 20)))
+    notifyChange(['prs', 'purchaseOrders', 'workOrders', 'notifications', 'users'])
   } catch (e) { console.error('line webhook:', e.message) }
 })
 api.post('/kiosk/punch', (req, res) => {

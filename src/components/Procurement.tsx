@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { procurementTabs } from '../erpData'
 import { baht, unMoney, matchMaterial, catsOfHouse, catLabelOf } from '../data'
 import { api } from '../api'
-import { useApp } from '../store'
+import { useApp, useLiveRefresh } from '../store'
 import type { ApiPR, ApiPO, ApiPayment, ApiVendor } from '../store'
 import MoneyInput from './MoneyInput'
 import EfilingList from './EfilingList'
@@ -37,6 +37,7 @@ function QuotePanel({ pr, canIssuePo, onIssued }: { pr: ApiPR; canIssuePo: boole
     api.get<QuoteFile[]>('/purchase-requests/' + prId + '/quote-files').then(setFiles).catch(() => {})
   }
   useEffect(() => { load() /* eslint-disable-next-line */ }, [prId])
+  useLiveRefresh(['prs', 'purchaseOrders'], load) // ใบเทียบราคา/รูปใบเสนอราคาที่ส่งทาง LINE ขึ้นทันที
   const pickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = Array.from(e.target.files || []).filter((x) => x.type.startsWith('image/')); e.target.value = ''
     if (!list.length) return

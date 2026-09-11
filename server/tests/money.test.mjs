@@ -1473,3 +1473,17 @@ test('หน้าลงเวลา: พนักงานยื่นปรั
   assert.equal((await POST('/kiosk/time-adjust', { emp_code: code, pin: e.data.pin || '4646', date: iso(tmr), kind: 'ออกงาน', time: '17:00' })).status, 400)
   assert.ok((await GET('/time-adjustments')).data.some((r) => r.id === ok.data.created.id))
 })
+
+test('อัปเดตสด (SSE): /events ต้องมีโทเคน · เมื่อมีการเขียนข้อมูล ทุกหน้าที่เปิดอยู่ได้เหตุการณ์ changed พร้อมชุดข้อมูลที่ต้องโหลดใหม่', async () => {
+  assert.equal((await fetch(`${BASE}/events?token=bad`)).status, 401)
+  const ctrl = new AbortController()
+  const res = await fetch(`${BASE}/events?token=${encodeURIComponent(token)}`, { signal: ctrl.signal })
+  assert.equal(res.status, 200); assert.match(res.headers.get('content-type') || '', /text\/event-stream/)
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
+  const readUntil = async (re, ms = 4000) => { const t0 = Date.now(); while (!re.test(buf) && Date.now() - t0 < ms) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value) } return re.test(buf) }
+  assert.ok(await readUntil(/event: hello/), 'ต้องได้ hello ก่อน')
+  const st = await GET('/events/status'); assert.ok(st.data.clients >= 1)
+  await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ทดสอบ SSE', amount: 10 })
+  assert.ok(await readUntil(/event: changed\ndata: .*"prs"/), 'ต้องได้ changed ที่มี prs: ' + buf.slice(-300))
+  ctrl.abort()
+})
