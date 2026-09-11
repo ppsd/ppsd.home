@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { useApp } from '../store'
+import { useApp, useLiveRefresh } from '../store'
 import WorkOrderPrint from './WorkOrderPrint'
 
 export interface QcRow { name: string; pass: string; note: string }
@@ -48,6 +48,7 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
   const [printing, setPrinting] = useState<WorkOrder | null>(null)
 
   const load = () => api.get<WorkOrder[]>('/work-orders').then(setRows).catch(() => setRows([]))
+  useLiveRefresh(['workOrders'], load) // อัปเดตสด (สั่งงานผ่าน LINE / รับทราบ)
   useEffect(() => { load() }, [])
   // งานด่วนที่สั่งถึงฉัน (หรือไล่ระดับมาถึงฉัน) และยังไม่เคยเปิด → บันทึกว่า "เห็นแล้ว" (read receipt ให้ CEO)
   useEffect(() => {

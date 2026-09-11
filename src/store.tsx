@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, setToken, getToken } from './api'
 import type { Role } from './erpData'
 
@@ -546,6 +546,23 @@ export const useApp = () => {
 }
 // ใช้ในหน้าเอกสารเปล่า (docview) ที่ไม่มี AppProvider
 export const useAppOptional = () => useContext(Ctx)
+// ===== อัปเดตสด: เซิร์ฟเวอร์ส่งเหตุการณ์ "changed" (SSE) เมื่อข้อมูลเปลี่ยน → หน้าเว็บโหลดเฉพาะชุดที่เปลี่ยน ไม่ต้องกด F5 =====
+// ชุดข้อมูลในสโตร์ที่โหลดใหม่ได้ (คีย์ → เส้นทาง API)
+const LIVE_RELOAD: Record<string, string> = {
+  prs: '/purchase-requests', purchaseOrders: '/purchase-orders', expenses: '/expenses', payments: '/payments', dashboard: '/dashboard',
+  houses: '/houses', installments: '/installments', issues: '/issues', employees: '/employees', kioskEmployees: '/kiosk/employees', ot: '/ot',
+  users: '/users', vendors: '/vendors', customers: '/customers', tasks: '/tasks', salesDocs: '/sales-docs', notifications: '/notifications',
+  leaves: '/leaves', timeAdjustments: '/time-adjustments', attendance: '/attendance', materialPrices: '/material-prices',
+}
+// คอมโพเนนต์ที่โหลดข้อมูลเองใช้ hook นี้: useLiveRefresh(['qc'], load)
+export function useLiveRefresh(keys: string[], cb: () => void) {
+  useEffect(() => {
+    const h = (e: Event) => { const ks = (e as CustomEvent<string[]>).detail || []; if (ks.some((k) => keys.includes(k))) cb() }
+    window.addEventListener('ppsd:changed', h)
+    return () => window.removeEventListener('ppsd:changed', h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keys.join(','), cb])
+}
 
 // fetch a dataset, returning fallback if access is denied / fails
 async function tryGet<T>(path: string, fallback: T): Promise<T> {
@@ -600,6 +617,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const positions = await tryGet<string[]>('/positions', [])
     setData({ houses, installments, issues, expenses, employees, payroll, payrollMeta, ot, vendors, prs, payments, users, dashboard, efilings, customers, tasks, salesDocs, notifications, reports, leaves, timeAdjustments, attendance, purchaseOrders, kioskEmployees, positions, materialPrices })
   }
+
+  // อัปเดตสด: ต่อ SSE เมื่อล็อกอินแล้ว → เหตุการณ์ changed → โหลดชุดข้อมูลที่เปลี่ยน (หน่วง 400ms รวมหลายเหตุการณ์) + แจ้งคอมโพเนนต์ที่โหลดเอง
+  const liveRef = useRef<{ es: EventSource | null; timer: ReturnType<typeof setTimeout> | null; pending: Set<string> }>({ es: null, timer: null, pending: new Set() })
+  useEffect(() => {
+    const tok = getToken()
+    if (!user || !tok || typeof EventSource === 'undefined') return
+    const es = new EventSource('/api/events?token=' + encodeURIComponent(tok))
+    liveRef.current.es = es
+    const flush = () => {
+      const keys = [...liveRef.current.pending]; liveRef.current.pending.clear(); liveRef.current.timer = null
+      for (const k of keys) { const path = LIVE_RELOAD[k]; if (path && (data as unknown as Record<string, unknown>)[k] !== null) reload(k as keyof AppData, path).catch(() => {}) }
+      window.dispatchEvent(new CustomEvent('ppsd:changed', { detail: keys }))
+    }
+    es.addEventListener('changed', (ev) => {
+      try { for (const k of (JSON.parse((ev as MessageEvent).data).keys || [])) liveRef.current.pending.add(String(k)) } catch { return }
+      if (!liveRef.current.timer) liveRef.current.timer = setTimeout(flush, 400)
+    })
+    return () => { es.close(); liveRef.current.es = null; if (liveRef.current.timer) clearTimeout(liveRef.current.timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id])
 
   // restore session on first load if a token exists
   useEffect(() => {
