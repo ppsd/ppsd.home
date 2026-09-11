@@ -1862,8 +1862,8 @@ function poBlockReason(b, ctrl) {
       : 'ออก PO ไม่ได้ — โหมดจัดซื้อเต็มรูปแบบต้องอ้างอิงใบขอซื้อ (PR) ที่อนุมัติแล้วทุกใบ (ปิดกติกานี้ได้ที่หน้า ตรวจสอบ → กติกา)'
   if (ctrl.enforce_approval_flow && pr && !approvalState('pr', pr.id).done)
     return `ออก PO ไม่ได้ — ใบขอซื้อ ${pr.no} ยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PR ก่อน)`
-  // 1) PO เกินยอดที่อนุมัติใน PR
-  if (ctrl.enforce_po_over_pr && pr && amount > (pr.amount || 0))
+  // 1) PO เกินยอดที่อนุมัติใน PR — เฉพาะ PR ที่ระบุยอดไว้ (PR ปกติเปิดโดยไม่มีราคา รอร้านเสนอราคา → ไม่ตรวจข้อนี้)
+  if (ctrl.enforce_po_over_pr && pr && (pr.amount || 0) > 0 && amount > (pr.amount || 0))
     return `ออก PO ไม่ได้ — ยอด ${baht(amount)} เกินยอดที่อนุมัติใน ${pr.no} (${baht(pr.amount || 0)}) ให้ลดยอดหรือขออนุมัติ PR ใหม่`
   // 2) PO ยอดสูงต้องมีใบเทียบราคาครบ + เลือกผู้ขายจากใบเทียบราคาก่อน
   if (ctrl.enforce_quote && amount >= (ctrl.quote_required_above || Infinity)) {
