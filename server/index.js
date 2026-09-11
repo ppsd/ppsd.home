@@ -342,6 +342,24 @@ function trackHandler(req, res) {
 api.get('/track/:token', trackHandler)
 api.post('/track/:token', trackHandler)
 // ดูสลิปเงินเดือน "ของตัวเอง" — พนักงานยืนยันด้วย PIN (เหมือนตอกบัตร) · เฉพาะงวดที่ปิดแล้ว (ตัวเลขจ่ายจริง)
+// พนักงานยื่นปรับปรุงเวลาเข้า-ออกของตัวเองจากหน้าลงเวลา (ยืนยันด้วย PIN ตอกบัตร) — ไม่ต้องมีสิทธิ์เข้าหน้า HR
+api.post('/kiosk/time-adjust', (req, res) => {
+  const { emp_code, pin, date, kind, time, reason } = req.body || {}
+  const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
+  const badPin = kioskPinCheck(emp_code, pin, emp)
+  if (badPin) return res.status(badPin.code).json({ error: badPin.error })
+  const bad = timeAdjustError({ date, kind, time })
+  if (bad) return res.status(400).json({ error: bad })
+  const dup = db.prepare("SELECT id FROM time_adjustments WHERE emp_name=? AND date=? AND kind=? AND status='รออนุมัติ'").get(emp.name, date, kind)
+  if (dup) return res.status(409).json({ error: 'มีคำขอวันนี้/ประเภทนี้รออนุมัติอยู่แล้ว' })
+  const info = db.prepare('INSERT INTO time_adjustments (emp_name,date,kind,time,reason,status,by) VALUES (?,?,?,?,?,?,?)')
+    .run(emp.name, date, kind, time, String(reason || '').slice(0, 200), 'รออนุมัติ', emp.name)
+  audit({ user: { name: emp.name } }, 'ยื่นปรับปรุงเวลา (หน้าลงเวลา)', `${date} ${kind} ${time}`)
+  const mine = db.prepare('SELECT id,date,kind,time,reason,status FROM time_adjustments WHERE emp_name=? ORDER BY id DESC LIMIT 5').all(emp.name)
+  res.status(201).json({ ok: true, created: db.prepare('SELECT * FROM time_adjustments WHERE id=?').get(info.lastInsertRowid), mine })
+})
 api.post('/kiosk/my-slip', (req, res) => {
   const { emp_code, pin, period } = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
@@ -3052,16 +3070,23 @@ api.post('/leaves/:id/decision', requireManager, (req, res) => {
 // ---------- time-adjustment requests (ปรับปรุงเวลาเข้า-ออก) ----------
 const DAYMS = 86400000
 api.get('/time-adjustments', (_req, res) => res.json(db.prepare('SELECT * FROM time_adjustments ORDER BY id DESC').all()))
-api.post('/time-adjustments', canWrite, (req, res) => {
-  const b = req.body || {}
-  if (!b.date || !b.kind || !b.time) return res.status(400).json({ error: 'กรุณากรอกวันที่ ประเภท และเวลา' })
+// กติกายื่นปรับปรุงเวลา (ใช้ทั้งหน้า HR และหน้าลงเวลา) — คืนข้อความผิดพลาด หรือ null
+function timeAdjustError(b) {
+  if (!b.date || !b.kind || !b.time) return 'กรุณากรอกวันที่ ประเภท และเวลา'
+  if (!['เข้างาน', 'ออกงาน'].includes(b.kind)) return 'ประเภทต้องเป็น เข้างาน หรือ ออกงาน'
   const d = new Date(b.date + 'T00:00:00')
-  if (isNaN(d.getTime())) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง' })
-  if (d.getDay() === 0) return res.status(400).json({ error: 'วันอาทิตย์เป็นวันหยุด ยื่นปรับปรุงเวลาไม่ได้' })
+  if (isNaN(d.getTime())) return 'วันที่ไม่ถูกต้อง'
+  if (d.getDay() === 0) return 'วันอาทิตย์เป็นวันหยุด ยื่นปรับปรุงเวลาไม่ได้'
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const diff = Math.round((today.getTime() - d.getTime()) / DAYMS)
-  if (diff < 0) return res.status(400).json({ error: 'ยื่นล่วงหน้าไม่ได้' })
-  if (diff > 2) return res.status(400).json({ error: 'ยื่นย้อนหลังได้ไม่เกิน 2 วันทำการ' })
+  if (diff < 0) return 'ยื่นล่วงหน้าไม่ได้'
+  if (diff > 2) return 'ยื่นย้อนหลังได้ไม่เกิน 2 วันทำการ'
+  return null
+}
+api.post('/time-adjustments', canWrite, (req, res) => {
+  const b = req.body || {}
+  const bad = timeAdjustError(b)
+  if (bad) return res.status(400).json({ error: bad })
   const info = db
     .prepare('INSERT INTO time_adjustments (emp_name,date,kind,time,reason,status,by) VALUES (?,?,?,?,?,?,?)')
     .run(b.emp_name || req.user.name, b.date, b.kind, b.time, b.reason || '', 'รออนุมัติ', req.user.name)
