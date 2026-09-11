@@ -1460,3 +1460,16 @@ test('PR ไม่มียอด (รอร้านเสนอราคา) �
   await POST(`/approve/pr/${pr2.data.id}`)
   assert.equal((await POST('/purchase-orders', { vendor: 'SP Color House', item: 'สีจำกัดยอด', amount: 1275, pr_no: pr2.data.no })).status, 409)
 })
+
+test('หน้าลงเวลา: พนักงานยื่นปรับปรุงเวลาของตัวเองด้วย PIN ได้ (ไม่ต้องมีสิทธิ์หน้า HR) · PIN ผิด/ซ้ำ/ล่วงหน้า ถูกกัน', async () => {
+  const e = await POST('/employees', { name: 'พนักงาน ลืมตอก', role: 'เลขา', pay_type: 'รายเดือน', base: 15000, pin: '4646' })
+  const code = e.data.code
+  const today = iso(new Date())
+  assert.equal((await POST('/kiosk/time-adjust', { emp_code: code, pin: '0000', date: today, kind: 'เข้างาน', time: '08:00' })).status, 401)
+  const ok = await POST('/kiosk/time-adjust', { emp_code: code, pin: e.data.pin || '4646', date: today, kind: 'เข้างาน', time: '08:00', reason: 'ลืมตอก' })
+  assert.equal(ok.status, 201, JSON.stringify(ok.data)); assert.equal(ok.data.created.emp_name, 'พนักงาน ลืมตอก'); assert.equal(ok.data.created.status, 'รออนุมัติ')
+  assert.equal((await POST('/kiosk/time-adjust', { emp_code: code, pin: e.data.pin || '4646', date: today, kind: 'เข้างาน', time: '08:10' })).status, 409, 'ซ้ำวัน/ประเภทเดิม')
+  const tmr = new Date(); tmr.setDate(tmr.getDate() + 1)
+  assert.equal((await POST('/kiosk/time-adjust', { emp_code: code, pin: e.data.pin || '4646', date: iso(tmr), kind: 'ออกงาน', time: '17:00' })).status, 400)
+  assert.ok((await GET('/time-adjustments')).data.some((r) => r.id === ok.data.created.id))
+})

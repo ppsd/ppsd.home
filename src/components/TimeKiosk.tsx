@@ -46,6 +46,20 @@ export default function TimeKiosk() {
     } catch (e) { setToast({ msg: (e as Error).message, ok: false }) } finally { setBusy(false) }
   }
   const openMySlip = () => loadMySlip()
+  // ยื่นปรับปรุงเวลาเข้า-ออกของตัวเอง (ทุกคนทำได้จากหน้านี้ ยืนยันด้วย PIN เดียวกับตอกบัตร)
+  const [taOpen, setTaOpen] = useState(false)
+  const [ta, setTa] = useState({ date: new Date().toISOString().slice(0, 10), kind: 'เข้างาน', time: '08:00', reason: '' })
+  const [taMine, setTaMine] = useState<{ id: number; date: string; kind: string; time: string; status: string }[]>([])
+  const submitTa = async () => {
+    if (!selCode) { setToast({ msg: 'เลือกชื่อก่อน', ok: false }); return }
+    if (pin.length !== 4) { setToast({ msg: 'ใส่ PIN 4 หลักก่อน', ok: false }); return }
+    setBusy(true); setToast(null)
+    try {
+      const r = await api.post<{ mine: typeof taMine }>('/kiosk/time-adjust', { emp_code: selCode, pin, ...ta })
+      setTaMine(r.mine); setTa({ ...ta, reason: '' })
+      setToast({ msg: `ยื่นปรับปรุงเวลา ${ta.kind} ${ta.time} วันที่ ${ta.date} แล้ว — รอผู้จัดการอนุมัติ`, ok: true })
+    } catch (e) { setToast({ msg: (e as Error).message, ok: false }) } finally { setBusy(false) }
+  }
   const [cfgOpen, setCfgOpen] = useState(false)
   const [savingCfg, setSavingCfg] = useState(false)
 
@@ -199,6 +213,26 @@ export default function TimeKiosk() {
           {/* พนักงานดูสลิปเงินเดือนตัวเอง — ใช้ชื่อ + PIN เดียวกับตอกบัตร (เห็นเฉพาะของตัวเอง งวดที่ปิดแล้ว) */}
           <button onClick={openMySlip} disabled={busy} className="hov-f3f5f7" style={{ width: '100%', marginTop: 10, fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 11, padding: '11px 0', cursor: 'pointer' }}>🧾 ดูสลิปเงินเดือนของฉัน</button>
 
+          <button onClick={() => setTaOpen((v) => !v)} disabled={busy} className="hov-f3f5f7" style={{ width: '100%', marginTop: 8, fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 11, padding: '11px 0', cursor: 'pointer' }}>🕒 ยื่นปรับปรุงเวลาเข้า-ออก (ลืมตอกบัตร)</button>
+          {taOpen && (
+            <div style={{ marginTop: 8, background: '#F7F9FB', border: '1px solid #E1E5EA', borderRadius: 11, padding: 12, textAlign: 'left' }}>
+              <div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 8 }}>เลือกชื่อ + ใส่ PIN ด้านบน แล้วกรอกวัน/เวลาที่ถูกต้อง · ยื่นย้อนหลังได้ไม่เกิน 2 วันทำการ · ผู้จัดการอนุมัติในหน้า HR → ปรับปรุงเวลา</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: 8 }}>
+                <input type="date" value={ta.date} onChange={(e) => setTa({ ...ta, date: e.target.value })} style={{ fontFamily: 'inherit', fontSize: 13, border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px' }} />
+                <select value={ta.kind} onChange={(e) => setTa({ ...ta, kind: e.target.value, time: e.target.value === 'ออกงาน' ? '17:00' : '08:00' })} style={{ fontFamily: 'inherit', fontSize: 13, border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px' }}><option>เข้างาน</option><option>ออกงาน</option></select>
+                <input type="time" value={ta.time} onChange={(e) => setTa({ ...ta, time: e.target.value })} style={{ fontFamily: 'inherit', fontSize: 13, border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px' }} />
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <input placeholder="เหตุผล (เช่น ออกหน้างานแต่เช้า / ลืมตอก)" value={ta.reason} onChange={(e) => setTa({ ...ta, reason: e.target.value })} style={{ flex: 1, fontFamily: 'inherit', fontSize: 13, border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px' }} />
+                <button onClick={submitTa} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>ยื่น</button>
+              </div>
+              {taMine.length > 0 && (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#5C6770' }}>
+                  {taMine.map((r) => <div key={r.id}>• {r.date} {r.kind} {r.time} — <b style={{ color: r.status === 'อนุมัติ' ? '#2E7D55' : r.status === 'ปฏิเสธ' ? '#C24036' : '#B7791F' }}>{r.status}</b></div>)}
+                </div>
+              )}
+            </div>
+          )}
           {toast && <div style={{ marginTop: 12, fontSize: 13, fontWeight: 500, textAlign: 'center', padding: '10px 12px', borderRadius: 9, color: toast.ok ? '#2E7D55' : '#C24036', background: toast.ok ? '#E2F1EA' : '#FBEEEC' }}>{toast.msg}</div>}
         </div>
       </div>
