@@ -1448,3 +1448,15 @@ test('บัญชี/จัดซื้อส่งใบเสนอราค�
   assert.ok(row.po_no, 'ต้องออก PO ให้ทันทีเมื่อเลือกร้าน'); assert.equal(row.po_vendor, 'ร้าน B')
   await DEL('/line-link?user_id=' + acc.id)
 })
+
+test('PR ไม่มียอด (รอร้านเสนอราคา) → ออก PO ได้ตามราคาใบเสนอราคา · PR ที่ระบุยอดยังกันเกินยอด', async () => {
+  await PUT('/controls', { enforce_po_over_pr: true, enforce_approval_flow: false })
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'สีรองพื้น', qty: 2, unit: 'ถัง', price: 0 }] })
+  assert.equal(pr.data.amount, 0)
+  await POST(`/approve/pr/${pr.data.id}`)
+  const po = await POST('/purchase-orders', { vendor: 'SP Color House', item: 'สีรองพื้น', amount: 1275, pr_no: pr.data.no })
+  assert.equal(po.status, 201, JSON.stringify(po.data))
+  const pr2 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'สีจำกัดยอด', amount: 1000 })
+  await POST(`/approve/pr/${pr2.data.id}`)
+  assert.equal((await POST('/purchase-orders', { vendor: 'SP Color House', item: 'สีจำกัดยอด', amount: 1275, pr_no: pr2.data.no })).status, 409)
+})
