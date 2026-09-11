@@ -1428,3 +1428,23 @@ test('หาของออนไลน์: ผู้ขอเลือกช่
   assert.equal(w.data.source_pref, 'online')
   await DEL('/line-link')
 })
+
+test('บัญชี/จัดซื้อส่งใบเสนอราคา 1 ร้านแล้วพิมพ์ "เอาร้านนี้ค่ะ" → AI อ่าน + ออก PO ให้ทันที', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
+  const wait = (ms = 600) => new Promise((r) => setTimeout(r, ms))
+  const adminToken = token
+  const acc = (await GET('/users')).data.find((u) => u.username === 'acctest')
+  const code = await POST('/line-link/code', { user_id: acc.id }); await msg('Uacc', code.data.code); await wait()
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'เหล็กเส้น 12 มม.', qty: 10, unit: 'เส้น', price: 1000 }] })
+  token = adminToken
+  await POST(`/approve/pr/${pr.data.id}`)
+  await msg('Uacc', `ใบเสนอราคา ${pr.data.no}`); await wait()
+  await img('Uacc', 'q1'); await wait()
+  await msg('Uacc', 'เอาร้านนี้ค่ะ'); await wait(1200)
+  const row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.ok(row.po_no, 'ต้องออก PO ให้ทันทีเมื่อเลือกร้าน'); assert.equal(row.po_vendor, 'ร้าน B')
+  await DEL('/line-link?user_id=' + acc.id)
+})
