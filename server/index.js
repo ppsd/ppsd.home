@@ -1021,7 +1021,7 @@ async function autoCompare(prId, uid) {
   const u = userByLine(uid) || { id: 0, name: 'ระบบ', role: 'accounting' }
   const n = quoteFilesOf(pr.id).length
   const need = quoteNeeded(pr)
-  if (n < need) { await linePush(uid, `📎 ${pr.no} มีใบเสนอราคา ${n} รูป — ต้องการอย่างน้อย ${need} ร้านถึงจะเทียบให้เอง ส่งรูปเพิ่มได้เลย หรือพิมพ์ 'เทียบราคา' เพื่อเทียบเท่าที่มี`); return }
+  if (n < need) { await linePush(uid, `📎 ${pr.no} มีใบเสนอราคา ${n} รูป — ต้องการอย่างน้อย ${need} ร้านถึงจะเทียบให้เอง ส่งรูปเพิ่มได้เลย · หรือพิมพ์ 'เอาร้านนี้' เพื่อออก PO จากร้านนี้เลย · 'เทียบราคา' เพื่อเทียบเท่าที่มี`); return }
   if (!aiKey() && !process.env.PPSD_AI_MOCK_COMPARE) { await linePush(uid, '⚠ ยังไม่ได้ตั้งกุญแจ AI (ผู้ใช้งาน → ตั้งค่า AI) เลยเทียบราคาอัตโนมัติไม่ได้ — เลือกร้านเองได้ในหน้าจัดซื้อ'); return }
   let r
   try { r = await aiCompareQuotes(pr, u) } catch (e) { await linePush(uid, '❌ AI เทียบราคาไม่สำเร็จ: ' + (e.msg || e.message)); return }
@@ -1203,11 +1203,19 @@ async function handleLineUserMessage(uid, text, replyToken) {
     }
     return lineReply(replyToken, `📎 พร้อมรับรูปใบเสนอราคาของ ${pr.no} (${pr.item.slice(0, 60)})${moved ? `\nผูกรูปที่ส่งมาก่อนหน้า ${moved} รูปให้แล้ว` : ''}${n ? `\nตอนนี้มี ${n} รูป` : ''}\nส่งรูปใบเสนอราคาของแต่ละร้านมาในแชทนี้ได้เลย พอครบพิมพ์ 'เทียบราคา' ให้ AI สรุปว่าร้านไหนคุ้มสุดค่ะ`)
   }
-  if (/^(เทียบราคา|เทียบ|compare)$/i.test(t)) {
+  // เทียบราคา / เลือกร้านนี้เลย (ภาษาพูด เช่น "เอาร้านนี้ค่ะ" "เทียบเองเลย" "ออก PO เลย") — ใช้ได้เมื่อกำลังคุยเรื่องใบเสนอราคาของ PR อยู่
+  if (/^(เทียบราคา|เทียบ|compare)$/i.test(t) || (ctx?.kind === 'quote' && /ร้านนี้|เอาร้าน|ใช้ร้าน|เลือกร้าน|เทียบ|ออก\s*po|สั่งเลย|สั่งร้าน/i.test(t) && !ORDER_CMD_RE.test(t))) {
     const pr = ctx?.kind === 'quote' ? db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id) : null
     if (!pr) return lineReply(replyToken, 'ยังไม่รู้ว่าเทียบราคาของใบขอซื้อไหนค่ะ — พิมพ์ เช่น "เทียบราคา PR-69-0012"')
+    if (!quoteFilesOf(pr.id).length) return lineReply(replyToken, `ยังไม่มีรูปใบเสนอราคาของ ${pr.no} ค่ะ ส่งรูปมาก่อนนะคะ`)
     clearTimeout(autoCompareTimers.get(pr.id))
-    try { const r = await aiCompareQuotes(pr, u); await lineReply(replyToken, compareMessages(pr, r)); await autoIssuePo(pr, r, u, uid); return true } catch (e) { return lineReply(replyToken, '❌ ' + (e.msg || e.message)) }
+    try {
+      const r = await aiCompareQuotes(pr, u)
+      await lineReply(replyToken, compareMessages(pr, r))
+      if (canRunPurchasing(u)) await autoIssuePo(pr, r, u, uid)
+      else await linePush(uid, 'ให้จัดซื้อ/บัญชี/ผู้บริหารกด "ออก PO ร้าน…" ในการ์ดเพื่อออกใบสั่งซื้อค่ะ')
+      return true
+    } catch (e) { return lineReply(replyToken, '❌ ' + (e.msg || e.message)) }
   }
   const pom = t.match(/^(?:ออก\s*PO|po)\s*((?:PR)-?[\w-]+)?$/i)
   if (pom) {
@@ -1264,6 +1272,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   if (!lineCanCommand(u)) {
     // โฟร์แมน/พนักงาน: ข้อความอื่นที่ไม่ใช่คำสั่ง = รายการที่จะสั่งของ (ไม่ต้องพิมพ์ "สั่งของ" นำหน้าก็ได้) → ร่างใบขอซื้อให้ยืนยันก่อน
+    if (ctx?.kind === 'quote') return lineReply(replyToken, `กำลังรับใบเสนอราคาของ ${db.prepare('SELECT no FROM purchase_requests WHERE id=?').get(ctx.pr_id)?.no || 'PR'} อยู่ค่ะ — ส่งรูปเพิ่ม · พิมพ์ 'เทียบราคา' · หรือ 'เอาร้านนี้' เพื่อออก PO จากร้านที่ส่งมา`)
     if (t.length >= 4 && !/^(ครับ|ค่ะ|คะ|ขอบคุณ|โอเค|ok|สวัสดี|หวัดดี)/i.test(t)) {
       const ai = await aiParseLine(t, u)
       if (!ai || ai.intent !== 'other' || ai.items.length) return handleLineOrder(uid, u, t, replyToken, ctx, ai)
@@ -1511,7 +1520,7 @@ async function handleLineUserImage(uid, message, replyToken) {
     setLineCtx(uid, { kind: 'quote', pr_id: pr.id, ttl: 48 * 60 * 60 * 1000 })
     const n = quoteFilesOf(pr.id).length, need = quoteNeeded(pr)
     scheduleAutoCompare(pr.id, uid)
-    return lineReply(replyToken, `📎 รับรูปใบเสนอราคาใบที่ ${n} ของ ${pr.no} แล้วค่ะ${n >= need ? ' — ครบแล้ว AI จะเทียบราคาและร่าง PO ให้ในอีก 1 นาที (ส่งรูปเพิ่มได้ระหว่างนี้)' : ` — ส่งเพิ่มอีก ${need - n} ร้าน AI จะเทียบให้เอง หรือพิมพ์ 'เทียบราคา' เพื่อเทียบเท่าที่มี`}`)
+    return lineReply(replyToken, `📎 รับรูปใบเสนอราคาใบที่ ${n} ของ ${pr.no} แล้วค่ะ${n >= need ? ' — ครบแล้ว AI จะเทียบราคาและร่าง PO ให้ในอีก 1 นาที (ส่งรูปเพิ่มได้ระหว่างนี้)' : ` — ส่งเพิ่มอีก ${need - n} ร้าน AI จะเทียบให้เอง · หรือพิมพ์ 'เอาร้านนี้' เพื่อออก PO จากร้านนี้เลย`}`)
   }
   if (ctx?.kind === 'quote') {
     const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id)
