@@ -1506,3 +1506,32 @@ test('เงินสดย่อย: ผูกบ้านได้ — รา�
   const sr = stmt.rows.find((r) => r.memo === 'ตะปู+ลวดผูกเหล็ก')
   assert.equal(sr.house_code, 'TS-01'); assert.equal(sr.house_name, 'บ้านเทสต์'); assert.equal(sr.out, 350.5)
 })
+
+test('ค่าน้ำมันรถ: กองแยกจากเงินสดย่อย — วงเงิน/เติม/จ่าย/ใบสรุป แยกกัน · ปรับลิมิตขึ้น-ลงได้ · กองที่ไม่รู้จักถูกกัน', async () => {
+  assert.equal((await GET('/petty-cash?fund=nope')).status, 400)
+  const petty0 = (await GET('/petty-cash')).data
+  // ตั้งลิมิตน้ำมัน 3000 แล้วเติมให้เต็ม — เงินสดย่อยทั่วไปต้องไม่ขยับ
+  const f1 = await POST('/petty-cash/float', { fund: 'fuel', float: 3000 }); assert.equal(f1.status, 200); assert.equal(f1.data.fund, 'fuel'); assert.equal(f1.data.float, 3000)
+  const top = await POST('/petty-cash/topup', { fund: 'fuel' }); assert.equal(top.status, 200, JSON.stringify(top.data)); assert.equal(top.data.balance, 3000)
+  assert.equal((await GET('/petty-cash')).data.balance, petty0.balance, 'เติมกองน้ำมันต้องไม่กระทบเงินสดย่อยทั่วไป')
+  assert.equal((await GET('/petty-cash')).data.float, petty0.float, 'ลิมิตเงินสดย่อยต้องไม่เปลี่ยนตาม')
+  // จ่ายค่าน้ำมัน ผูกบ้าน + ทะเบียนรถ
+  const ex = await POST('/petty-cash/expense', { fund: 'fuel', item: 'เติมดีเซล', amount: 1200.25, house_code: 'TS-01', vehicle: 'ผก 1234' })
+  assert.equal(ex.status, 200, JSON.stringify(ex.data))
+  const row = ex.data.rows.find((r) => r.memo.startsWith('เติมดีเซล'))
+  assert.ok(row); assert.match(row.memo, /ทะเบียน ผก 1234/); assert.equal(row.house_code, 'TS-01'); assert.equal(row.credit, 1200.25)
+  assert.equal(ex.data.balance, 1799.75); assert.equal(ex.data.toReplenish, 1200.25)
+  assert.equal((await GET('/petty-cash')).data.balance, petty0.balance, 'จ่ายกองน้ำมันต้องไม่ตัดเงินสดย่อยทั่วไป')
+  // ปรับลิมิตลง (2000) → ต้องเติมเป็น 200.25 · ปรับขึ้น (5000) → 3200.25
+  assert.equal((await POST('/petty-cash/float', { fund: 'fuel', float: 2000 })).data.toReplenish, 200.25)
+  assert.equal((await POST('/petty-cash/float', { fund: 'fuel', float: 5000 })).data.toReplenish, 3200.25)
+  // ใบสรุปแยกกอง + overview เห็นทั้งสองกอง
+  const stmt = (await GET('/petty-cash/statement?fund=fuel')).data
+  assert.equal(stmt.fund, 'fuel'); assert.equal(stmt.label, 'ค่าน้ำมันรถ'); assert.ok(stmt.rows.some((r) => r.memo.startsWith('เติมดีเซล')))
+  assert.ok(!(await GET('/petty-cash/statement')).data.rows.some((r) => r.memo.startsWith('เติมดีเซล')), 'ใบสรุปเงินสดย่อยทั่วไปต้องไม่มีรายการน้ำมัน')
+  const ov = (await GET('/petty-cash/overview')).data
+  assert.deepEqual(ov.map((o) => o.fund), ['petty', 'fuel']); assert.equal(ov.find((o) => o.fund === 'fuel').float, 5000)
+  // ต้นทุนบ้านต้องรวมค่าน้ำมันที่ผูกบ้าน
+  const pnl = (await GET('/project-pnl')).data.find((h) => h.house_code === 'TS-01')
+  assert.ok(pnl.cost + pnl.expense >= 1200.25)
+})

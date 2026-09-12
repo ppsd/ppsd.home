@@ -21,6 +21,7 @@ function setSettingRaw(k, v) { db.prepare('INSERT INTO settings (key,value) VALU
 export function defaultBank() { return getSetting('acct_bank_default', '1020') }
 export function defaultCash() { return getSetting('acct_cash_default', '1010') }
 export const PETTY_ACCOUNT = '1030' // เงินสดย่อย
+export const FUEL_ACCOUNT = '1031' // เงินสดย่อย-ค่าน้ำมันรถ (กองแยก วงเงินแยก)
 export function setDefaults({ bank, cash }) {
   const up = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
   if (bank) up.run('acct_bank_default', String(bank))
@@ -238,7 +239,7 @@ export function balanceSheet({ to } = {}) {
 // บัญชีเงินสด/ธนาคารทั้งหมดแบบไดนามิก (รองรับบัญชีธนาคารที่ผู้ใช้เพิ่มเอง 10xx)
 function cashCodes() {
   try { const c = cashAccounts().map((a) => a.code); if (c.length) return c } catch { /* ignore */ }
-  return ['1010', '1020', '1030']
+  return ['1010', '1020', '1030', '1031']
 }
 // ยอดเงินสด+ธนาคารคงเหลือรวม (ตามบัญชี) — ใช้โชว์ "เงินสดสุทธิ" หน้าแรก
 export function cashBalance() {
@@ -524,40 +525,59 @@ export function estimateCorpTax(netProfit) {
 }
 
 // ========================= เงินสดย่อย (Petty Cash — imprest) =========================
-// ตั้งวงเงิน (float) เช่น 10,000 · จ่ายค่าใช้จ่ายส่วนกลางจากเงินสดย่อย · เติมกลับให้เต็มทุกอาทิตย์
-export function pettyFloat() { return Number(getSetting('petty_float', '10000')) || 10000 }
-export function setPettyFloat(n) { setSettingRaw('petty_float', Math.max(0, Number(n) || 0)) }
+// มี 2 กองแยกกัน แต่ละกองมีบัญชี/วงเงิน (float) ของตัวเอง ปรับเพิ่ม-ลดได้อิสระ · จ่ายแล้วเติมกลับให้เต็มวงเงิน
+//   petty = เงินสดย่อยทั่วไป (1030)  ·  fuel = ค่าน้ำมันรถ (1031) แยกออกมาเพื่อคุมลิมิตน้ำมันต่างหาก
+export const PETTY_FUNDS = {
+  petty: { key: 'petty', account: PETTY_ACCOUNT, label: 'เงินสดย่อย', floatKey: 'petty_float', defaultFloat: 10000, source: 'petty', topupSource: 'petty_topup' },
+  fuel: { key: 'fuel', account: FUEL_ACCOUNT, label: 'ค่าน้ำมันรถ', floatKey: 'fuel_float', defaultFloat: 5000, source: 'fuel', topupSource: 'fuel_topup' },
+}
+export function pettyFund(key) {
+  const f = PETTY_FUNDS[String(key || 'petty')]
+  if (!f) throw new Error('ไม่รู้จักกองเงินสดย่อย: ' + key)
+  return f
+}
+export function pettyFloat(fund = 'petty') { const f = pettyFund(fund); return Number(getSetting(f.floatKey, String(f.defaultFloat))) || f.defaultFloat }
+export function setPettyFloat(n, fund = 'petty') { setSettingRaw(pettyFund(fund).floatKey, Math.max(0, Number(n) || 0)) }
 // ชื่อบ้านจากรหัส (ใช้แสดงในรายการเงินสดย่อย) — ไม่พบ = คืนรหัสเดิม
 function houseNameOf(code) {
   if (!code) return ''
   try { return db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code } catch { return code }
 }
 const withHouseName = (r) => ({ ...r, house_code: r.house_code || '', house_name: houseNameOf(r.house_code) })
-export function pettyState() {
-  const float = pettyFloat()
-  const gl = ledgerOf(PETTY_ACCOUNT)
+export function pettyState(fund = 'petty') {
+  const f = pettyFund(fund)
+  const float = pettyFloat(fund)
+  const gl = ledgerOf(f.account)
   const balance = gl.rows.length ? gl.rows[gl.rows.length - 1].balance : 0
-  return { float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-60).reverse().map(withHouseName) }
+  return { fund: f.key, label: f.label, account: f.account, float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-60).reverse().map(withHouseName) }
 }
-// บันทึกจ่ายค่าใช้จ่ายจากเงินสดย่อย: Dr ค่าใช้จ่าย(ตามหมวด) / Cr เงินสดย่อย
+// สรุปทุกกองในหน้าเดียว (ใช้โชว์ยอดรวม/แจ้งเตือนใกล้หมด)
+export function pettyOverview() {
+  return Object.keys(PETTY_FUNDS).map((k) => { const s = pettyState(k); return { fund: s.fund, label: s.label, float: s.float, balance: s.balance, toReplenish: s.toReplenish } })
+}
+// บันทึกจ่ายค่าใช้จ่ายจากกองเงินสดย่อย: Dr ค่าใช้จ่าย(ตามหมวด) / Cr บัญชีของกอง
 // ผูกบ้านได้ (house_code) เช่น โฟร์แมนเบิกไปซื้อของเล็กน้อยให้บ้านหลังนั้น → ต้นทุนไปรวมที่บ้าน; ไม่ระบุ = ส่วนกลางบริษัท
-export function pettyExpense({ date_iso, cat, item, amount, ref, by, house_code }) {
+// กองน้ำมัน: ระบุทะเบียนรถ (vehicle) ได้ จะต่อท้ายรายการให้
+export function pettyExpense({ date_iso, cat, item, amount, ref, by, house_code, fund, vehicle }) {
+  const f = pettyFund(fund)
   const amt = r2(Number(String(amount).replace(/,/g, '')) || 0)
   if (amt <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
   const hc = String(house_code || '').trim()
   if (hc && !db.prepare('SELECT code FROM houses WHERE code=?').get(hc)) throw new Error('ไม่พบบ้าน ' + hc)
-  const acc = expenseAccountFor(cat)
-  const memo = `${item || cat || 'ค่าใช้จ่าย'}`.trim()
-  return postJournal({ date_iso, memo, ref: ref || '', house_code: hc, source: 'petty', by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: PETTY_ACCOUNT, debit: 0, credit: amt, memo }] })
+  const acc = f.key === 'fuel' && !cat ? '6030' : expenseAccountFor(cat || (f.key === 'fuel' ? 'ค่าน้ำมัน' : ''))
+  const veh = String(vehicle || '').trim()
+  const memo = `${item || cat || (f.key === 'fuel' ? 'ค่าน้ำมันรถ' : 'ค่าใช้จ่าย')}${veh ? ' · ทะเบียน ' + veh : ''}`.trim()
+  return postJournal({ date_iso, memo, ref: ref || '', house_code: hc, source: f.source, by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: f.account, debit: 0, credit: amt, memo }] })
 }
-// เติมเงินสดย่อยให้เต็มวงเงิน: Dr เงินสดย่อย / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float)
-export function pettyTopup({ date_iso, amount, from, ref, note, by }) {
-  const st = pettyState()
+// เติมกองให้เต็มวงเงิน: Dr บัญชีของกอง / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float)
+export function pettyTopup({ date_iso, amount, from, ref, note, by, fund }) {
+  const f = pettyFund(fund)
+  const st = pettyState(f.key)
   const amt = amount != null && amount !== '' ? r2(Number(String(amount).replace(/,/g, '')) || 0) : st.toReplenish
-  if (amt <= 0) throw new Error('เงินสดย่อยเต็มวงเงินอยู่แล้ว ไม่ต้องเติม')
+  if (amt <= 0) throw new Error(`${f.label}เต็มวงเงินอยู่แล้ว ไม่ต้องเติม`)
   const bank = from || defaultBank()
-  postJournal({ date_iso, memo: note || `เติม/ทดแทนเงินสดย่อยให้เต็มวงเงิน (${st.float.toLocaleString('en-US')})`, ref: ref || '', source: 'petty_topup', by, lines: [{ account: PETTY_ACCOUNT, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
-  return { amount: amt, float: st.float }
+  postJournal({ date_iso, memo: note || `เติม/ทดแทน${f.label}ให้เต็มวงเงิน (${st.float.toLocaleString('en-US')})`, ref: ref || '', source: f.topupSource, by, lines: [{ account: f.account, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
+  return { amount: amt, float: st.float, fund: f.key }
 }
 // ยอดคงเหลือของบัญชีก่อนวันที่ (สินทรัพย์ = เดบิต − เครดิต)
 function accountBalanceBefore(account, iso) {
@@ -566,10 +586,11 @@ function accountBalanceBefore(account, iso) {
   return r2(r?.v || 0)
 }
 // ใบสรุปรายจ่ายเงินสดย่อยตามรอบวันที่ (ยอดยกมา → เข้า/ออก → คงเหลือ → ต้องเติมให้เต็ม)
-export function pettyStatement({ from, to } = {}) {
-  const float = pettyFloat()
-  const opening = accountBalanceBefore(PETTY_ACCOUNT, from)
-  const gl = ledgerOf(PETTY_ACCOUNT, { from, to })
+export function pettyStatement({ from, to, fund } = {}) {
+  const f = pettyFund(fund)
+  const float = pettyFloat(f.key)
+  const opening = accountBalanceBefore(f.account, from)
+  const gl = ledgerOf(f.account, { from, to })
   let bal = opening, seq = 0
   const rows = gl.rows.map((r) => {
     const inAmt = r2(r.debit || 0), outAmt = r2(r.credit || 0)
@@ -579,5 +600,5 @@ export function pettyStatement({ from, to } = {}) {
   const totalOut = r2(rows.reduce((s, r) => s + r.out, 0))
   const totalInMoves = r2(rows.reduce((s, r) => s + r.in, 0))
   const closing = r2(opening + totalInMoves - totalOut)
-  return { float, from, to, opening, rows, totalOut, totalInMoves, totalIn: r2(opening + totalInMoves), closing, toReplenish: r2(Math.max(0, float - closing)) }
+  return { fund: f.key, label: f.label, float, from, to, opening, rows, totalOut, totalInMoves, totalIn: r2(opening + totalInMoves), closing, toReplenish: r2(Math.max(0, float - closing)) }
 }

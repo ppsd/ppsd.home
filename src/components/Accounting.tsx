@@ -27,6 +27,7 @@ const TABS = [
   { id: 'aging', label: 'ลูกหนี้/เจ้าหนี้' },
   { id: 'reconcile', label: 'กระทบยอดธนาคาร' },
   { id: 'petty', label: 'เงินสดย่อย' },
+  { id: 'fuel', label: 'ค่าน้ำมันรถ' },
   { id: 'trial', label: 'งบทดลอง' },
   { id: 'journal', label: 'สมุดรายวัน' },
   { id: 'gl', label: 'แยกประเภท' },
@@ -95,7 +96,8 @@ export default function Accounting() {
       {tab === 'projects' && <ProjectPnl />}
       {tab === 'aging' && <AgingReport />}
       {tab === 'reconcile' && <Reconcile />}
-      {tab === 'petty' && <PettyCash />}
+      {tab === 'petty' && <PettyCash key="petty" fund="petty" />}
+      {tab === 'fuel' && <PettyCash key="fuel" fund="fuel" />}
       {tab === 'trial' && <TrialBalance />}
       {tab === 'journal' && <Journal accounts={accounts} />}
       {tab === 'gl' && <GeneralLedger accounts={accounts} />}
@@ -897,79 +899,112 @@ function Closing({ accounts }: { accounts: Account[] }) {
 
 // ---------- เงินสดย่อย (Petty Cash — imprest) ----------
 interface PettyRow { no: string; date: string; memo: string; debit: number; credit: number; balance: number; house_code?: string; house_name?: string }
-interface PettyState { float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number }
+interface PettyState { fund?: string; label?: string; float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number }
+interface PettyOverviewRow { fund: string; label: string; float: number; balance: number; toReplenish: number }
 interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string; house_code?: string; house_name?: string }
-interface PettyStatement { float: number; from: string; to: string; opening: number; rows: PettyStmtRow[]; totalOut: number; totalIn: number; closing: number; toReplenish: number }
-const PETTY_CATS = ['ค่าน้ำมัน/ขนส่ง', 'วัสดุ/ของใช้หน้างาน', 'ของใช้สำนักงาน', 'ค่ารับรอง', 'ค่าบริการ', 'ค่าดำเนินการ', 'อื่นๆ']
+interface PettyStatement { fund?: string; label?: string; float: number; from: string; to: string; opening: number; rows: PettyStmtRow[]; totalOut: number; totalIn: number; closing: number; toReplenish: number }
+// กองเงินสดย่อย 2 กอง วงเงินแยกกัน: เงินสดย่อยทั่วไป และ ค่าน้ำมันรถ (แยกออกมาเพื่อคุมลิมิตน้ำมันต่างหาก ปรับเพิ่ม-ลดได้เหมือนกัน)
+type PettyFundKey = 'petty' | 'fuel'
+const PETTY_FUND_INFO: Record<PettyFundKey, { label: string; icon: string; cats: string[]; intro: string; itemPh: string }> = {
+  petty: {
+    label: 'เงินสดย่อย', icon: '💵',
+    cats: ['วัสดุ/ของใช้หน้างาน', 'ของใช้สำนักงาน', 'ค่าขนส่ง', 'ค่ารับรอง', 'ค่าบริการ', 'ค่าดำเนินการ', 'อื่นๆ'],
+    intro: 'เงินสดย่อยใช้จ่ายค่าใช้จ่ายเล็กๆ น้อยๆ แล้วเติมกลับให้เต็มวงเงินทุกอาทิตย์ — ถ้าโฟร์แมนเบิกไปซื้อของให้บ้านหลังไหน เลือก “บ้าน” ไว้ด้วย ต้นทุนจะไปรวมที่บ้านหลังนั้น (ไม่เลือก = ส่วนกลางบริษัท) · ค่าน้ำมันรถแยกไปอยู่แท็บ “ค่าน้ำมันรถ” มีวงเงินของตัวเอง',
+    itemPh: 'เช่น ตะปู/ลวดผูกเหล็ก, กาแฟรับรอง',
+  },
+  fuel: {
+    label: 'ค่าน้ำมันรถ', icon: '⛽',
+    cats: ['ค่าน้ำมันรถ', 'ค่าทางด่วน/ค่าจอดรถ', 'ค่าซ่อม/บำรุงรักษารถ', 'อื่นๆ (รถ)'],
+    intro: 'กองค่าน้ำมันรถแยกจากเงินสดย่อยทั่วไป มีวงเงิน (ลิมิต) ของตัวเอง ปรับเพิ่ม-ลดได้ตรงนี้ · เติมน้ำมันวิ่งไปบ้านหลังไหน เลือก “บ้าน” ไว้ด้วย ค่าน้ำมันจะไปรวมเป็นต้นทุนบ้านหลังนั้น (ไม่เลือก = ส่วนกลาง)',
+    itemPh: 'เช่น เติมดีเซล ปตท. บางนา',
+  },
+}
 // ป้ายบ้านเล็กๆ ท้ายรายการ (ไม่ผูกบ้าน = ส่วนกลาง ไม่แสดง)
 function HouseTag({ code, name }: { code?: string; name?: string }) {
   if (!code) return null
   return <span title={name || code} style={{ display: 'inline-block', fontSize: 10.5, fontWeight: 600, color: '#30506A', background: '#E8EEF3', border: '1px solid #D2DAE1', borderRadius: 6, padding: '1px 6px', marginLeft: 6, whiteSpace: 'nowrap' }}>🏠 {name && name !== code ? `${code} · ${name}` : code}</span>
 }
-function PettyCash() {
+function PettyCash({ fund }: { fund: PettyFundKey }) {
+  const FUND = PETTY_FUND_INFO[fund]
+  const fq = 'fund=' + fund
   const app = useAppOptional()
+  const [overview, setOverview] = useState<PettyOverviewRow[]>([])
   // รายชื่อบ้านให้เลือกผูก (บ้านที่ยังไม่ปิดงานขึ้นก่อน แล้วตามด้วยที่เหลือ) — เผื่อโฟร์แมนเบิกไปซื้อของให้บ้านหลังนั้น
   const houses = (app?.data.houses || []).slice().sort((a, b) => (a.status === 'ส่งมอบแล้ว' ? 1 : 0) - (b.status === 'ส่งมอบแล้ว' ? 1 : 0) || a.code.localeCompare(b.code))
   const [st, setSt] = useState<PettyState | null>(null)
   const [msg, setMsg] = useState('')
   const today = new Date().toISOString().slice(0, 10)
   const firstOfMonth = today.slice(0, 8) + '01'
-  const [f, setF] = useState({ date_iso: today, cat: 'ค่าน้ำมัน/ขนส่ง', item: '', amount: '', ref: '', house_code: '' })
+  const [f, setF] = useState({ date_iso: today, cat: FUND.cats[0], item: '', amount: '', ref: '', house_code: '', vehicle: '' })
   const [floatEdit, setFloatEdit] = useState('')
   const [range, setRange] = useState({ from: firstOfMonth, to: today })
   const [stmt, setStmt] = useState<PettyStatement | null>(null)
-  const load = () => api.get<PettyState>('/petty-cash').then((s) => { setSt(s); setFloatEdit(String(s.float)) }).catch(() => setSt(null))
+  const load = () => {
+    api.get<PettyState>('/petty-cash?' + fq).then((s) => { setSt(s); setFloatEdit(String(s.float)) }).catch(() => setSt(null))
+    api.get<PettyOverviewRow[]>('/petty-cash/overview').then(setOverview).catch(() => setOverview([]))
+  }
   useEffect(() => { load() }, [])
   const printStatement = async () => {
     const q = new URLSearchParams(); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)
-    const s = await api.get<PettyStatement>('/petty-cash/statement?' + q.toString()); setStmt(s)
+    q.set('fund', fund); const s = await api.get<PettyStatement>('/petty-cash/statement?' + q.toString()); setStmt(s)
   }
   const spend = async () => {
     if (!f.amount) { setMsg('ใส่จำนวนเงิน'); return }
     try {
-      await api.post('/petty-cash/expense', f)
+      await api.post('/petty-cash/expense', { ...f, fund })
       const h = houses.find((x) => x.code === f.house_code)
-      setF({ ...f, item: '', amount: '', ref: '' })
-      setMsg(h ? `บันทึกจ่ายเงินสดย่อยแล้ว — ผูกบ้าน ${h.code} ${h.name} (ต้นทุนไปรวมที่บ้านหลังนี้)` : 'บันทึกจ่ายเงินสดย่อยแล้ว (ส่วนกลางบริษัท)')
+      setF({ ...f, item: '', amount: '', ref: '', vehicle: '' })
+      setMsg(h ? `บันทึกจ่าย${FUND.label}แล้ว — ผูกบ้าน ${h.code} ${h.name} (ต้นทุนไปรวมที่บ้านหลังนี้)` : `บันทึกจ่าย${FUND.label}แล้ว (ส่วนกลางบริษัท)`)
       load()
     }
     catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
   }
   const topup = async () => {
-    try { const r = await api.post<PettyState>('/petty-cash/topup', {}); setMsg(`เติมเงินสดย่อย ${baht(r.added || 0)} จากธนาคาร → เต็มวงเงินแล้ว`); load() }
+    try { const r = await api.post<PettyState>('/petty-cash/topup', { fund }); setMsg(`เติม${FUND.label} ${baht(r.added || 0)} จากธนาคาร → เต็มวงเงินแล้ว`); load() }
     catch (e) { setMsg((e as Error).message) }
   }
-  const saveFloat = async () => { await api.post('/petty-cash/float', { float: Number(floatEdit) || 0 }); setMsg('ตั้งวงเงินแล้ว'); load() }
+  const saveFloat = async () => { await api.post('/petty-cash/float', { float: Number(floatEdit) || 0, fund }); setMsg(`ตั้งวงเงิน${FUND.label}เป็น ${baht(Number(floatEdit) || 0)} แล้ว`); load() }
   if (!st) return <div style={{ color: '#94A0A8', padding: 20 }}>กำลังโหลด…</div>
   const pct = st.float > 0 ? Math.max(0, Math.min(100, Math.round((st.balance / st.float) * 100))) : 0
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>เงินสดย่อยใช้จ่ายค่าใช้จ่ายเล็กๆ น้อยๆ แล้วเติมกลับให้เต็มวงเงินทุกอาทิตย์ — ถ้าโฟร์แมนเบิกไปซื้อของให้บ้านหลังไหน เลือก “บ้าน” ไว้ด้วย ต้นทุนจะไปรวมที่บ้านหลังนั้น (ไม่เลือก = ส่วนกลางบริษัท)</div>
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>{FUND.icon} {FUND.intro}</div>
+      {/* ยอดทุกกองแบบย่อ — ให้เห็นว่ากองไหนใกล้หมด โดยไม่ต้องสลับแท็บ */}
+      {overview.length > 1 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {overview.map((o) => {
+            const low = o.float > 0 && o.balance < o.float * 0.3
+            const active = o.fund === fund
+            return <span key={o.fund} style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 20, border: '1px solid ' + (active ? '#30506A' : '#D2DAE1'), background: active ? '#E8EEF3' : '#fff', color: low ? '#C24036' : '#1E2E3B' }}>{o.fund === 'fuel' ? '⛽' : '💵'} {o.label}: <b className="num">{baht(o.balance)}</b> / {baht(o.float)}{low ? ' · ใกล้หมด' : ''}</span>
+          })}
+        </div>
+      )}
       {msg && <div style={{ fontSize: 12.5, color: msg.startsWith('ผิดพลาด') || msg.includes('เต็มวงเงินอยู่แล้ว') ? '#C24036' : '#2E7D55', background: msg.startsWith('ผิดพลาด') || msg.includes('เต็มวงเงินอยู่แล้ว') ? '#FBEEEC' : '#E2F1EA', border: '1px solid #CDE3D6', borderRadius: 9, padding: '9px 13px' }}>{msg}</div>}
 
       {/* สรุปยอด + ปุ่มเติม */}
       <div style={{ ...card, padding: 18, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 16, alignItems: 'center' }}>
-        <div><div style={{ fontSize: 12, color: '#5C6770' }}>เงินสดย่อยคงเหลือ</div><div className="num" style={{ fontSize: 26, fontWeight: 700, color: st.balance < st.float * 0.3 ? '#C24036' : '#1E2E3B' }}>{baht(st.balance)}</div>
+        <div><div style={{ fontSize: 12, color: '#5C6770' }}>{FUND.label}คงเหลือ</div><div className="num" style={{ fontSize: 26, fontWeight: 700, color: st.balance < st.float * 0.3 ? '#C24036' : '#1E2E3B' }}>{baht(st.balance)}</div>
           <div style={{ height: 8, background: '#EEF1F4', borderRadius: 20, overflow: 'hidden', marginTop: 6 }}><div style={{ height: '100%', width: pct + '%', background: pct < 30 ? '#C24036' : '#2E7D55', borderRadius: 20 }} /></div></div>
-        <div><div style={{ fontSize: 12, color: '#5C6770' }}>วงเงิน (Float)</div>
+        <div><div style={{ fontSize: 12, color: '#5C6770' }}>วงเงิน{fund === 'fuel' ? 'ค่าน้ำมัน (ลิมิต)' : ' (Float)'}</div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}><input value={floatEdit} onChange={(e) => setFloatEdit(e.target.value)} style={{ ...field, width: 100, textAlign: 'right' }} /><button onClick={saveFloat} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '7px 10px', cursor: 'pointer' }}>ตั้ง</button></div></div>
         <div><div style={{ fontSize: 12, color: '#5C6770' }}>ต้องเติมให้เต็ม</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color: '#C0852C' }}>{baht(st.toReplenish)}</div></div>
-        <div style={{ textAlign: 'right' }}><button onClick={topup} disabled={st.toReplenish <= 0} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: st.toReplenish > 0 ? '#2E7D55' : '#C4CCD3', border: 'none', borderRadius: 9, padding: '11px 18px', cursor: st.toReplenish > 0 ? 'pointer' : 'not-allowed' }}>↑ เติมให้เต็มวงเงิน</button><div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 4 }}>ตัดจากธนาคารเข้าเงินสดย่อย</div></div>
+        <div style={{ textAlign: 'right' }}><button onClick={topup} disabled={st.toReplenish <= 0} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: st.toReplenish > 0 ? '#2E7D55' : '#C4CCD3', border: 'none', borderRadius: 9, padding: '11px 18px', cursor: st.toReplenish > 0 ? 'pointer' : 'not-allowed' }}>↑ เติมให้เต็มวงเงิน</button><div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 4 }}>ตัดจากธนาคารเข้า{FUND.label}</div></div>
       </div>
 
       {/* บันทึกจ่ายเงินสดย่อย */}
       <div style={{ ...card, padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>บันทึกจ่ายเงินสดย่อย</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '120px 90px 1fr 1fr 1.3fr 110px auto', gap: 10, alignItems: 'end' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>บันทึกจ่าย{FUND.label}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: fund === 'fuel' ? '120px 90px 100px 1fr 1fr 1.3fr 110px auto' : '120px 90px 1fr 1fr 1.3fr 110px auto', gap: 10, alignItems: 'end' }}>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>วันที่</div><input type="date" style={{ ...field, width: '100%' }} value={f.date_iso} onChange={(e) => setF({ ...f, date_iso: e.target.value })} /></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>เลขที่เอกสาร</div><input style={{ ...field, width: '100%' }} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} placeholder="บิล/ใบเสร็จ" /></div>
-          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>บ้าน (ถ้าซื้อให้บ้าน)</div>
+          {fund === 'fuel' && <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>ทะเบียนรถ</div><input style={{ ...field, width: '100%' }} value={f.vehicle} onChange={(e) => setF({ ...f, vehicle: e.target.value })} placeholder="เช่น ผก 1234" /></div>}
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>{fund === 'fuel' ? 'บ้าน (วิ่งไปบ้านไหน)' : 'บ้าน (ถ้าซื้อให้บ้าน)'}</div>
             <select data-testid="petty-house" style={{ ...field, width: '100%', color: f.house_code ? '#1E2E3B' : '#94A0A8' }} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}>
               <option value="">— ส่วนกลางบริษัท —</option>
               {houses.map((h) => <option key={h.code} value={h.code}>{h.code} · {h.name}{h.status === 'ส่งมอบแล้ว' ? ' (ส่งมอบแล้ว)' : ''}</option>)}
             </select></div>
-          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หมวด</div><select style={{ ...field, width: '100%' }} value={f.cat} onChange={(e) => setF({ ...f, cat: e.target.value })}>{PETTY_CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
-          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>รายการ</div><input style={{ ...field, width: '100%' }} value={f.item} onChange={(e) => setF({ ...f, item: e.target.value })} placeholder="เช่น ค่าน้ำมันรถ, กาแฟรับรอง" /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หมวด</div><select style={{ ...field, width: '100%' }} value={f.cat} onChange={(e) => setF({ ...f, cat: e.target.value })}>{FUND.cats.map((c) => <option key={c}>{c}</option>)}</select></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>รายการ</div><input style={{ ...field, width: '100%' }} value={f.item} onChange={(e) => setF({ ...f, item: e.target.value })} placeholder={FUND.itemPh} /></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>จำนวนเงิน</div><input type="number" style={{ ...field, width: '100%', textAlign: 'right' }} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
           <button onClick={spend} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>บันทึกจ่าย</button>
         </div>
@@ -977,7 +1012,7 @@ function PettyCash() {
 
       {/* พิมพ์ใบสรุปตามรอบ */}
       <div style={{ ...card, padding: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>ใบสรุปรายจ่ายเงินสดย่อย</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>ใบสรุปรายจ่าย{FUND.label}</span>
         <span style={{ fontSize: 12, color: '#5C6770' }}>รอบวันที่</span>
         <input type="date" style={field} value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
         <span style={{ color: '#94A0A8' }}>–</span>
@@ -987,14 +1022,14 @@ function PettyCash() {
 
       {/* ประวัติ */}
       <div style={card}>
-        <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600 }}>ความเคลื่อนไหวเงินสดย่อย</div>
+        <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600 }}>ความเคลื่อนไหว{FUND.label}</div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
           <thead><tr style={{ background: '#F7F9FB' }}>
             <th style={{ ...th, paddingLeft: 16 }}>เลขที่/วันที่</th><th style={th}>รายการ</th>
             <th style={{ ...th, textAlign: 'right' }}>เติมเข้า</th><th style={{ ...th, textAlign: 'right' }}>จ่ายออก</th><th style={{ ...th, textAlign: 'right', paddingRight: 16 }}>คงเหลือ</th>
           </tr></thead>
           <tbody>
-            {st.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีความเคลื่อนไหว — กด “เติมให้เต็มวงเงิน” เพื่อเริ่มตั้งเงินสดย่อย</td></tr>}
+            {st.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีความเคลื่อนไหว — ตั้งวงเงินแล้วกด “เติมให้เต็มวงเงิน” เพื่อเริ่มตั้ง{FUND.label}</td></tr>}
             {st.rows.map((r, i) => (
               <tr key={i} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                 <td style={{ padding: '8px 16px' }}><span className="num" style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.no}</span><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.date}</div></td>
@@ -1023,7 +1058,7 @@ function PettyStatementDoc({ s, onClose }: { s: PettyStatement; onClose: () => v
   return (
     <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 70, overflow: 'auto', padding: '24px 16px' }}>
       <div className="no-print" style={{ maxWidth: 760, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>ใบสรุปรายจ่ายเงินสดย่อย</div>
+        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>ใบสรุปรายจ่าย{s.label || 'เงินสดย่อย'}</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
           <button onClick={() => window.print()} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>🖨 พิมพ์</button>
           <button onClick={onClose} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 500, color: '#1C2730', background: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ปิด</button>
@@ -1032,7 +1067,7 @@ function PettyStatementDoc({ s, onClose }: { s: PettyStatement; onClose: () => v
       <div className="print-area" style={{ maxWidth: 760, margin: '0 auto', background: '#fff', color: '#1C2730', borderRadius: 4, padding: '26px 30px', boxShadow: '0 24px 70px rgba(20,30,40,.3)' }}>
         <div style={{ textAlign: 'center', lineHeight: 1.5 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>{company.name}</div>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>ใบสรุป รายจ่ายเงินสดย่อย</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>ใบสรุป รายจ่าย{s.label || 'เงินสดย่อย'}</div>
           <div style={{ fontSize: 12, color: '#333' }}>รอบวันที่ {s.from ? thDate(s.from) : '-'} – {s.to ? thDate(s.to) : '-'}</div>
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
@@ -1073,10 +1108,10 @@ function PettyStatementDoc({ s, onClose }: { s: PettyStatement; onClose: () => v
           </tbody>
         </table>
         <div style={{ fontSize: 11.5, color: '#C24036', marginTop: 10 }}>
-          * เพื่อให้อยู่ในวงเงินสดย่อย {s.float.toLocaleString('en-US')} บาท<br />
+          * เพื่อให้อยู่ในวงเงิน{s.label || 'เงินสดย่อย'} {s.float.toLocaleString('en-US')} บาท<br />
           {s.toReplenish > 0
             ? <>ต้องเติมอีก <b>{s.toReplenish.toLocaleString('en-US')}</b> บาท ({s.float.toLocaleString('en-US')} − {s.closing.toLocaleString('en-US')} = {s.toReplenish.toLocaleString('en-US')})</>
-            : <>เงินสดย่อยเต็มวงเงินแล้ว (คงเหลือ {s.closing.toLocaleString('en-US')} บาท)</>}
+            : <>{s.label || 'เงินสดย่อย'}เต็มวงเงินแล้ว (คงเหลือ {s.closing.toLocaleString('en-US')} บาท)</>}
         </div>
         {(() => {
           // สรุปรายจ่ายที่ผูกบ้าน (โฟร์แมนเบิกไปซื้อของให้บ้าน) แยกจากส่วนกลาง — ให้บัญชีเห็นว่าเงินสดย่อยไปลงบ้านไหนเท่าไร
