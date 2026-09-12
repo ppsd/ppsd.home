@@ -1487,3 +1487,22 @@ test('อัปเดตสด (SSE): /events ต้องมีโทเคน 
   assert.ok(await readUntil(/event: changed\ndata: .*"prs"/), 'ต้องได้ changed ที่มี prs: ' + buf.slice(-300))
   ctrl.abort()
 })
+
+test('เงินสดย่อย: ผูกบ้านได้ — รายการ/ใบสรุปแสดงบ้าน · ต้นทุนไปรวมที่บ้านในกำไรรายโครงการ · รหัสบ้านผิดถูกกัน', async () => {
+  await POST('/petty-cash/float', { float: 5000 })
+  const top = await POST('/petty-cash/topup', {}); assert.equal(top.status, 200, JSON.stringify(top.data))
+  assert.equal((await POST('/petty-cash/expense', { cat: 'วัสดุ/ของใช้หน้างาน', item: 'ตะปู+ลวดผูกเหล็ก', amount: 350.5, house_code: 'XX-NOPE' })).status, 400, 'บ้านไม่มีต้องกัน')
+  const pnlBefore = (await GET('/project-pnl')).data.find((h) => h.house_code === 'TS-01')
+  const costBefore = pnlBefore ? pnlBefore.cost + pnlBefore.expense : 0
+  const ex = await POST('/petty-cash/expense', { cat: 'วัสดุ/ของใช้หน้างาน', item: 'ตะปู+ลวดผูกเหล็ก', amount: 350.5, house_code: 'TS-01' })
+  assert.equal(ex.status, 200, JSON.stringify(ex.data))
+  const row = ex.data.rows.find((r) => r.memo === 'ตะปู+ลวดผูกเหล็ก')
+  assert.ok(row, 'ต้องเห็นรายการในความเคลื่อนไหว'); assert.equal(row.house_code, 'TS-01'); assert.equal(row.house_name, 'บ้านเทสต์'); assert.equal(row.credit, 350.5)
+  const central = await POST('/petty-cash/expense', { cat: 'ค่ารับรอง', item: 'กาแฟ', amount: 80 })
+  assert.equal(central.data.rows.find((r) => r.memo === 'กาแฟ').house_code, '', 'ไม่เลือกบ้าน = ส่วนกลาง')
+  const pnl = (await GET('/project-pnl')).data.find((h) => h.house_code === 'TS-01')
+  assert.equal(Math.round((pnl.cost + pnl.expense - costBefore) * 100) / 100, 350.5, 'ต้นทุนบ้านต้องเพิ่มเท่ายอดเงินสดย่อยที่ผูกบ้าน')
+  const stmt = (await GET('/petty-cash/statement')).data
+  const sr = stmt.rows.find((r) => r.memo === 'ตะปู+ลวดผูกเหล็ก')
+  assert.equal(sr.house_code, 'TS-01'); assert.equal(sr.house_name, 'บ้านเทสต์'); assert.equal(sr.out, 350.5)
+})

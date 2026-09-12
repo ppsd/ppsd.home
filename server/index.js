@@ -2418,7 +2418,7 @@ api.get('/tax-summary', financeOnly, (req, res) => res.json(acct.taxSummary(acct
 // เงินสดย่อย (ส่วนกลาง) — ตั้งวงเงิน / จ่าย / เติมให้เต็ม
 api.get('/petty-cash', financeOnly, (_req, res) => res.json(acct.pettyState()))
 api.post('/petty-cash/float', financeOnly, (req, res) => { acct.setPettyFloat(req.body?.float); audit(req, 'ตั้งวงเงินสดย่อย', String(req.body?.float || '')); res.json(acct.pettyState()) })
-api.post('/petty-cash/expense', financeOnly, (req, res) => { try { acct.pettyExpense({ ...(req.body || {}), by: req.user.name }); audit(req, 'จ่ายเงินสดย่อย', `${req.body?.item || ''} ${req.body?.amount || ''}`); res.json(acct.pettyState()) } catch (e) { res.status(400).json({ error: e.message }) } })
+api.post('/petty-cash/expense', financeOnly, (req, res) => { try { acct.pettyExpense({ ...(req.body || {}), by: req.user.name }); audit(req, 'จ่ายเงินสดย่อย', `${req.body?.item || ''} ${req.body?.amount || ''}${req.body?.house_code ? ' บ้าน ' + req.body.house_code : ''}`); res.json(acct.pettyState()) } catch (e) { res.status(400).json({ error: e.message }) } })
 api.post('/petty-cash/topup', financeOnly, (req, res) => { try { const r = acct.pettyTopup({ ...(req.body || {}), by: req.user.name }); audit(req, 'เติมเงินสดย่อย', String(r.amount)); res.json({ ...acct.pettyState(), added: r.amount }) } catch (e) { res.status(400).json({ error: e.message }) } })
 api.get('/petty-cash/statement', financeOnly, (req, res) => res.json(acct.pettyStatement({ from: req.query.from || undefined, to: req.query.to || undefined })))
 // สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากข้อมูลเดิมทั้งหมด (idempotent)
