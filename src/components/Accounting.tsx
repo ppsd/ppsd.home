@@ -3,6 +3,7 @@ import { api } from '../api'
 import { baht } from '../data'
 import { exportXlsx, ExportButton } from '../exportCsv'
 import { company } from '../erpData'
+import { useAppOptional } from '../store'
 
 // ระบบบัญชีคู่ (Double-entry / General Ledger) — เฟส 1
 // งบการเงิน · งบทดลอง · สมุดรายวัน · แยกประเภท · ผังบัญชี
@@ -895,17 +896,25 @@ function Closing({ accounts }: { accounts: Account[] }) {
 }
 
 // ---------- เงินสดย่อย (Petty Cash — imprest) ----------
-interface PettyRow { no: string; date: string; memo: string; debit: number; credit: number; balance: number }
+interface PettyRow { no: string; date: string; memo: string; debit: number; credit: number; balance: number; house_code?: string; house_name?: string }
 interface PettyState { float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number }
-interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string }
+interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string; house_code?: string; house_name?: string }
 interface PettyStatement { float: number; from: string; to: string; opening: number; rows: PettyStmtRow[]; totalOut: number; totalIn: number; closing: number; toReplenish: number }
-const PETTY_CATS = ['ค่าน้ำมัน/ขนส่ง', 'ของใช้สำนักงาน', 'ค่ารับรอง', 'ค่าบริการ', 'ค่าดำเนินการ', 'อื่นๆ']
+const PETTY_CATS = ['ค่าน้ำมัน/ขนส่ง', 'วัสดุ/ของใช้หน้างาน', 'ของใช้สำนักงาน', 'ค่ารับรอง', 'ค่าบริการ', 'ค่าดำเนินการ', 'อื่นๆ']
+// ป้ายบ้านเล็กๆ ท้ายรายการ (ไม่ผูกบ้าน = ส่วนกลาง ไม่แสดง)
+function HouseTag({ code, name }: { code?: string; name?: string }) {
+  if (!code) return null
+  return <span title={name || code} style={{ display: 'inline-block', fontSize: 10.5, fontWeight: 600, color: '#30506A', background: '#E8EEF3', border: '1px solid #D2DAE1', borderRadius: 6, padding: '1px 6px', marginLeft: 6, whiteSpace: 'nowrap' }}>🏠 {name && name !== code ? `${code} · ${name}` : code}</span>
+}
 function PettyCash() {
+  const app = useAppOptional()
+  // รายชื่อบ้านให้เลือกผูก (บ้านที่ยังไม่ปิดงานขึ้นก่อน แล้วตามด้วยที่เหลือ) — เผื่อโฟร์แมนเบิกไปซื้อของให้บ้านหลังนั้น
+  const houses = (app?.data.houses || []).slice().sort((a, b) => (a.status === 'ส่งมอบแล้ว' ? 1 : 0) - (b.status === 'ส่งมอบแล้ว' ? 1 : 0) || a.code.localeCompare(b.code))
   const [st, setSt] = useState<PettyState | null>(null)
   const [msg, setMsg] = useState('')
   const today = new Date().toISOString().slice(0, 10)
   const firstOfMonth = today.slice(0, 8) + '01'
-  const [f, setF] = useState({ date_iso: today, cat: 'ค่าน้ำมัน/ขนส่ง', item: '', amount: '', ref: '' })
+  const [f, setF] = useState({ date_iso: today, cat: 'ค่าน้ำมัน/ขนส่ง', item: '', amount: '', ref: '', house_code: '' })
   const [floatEdit, setFloatEdit] = useState('')
   const [range, setRange] = useState({ from: firstOfMonth, to: today })
   const [stmt, setStmt] = useState<PettyStatement | null>(null)
@@ -917,7 +926,13 @@ function PettyCash() {
   }
   const spend = async () => {
     if (!f.amount) { setMsg('ใส่จำนวนเงิน'); return }
-    try { await api.post('/petty-cash/expense', f); setF({ ...f, item: '', amount: '', ref: '' }); setMsg('บันทึกจ่ายเงินสดย่อยแล้ว'); load() }
+    try {
+      await api.post('/petty-cash/expense', f)
+      const h = houses.find((x) => x.code === f.house_code)
+      setF({ ...f, item: '', amount: '', ref: '' })
+      setMsg(h ? `บันทึกจ่ายเงินสดย่อยแล้ว — ผูกบ้าน ${h.code} ${h.name} (ต้นทุนไปรวมที่บ้านหลังนี้)` : 'บันทึกจ่ายเงินสดย่อยแล้ว (ส่วนกลางบริษัท)')
+      load()
+    }
     catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
   }
   const topup = async () => {
@@ -929,7 +944,7 @@ function PettyCash() {
   const pct = st.float > 0 ? Math.max(0, Math.min(100, Math.round((st.balance / st.float) * 100))) : 0
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>เงินสดย่อยเป็น “ส่วนกลางบริษัท” (ไม่ผูกบ้าน) — จ่ายค่าใช้จ่ายเล็กๆ น้อยๆ แล้วเติมกลับให้เต็มวงเงินทุกอาทิตย์</div>
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>เงินสดย่อยใช้จ่ายค่าใช้จ่ายเล็กๆ น้อยๆ แล้วเติมกลับให้เต็มวงเงินทุกอาทิตย์ — ถ้าโฟร์แมนเบิกไปซื้อของให้บ้านหลังไหน เลือก “บ้าน” ไว้ด้วย ต้นทุนจะไปรวมที่บ้านหลังนั้น (ไม่เลือก = ส่วนกลางบริษัท)</div>
       {msg && <div style={{ fontSize: 12.5, color: msg.startsWith('ผิดพลาด') || msg.includes('เต็มวงเงินอยู่แล้ว') ? '#C24036' : '#2E7D55', background: msg.startsWith('ผิดพลาด') || msg.includes('เต็มวงเงินอยู่แล้ว') ? '#FBEEEC' : '#E2F1EA', border: '1px solid #CDE3D6', borderRadius: 9, padding: '9px 13px' }}>{msg}</div>}
 
       {/* สรุปยอด + ปุ่มเติม */}
@@ -944,10 +959,15 @@ function PettyCash() {
 
       {/* บันทึกจ่ายเงินสดย่อย */}
       <div style={{ ...card, padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>บันทึกจ่ายเงินสดย่อย (ส่วนกลาง)</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '120px 90px 1fr 1.3fr 110px auto', gap: 10, alignItems: 'end' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>บันทึกจ่ายเงินสดย่อย</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '120px 90px 1fr 1fr 1.3fr 110px auto', gap: 10, alignItems: 'end' }}>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>วันที่</div><input type="date" style={{ ...field, width: '100%' }} value={f.date_iso} onChange={(e) => setF({ ...f, date_iso: e.target.value })} /></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>เลขที่เอกสาร</div><input style={{ ...field, width: '100%' }} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} placeholder="บิล/ใบเสร็จ" /></div>
+          <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>บ้าน (ถ้าซื้อให้บ้าน)</div>
+            <select data-testid="petty-house" style={{ ...field, width: '100%', color: f.house_code ? '#1E2E3B' : '#94A0A8' }} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}>
+              <option value="">— ส่วนกลางบริษัท —</option>
+              {houses.map((h) => <option key={h.code} value={h.code}>{h.code} · {h.name}{h.status === 'ส่งมอบแล้ว' ? ' (ส่งมอบแล้ว)' : ''}</option>)}
+            </select></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หมวด</div><select style={{ ...field, width: '100%' }} value={f.cat} onChange={(e) => setF({ ...f, cat: e.target.value })}>{PETTY_CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>รายการ</div><input style={{ ...field, width: '100%' }} value={f.item} onChange={(e) => setF({ ...f, item: e.target.value })} placeholder="เช่น ค่าน้ำมันรถ, กาแฟรับรอง" /></div>
           <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>จำนวนเงิน</div><input type="number" style={{ ...field, width: '100%', textAlign: 'right' }} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
@@ -978,7 +998,7 @@ function PettyCash() {
             {st.rows.map((r, i) => (
               <tr key={i} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                 <td style={{ padding: '8px 16px' }}><span className="num" style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.no}</span><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.date}</div></td>
-                <td style={{ padding: '8px 12px', color: '#5C6770' }}>{r.memo}</td>
+                <td style={{ padding: '8px 12px', color: '#5C6770' }}>{r.memo}<HouseTag code={r.house_code} name={r.house_name} /></td>
                 <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.debit ? '#2E7D55' : '#CBD3DA' }}>{r.debit ? baht(r.debit) : '-'}</td>
                 <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.credit ? '#C24036' : '#CBD3DA' }}>{r.credit ? baht(r.credit) : '-'}</td>
                 <td className="num" style={{ padding: '8px 16px', textAlign: 'right', fontWeight: 600 }}>{baht(r.balance)}</td>
@@ -1035,7 +1055,7 @@ function PettyStatementDoc({ s, onClose }: { s: PettyStatement; onClose: () => v
                 <td style={{ ...cell, textAlign: 'center', whiteSpace: 'nowrap' }} className="num">{r.date_iso ? thDate(r.date_iso) : r.date}</td>
                 <td style={{ ...cell, textAlign: 'center' }} className="num">{r.seq}</td>
                 <td style={{ ...cell, textAlign: 'center' }} className="num">{r.ref}</td>
-                <td style={cell}>{r.memo}</td>
+                <td style={cell}>{r.memo}{r.house_code ? <span style={{ fontSize: 10.5, color: '#444' }}> [บ้าน {r.house_code}{r.house_name && r.house_name !== r.house_code ? ' ' + r.house_name : ''}]</span> : null}</td>
                 <td style={{ ...cell, textAlign: 'right' }} className="num">{r.in ? m(r.in) : ''}</td>
                 <td style={{ ...cell, textAlign: 'right' }} className="num">{r.out ? m(r.out) : ''}</td>
                 <td style={{ ...cell, textAlign: 'right' }} className="num">{m(r.balance)}</td>
@@ -1058,6 +1078,29 @@ function PettyStatementDoc({ s, onClose }: { s: PettyStatement; onClose: () => v
             ? <>ต้องเติมอีก <b>{s.toReplenish.toLocaleString('en-US')}</b> บาท ({s.float.toLocaleString('en-US')} − {s.closing.toLocaleString('en-US')} = {s.toReplenish.toLocaleString('en-US')})</>
             : <>เงินสดย่อยเต็มวงเงินแล้ว (คงเหลือ {s.closing.toLocaleString('en-US')} บาท)</>}
         </div>
+        {(() => {
+          // สรุปรายจ่ายที่ผูกบ้าน (โฟร์แมนเบิกไปซื้อของให้บ้าน) แยกจากส่วนกลาง — ให้บัญชีเห็นว่าเงินสดย่อยไปลงบ้านไหนเท่าไร
+          const byHouse = new Map<string, { name: string; total: number }>()
+          let central = 0
+          for (const r of s.rows) {
+            if (!r.out) continue
+            if (!r.house_code) { central += r.out; continue }
+            const cur = byHouse.get(r.house_code) || { name: r.house_name || r.house_code, total: 0 }
+            cur.total += r.out; byHouse.set(r.house_code, cur)
+          }
+          if (byHouse.size === 0) return null
+          return (
+            <div style={{ marginTop: 12, fontSize: 11.5 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>สรุปรายจ่ายแยกตามบ้าน</div>
+              <table style={{ borderCollapse: 'collapse', minWidth: 320 }}><tbody>
+                {[...byHouse.entries()].map(([code, v]) => (
+                  <tr key={code}><td style={cell}>🏠 {code}{v.name && v.name !== code ? ' · ' + v.name : ''}</td><td style={{ ...cell, textAlign: 'right', minWidth: 90 }} className="num">{m(v.total)}</td></tr>
+                ))}
+                {central > 0 && <tr><td style={cell}>ส่วนกลางบริษัท</td><td style={{ ...cell, textAlign: 'right' }} className="num">{m(central)}</td></tr>}
+              </tbody></table>
+            </div>
+          )
+        })()}
         <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 40, gap: 30, fontSize: 11.5 }}>
           {['ผู้จัดทำ', 'ผู้ตรวจสอบ', 'ผู้อนุมัติ'].map((l, i) => (
             <div key={i} style={{ flex: 1, textAlign: 'center' }}><div style={{ borderTop: '1px dotted #666', marginBottom: 5 }} /><div>({l})</div><div style={{ fontSize: 10.5, color: '#94A0A8', marginTop: 2 }}>วันที่ ..../..../....</div></div>

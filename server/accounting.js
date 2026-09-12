@@ -527,19 +527,28 @@ export function estimateCorpTax(netProfit) {
 // ตั้งวงเงิน (float) เช่น 10,000 · จ่ายค่าใช้จ่ายส่วนกลางจากเงินสดย่อย · เติมกลับให้เต็มทุกอาทิตย์
 export function pettyFloat() { return Number(getSetting('petty_float', '10000')) || 10000 }
 export function setPettyFloat(n) { setSettingRaw('petty_float', Math.max(0, Number(n) || 0)) }
+// ชื่อบ้านจากรหัส (ใช้แสดงในรายการเงินสดย่อย) — ไม่พบ = คืนรหัสเดิม
+function houseNameOf(code) {
+  if (!code) return ''
+  try { return db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code } catch { return code }
+}
+const withHouseName = (r) => ({ ...r, house_code: r.house_code || '', house_name: houseNameOf(r.house_code) })
 export function pettyState() {
   const float = pettyFloat()
   const gl = ledgerOf(PETTY_ACCOUNT)
   const balance = gl.rows.length ? gl.rows[gl.rows.length - 1].balance : 0
-  return { float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-60).reverse() }
+  return { float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-60).reverse().map(withHouseName) }
 }
-// บันทึกจ่ายค่าใช้จ่ายจากเงินสดย่อย (ส่วนกลาง ไม่ผูกบ้าน): Dr ค่าใช้จ่าย(ตามหมวด) / Cr เงินสดย่อย
-export function pettyExpense({ date_iso, cat, item, amount, ref, by }) {
+// บันทึกจ่ายค่าใช้จ่ายจากเงินสดย่อย: Dr ค่าใช้จ่าย(ตามหมวด) / Cr เงินสดย่อย
+// ผูกบ้านได้ (house_code) เช่น โฟร์แมนเบิกไปซื้อของเล็กน้อยให้บ้านหลังนั้น → ต้นทุนไปรวมที่บ้าน; ไม่ระบุ = ส่วนกลางบริษัท
+export function pettyExpense({ date_iso, cat, item, amount, ref, by, house_code }) {
   const amt = r2(Number(String(amount).replace(/,/g, '')) || 0)
   if (amt <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
+  const hc = String(house_code || '').trim()
+  if (hc && !db.prepare('SELECT code FROM houses WHERE code=?').get(hc)) throw new Error('ไม่พบบ้าน ' + hc)
   const acc = expenseAccountFor(cat)
   const memo = `${item || cat || 'ค่าใช้จ่าย'}`.trim()
-  return postJournal({ date_iso, memo, ref: ref || '', source: 'petty', by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: PETTY_ACCOUNT, debit: 0, credit: amt, memo }] })
+  return postJournal({ date_iso, memo, ref: ref || '', house_code: hc, source: 'petty', by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: PETTY_ACCOUNT, debit: 0, credit: amt, memo }] })
 }
 // เติมเงินสดย่อยให้เต็มวงเงิน: Dr เงินสดย่อย / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float)
 export function pettyTopup({ date_iso, amount, from, ref, note, by }) {
@@ -565,7 +574,7 @@ export function pettyStatement({ from, to } = {}) {
   const rows = gl.rows.map((r) => {
     const inAmt = r2(r.debit || 0), outAmt = r2(r.credit || 0)
     bal = r2(bal + inAmt - outAmt)
-    return { date: r.date, date_iso: r.date_iso || '', ref: r.ref || '', memo: r.memo, in: inAmt, out: outAmt, balance: bal, seq: outAmt > 0 ? String(++seq).padStart(3, '0') : '' }
+    return { date: r.date, date_iso: r.date_iso || '', ref: r.ref || '', memo: r.memo, house_code: r.house_code || '', house_name: houseNameOf(r.house_code), in: inAmt, out: outAmt, balance: bal, seq: outAmt > 0 ? String(++seq).padStart(3, '0') : '' }
   })
   const totalOut = r2(rows.reduce((s, r) => s + r.out, 0))
   const totalInMoves = r2(rows.reduce((s, r) => s + r.in, 0))
