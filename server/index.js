@@ -4682,6 +4682,59 @@ api.post('/contractors/:id/evals', canWrite, (req, res) => {
 })
 
 // ---------- ใบเปรียบเทียบราคา (price comparison) ผูกกับ PR ----------
+// ===== ประวัติเคยซื้อ: หา PO เก่าที่รายการ "ใกล้เคียง" ของใน PR (ไม่ต้องตรงเป๊ะ) → ร้าน/ราคาต่อหน่วย/วันที่/เลข PO ขึ้นให้เองในใบเทียบราคา =====
+const _hnorm = (s) => String(s || '').toLowerCase().replace(/["“”'()\[\]]/g, '').replace(/\s+/g, '')
+function _bigrams(s) { const g = new Set(); for (let i = 0; i < s.length - 1; i++) g.add(s.slice(i, i + 2)); return g }
+// ความคล้ายของชื่อรายการ 0..1: ตรง/ครอบคำ = สูง · ที่เหลือใช้ bigram Dice · ตัวเลขขนาด (12 มม., 4 นิ้ว, 280ksc) ไม่ตรงกัน = ลดครึ่ง
+function itemSimilarity(a, b) {
+  const x = _hnorm(a), y = _hnorm(b)
+  if (!x || !y) return 0
+  if (x === y) return 1
+  if (x.includes(y) || y.includes(x)) return 0.85
+  const gx = _bigrams(x), gy = _bigrams(y)
+  let c = 0; for (const g of gx) if (gy.has(g)) c++
+  const dice = (2 * c) / ((gx.size + gy.size) || 1)
+  const nx = x.match(/\d+(?:\.\d+)?/g) || [], ny = y.match(/\d+(?:\.\d+)?/g) || []
+  if (nx.length && ny.length && !nx.some((n) => ny.includes(n))) return dice * 0.5
+  return dice
+}
+function priceHistoryFor(pr) {
+  const items = (jparse(pr.items) || []).filter((it) => it?.desc)
+  const descs = items.length ? items.map((it) => ({ desc: String(it.desc), qty: Number(it.qty) || 0, unit: String(it.unit || '') })) : [{ desc: String(pr.item || ''), qty: 0, unit: '' }]
+  const pos = db.prepare("SELECT id,no,date,vendor,item,amount,items,house_code,status FROM purchase_orders WHERE status<>'ยกเลิก' AND pr_no<>? ORDER BY id DESC LIMIT 1500").all(pr.no || '')
+  const hname = (c) => c ? (db.prepare('SELECT name FROM houses WHERE code=?').get(c)?.name || c) : ''
+  return descs.map((d) => {
+    const matches = []
+    for (const po of pos) {
+      const lines = jparse(po.items) || []
+      const cands = lines.length ? lines : [{ desc: po.item, qty: 0, unit: '', price: po.amount }]
+      for (const l of cands) {
+        if (!l?.desc) continue
+        const sc = itemSimilarity(d.desc, l.desc)
+        if (sc < 0.4) continue
+        const qty = Number(l.qty) || 0, price = Number(l.price) || 0
+        matches.push({ score: Math.round(sc * 100) / 100, exact: sc >= 0.85, vendor: po.vendor, desc: String(l.desc), qty, unit: String(l.unit || ''), price, per_unit: qty > 0, total: qty > 0 ? Math.round(price * qty) : price, po_no: po.no, po_id: po.id, date: po.date, house: hname(po.house_code) })
+      }
+    }
+    matches.sort((a, b) => b.score - a.score || b.po_id - a.po_id)
+    // สรุปต่อร้าน: ครั้งล่าสุด / ต่ำสุด / กี่ครั้ง (ร้านที่เคยซื้อบ่อยขึ้นก่อน)
+    const byVendor = new Map()
+    for (const m of matches) {
+      const v = byVendor.get(m.vendor) || { vendor: m.vendor, last: m, min: m.per_unit ? m.price : 0, times: 0 }
+      v.times++; if (m.po_id > v.last.po_id) v.last = m
+      if (m.per_unit && m.price > 0 && (v.min === 0 || m.price < v.min)) v.min = m.price
+      byVendor.set(m.vendor, v)
+    }
+    const mp = materialPriceFor(d.desc)
+    return { desc: d.desc, qty: d.qty, unit: d.unit, matches: matches.slice(0, 12), vendors: [...byVendor.values()].sort((a, b) => b.times - a.times || b.last.po_id - a.last.po_id).slice(0, 6), central: mp ? { name: mp.name, unit: mp.unit, central: mp.central } : null }
+  })
+}
+api.get('/purchase-requests/:id/price-history', requireAuth, (req, res) => {
+  if (!(canRunPurchasing(req.user) || req.user.role === 'accounting')) return res.status(403).json({ error: 'ดูได้เฉพาะจัดซื้อ/บัญชี/ผู้ตรวจสอบ/ผู้บริหาร' })
+  const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
+  if (!pr) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
+  res.json(priceHistoryFor(pr))
+})
 api.get('/purchase-requests/:id/quotes', financeOnly, (req, res) =>
   res.json(db.prepare('SELECT * FROM pr_quotes WHERE pr_id=? ORDER BY (price=0), price').all(req.params.id))
 )
