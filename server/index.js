@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync, appendFileSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
+import { registerCrm, crmNotifications } from './crm.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin, verifyToken } from './security.js'
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
@@ -216,6 +217,7 @@ const sseClients = new Set()
 let changeSeq = 0
 // เส้นทาง API ที่เขียนข้อมูล → ชุดข้อมูลในหน้าเว็บที่ต้องโหลดใหม่
 const CHANGE_MAP = [
+  [/^\/crm\//, ['customers', 'houses', 'crm', 'notifications']],
   [/^\/(fuel-requests|petty-cash)/, ['fuel', 'dashboard', 'notifications']],
   [/^\/(purchase-requests|pr-quotes|pr-quote-files|approve\/pr|reject\/pr|procurement\/flow)/, ['prs', 'purchaseOrders', 'notifications']],
   [/^\/(purchase-orders|approve\/po|reject\/po|goods-receipts|payables)/, ['purchaseOrders', 'prs', 'expenses', 'dashboard', 'notifications']],
@@ -1975,6 +1977,8 @@ function maxNoSuffix(table) {
 const canWrite = requireRole('admin', 'accounting', 'site')
 const financeOnly = requireRole('admin', 'accounting')
 const adminOnly = requireRole('admin')
+// ===== CRM (ลูกค้า 360 · Lead/Pipeline) — โมดูลแยกใน crm.js =====
+registerCrm(api, { canWrite, financeOnly, audit, notifyChange, nowTS, todayTH, docYear, nextSeq, linePush, lineApprovers, lineUidOfName, setLineCtx, getLineCtx, lineReply, userByLine, getSetting, setSetting })
 
 // ---------- ชั้นควบคุมภายใน / กันโกง (Internal Control) ----------
 // ค่าตั้งต้นของกติกาควบคุม (admin แก้ได้ในหน้า "ตรวจสอบ")
@@ -5875,6 +5879,7 @@ api.delete('/files/:id', canWrite, (req, res) => {
 api.get('/notifications', (req, res) => {
   const mgr = isManager(req.user)
   const out = []
+  try { out.push(...crmNotifications(req.user)) } catch (e) { console.error('crmNotifications:', e.message) } // Lead เงียบ / นัดติดตามลูกค้าถึงกำหนด
   const todayISO = new Date().toISOString().slice(0, 10)
   const woDone = (s) => s === 'เสร็จ' || s === 'ตรวจผ่าน'
   // ใบสั่งงานที่สั่งให้ฉัน (หรือถูกไล่ระดับมาถึงฉัน) แต่ยังไม่กดรับทราบ → เด้งเตือนให้รับทราบ

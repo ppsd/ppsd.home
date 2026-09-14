@@ -16,7 +16,7 @@ import PrintDoc from './components/PrintDoc'
 import Issues from './components/Issues'
 import Expenses from './components/Expenses'
 import Users from './components/Users'
-import Customers from './components/Customers'
+import Crm from './components/Crm'
 import Reports from './components/Reports'
 import Gantt from './components/Gantt'
 import Sales from './components/Sales'
@@ -306,7 +306,7 @@ export default function App() {
           {page === 'issues' && <Issues onAddIssue={openAddIssue} />}
           {page === 'expenses' && <Expenses onAddExpense={openAddExpense} />}
           {page === 'users' && <Users onAddUser={openAddUser} />}
-          {page === 'customers' && <Customers />}
+          {page === 'customers' && <Crm />}
           {page === 'gantt' && <Gantt />}
           {page === 'sales' && <Sales />}
           {page === 'reports' && <Reports />}
