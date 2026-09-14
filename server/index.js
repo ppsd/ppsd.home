@@ -734,6 +734,62 @@ function rejectFuelRequest(fr, u, note) {
   notifyChange(['fuel', 'notifications'])
   return fuelById(fr.id)
 }
+// ===== เลือกร้านจากผล "AI หาร้านออนไลน์" ในแชท: ส่งต่อลิงก์/ชื่อสินค้ากลับมาพร้อม "เอาร้านนี้" หรือพิมพ์ "เอาร้านที่ 2" =====
+// ไม่ยึดกับใบที่ค้างในบริบท (ผู้รับมักคุยหลายใบพร้อมกัน) — หาจากลิงก์ก่อน แล้วค่อยชื่อสินค้า โดยให้ใบในบริบทมีสิทธิ์ก่อน
+function onlineOptionsOf(pr) { const r = jparse(pr?.online_options); return r?.items?.length ? r : null }
+function findOnlineOfferInText(t, preferPrId) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '').replace(/[?#].*$/, '')
+  const nt = String(t || '').toLowerCase().replace(/\s+/g, '')
+  const urls = (String(t || '').match(/https?:\/\/[^\s]+/gi) || []).map((x) => x.replace(/[),.!]+$/, ''))
+  const prs = db.prepare("SELECT * FROM purchase_requests WHERE online_options IS NOT NULL AND status<>'ปฏิเสธ' ORDER BY id DESC LIMIT 40").all()
+    .sort((a, b) => Number(b.id === preferPrId) - Number(a.id === preferPrId))
+  let byName = null
+  for (const pr of prs) {
+    const r = onlineOptionsOf(pr); if (!r) continue
+    r.items.forEach((it, i) => (it.offers || []).forEach((o, j) => {
+      if (o.url && urls.some((x) => norm(x) === norm(o.url) || nt.includes(norm(o.url)))) { if (!byName || byName.how !== 'url') byName = { pr, item: i, offer: j, it, o, how: 'url' } }
+      const nm = norm(o.name).slice(0, 24)
+      if (!byName && nm.length >= 6 && nt.includes(nm)) byName = { pr, item: i, offer: j, it, o, how: 'name' }
+    }))
+    if (byName?.how === 'url') return byName
+  }
+  return byName
+}
+// "เอาร้านที่ 2" / "รายการ 1 ร้าน 3" / "เอาร้านที่ 1 PR-69-0166" — อ้างลำดับในข้อความผลค้นหา
+function pickOnlineOfferByNumber(t, ctx) {
+  const km = String(t || '').match(/ร้าน(?:ที่|ลำดับ)?\s*(\d)(?!\d)/)
+  if (!km) return null
+  const pm = String(t || '').match(/PR-?[\w-]+/i)
+  const pr = pm ? findPrByNo(pm[0]) : (ctx?.kind === 'quote' ? db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id) : null)
+  const r = onlineOptionsOf(pr); if (!r) return null
+  const im = String(t || '').match(/รายการ(?:ที่)?\s*(\d+)/)
+  const i = im ? Number(im[1]) - 1 : 0
+  const it = r.items[i]; if (!it) return null
+  const o = (it.offers || []).find((x) => Number(x.rank) === Number(km[1])) || it.offers?.[Number(km[1]) - 1]
+  return o ? { pr, item: i, offer: it.offers.indexOf(o), it, o, how: 'number' } : null
+}
+function onlineOptionsHint(pr) {
+  const r = onlineOptionsOf(pr); if (!r) return ''
+  return `🔎 ${pr.no} มีตัวเลือกออนไลน์ที่ AI หาให้ ${r.items.reduce((s, it) => s + (it.offers || []).length, 0)} ร้าน — ส่งต่อลิงก์ร้านที่ต้องการกลับมาพร้อมพิมพ์ 'เอาร้านนี้' หรือพิมพ์ 'เอาร้านที่ 1' ได้เลยค่ะ`
+}
+// บันทึกตัวเลือกออนไลน์เป็นใบเทียบราคา (ราคา × จำนวน) แล้วออก PO ให้เลยถ้าคนสั่งมีสิทธิ์ออก PO
+async function useOnlineOffer(hit, u, uid, replyToken) {
+  const { pr, it, o } = hit
+  const total = Math.round((o.price || 0) * (it.qty || 1))
+  db.prepare('UPDATE pr_quotes SET chosen=0 WHERE pr_id=?').run(pr.id)
+  const info = db.prepare('INSERT INTO pr_quotes (pr_id,vendor,price,terms,note,chosen,ai,items,recommended,reason) VALUES (?,?,?,?,?,1,0,?,0,?)')
+    .run(pr.id, o.shop, total, 'ออนไลน์ · ' + o.url, `เลือกจากผล AI ค้นออนไลน์ทาง LINE โดย ${u.name} · ${o.name || it.desc}${o.note ? ' · ' + o.note : ''}`, JSON.stringify([{ name: it.desc, qty: it.qty || 1, unit: it.unit || o.unit, price: o.price, amount: total }]), '')
+  const q = db.prepare('SELECT * FROM pr_quotes WHERE id=?').get(info.lastInsertRowid)
+  audit({ user: u }, 'เลือกร้านออนไลน์ทาง LINE', `${pr.no} · ${o.shop} ${fmtMoney(total)}`)
+  setLineCtx(uid, { kind: 'quote', pr_id: pr.id, ttl: 48 * 60 * 60 * 1000 })
+  notifyChange(['prs'])
+  const head = `🛒 ${pr.no}: เลือก ${o.shop} — ${o.name || it.desc}${o.price ? ` ฿${fmtMoney(o.price)}/${o.unit || it.unit || 'หน่วย'}` : ''} × ${it.qty || 1} = ${fmtMoney(total)} บาท\n${o.url}`
+  if (!canRunPurchasing(u)) return lineReply(replyToken, head + '\n\nบันทึกเป็นร้านที่เลือกแล้ว — ให้จัดซื้อ/บัญชี/ผู้บริหารพิมพ์ "ออก PO ' + pr.no + '" หรือกดออก PO ในหน้าจัดซื้อค่ะ')
+  try {
+    const po = issuePoFromPr(pr, q, u)
+    return lineReply(replyToken, head + `\n\n✅ ออกใบสั่งซื้อ ${po.no} ร้าน ${po.vendor} ยอด ${fmtMoney(po.amount)} บาท (อ้าง ${pr.no}) แล้ว\n📨 ส่งขออนุมัติ PO ทาง LINE ถึงผู้บริหารแล้วค่ะ`)
+  } catch (e) { return lineReply(replyToken, head + '\n\n❌ ออก PO ไม่ได้: ' + (e.msg || e.message)) }
+}
 async function handleLinePostback(uid, data, replyToken) {
   const u = userByLine(uid)
   if (!u) return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ')
@@ -1382,6 +1438,21 @@ async function handleLineUserMessage(uid, text, replyToken) {
     const n = quoteFilesOf(pr.id).length
     return lineReply(replyToken, `📎 ผูกรูป ${moved} รูปกับ ${pr.no} แล้ว (รวม ${n} รูป) — ส่งเพิ่มได้เลย ครบ${quoteNeeded(pr)} ร้าน AI จะเทียบให้เอง`)
   }
+  // พิมพ์เลข PR เฉยๆ = สลับมาคุยเรื่องใบนี้ (รูปใบเสนอราคา/ตัวเลือกออนไลน์ที่ส่งต่อจากนี้ไปนับเป็นของใบนี้)
+  if (/^(?:PR)-?[\w-]+$/i.test(t)) {
+    const pr = findPrByNo(t)
+    if (!pr) return lineReply(replyToken, `ไม่พบใบขอซื้อ ${t.toUpperCase()} ค่ะ`)
+    setLineCtx(uid, { kind: 'quote', pr_id: pr.id, ttl: 48 * 60 * 60 * 1000 })
+    const n = quoteFilesOf(pr.id).length
+    const po = pr.po_no || db.prepare('SELECT no, vendor FROM purchase_orders WHERE pr_no=? AND status<>? ORDER BY id DESC').get(pr.no, 'ยกเลิก')
+    return lineReply(replyToken, `📌 ตอนนี้คุยเรื่อง ${pr.no} (${String(pr.item || '').slice(0, 50)}) · สถานะ ${pr.status}${po ? ` · มี PO ${po.no || po} แล้ว` : ''}\n${n ? `มีรูปใบเสนอราคา ${n} รูป — พิมพ์ 'เทียบราคา' หรือ 'เอาร้านนี้'` : 'ยังไม่มีรูปใบเสนอราคา — ส่งรูปมาได้เลย'}${onlineOptionsHint(pr) ? '\n' + onlineOptionsHint(pr) : ''}`)
+  }
+  // ส่งต่อลิงก์/ชื่อสินค้าจากผล AI หาร้าน + "เอาร้านนี้" หรือ "เอาร้านที่ 2" → ใช้ตัวเลือกออนไลน์นั้นออก PO (หาให้ข้ามใบได้ ไม่ต้องอยู่ในบริบทใบเดียวกัน)
+  if (/ร้านนี้|เอาร้าน|ใช้ร้าน|เลือกร้าน|สั่งร้าน|เอาอันนี้|อันนี้|ลิงก์นี้|ลิ้งนี้|https?:\/\//i.test(t) && !ORDER_CMD_RE.test(t)) {
+    const hit = findOnlineOfferInText(t, ctx?.kind === 'quote' ? ctx.pr_id : 0) || pickOnlineOfferByNumber(t, ctx)
+    if (hit) return useOnlineOffer(hit, u, uid, replyToken)
+    if (/https?:\/\//i.test(t)) return lineReply(replyToken, 'ลิงก์นี้ไม่ตรงกับตัวเลือกที่ AI หาให้ในใบไหนเลยค่ะ — ส่งต่อข้อความผลค้นหาจากบอท (ที่มีลิงก์เดิม) กลับมาพร้อม "เอาร้านนี้" หรือพิมพ์ "เอาร้านที่ 1 PR-69-0166" ระบุเลขใบก็ได้ค่ะ')
+  }
   const qm = t.match(/^(?:ใบเสนอราคา|เสนอราคา|เทียบราคา|quote)\s*((?:PR)-?[\w-]+)$/i)
   if (qm) {
     const pr = findPrByNo(qm[1])
@@ -1400,7 +1471,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (/^(เทียบราคา|เทียบ|compare)$/i.test(t) || (ctx?.kind === 'quote' && /ร้านนี้|เอาร้าน|ใช้ร้าน|เลือกร้าน|เทียบ|ออก\s*po|สั่งเลย|สั่งร้าน/i.test(t) && !ORDER_CMD_RE.test(t))) {
     const pr = ctx?.kind === 'quote' ? db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id) : null
     if (!pr) return lineReply(replyToken, 'ยังไม่รู้ว่าเทียบราคาของใบขอซื้อไหนค่ะ — พิมพ์ เช่น "เทียบราคา PR-69-0012"')
-    if (!quoteFilesOf(pr.id).length) return lineReply(replyToken, `ยังไม่มีรูปใบเสนอราคาของ ${pr.no} ค่ะ ส่งรูปมาก่อนนะคะ`)
+    if (!quoteFilesOf(pr.id).length) return lineReply(replyToken, `ยังไม่มีรูปใบเสนอราคาของ ${pr.no} ค่ะ ส่งรูปมาก่อนนะคะ${onlineOptionsHint(pr) ? '\n' + onlineOptionsHint(pr) : ''}`)
     clearTimeout(autoCompareTimers.get(pr.id))
     try {
       const r = await aiCompareQuotes(pr, u)
@@ -1465,7 +1536,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   }
   if (!lineCanCommand(u)) {
     // โฟร์แมน/พนักงาน: ข้อความอื่นที่ไม่ใช่คำสั่ง = รายการที่จะสั่งของ (ไม่ต้องพิมพ์ "สั่งของ" นำหน้าก็ได้) → ร่างใบขอซื้อให้ยืนยันก่อน
-    if (ctx?.kind === 'quote') return lineReply(replyToken, `กำลังรับใบเสนอราคาของ ${db.prepare('SELECT no FROM purchase_requests WHERE id=?').get(ctx.pr_id)?.no || 'PR'} อยู่ค่ะ — ส่งรูปเพิ่ม · พิมพ์ 'เทียบราคา' · หรือ 'เอาร้านนี้' เพื่อออก PO จากร้านที่ส่งมา`)
+    if (ctx?.kind === 'quote') { const cpr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id); return lineReply(replyToken, `กำลังรับใบเสนอราคาของ ${cpr?.no || 'PR'} อยู่ค่ะ — ส่งรูปเพิ่ม · พิมพ์ 'เทียบราคา' · หรือ 'เอาร้านนี้' เพื่อออก PO จากร้านที่ส่งมา${cpr && onlineOptionsHint(cpr) ? '\n' + onlineOptionsHint(cpr) : ''}\n(ถ้าจะคุยใบอื่น พิมพ์เลขใบ เช่น PR-69-0166)`) }
     if (t.length >= 4 && !/^(ครับ|ค่ะ|คะ|ขอบคุณ|โอเค|ok|สวัสดี|หวัดดี)/i.test(t)) {
       const ai = await aiParseLine(t, u)
       if (!ai || ai.intent !== 'other' || ai.items.length) return handleLineOrder(uid, u, t, replyToken, ctx, ai)
