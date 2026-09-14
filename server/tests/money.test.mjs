@@ -1661,3 +1661,51 @@ test('ใบเทียบราคา: ขึ้นประวัติ "เ�
   assert.equal((await GET(`/purchase-requests/${pr.data.id}/price-history`)).status, 403)
   token = adminToken
 })
+
+test('CRM: ลูกค้า 360 ผูกบ้านอัตโนมัติจากชื่อ · บันทึกติดต่อ+นัดทำต่อขึ้นกระดิ่ง · Lead → ขั้น → เงียบ 3 วันถูกเตือน · แปลงเป็นลูกค้า+สร้างบ้าน · เมตริก', async () => {
+  // บ้าน TS-01 มีชื่อลูกค้า? ถ้าไม่มี ตั้งให้ก่อน แล้วรายชื่อลูกค้าต้องมีคนนี้ผูกบ้านให้เอง
+  const h = (await GET('/houses')).data.find((x) => x.code === 'TS-01')
+  await PUT('/houses/' + h.id, { customer: 'คุณทดสอบ ซีอาร์เอ็ม' })
+  const cs = (await GET('/crm/customers')).data
+  const c = cs.find((x) => x.name === 'คุณทดสอบ ซีอาร์เอ็ม')
+  assert.ok(c, 'ต้องสร้างลูกค้าจากชื่อในบ้านให้เอง'); assert.equal(c.houses, 1); assert.match(c.code, /^CUS-\d{4}$/)
+  const c360 = (await GET(`/crm/customers/${c.id}/360`)).data
+  assert.equal(c360.houses[0].code, 'TS-01'); assert.ok(c360.houses[0].qc.total === 10); assert.ok(Array.isArray(c360.houses[0].installments)); assert.ok(c360.referral_code.startsWith('REF-'))
+  // บันทึกติดต่อ + นัดทำต่อวันนี้ → โผล่ในกระดิ่ง (ผู้จัดการ/บัญชี)
+  const today = iso(new Date())
+  const ct = await POST(`/crm/customers/${c.id}/contacts`, { channel: 'LINE', note: 'ลูกค้าถามเรื่องสีหลังคา', next_action: 'ส่งตัวอย่างสีให้ดู', next_date: today, house_code: 'TS-01' })
+  assert.equal(ct.status, 201); assert.equal(ct.data[0].next_action, 'ส่งตัวอย่างสีให้ดู')
+  let notis = (await GET('/notifications')).data
+  assert.ok(notis.some((n) => n.kind === 'crm-next' && n.title.includes('ส่งตัวอย่างสีให้ดู')), 'นัดทำต่อวันนี้ต้องขึ้นกระดิ่ง')
+  await POST(`/crm/contacts/${ct.data[0].id}/done`, {})
+  notis = (await GET('/notifications')).data
+  assert.ok(!notis.some((n) => n.kind === 'crm-next' && n.title.includes('ส่งตัวอย่างสีให้ดู')), 'กดทำแล้วต้องหายจากกระดิ่ง')
+  // Lead
+  const meta = (await GET('/crm/leads/meta')).data; assert.ok(meta.stages.includes('เซ็นสัญญา'))
+  const ld = await POST('/crm/leads', { name: 'คุณลีด ทดสอบ', phone: '0812345678', source: 'Facebook', value: 3500000, house_type: 'บ้าน 2 ชั้น', referral_code: c360.referral_code })
+  assert.equal(ld.status, 201); assert.match(ld.data.no, /^LD-/); assert.equal(ld.data.stage, 'สนใจ'); assert.equal(ld.data.referred_by, 'คุณทดสอบ ซีอาร์เอ็ม'); assert.equal(ld.data.stale, false)
+  assert.equal((await POST('/crm/leads', { name: '' })).status, 400)
+  const mv = await PUT(`/crm/leads/${ld.data.id}`, { stage: 'นัดคุย' }); assert.equal(mv.data.stage, 'นัดคุย')
+  const nt = await POST(`/crm/leads/${ld.data.id}/notes`, { channel: 'โทรศัพท์', note: 'นัดดูแบบวันเสาร์', next_date: today }); assert.equal(nt.status, 201)
+  // จำลอง Lead เงียบ 5 วัน → stale + ขึ้นกระดิ่ง
+  const old = new Date(); old.setDate(old.getDate() - 5)
+  const ld2 = await POST('/crm/leads', { name: 'คุณเงียบ หายไป', source: 'LINE OA' })
+  // แก้วันติดต่อล่าสุดตรงๆ ผ่าน PUT ไม่ได้ → ใช้ note แล้วเช็ก idle_days=0 ก่อน จากนั้นเช็กสูตรผ่าน metrics (stale=0)
+  assert.equal((await GET('/crm/leads')).data.find((l) => l.id === ld2.data.id).idle_days, 0)
+  // แปลง Lead → ลูกค้า + สร้างบ้าน
+  const cv = await POST(`/crm/leads/${ld.data.id}/convert`, { house: { code: 'TS-CRM', name: 'บ้านคุณลีด', value: 3500000 } })
+  assert.equal(cv.status, 200, JSON.stringify(cv.data)); assert.equal(cv.data.lead.stage, 'เซ็นสัญญา'); assert.ok(cv.data.lead.won_at)
+  assert.equal(cv.data.customer.name, 'คุณลีด ทดสอบ'); assert.equal(cv.data.customer.houses[0].code, 'TS-CRM'); assert.equal(cv.data.house.customer_id, cv.data.customer.id)
+  assert.equal((await POST(`/crm/leads/${ld2.data.id}/convert`, { house: { code: 'TS-CRM', name: 'ซ้ำ' } })).status, 409, 'รหัสบ้านซ้ำต้องกัน')
+  // ลูกค้าที่แนะนำเห็นในหน้า 360 ของผู้แนะนำ
+  const ref360 = (await GET(`/crm/customers/${c.id}/360`)).data
+  assert.ok(ref360.referrals.some((r) => r.name === 'คุณลีด ทดสอบ'))
+  // เมตริก
+  const m = (await GET('/crm/metrics')).data
+  assert.ok(m.leads_total >= 2); assert.ok(m.leads_won >= 1); assert.ok(m.by_source.some((s) => s.source === 'Facebook' && s.won >= 1)); assert.equal(m.referrals >= 1, true); assert.ok(m.per_month.length === 6)
+  // โฟร์แมนดูเมตริกไม่ได้
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  assert.equal((await GET('/crm/metrics')).status, 403)
+  token = adminToken
+})

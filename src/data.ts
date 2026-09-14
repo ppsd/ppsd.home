@@ -175,7 +175,7 @@ export const navGroups: NavGroup[] = [
 export const titles: Record<string, [string, string]> = {
   dashboard: ['ภาพรวมระบบ', 'หน้าสรุป'],
   houses: ['การจัดการบ้าน', 'บ้านทั้งหมด'],
-  customers: ['การขาย', 'ลูกค้า (CRM)'],
+  customers: ['ลูกค้า', 'CRM — ลูกค้า 360° · Lead/Pipeline · รายงาน'],
   installments: ['การเงิน', 'งวดงาน'],
   gantt: ['หน้างาน', 'แผนงาน / ไทม์ไลน์'],
   issues: ['หน้างาน', 'ปัญหาหน้างาน'],
