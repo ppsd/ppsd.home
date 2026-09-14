@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdir
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { registerCrm, crmNotifications } from './crm.js'
+import { registerCrmService, serviceNotifications, customerByLine, consumeCustomerCode, handleCustomerLineMessage, handleCustomerLineImage, onQcSaved } from './crm_service.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin, verifyToken } from './security.js'
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
@@ -217,7 +218,8 @@ const sseClients = new Set()
 let changeSeq = 0
 // เส้นทาง API ที่เขียนข้อมูล → ชุดข้อมูลในหน้าเว็บที่ต้องโหลดใหม่
 const CHANGE_MAP = [
-  [/^\/crm\//, ['customers', 'houses', 'crm', 'notifications']],
+  [/^\/crm\//, ['customers', 'houses', 'crm', 'issues', 'notifications']],
+  [/^\/issues/, ['issues', 'crm', 'dashboard', 'notifications']],
   [/^\/(fuel-requests|petty-cash)/, ['fuel', 'dashboard', 'notifications']],
   [/^\/(purchase-requests|pr-quotes|pr-quote-files|approve\/pr|reject\/pr|procurement\/flow)/, ['prs', 'purchaseOrders', 'notifications']],
   [/^\/(purchase-orders|approve\/po|reject\/po|goods-receipts|payables)/, ['purchaseOrders', 'prs', 'expenses', 'dashboard', 'notifications']],
@@ -1358,9 +1360,15 @@ async function handleLineUserMessage(uid, text, replyToken) {
   const u = userByLine(uid)
   // ยังไม่ผูก → รับเฉพาะรหัส 6 หลัก
   if (!u) {
+    // ลูกค้า (CRM) ที่ผูก LINE แล้ว → บอทฝั่งลูกค้า
+    const cust = customerByLine(uid)
+    if (cust) return handleCustomerLineMessage(crmDeps, uid, cust, t, replyToken)
     if (/^\d{6}$/.test(t)) {
       const linked = consumeLineLinkCode(t, uid)
-      return lineReply(replyToken, linked ? `✅ ผูก LINE กับบัญชี "${linked.name}" แล้ว\n\nพิมพ์ 'ช่วย' เพื่อดูคำสั่งที่ใช้ได้` : '❌ รหัสไม่ถูกหรือหมดอายุ (10 นาที) — ขอรหัสใหม่ที่ ERP → ผู้ใช้งาน → ผูก LINE')
+      if (linked) return lineReply(replyToken, `✅ ผูก LINE กับบัญชี "${linked.name}" แล้ว\n\nพิมพ์ 'ช่วย' เพื่อดูคำสั่งที่ใช้ได้`)
+      const cl = consumeCustomerCode(t, uid)
+      if (cl) { setLineCtx(uid, null); return handleCustomerLineMessage(crmDeps, uid, cl, 'สวัสดี', replyToken) }
+      return lineReply(replyToken, '❌ รหัสไม่ถูกหรือหมดอายุ — พนักงาน: ขอรหัสใหม่ที่ ERP → ผู้ใช้งาน → ผูก LINE · ลูกค้า: ขอรหัสใหม่จากทีมงาน PPSD ค่ะ')
     }
     return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้\n1) เข้า ERP → เมนู ผู้ใช้งาน → กด "ผูก LINE"\n2) ส่งรหัส 6 หลักที่ได้มาที่นี่')
   }
@@ -1770,7 +1778,11 @@ function submitLineOrder(uid, u, d, replyToken) {
 // รูปที่ส่งมาในแชท = รูปใบเสนอราคา → ผูกกับ PR ที่กำลังคุยอยู่ หรือถามว่าของ PR ไหน
 async function handleLineUserImage(uid, message, replyToken) {
   const u = userByLine(uid)
-  if (!u) return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ — ขอรหัส 6 หลักที่ ERP (ไอคอน 💬 มุมขวาบน) แล้วส่งมาที่นี่')
+  if (!u) {
+    const cust = customerByLine(uid)
+    if (cust) { const cimg = await lineFetchImage(message); if (!cimg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return handleCustomerLineImage(crmDeps, uid, cust, cimg, replyToken) }
+    return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ — ขอรหัส 6 หลักที่ ERP (ไอคอน 💬 มุมขวาบน) แล้วส่งมาที่นี่')
+  }
   const img = await lineFetchImage(message)
   if (!img) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง')
   const ctx = getLineCtx(uid)
@@ -1978,7 +1990,9 @@ const canWrite = requireRole('admin', 'accounting', 'site')
 const financeOnly = requireRole('admin', 'accounting')
 const adminOnly = requireRole('admin')
 // ===== CRM (ลูกค้า 360 · Lead/Pipeline) — โมดูลแยกใน crm.js =====
-registerCrm(api, { canWrite, financeOnly, audit, notifyChange, nowTS, todayTH, docYear, nextSeq, linePush, lineApprovers, lineUidOfName, setLineCtx, getLineCtx, lineReply, userByLine, getSetting, setSetting })
+const crmDeps = { canWrite, financeOnly, audit, notifyChange, nowTS, todayTH, docYear, nextSeq, linePush, lineApprovers, lineUidOfName, setLineCtx, getLineCtx, lineReply, userByLine, getSetting, setSetting, publicBaseUrl: () => publicBaseUrl(), hasLineToken: () => !!getSetting('line_token', '') }
+registerCrm(api, crmDeps)
+registerCrmService(api, crmDeps) // LINE ลูกค้า · เคสแจ้งซ่อม/SLA · ประกัน · NPS · ข้อความอัตโนมัติ
 
 // ---------- ชั้นควบคุมภายใน / กันโกง (Internal Control) ----------
 // ค่าตั้งต้นของกติกาควบคุม (admin แก้ได้ในหน้า "ตรวจสอบ")
@@ -5115,7 +5129,9 @@ api.post('/qc', canWrite, (req, res) => {
     .run(no, b.house_code || '', b.category, b.type, b.zone || '', b.inspector || req.user.name, todayTH(), b.status || 'กำลังตรวจ', JSON.stringify(items), b.remark || '', JSON.stringify(cleanImgs(b.images)), b.start_date || '', b.end_date || '', req.user.name, todayTH(),
       String(b.phase || ''), String(b.form_id || ''), String(b.kind || ''), JSON.stringify(cleanExtra(b.extra)), String(b.worker || ''), QC_STD.includes(b.std) ? b.std : '', String(b.fix_date || ''), String(b.recheck_date || ''))
   audit(req, 'สร้างใบตรวจ QC', `${no} · ${b.type}`)
-  res.status(201).json(qcRow(db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(info.lastInsertRowid)))
+  const qcNew = db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(info.lastInsertRowid)
+  onQcSaved(crmDeps, qcNew) // แจ้งลูกค้าเมื่อเฟสผ่านครบ
+  res.status(201).json(qcRow(qcNew))
 })
 api.put('/qc/:id', canWrite, (req, res) => {
   const d = db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(req.params.id)
@@ -5127,7 +5143,9 @@ api.put('/qc/:id', canWrite, (req, res) => {
   db.prepare('UPDATE qc_inspections SET status=?, items=?, remark=?, zone=?, inspector=?, images=?, start_date=?, end_date=?, extra=?, worker=?, std=?, fix_date=?, recheck_date=? WHERE id=?')
     .run(b.status ?? d.status, items, b.remark ?? d.remark, b.zone ?? d.zone, b.inspector ?? d.inspector, images, b.start_date ?? d.start_date, b.end_date ?? d.end_date,
       extra, b.worker ?? d.worker ?? '', QC_STD.includes(b.std) ? b.std : (d.std || ''), b.fix_date ?? d.fix_date ?? '', b.recheck_date ?? d.recheck_date ?? '', d.id)
-  res.json(qcRow(db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(d.id)))
+  const qcUpd = db.prepare('SELECT * FROM qc_inspections WHERE id=?').get(d.id)
+  onQcSaved(crmDeps, qcUpd)
+  res.json(qcRow(qcUpd))
 })
 api.delete('/qc/:id', canWrite, (req, res) => { db.prepare('DELETE FROM qc_inspections WHERE id=?').run(req.params.id); res.json({ ok: true }) })
 
@@ -5879,7 +5897,7 @@ api.delete('/files/:id', canWrite, (req, res) => {
 api.get('/notifications', (req, res) => {
   const mgr = isManager(req.user)
   const out = []
-  try { out.push(...crmNotifications(req.user)) } catch (e) { console.error('crmNotifications:', e.message) } // Lead เงียบ / นัดติดตามลูกค้าถึงกำหนด
+  try { out.push(...crmNotifications(req.user), ...serviceNotifications(req.user)) } catch (e) { console.error('crmNotifications:', e.message) } // Lead เงียบ / นัดติดตามลูกค้า / เคสเกิน SLA / คะแนนต่ำ
   const todayISO = new Date().toISOString().slice(0, 10)
   const woDone = (s) => s === 'เสร็จ' || s === 'ตรวจผ่าน'
   // ใบสั่งงานที่สั่งให้ฉัน (หรือถูกไล่ระดับมาถึงฉัน) แต่ยังไม่กดรับทราบ → เด้งเตือนให้รับทราบ

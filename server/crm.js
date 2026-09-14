@@ -25,6 +25,8 @@ export const LEAD_STAGES = ['สนใจ', 'นัดคุย', 'เสนอ�
 export const LEAD_SOURCES = ['Facebook', 'LINE OA', 'เว็บไซต์', 'บอกต่อ', 'ป้าย/หน้างาน', 'โทรเข้า', 'อื่นๆ']
 const OPEN_STAGES = LEAD_STAGES.filter((s) => s !== 'เซ็นสัญญา' && s !== 'ยกเลิก')
 export const STALE_DAYS = 3
+// จุดเสียบจาก crm_service.js (ประกัน/เคส) — เลี่ยง import วน
+export const hooks = { warrantyOf: null, caseRow: null }
 
 const normName = (s) => String(s || '').replace(/^(นาย|นาง|นางสาว|น\.ส\.|คุณ|ดร\.|ด\.ช\.|ด\.ญ\.)\s*/g, '').replace(/\s+/g, '').toLowerCase()
 const isoNow = () => new Date().toISOString().slice(0, 10)
@@ -89,7 +91,8 @@ export function customer360(c) {
     const qc = qcProgressOf(h.code)
     const files = db.prepare('SELECT COUNT(*) c FROM files WHERE house_code=?').get(h.code).c
     const photos = db.prepare("SELECT images FROM qc_inspections WHERE house_code=? AND images IS NOT NULL ORDER BY id DESC LIMIT 6").all(h.code).flatMap((r) => jparse(r.images) || []).slice(0, 6)
-    return { ...h, installments: inst, inst_paid: paid, inst_total: total, next_due: nextDue || null, issues, open_issues: issues.filter((i) => i.status !== 'แก้ไขแล้ว' && i.status !== 'ปิดเคส').length, qc, files, photos }
+    const cases = hooks.caseRow ? issues.map(hooks.caseRow) : issues
+    return { ...h, installments: inst, inst_paid: paid, inst_total: total, next_due: nextDue || null, issues: cases, open_issues: issues.filter((i) => i.status !== 'แก้ไขแล้ว' && i.status !== 'ปิดเคส' && i.status !== 'ยกเลิก').length, qc, files, photos, warranty: hooks.warrantyOf ? hooks.warrantyOf(h) : null }
   })
   const docs = db.prepare('SELECT id,type,no,date,total,status FROM sales_docs WHERE customer=? ORDER BY id DESC LIMIT 30').all(c.name)
   const contacts = db.prepare('SELECT * FROM customer_contacts WHERE customer_id=? ORDER BY id DESC LIMIT 200').all(c.id)

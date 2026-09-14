@@ -15,9 +15,13 @@ const ghost = btn('#fff', '#30506A', '1px solid #D2DAE1')
 interface CrmCustomer { id: number; code: string; name: string; phone: string; email: string; address: string; project: string; status: string; note: string; created: string; source?: string; owner?: string; birthday?: string; tags?: string; line_uid?: string | null; line_linked?: boolean; houses?: number; referral_code?: string; portal_token?: string }
 interface Contact { id: number; customer_id: number; lead_id?: number; date: string; channel: string; note: string; by: string; house_code?: string; next_action?: string; next_date?: string; done?: number }
 interface Inst { id: number; no: number; detail: string; due: string; due_iso?: string; amount: number; paid?: number; status: string }
-interface Issue { id: number; title: string; status: string; date: string; priority: string; case_no?: string; sla_due?: string }
+interface Issue { id: number; title: string; status: string; date: string; priority: string; case_no?: string; sla_due?: string; assignee?: string; open?: boolean; sla_overdue?: boolean }
+interface Warranty { start: string | null; delivered: boolean; items: { name: string; years: number; expires: string | null; days_left: number | null; active: boolean }[] }
+interface CaseRow { id: number; case_no: string | null; house_code: string; house: string; house_manager: string; customer: string; customer_id: number | null; customer_line: boolean; title: string; note: string; by: string; date: string; priority: string; status: string; source: string; sla_due: string; created_at: string; resolved_at: string | null; assignee: string; photo: string | null; category: string; open: boolean; sla_overdue: boolean; hours_open: number | null; log: { at: string; by: string; text: string }[] }
+interface NpsRow { id: number; customer_id: number; customer: string; house_code: string; trigger_key: string; score: number | null; comment: string | null; asked_at: string; answered_at: string | null }
+type CrmSettings = Record<string, string>
 interface QcProg { phases: { id: string; name: string; forms: number; passed: boolean; fixing: boolean; started: boolean }[]; done: number; total: number; current: { id: string; name: string } | null }
-interface House360 { id: number; code: string; name: string; project: string; status: string; pct: number; value: number; deliver_date?: string; installments: Inst[]; inst_paid: number; inst_total: number; next_due: Inst | null; issues: Issue[]; open_issues: number; qc: QcProg; files: number; photos: string[] }
+interface House360 { id: number; code: string; name: string; project: string; status: string; pct: number; value: number; deliver_date?: string; manager?: string; installments: Inst[]; inst_paid: number; inst_total: number; next_due: Inst | null; issues: Issue[]; open_issues: number; qc: QcProg; files: number; photos: string[]; warranty?: Warranty | null }
 interface C360 extends Omit<CrmCustomer, 'houses'> { houses: House360[]; docs: { id: number; type: string; no: string; date: string; total: number; status: string }[]; contacts: Contact[]; leads: Lead[]; referrals: { id: number; no: string; name: string; stage: string; created: string }[]; next_actions: { id: number; action: string; date: string; by: string; overdue: boolean }[] }
 interface Lead { id: number; no: string; name: string; phone: string; line: string; email: string; source: string; stage: string; value: number; owner: string; note: string; next_date: string; referral_code: string; referred_by: string; house_type: string; area: string; budget: number; customer_id: number | null; lost_reason: string; created: string; updated: string; stage_at: string; contacted_at: string; won_at: string; stale: boolean; idle_days: number }
 interface Metrics { customers: number; line_linked: number; leads_total: number; leads_open: number; leads_stale: number; leads_won: number; conversion: number; avg_close_days: number | null; per_month: { month: string; leads: number; won: number }[]; by_source: { source: string; leads: number; won: number }[]; pipeline: { stage: string; n: number; value: number }[]; referrals: number; open_cases: number; avg_resolve_hours: number | null; nps: { avg: number; n: number; score: number } | null }
@@ -28,9 +32,9 @@ const CHANNELS = ['โทรศัพท์', 'LINE', 'นัดพบ', 'ไซ
 
 export default function Crm() {
   const { user } = useApp()
-  const [tab, setTab] = useState<'customers' | 'leads' | 'report'>('customers')
+  const [tab, setTab] = useState<'customers' | 'leads' | 'cases' | 'nps' | 'auto' | 'report'>('customers')
   const isMgr = !!user && (user.role === 'admin' || user.role === 'accounting' || (user as { isManager?: boolean }).isManager)
-  const tabs = [{ id: 'customers', label: '👤 ลูกค้า (360°)' }, { id: 'leads', label: '🎯 Lead / Pipeline' }, ...(isMgr ? [{ id: 'report', label: '📊 รายงาน CRM' }] : [])] as { id: typeof tab; label: string }[]
+  const tabs = [{ id: 'customers', label: '👤 ลูกค้า (360°)' }, { id: 'leads', label: '🎯 Lead / Pipeline' }, { id: 'cases', label: '🛠 เคสบริการ / แจ้งซ่อม' }, ...(isMgr ? [{ id: 'nps', label: '⭐ NPS / บอกต่อ' }, { id: 'auto', label: '💬 LINE ลูกค้า & อัตโนมัติ' }, { id: 'report', label: '📊 รายงาน CRM' }] : [])] as { id: typeof tab; label: string }[]
   return (
     <div style={{ maxWidth: 1360, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -38,6 +42,9 @@ export default function Crm() {
       </div>
       {tab === 'customers' && <CustomersTab />}
       {tab === 'leads' && <LeadsTab />}
+      {tab === 'cases' && <CasesTab />}
+      {tab === 'nps' && <NpsTab />}
+      {tab === 'auto' && <AutoTab />}
       {tab === 'report' && <ReportTab />}
     </div>
   )
@@ -121,6 +128,14 @@ function Customer360({ id, onClose, onChanged }: { id: number; onClose: () => vo
   }
   const save = async () => { try { await api.put('/crm/customers/' + id, ef); setEdit(false); load(); onChanged() } catch (e) { setMsg((e as Error).message) } }
   const doneAction = async (cid: number) => { await api.post('/crm/contacts/' + cid + '/done', {}); load() }
+  const [code, setCode] = useState<{ code: string; expires_hours: number } | null>(null)
+  const [pushOpen, setPushOpen] = useState(false)
+  const [pushText, setPushText] = useState('')
+  const lineCode = async () => { try { const r = await api.post<{ code: string; expires_hours: number }>('/crm/customers/' + id + '/line-code', {}); setCode(r); setMsg('') } catch (e) { setMsg((e as Error).message) } }
+  const sendProgress = async () => { try { const r = await api.post<{ ok: boolean }>('/crm/customers/' + id + '/send-progress', {}); setMsg(r.ok ? 'ส่งความคืบหน้าให้ลูกค้าทาง LINE แล้ว' : 'ส่งไม่สำเร็จ (ตรวจ LINE token)'); load() } catch (e) { setMsg((e as Error).message) } }
+  const pushMsg = async () => { if (!pushText.trim()) return; try { const r = await api.post<{ ok: boolean }>('/crm/customers/' + id + '/push', { text: pushText }); setMsg(r.ok ? 'ส่งข้อความแล้ว' : 'ส่งไม่สำเร็จ'); setPushText(''); setPushOpen(false); load() } catch (e) { setMsg((e as Error).message) } }
+  const askNps = async () => { try { const r = await api.post<{ ok: boolean }>('/crm/customers/' + id + '/ask-nps', {}); setMsg(r.ok ? 'ส่งคำถามให้คะแนนแล้ว' : 'ส่งไม่สำเร็จ (อาจเคยถามหัวข้อนี้แล้ว)') } catch (e) { setMsg((e as Error).message) } }
+  const closeCase = async (i: Issue, status: string) => { const note = status === 'แก้ไขแล้ว' ? window.prompt('สรุปการแก้ไขที่จะแจ้งลูกค้า (เว้นว่างได้)') : ''; if (note === null) return; try { await api.put('/crm/cases/' + i.id, { status, note_add: note || '' }); load() } catch (e) { setMsg((e as Error).message) } }
   const ss = STATUS_STYLE(c.status)
   const section = (title: string, body: React.ReactNode, extra?: React.ReactNode) => <div style={{ ...card }}><div style={{ padding: '9px 14px', borderBottom: '1px solid #EEF1F4', fontSize: 12.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>{title}{extra}</div><div style={{ padding: 12 }}>{body}</div></div>
   const allHouses = (data.houses || []).filter((h) => h.kind !== 'office')
@@ -139,7 +154,12 @@ function Customer360({ id, onClose, onChanged }: { id: number; onClose: () => vo
               <span style={{ color: '#6B4E9E' }}>รหัสบอกต่อ <b className="num">{c.referral_code}</b>{c.referrals.length ? ` · แนะนำมาแล้ว ${c.referrals.length} ราย` : ''}</span>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 6 }}><button onClick={() => setEdit((v) => !v)} style={ghost}>✎ แก้ไข</button><button onClick={onClose} style={ghost}>✕</button></div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button onClick={lineCode} title="ขอรหัส 6 หลักให้ลูกค้าส่งเข้า LINE OA ของบริษัท" style={{ ...ghost, color: '#06C755', borderColor: '#B7E4C7' }}>💬 {c.line_linked ? 'ผูก LINE ใหม่' : 'ผูก LINE ลูกค้า'}</button>
+            {c.line_linked && <button onClick={sendProgress} style={ghost}>📬 ส่งความคืบหน้า</button>}
+            {c.line_linked && <button onClick={() => setPushOpen((v) => !v)} style={ghost}>✉ ส่งข้อความ</button>}
+            {c.line_linked && <button onClick={askNps} style={ghost}>⭐ ขอคะแนน</button>}
+            <button onClick={() => setEdit((v) => !v)} style={ghost}>✎ แก้ไข</button><button onClick={onClose} style={ghost}>✕</button></div>
         </div>
         {edit && (
           <div style={{ marginTop: 12, borderTop: '1px solid #EEF1F4', paddingTop: 12 }}>
@@ -159,7 +179,20 @@ function Customer360({ id, onClose, onChanged }: { id: number; onClose: () => vo
           </div>
         )}
       </div>
-      {msg && <div style={{ fontSize: 12.5, color: '#C24036' }}>{msg}</div>}
+      {msg && <div style={{ fontSize: 12.5, color: msg.includes('แล้ว') ? '#2E7D55' : '#C24036' }}>{msg}</div>}
+      {code && (
+        <div style={{ background: '#EAF8EF', border: '1px solid #B7E4C7', borderRadius: 10, padding: '10px 14px', fontSize: 12.5 }}>
+          <b>รหัสผูก LINE ของลูกค้า:</b> <span className="num" style={{ fontSize: 22, fontWeight: 700, letterSpacing: 3, color: '#1C2730' }}>{code.code}</span> <span style={{ color: '#5C6770' }}>(ใช้ได้ {code.expires_hours} ชม.)</span>
+          <div style={{ color: '#5C6770', marginTop: 4 }}>ส่งรหัสนี้ให้ลูกค้า แล้วให้ลูกค้าเพิ่มเพื่อน LINE OA ของบริษัท → พิมพ์รหัส 6 หลักนี้ส่งมา ระบบจะผูกบัญชีและทักทายลูกค้าให้เอง หลังจากนั้นลูกค้าพิมพ์ "ความคืบหน้า" / "งวด" / "แจ้งซ่อม …" ได้เลย</div>
+          <button onClick={() => setCode(null)} style={{ ...ghost, marginTop: 6, padding: '3px 9px', fontSize: 11 }}>ปิด</button>
+        </div>
+      )}
+      {pushOpen && (
+        <div style={{ ...card, padding: 10, display: 'flex', gap: 6 }}>
+          <input style={{ ...field, flex: 1 }} placeholder="ข้อความถึงลูกค้า (ส่งทาง LINE และบันทึกลง timeline)" value={pushText} onChange={(e) => setPushText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && pushMsg()} />
+          <button onClick={pushMsg} style={btn('#06C755')}>ส่ง LINE</button>
+        </div>
+      )}
 
       {/* สิ่งที่ต้องทำต่อ */}
       {c.next_actions.length > 0 && (
@@ -189,6 +222,17 @@ function Customer360({ id, onClose, onChanged }: { id: number; onClose: () => vo
               <div style={{ fontSize: 11.5, color: h.open_issues ? '#C24036' : '#5C6770', marginTop: 3 }}>ปัญหา/เคสค้าง {h.open_issues} · ทั้งหมด {h.issues.length}</div>
             </div>
             {h.photos.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', gridColumn: '1 / -1' }}>{h.photos.map((p, i) => <img key={i} src={p} alt="" style={{ height: 56, borderRadius: 6, border: '1px solid #E1E5EA' }} />)}</div>}
+            {h.warranty && h.warranty.delivered && (
+              <div style={{ gridColumn: '1 / -1', fontSize: 11.5 }}>
+                <b>🛡 ประกันงาน</b> (นับจากส่งมอบ {h.warranty.start}) · {h.warranty.items.map((w) => <span key={w.name} style={{ marginRight: 10, color: w.active ? (w.days_left != null && w.days_left <= 30 ? '#C0852C' : '#2E7D55') : '#94A0A8' }}>{w.active ? '🟢' : '⚪'} {w.name} {w.years} ปี{w.active ? ` เหลือ ${w.days_left} วัน` : ' หมดแล้ว'}</span>)}
+              </div>
+            )}
+            {h.issues.length > 0 && (
+              <div style={{ gridColumn: '1 / -1', fontSize: 12 }}>
+                <b>🛠 เคส/ปัญหา</b>
+                {h.issues.slice(0, 6).map((i) => <div key={i.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 3 }}><span style={{ color: i.sla_overdue ? '#C24036' : i.open ? '#C0852C' : '#2E7D55' }}>{i.open ? (i.sla_overdue ? '⛔' : '🟡') : '✅'}</span><span><b className="num">{i.case_no || '#' + i.id}</b> {i.title} <span style={{ color: '#94A0A8' }}>· {i.status}{i.assignee ? ' · ' + i.assignee : ''} · {i.date}</span></span>{i.open && <><button onClick={() => closeCase(i, 'กำลังแก้ไข')} style={{ ...ghost, padding: '1px 7px', fontSize: 10.5 }}>กำลังแก้</button><button onClick={() => closeCase(i, 'แก้ไขแล้ว')} style={{ ...ghost, padding: '1px 7px', fontSize: 10.5, color: '#2E7D55' }}>✓ ปิดเคส</button></>}</div>)}
+              </div>
+            )}
           </div>
         ))
       })}
@@ -359,6 +403,167 @@ function LeadDrawer({ lead, meta, onClose, onChanged }: { lead: Lead; meta: { st
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
         {notes.length === 0 && <div style={{ fontSize: 12, color: '#94A0A8' }}>ยังไม่มีบันทึก — สร้างเมื่อ {lead.created}</div>}
         {notes.map((x) => <div key={x.id} style={{ borderLeft: '2px solid #30506A', paddingLeft: 10 }}><div style={{ fontSize: 12.5 }}>{x.note}{x.next_action ? <span style={{ color: '#C0852C' }}> → {x.next_action}{x.next_date ? ' (' + x.next_date + ')' : ''}</span> : null}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>{x.channel} · {x.date} · {x.by}</div></div>)}
+      </div>
+    </div>
+  )
+}
+
+// ---------- เคสบริการ / แจ้งซ่อม ----------
+function CasesTab() {
+  const { data } = useApp()
+  const [rows, setRows] = useState<CaseRow[]>([])
+  const [filter, setFilter] = useState<'open' | 'all'>('open')
+  const [sel, setSel] = useState<CaseRow | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [f, setF] = useState({ house_code: '', title: '', note: '', priority: 'ทั่วไป', category: 'แจ้งซ่อม' })
+  const [msg, setMsg] = useState('')
+  const load = () => api.get<CaseRow[]>('/crm/cases').then(setRows).catch(() => setRows([]))
+  useEffect(() => { load() }, [])
+  useLiveRefresh(['issues', 'crm'], load)
+  const list = rows.filter((r) => filter === 'all' || r.open)
+  const act = async (r: CaseRow, b: Record<string, string>) => { try { const u = await api.put<CaseRow>('/crm/cases/' + r.id, b); setSel(u); load(); setMsg('') } catch (e) { setMsg((e as Error).message) } }
+  const add = async () => { if (!f.title.trim()) { setMsg('กรอกเรื่องที่แจ้ง'); return } try { await api.post('/crm/cases', f); setAdding(false); setF({ house_code: '', title: '', note: '', priority: 'ทั่วไป', category: 'แจ้งซ่อม' }); load() } catch (e) { setMsg((e as Error).message) } }
+  const st = (r: CaseRow) => r.open ? (r.sla_overdue ? { c: '#C24036', bg: '#FBEEEC', t: '⛔ เกิน SLA' } : r.status === 'รอช่าง' ? { c: '#C0852C', bg: '#FBF1DF', t: '🟡 รอรับเรื่อง' } : { c: '#30506A', bg: '#E2E9EF', t: '🔧 ' + r.status }) : { c: '#2E7D55', bg: '#E2F1EA', t: '✅ ' + r.status }
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: sel ? '1fr 380px' : '1fr', gap: 12, alignItems: 'start' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: '#5C6770' }}>เคสค้าง <b className="num" style={{ color: rows.some((r) => r.sla_overdue) ? '#C24036' : '#1C2730' }}>{rows.filter((r) => r.open).length}</b> · เกิน SLA <b className="num" style={{ color: '#C24036' }}>{rows.filter((r) => r.sla_overdue).length}</b></span>
+          <button onClick={() => setFilter(filter === 'open' ? 'all' : 'open')} style={ghost}>{filter === 'open' ? 'ดูทั้งหมด' : 'เฉพาะค้าง'}</button>
+          <span style={{ fontSize: 11.5, color: '#94A0A8' }}>ลูกค้าแจ้งเองทาง LINE: "แจ้งซ่อม ห้องน้ำรั่ว" (+รูป) → เคสขึ้นที่นี่ + แจ้งโฟร์แมน/ผู้บริหารทันที</span>
+          <button onClick={() => setAdding((v) => !v)} style={{ ...btn(), marginLeft: 'auto' }}>+ เปิดเคสให้ลูกค้า</button>
+        </div>
+        {msg && <div style={{ fontSize: 12.5, color: '#C24036' }}>{msg}</div>}
+        {adding && (
+          <div style={{ ...card, padding: 12, display: 'grid', gridTemplateColumns: '160px 1fr 110px 130px auto', gap: 8 }}>
+            <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— บ้าน —</option>{(data.houses || []).filter((h) => h.kind !== 'office').map((h) => <option key={h.code} value={h.code}>{h.code} {h.name}</option>)}</select>
+            <input style={field} placeholder="เรื่องที่แจ้ง *" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
+            <select style={field} value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })}>{['ทั่วไป', 'ด่วน', 'ด่วนมาก'].map((x) => <option key={x}>{x}</option>)}</select>
+            <select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['แจ้งซ่อม', 'สอบถาม', 'ร้องเรียน', 'ตรวจบ้านหลังส่งมอบ', 'อื่นๆ'].map((x) => <option key={x}>{x}</option>)}</select>
+            <button onClick={add} style={btn()}>เปิดเคส</button>
+            <input style={{ ...field, gridColumn: '1 / -1' }} placeholder="รายละเอียด" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
+          </div>
+        )}
+        <div style={card}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead><tr style={{ background: '#F7F9FB' }}><th style={{ ...th, paddingLeft: 16 }}>เคส</th><th style={th}>บ้าน / ลูกค้า</th><th style={th}>เรื่อง</th><th style={th}>ผู้รับผิดชอบ</th><th style={th}>SLA</th><th style={th}>สถานะ</th></tr></thead>
+            <tbody>
+              {list.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center', color: '#94A0A8' }}>ไม่มีเคส</td></tr>}
+              {list.map((r) => { const x = st(r); return (
+                <tr key={r.id} onClick={() => setSel(r)} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6', cursor: 'pointer', background: sel?.id === r.id ? '#EEF3F7' : undefined }}>
+                  <td style={{ ...td, paddingLeft: 16 }}><b className="num">{r.case_no || '#' + r.id}</b><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.date}{r.source === 'line' ? ' · LINE' : r.source === 'auto' ? ' · อัตโนมัติ' : ''} · {r.category}</div></td>
+                  <td style={td}>{r.house || r.house_code || '-'}<div style={{ fontSize: 11, color: '#5C6770' }}>{r.customer || r.by}{r.customer_line ? ' ●' : ''}</div></td>
+                  <td style={td}>{r.title}{r.photo ? ' 📷' : ''}</td>
+                  <td style={td}>{r.assignee || <span style={{ color: '#C24036' }}>ยังไม่มี</span>}</td>
+                  <td className="num" style={{ ...td, color: r.sla_overdue ? '#C24036' : '#5C6770', fontSize: 11.5 }}>{r.open ? String(r.sla_due || '').slice(0, 16) : (r.hours_open != null ? `แก้ใน ${r.hours_open} ชม.` : '-')}</td>
+                  <td style={td}><span style={{ fontSize: 11, fontWeight: 600, color: x.c, background: x.bg, padding: '2px 8px', borderRadius: 20, whiteSpace: 'nowrap' }}>{x.t}</span></td>
+                </tr>) })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {sel && (
+        <div style={{ ...card, padding: 14, position: 'sticky', top: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b className="num">{sel.case_no || '#' + sel.id}</b><span style={{ fontSize: 11, color: '#94A0A8' }}>{sel.category} · {sel.priority}</span><button onClick={() => setSel(null)} style={{ ...ghost, marginLeft: 'auto', padding: '2px 8px' }}>✕</button></div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 6 }}>{sel.title}</div>
+          <div style={{ fontSize: 12, color: '#5C6770' }}>{sel.house || sel.house_code} · {sel.customer || sel.by} · เปิด {sel.created_at || sel.date}{sel.hours_open != null ? ` (${sel.hours_open} ชม.)` : ''}</div>
+          {sel.note && <div style={{ fontSize: 12.5, marginTop: 6, whiteSpace: 'pre-wrap' }}>{sel.note}</div>}
+          {sel.photo && <a href={sel.photo} target="_blank" rel="noreferrer"><img src={sel.photo} alt="" style={{ maxWidth: '100%', borderRadius: 8, marginTop: 8, border: '1px solid #E1E5EA' }} /></a>}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 10 }}>
+            <label style={{ fontSize: 11, color: '#5C6770' }}>ผู้รับผิดชอบ<select style={{ ...field, width: '100%', marginTop: 2 }} value={sel.assignee || ''} onChange={(e) => act(sel, { assignee: e.target.value })}><option value="">— เลือก —</option>{Array.from(new Set([...(data.employees || []).map((e) => e.name), sel.house_manager].filter(Boolean))).map((n) => <option key={n}>{n}</option>)}</select></label>
+            <label style={{ fontSize: 11, color: '#5C6770' }}>สถานะ<select style={{ ...field, width: '100%', marginTop: 2 }} value={sel.status} onChange={(e) => { const s2 = e.target.value; const n = s2 === 'แก้ไขแล้ว' ? window.prompt('สรุปการแก้ไขที่จะแจ้งลูกค้า (เว้นว่างได้)') : ''; if (n === null) return; act(sel, { status: s2, note_add: n || '' }) }}>{['รอช่าง', 'กำลังแก้ไข', 'รออะไหล่', 'นัดลูกค้า', 'แก้ไขแล้ว', 'ยกเลิก'].map((x) => <option key={x}>{x}</option>)}</select></label>
+          </div>
+          <CaseNote onAdd={(t) => act(sel, { note_add: t })} />
+          <div style={{ fontSize: 12, fontWeight: 600, marginTop: 10 }}>ประวัติ</div>
+          {sel.log.map((l, i) => <div key={i} style={{ fontSize: 11.5, borderLeft: '2px solid #D2DAE1', paddingLeft: 8, marginTop: 4 }}>{l.text}<div style={{ color: '#94A0A8', fontSize: 10.5 }}>{l.at} · {l.by}</div></div>)}
+          {sel.customer_line && <div style={{ fontSize: 11, color: '#06C755', marginTop: 8 }}>● ลูกค้าผูก LINE — ทุกการเปลี่ยนสถานะจะแจ้งลูกค้าอัตโนมัติ ปิดเคสแล้วระบบขอคะแนนให้</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+function CaseNote({ onAdd }: { onAdd: (t: string) => void }) {
+  const [t, setT] = useState('')
+  return <div style={{ display: 'flex', gap: 6, marginTop: 8 }}><input style={{ ...field, flex: 1 }} placeholder="บันทึกความคืบหน้า (แจ้งลูกค้าด้วยถ้าผูก LINE)" value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && t.trim()) { onAdd(t.trim()); setT('') } }} /><button onClick={() => { if (t.trim()) { onAdd(t.trim()); setT('') } }} style={btn()}>+</button></div>
+}
+
+// ---------- NPS / บอกต่อ ----------
+function NpsTab() {
+  const [d, setD] = useState<{ rows: NpsRow[]; summary: { asked: number; answered: number; avg: number | null; nps: number | null; promoters: number; detractors: number } } | null>(null)
+  const [m, setM] = useState<Metrics | null>(null)
+  const load = () => { api.get<typeof d>('/crm/nps').then(setD).catch(() => setD(null)); api.get<Metrics>('/crm/metrics').then(setM).catch(() => {}) }
+  useEffect(() => { load() }, [])
+  useLiveRefresh(['crm'], load)
+  if (!d) return <div style={{ color: '#94A0A8', padding: 20 }}>กำลังโหลด…</div>
+  const s = d.summary
+  const tile = (label: string, value: string, sub?: string, color = '#1C2730') => <div style={{ ...card, padding: 14 }}><div style={{ fontSize: 11.5, color: '#5C6770' }}>{label}</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>{sub && <div style={{ fontSize: 11, color: '#94A0A8' }}>{sub}</div>}</div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
+        {tile('คะแนน NPS', s.nps == null ? '-' : String(s.nps), 'ผู้แนะนำ − ผู้ไม่พอใจ (%)', s.nps != null && s.nps < 0 ? '#C24036' : '#2E7D55')}
+        {tile('เฉลี่ย', s.avg == null ? '-' : s.avg + '/10', `ตอบแล้ว ${s.answered}/${s.asked}`)}
+        {tile('ประทับใจ (9-10)', String(s.promoters), '', '#2E7D55')}
+        {tile('ไม่พอใจ (0-6)', String(s.detractors), 'ผู้บริหารได้รับแจ้งทาง LINE ทันที', s.detractors ? '#C24036' : '#1C2730')}
+        {tile('Lead จากการบอกต่อ', String(m?.referrals ?? 0), 'ลูกค้าพิมพ์ "บอกต่อ" ในไลน์รับรหัส REF-', '#6B4E9E')}
+      </div>
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>ระบบถามคะแนนอัตโนมัติทาง LINE: หลังผ่าน QC เฟสที่ตั้งไว้ · หลังส่งมอบบ้าน · หลังปิดเคสแจ้งซ่อม — ลูกค้าตอบเป็นตัวเลข 0-10 แล้วพิมพ์ความเห็นเพิ่มได้</div>
+      <div style={card}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead><tr style={{ background: '#F7F9FB' }}><th style={{ ...th, paddingLeft: 16 }}>ลูกค้า</th><th style={th}>บ้าน</th><th style={th}>หัวข้อ</th><th style={{ ...th, textAlign: 'center' }}>คะแนน</th><th style={th}>ความเห็น</th><th style={th}>ตอบเมื่อ</th></tr></thead>
+          <tbody>
+            {d.rows.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีการถามคะแนน</td></tr>}
+            {d.rows.map((r) => <tr key={r.id} style={{ borderTop: '1px solid #F1F4F6' }}><td style={{ ...td, paddingLeft: 16 }}>{r.customer}</td><td style={td}>{r.house_code || '-'}</td><td style={{ ...td, color: '#5C6770' }}>{r.trigger_key}</td><td className="num" style={{ ...td, textAlign: 'center', fontWeight: 700, color: r.score == null ? '#94A0A8' : r.score >= 9 ? '#2E7D55' : r.score <= 6 ? '#C24036' : '#C0852C' }}>{r.score ?? 'รอตอบ'}</td><td style={{ ...td, color: '#5C6770' }}>{r.comment || '-'}</td><td style={{ ...td, color: '#94A0A8', fontSize: 11 }}>{r.answered_at || 'ถาม ' + r.asked_at}</td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ---------- LINE ลูกค้า & อัตโนมัติ ----------
+function AutoTab() {
+  const [s, setS] = useState<CrmSettings | null>(null)
+  const [msg, setMsg] = useState('')
+  const [wr, setWr] = useState<{ code: string; name: string; customer: string; status: string; deliver_date: string; delivered: boolean; items: Warranty['items'] }[]>([])
+  const load = () => { api.get<CrmSettings>('/crm/settings').then(setS).catch(() => setS(null)); api.get<typeof wr>('/crm/warranty').then(setWr).catch(() => setWr([])) }
+  useEffect(() => { load() }, [])
+  if (!s) return <div style={{ color: '#94A0A8', padding: 20 }}>กำลังโหลด…</div>
+  const save = async () => { try { const r = await api.put<CrmSettings>('/crm/settings', s); setS(r); setMsg('บันทึกแล้ว') } catch (e) { setMsg((e as Error).message) } }
+  const run = async () => { try { const r = await api.post<Record<string, number>>('/crm/run-automations', { force: true }); setMsg('รันแล้ว: ' + Object.entries(r).map(([k, v]) => `${k} ${v}`).join(' · ')) } catch (e) { setMsg((e as Error).message) } }
+  const toggle = (k: string, label: string, sub: string) => <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0', borderTop: '1px solid #F1F4F6', fontSize: 12.5, cursor: 'pointer' }}><input type="checkbox" checked={s[k] === '1'} onChange={(e) => setS({ ...s, [k]: e.target.checked ? '1' : '0' })} style={{ marginTop: 3 }} /><span><b>{label}</b><div style={{ color: '#5C6770', fontSize: 11.5 }}>{sub}</div></span></label>
+  const warranty = (() => { try { return JSON.parse(s.crm_warranty || '[]') as { name: string; years: number }[] } catch { return [] } })()
+  const setWarranty = (w: { name: string; years: number }[]) => setS({ ...s, crm_warranty: JSON.stringify(w) })
+  const DOW = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์']
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 12, alignItems: 'start' }}>
+      <div style={{ ...card, padding: 14 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 4 }}>💬 ข้อความถึงลูกค้าอัตโนมัติ (ทาง LINE)</div>
+        <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 6 }}>ส่งเฉพาะลูกค้าที่ผูก LINE แล้ว (ปุ่ม “ผูก LINE ลูกค้า” ในหน้าลูกค้า) · เวลาส่ง <input style={{ ...field, width: 56, padding: '3px 6px' }} value={s.crm_hour} onChange={(e) => setS({ ...s, crm_hour: e.target.value })} /> น.</div>
+        {toggle('crm_auto_weekly', 'ความคืบหน้าประจำสัปดาห์', 'ทุกวัน' + (DOW[Number(s.crm_weekly_dow)] || 'จันทร์') + ' — % ความคืบหน้า ขั้นตอนที่ผ่าน QC งวดถัดไป + รูปล่าสุด')}
+        <div style={{ fontSize: 11.5, color: '#5C6770', paddingLeft: 26 }}>วัน: <select style={{ ...field, padding: '3px 6px' }} value={s.crm_weekly_dow} onChange={(e) => setS({ ...s, crm_weekly_dow: e.target.value })}>{DOW.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}</select></div>
+        {toggle('crm_auto_inst', 'เตือนงวดเงินก่อนครบกำหนด', 'ล่วงหน้า ' + s.crm_inst_days + ' วัน พร้อมยอดและวันครบ')}
+        <div style={{ fontSize: 11.5, color: '#5C6770', paddingLeft: 26 }}>ล่วงหน้า <input style={{ ...field, width: 50, padding: '3px 6px' }} value={s.crm_inst_days} onChange={(e) => setS({ ...s, crm_inst_days: e.target.value })} /> วัน</div>
+        {toggle('crm_auto_qc', 'แจ้งเมื่อผ่านตรวจ QC ครบเฟส', 'ทันทีที่ใบตรวจสุดท้ายของเฟสผ่าน · ขอคะแนน NPS หลังเฟส ' + s.crm_nps_phases)}
+        {toggle('crm_auto_delivery', 'ส่งมอบบ้าน', 'ข้อความยินดี + รายการประกัน + ขอคะแนน NPS')}
+        {toggle('crm_auto_anniv', 'ครบรอบเข้าบ้าน / วันเกิดลูกค้า', 'อวยพรทุกปี (ตั้งวันเกิดในหน้าลูกค้า)')}
+        {toggle('crm_auto_warranty', 'เตือนประกันใกล้หมด', 'แจ้งลูกค้าล่วงหน้า 30 วันก่อนหมดแต่ละรายการ')}
+        {toggle('crm_auto_checkup', 'นัดตรวจบ้านฟรีหลังส่งมอบ', 'ครบ ' + s.crm_checkups + ' เดือน → เปิดเคสให้โฟร์แมนโทรนัด + แจ้งลูกค้า')}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8, fontSize: 11.5, color: '#5C6770' }}>
+          <label>SLA ตอบกลับเคส (ชม.)<input style={{ ...field, width: '100%', marginTop: 2 }} value={s.crm_sla_hours} onChange={(e) => setS({ ...s, crm_sla_hours: e.target.value })} /></label>
+          <label>ตรวจบ้านหลังส่งมอบ (เดือน, คั่นด้วย ,)<input style={{ ...field, width: '100%', marginTop: 2 }} value={s.crm_checkups} onChange={(e) => setS({ ...s, crm_checkups: e.target.value })} /></label>
+          <label>เบอร์ทีมงาน (ลูกค้าพิมพ์ "ติดต่อ")<input style={{ ...field, width: '100%', marginTop: 2 }} value={s.crm_contact_phone} onChange={(e) => setS({ ...s, crm_contact_phone: e.target.value })} /></label>
+          <label>LINE ทีมงาน<input style={{ ...field, width: '100%', marginTop: 2 }} value={s.crm_contact_line} onChange={(e) => setS({ ...s, crm_contact_line: e.target.value })} /></label>
+        </div>
+        <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 12 }}>🛡 รายการรับประกัน (นับจากวันส่งมอบ)</div>
+        {warranty.map((w, i) => <div key={i} style={{ display: 'flex', gap: 6, marginTop: 4 }}><input style={{ ...field, flex: 1 }} value={w.name} onChange={(e) => setWarranty(warranty.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} /><input style={{ ...field, width: 70 }} value={w.years} onChange={(e) => setWarranty(warranty.map((x, j) => j === i ? { ...x, years: Number(e.target.value) || 0 } : x))} /><span style={{ alignSelf: 'center', fontSize: 12 }}>ปี</span><button onClick={() => setWarranty(warranty.filter((_, j) => j !== i))} style={{ ...ghost, color: '#C24036' }}>✕</button></div>)}
+        <button onClick={() => setWarranty([...warranty, { name: '', years: 1 }])} style={{ ...ghost, marginTop: 6 }}>+ เพิ่มรายการ</button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}><button onClick={save} style={btn()}>บันทึกการตั้งค่า</button><button onClick={run} style={ghost} title="รันข้อความอัตโนมัติทันที (ไม่รอเวลา)">▶ รันตอนนี้</button>{msg && <span style={{ fontSize: 12, color: msg.startsWith('บันทึก') || msg.startsWith('รัน') ? '#2E7D55' : '#C24036' }}>{msg}</span>}</div>
+        <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 10 }}>สิ่งที่ลูกค้าพิมพ์ในไลน์ได้: ความคืบหน้า · งวด · เอกสาร · แจ้งซ่อม … · เคส · ประกัน · บอกต่อ · ติดต่อ — ข้อความอื่นจะเข้า timeline และแจ้งโฟร์แมน/ผู้บริหาร</div>
+      </div>
+      <div style={{ ...card, padding: 14 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 6 }}>🛡 สถานะประกันบ้านที่ส่งมอบแล้ว</div>
+        {wr.filter((h) => h.delivered).length === 0 && <div style={{ fontSize: 12, color: '#94A0A8' }}>ยังไม่มีบ้านที่ส่งมอบพร้อมวันส่งมอบ (ใส่ "กำหนดส่งมอบ" ในหน้าบ้านเป็น ปี-เดือน-วัน)</div>}
+        {wr.filter((h) => h.delivered).map((h) => <div key={h.code} style={{ borderTop: '1px solid #F1F4F6', padding: '6px 0', fontSize: 12 }}><b>{h.code} {h.name}</b> <span style={{ color: '#5C6770' }}>· {h.customer} · ส่งมอบ {h.deliver_date}</span><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>{h.items.map((w) => <span key={w.name} style={{ fontSize: 11, color: w.active ? (w.days_left != null && w.days_left <= 30 ? '#C0852C' : '#2E7D55') : '#94A0A8' }}>{w.active ? '🟢' : '⚪'} {w.name}: {w.active ? `เหลือ ${w.days_left} วัน` : 'หมดแล้ว'}</span>)}</div></div>)}
       </div>
     </div>
   )

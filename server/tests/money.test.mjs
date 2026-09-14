@@ -1709,3 +1709,76 @@ test('CRM: ลูกค้า 360 ผูกบ้านอัตโนมัต�
   assert.equal((await GET('/crm/metrics')).status, 403)
   token = adminToken
 })
+
+test('CRM ลูกค้าทาง LINE: ผูกด้วยรหัส → ความคืบหน้า/งวด/ประกัน/บอกต่อ → แจ้งซ่อม+รูป = เคส SLA แจ้งทีม → ปิดเคสถามคะแนน → คะแนนต่ำแจ้งผู้บริหาร · อัตโนมัติ: เตือนงวด/ส่งมอบ/นัดตรวจ · QC ผ่านเฟสแจ้งลูกค้า', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
+  const wait = (ms = 600) => new Promise((r) => setTimeout(r, ms))
+  const c = (await GET('/crm/customers')).data.find((x) => x.name === 'คุณทดสอบ ซีอาร์เอ็ม')
+  // ขอรหัสผูก LINE ให้ลูกค้า → ลูกค้าส่งรหัส → ผูก + ทักทาย
+  const code = await POST(`/crm/customers/${c.id}/line-code`, {}); assert.equal(code.status, 200); assert.match(code.data.code, /^\d{6}$/)
+  assert.equal((await POST(`/crm/customers/${c.id}/push`, { text: 'x' })).status, 400, 'ยังไม่ผูกส่งไม่ได้')
+  await msg('Ucust1', code.data.code); await wait()
+  let c360 = (await GET(`/crm/customers/${c.id}/360`)).data
+  assert.equal(c360.line_linked, true, 'ลูกค้าต้องผูก LINE แล้ว')
+  // คำสั่งฝั่งลูกค้า (ต้องไม่ล้ม และไม่ถูกมองเป็นพนักงาน)
+  for (const t of ['ความคืบหน้า', 'งวด', 'เอกสาร', 'ประกัน', 'บอกต่อ', 'ติดต่อ', 'ช่วย']) assert.equal((await msg('Ucust1', t)).status, 200)
+  await wait()
+  c360 = (await GET(`/crm/customers/${c.id}/360`)).data
+  assert.ok(c360.contacts.some((x) => x.note.includes('ขอดูความคืบหน้า')), 'การขอดูความคืบหน้าต้องลง timeline')
+  const pv = (await GET(`/crm/customers/${c.id}/preview-progress`)).data
+  assert.ok(pv.messages[0].includes('TS-01') || pv.messages[0].includes('บ้านเทสต์'))
+  // ข้อความทั่วไป → ลง timeline
+  await msg('Ucust1', 'พรุ่งนี้ขอเข้าไปดูหน้างานได้ไหมคะ'); await wait()
+  c360 = (await GET(`/crm/customers/${c.id}/360`)).data
+  assert.ok(c360.contacts.some((x) => x.note.includes('พรุ่งนี้ขอเข้าไปดูหน้างาน')))
+  // แจ้งซ่อม + รูป → เคส
+  const n0 = (await GET('/crm/cases')).data.length
+  await msg('Ucust1', 'แจ้งซ่อม ห้องน้ำชั้น 2 น้ำรั่ว'); await wait()
+  await img('Ucust1', 'p1'); await wait()
+  const cases = (await GET('/crm/cases')).data
+  assert.equal(cases.length, n0 + 1, 'ต้องเปิดเคสใหม่ 1')
+  const cs = cases[0]
+  assert.match(cs.case_no, /^CS-\d{2}-\d{4}$/); assert.equal(cs.house_code, 'TS-01'); assert.equal(cs.customer_id, c.id); assert.equal(cs.source, 'line'); assert.ok(cs.photo, 'ต้องมีรูปแนบ'); assert.equal(cs.open, true); assert.ok(cs.sla_due)
+  assert.ok((await GET('/notifications')).data.some((n) => n.kind === 'case-new' && n.title.includes(cs.case_no)), 'เคสใหม่ต้องขึ้นกระดิ่ง')
+  // ลูกค้าดูสถานะเคส
+  assert.equal((await msg('Ucust1', 'เคส')).status, 200)
+  // ทีมงานอัปเดต → ปิดเคส → ระบบถาม NPS → ลูกค้าตอบ 4 → บันทึก + แจ้งผู้บริหาร → ความเห็น
+  const up = await PUT(`/crm/cases/${cs.id}`, { status: 'กำลังแก้ไข', assignee: 'สมชาย ช่างหลังคา' }); assert.equal(up.data.status, 'กำลังแก้ไข'); assert.equal(up.data.log.length, 2)
+  const cl = await PUT(`/issues/${cs.id}`, { status: 'แก้ไขแล้ว', note_add: 'เปลี่ยนซีลกันซึมแล้ว' }); assert.equal(cl.data.open, false); assert.ok(cl.data.resolved_at)
+  await wait()
+  await msg('Ucust1', '4'); await wait()
+  await msg('Ucust1', 'ช่างมาช้าไปหน่อย'); await wait()
+  const nps = (await GET('/crm/nps')).data
+  const row = nps.rows.find((r) => r.trigger_key === 'case:' + cs.id)
+  assert.ok(row, 'ต้องมีแถว NPS ของเคส'); assert.equal(row.score, 4); assert.equal(row.comment, 'ช่างมาช้าไปหน่อย'); assert.equal(nps.summary.detractors >= 1, true)
+  assert.ok((await GET('/notifications')).data.some((n) => n.kind === 'nps-low'), 'คะแนนต่ำต้องขึ้นกระดิ่ง')
+  // อัตโนมัติ: งวดครบใน 5 วัน → เตือน (ยิงครั้งเดียว) · ส่งมอบ → ประกัน+NPS · ครบ 6 เดือน → เคสนัดตรวจ
+  const due = new Date(); due.setDate(due.getDate() + 5)
+  const inst = await POST('/houses/TS-01/installments', { no: 99, detail: 'งวดทดสอบ CRM', amount: 50000, due_iso: iso(due), side: 'customer' })
+  assert.equal(inst.status, 201, JSON.stringify(inst.data))
+  const r1 = (await POST('/crm/run-automations', { force: true })).data
+  assert.ok(r1.inst >= 1, 'ต้องเตือนงวด: ' + JSON.stringify(r1))
+  const r2 = (await POST('/crm/run-automations', { force: true })).data
+  assert.equal(r2.inst, 0, 'งวดเดิมต้องไม่เตือนซ้ำ')
+  const six = new Date(); six.setMonth(six.getMonth() - 6); six.setDate(six.getDate() + 3)
+  const h = (await GET('/houses')).data.find((x) => x.code === 'TS-01')
+  await PUT('/houses/' + h.id, { status: 'ส่งมอบแล้ว', deliver_date: iso(six) })
+  const r3 = (await POST('/crm/run-automations', { force: true })).data
+  assert.ok(r3.delivery >= 1, 'ส่งมอบต้องส่งข้อความ: ' + JSON.stringify(r3)); assert.ok(r3.checkup >= 1, 'ครบ 6 เดือนต้องเปิดเคสนัดตรวจ')
+  assert.ok((await GET('/crm/cases')).data.some((x) => x.category === 'ตรวจบ้านหลังส่งมอบ' && x.house_code === 'TS-01'))
+  const w = (await GET('/crm/houses/TS-01/warranty')).data
+  assert.equal(w.delivered, true); assert.ok(w.items.some((i) => i.name.includes('โครงสร้าง') && i.days_left > 1500))
+  assert.ok((await GET('/crm/nps')).data.rows.some((r) => r.trigger_key === 'delivery:TS-01'), 'ส่งมอบต้องถาม NPS')
+  await PUT('/houses/' + h.id, { status: 'กำลังสร้าง', deliver_date: '' })
+  // QC ผ่านครบเฟส → แจ้งลูกค้า (ลง timeline)
+  const qc = await POST('/qc', { house_code: 'TS-01', category: 'โครงสร้าง', type: 'ทดสอบเฟส 1', phase: '1', form_id: 'f001', status: 'ผ่าน', items: [] })
+  assert.equal(qc.status, 201, JSON.stringify(qc.data))
+  await wait()
+  c360 = (await GET(`/crm/customers/${c.id}/360`)).data
+  assert.ok(c360.contacts.some((x) => x.note.includes('ผ่าน QC เฟส 1')), 'ผ่านเฟสต้องแจ้งลูกค้าและลง timeline')
+  // ตั้งค่า
+  const st = await PUT('/crm/settings', { crm_inst_days: '10', crm_auto_anniv: '0' }); assert.equal(st.data.crm_inst_days, '10'); assert.equal(st.data.crm_auto_anniv, '0')
+  await DEL(`/crm/customers/${c.id}/line`)
+})
