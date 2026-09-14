@@ -22,6 +22,9 @@ const catLabel = (k?: string) => catLabelOf(k)
 
 interface Quote { id: number; pr_id: number; vendor: string; price: number; terms: string; note: string; chosen: number; ai?: number; recommended?: number; reason?: string; items?: string | null }
 interface QuoteFile { id: number; pr_id: number; image: string; by: string; source: string; created: string }
+// ประวัติเคยซื้อ (จาก PO เก่า รายการใกล้เคียง) — ขึ้นให้เองในใบเทียบราคา
+interface HistMatch { score: number; exact: boolean; vendor: string; desc: string; qty: number; unit: string; price: number; per_unit: boolean; total: number; po_no: string; po_id: number; date: string; house: string }
+interface HistItem { desc: string; qty: number; unit: string; matches: HistMatch[]; vendors: { vendor: string; last: HistMatch; min: number; times: number }[]; central: { name: string; unit: string; central: number } | null }
 type AiCompare = NonNullable<ApiPR['ai_compare']> & { quotes?: { vendor: string; total: number }[] }
 // ใบเปรียบเทียบราคา (price comparison) ของ PR หนึ่งใบ — ขั้น 4: รูปใบเสนอราคา (เว็บ/LINE) → AI เทียบ → ขั้น 5: ออก PO จากร้านที่เลือก
 function QuotePanel({ pr, canIssuePo, onIssued }: { pr: ApiPR; canIssuePo: boolean; onIssued?: () => void }) {
@@ -32,9 +35,16 @@ function QuotePanel({ pr, canIssuePo, onIssued }: { pr: ApiPR; canIssuePo: boole
   const [busy, setBusy] = useState('')
   const [f, setF] = useState({ vendor: '', price: '', terms: '' })
   const [err, setErr] = useState('')
+  const [hist, setHist] = useState<HistItem[]>([])
   const load = () => {
     api.get<Quote[]>('/purchase-requests/' + prId + '/quotes').then(setRows).catch(() => {})
     api.get<QuoteFile[]>('/purchase-requests/' + prId + '/quote-files').then(setFiles).catch(() => {})
+    api.get<HistItem[]>('/purchase-requests/' + prId + '/price-history').then(setHist).catch(() => setHist([]))
+  }
+  // เอาราคาที่เคยซื้อมาเป็นใบเทียบราคาทันที (ราคาต่อหน่วย × จำนวนใน PR)
+  const useHist = async (it: HistItem, m: HistMatch) => {
+    const price = m.per_unit ? Math.round(m.price * (it.qty || 1)) : m.price
+    try { await api.post('/purchase-requests/' + prId + '/quotes', { vendor: m.vendor, price, terms: `เคยซื้อ ${m.po_no} (${m.date})${m.house ? ' · ' + m.house : ''}`, note: `จากประวัติซื้อ: ${m.desc}${m.per_unit ? ` ฿${m.price.toLocaleString('en-US')}/${m.unit || 'หน่วย'} × ${it.qty || 1}` : ''}` }); load() } catch (e) { setErr((e as Error).message) }
   }
   useEffect(() => { load() /* eslint-disable-next-line */ }, [prId])
   useLiveRefresh(['prs', 'purchaseOrders'], load) // ใบเทียบราคา/รูปใบเสนอราคาที่ส่งทาง LINE ขึ้นทันที
@@ -124,6 +134,37 @@ function QuotePanel({ pr, canIssuePo, onIssued }: { pr: ApiPR; canIssuePo: boole
         </div>
       )}
       <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>เปรียบเทียบราคาผู้ขาย</div>
+      {/* เคยซื้อมาก่อน: ระบบหา PO เก่าที่รายการใกล้เคียงให้เอง (ไม่ต้องตรงเป๊ะ) → กด "ใช้ราคานี้" เพิ่มเป็นใบเทียบราคาได้เลย */}
+      {hist.some((h) => h.matches.length || h.central) && (
+        <div style={{ background: '#F3F8F5', border: '1px solid #CDE3D6', borderRadius: 8, padding: '9px 12px', marginBottom: 10, fontSize: 12.5 }}>
+          <div style={{ fontWeight: 700, color: '#2E7D55', marginBottom: 4 }}>🕘 เคยซื้อมาก่อน <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11 }}>· จาก PO เก่าที่รายการใกล้เคียง (ไม่ต้องตรงเป๊ะ) — กด “ใช้ราคานี้” เพื่อเพิ่มเป็นใบเทียบราคา</span></div>
+          {hist.map((h, i) => (
+            <div key={i} style={{ marginBottom: 6 }}>
+              <div style={{ fontWeight: 600 }}>{hist.length > 1 ? `${i + 1}. ` : ''}{h.desc}{h.qty ? ` ${h.qty} ${h.unit}` : ''}{h.central ? <span style={{ marginLeft: 8, fontSize: 11, color: '#6B4E9E', fontWeight: 500 }}>ราคากลาง ฿{h.central.central.toLocaleString('en-US')}/{h.central.unit || 'หน่วย'}</span> : null}</div>
+              {h.matches.length === 0 && <div style={{ color: '#94A0A8', fontSize: 11.5, paddingLeft: 14 }}>ยังไม่เคยซื้อรายการนี้</div>}
+              {(() => {
+                // แสดงต่อร้าน: ครั้งล่าสุดของแต่ละร้าน (ร้านที่ซื้อบ่อยขึ้นก่อน) สูงสุด 5 ร้าน
+                const seen = new Set<string>()
+                const rowsV = h.matches.filter((m) => { if (seen.has(m.vendor)) return false; seen.add(m.vendor); return true }).slice(0, 5)
+                const cheapest = Math.min(...rowsV.filter((m) => m.per_unit && m.price > 0).map((m) => m.price), Infinity)
+                return rowsV.map((m, j) => {
+                  const v = h.vendors.find((x) => x.vendor === m.vendor)
+                  return (
+                    <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'center', paddingLeft: 14, fontSize: 12, flexWrap: 'wrap' }}>
+                      <span><b>{m.vendor}</b> {m.per_unit ? <>฿{m.price.toLocaleString('en-US')}/{m.unit || h.unit || 'หน่วย'}{h.qty ? <span style={{ color: '#5C6770' }}> (×{h.qty} = ฿{Math.round(m.price * h.qty).toLocaleString('en-US')})</span> : null}</> : <>รวม ฿{m.price.toLocaleString('en-US')}</>}
+                        {m.per_unit && m.price === cheapest && rowsV.length > 1 ? <span style={{ marginLeft: 5, fontSize: 10, color: '#2E7D55', fontWeight: 600 }}>ถูกสุด</span> : null}
+                        <span style={{ color: '#94A0A8' }}> · {m.po_no} {m.date}{m.house ? ' · ' + m.house : ''}{v && v.times > 1 ? ` · ซื้อ ${v.times} ครั้ง` : ''}</span>
+                      </span>
+                      <span title={m.desc} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: m.exact ? '#E2F1EA' : '#FBF1DF', color: m.exact ? '#2E7D55' : '#C0852C' }}>{m.exact ? 'ตรง' : 'ใกล้เคียง'}: {m.desc.slice(0, 28)}</span>
+                      <button onClick={() => useHist(h, m)} title="เพิ่มร้าน/ราคานี้เป็นใบเทียบราคา" style={{ fontFamily: 'inherit', fontSize: 10.5, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 6, padding: '1px 7px', cursor: 'pointer' }}>+ ใช้ราคานี้</button>
+                    </div>
+                  )
+                })
+              })()}
+            </div>
+          ))}
+        </div>
+      )}
       {rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginBottom: 8 }}>
           <thead><tr style={{ textAlign: 'left', color: '#5C6770' }}><th style={{ padding: '4px 8px' }}>ผู้ขาย</th><th style={{ padding: '4px 8px', textAlign: 'right' }}>ราคา</th><th style={{ padding: '4px 8px' }}>เงื่อนไข</th><th style={{ padding: '4px 8px', textAlign: 'center' }}>เลือก</th></tr></thead>

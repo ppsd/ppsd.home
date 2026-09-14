@@ -1627,3 +1627,37 @@ test('LINE: ส่งต่อลิงก์จากผล AI หาร้า�
   assert.equal((await GET('/purchase-orders')).data.length, nPo)
   await DEL('/line-link?user_id=' + acc.id)
 })
+
+test('ใบเทียบราคา: ขึ้นประวัติ "เคยซื้อ" จาก PO เก่าที่รายการใกล้เคียงให้เอง (ไม่ต้องตรงเป๊ะ) · ขนาดต่างกันคะแนนต่ำ · ใช้ราคานี้เป็นใบเทียบราคาได้', async () => {
+  await PUT('/controls', { enforce_approval_flow: false })
+  // PO เก่า 2 ใบ: ปูนตราเสือ 120/ถุง ร้านปูนดี · ปูนตราเสือ (ชื่อพิมพ์ต่าง) 118/ถุง ร้านวัสดุเจริญ · เหล็ก 9 มม. (ขนาดต่าง)
+  const mk = async (vendor, items) => {
+    const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items })
+    await POST(`/approve/pr/${pr.data.id}`)
+    const po = await POST('/purchase-orders', { vendor, item: items.map((i) => i.desc).join(', '), amount: items.reduce((s, i) => s + i.qty * i.price, 0), pr_no: pr.data.no, items })
+    assert.equal(po.status, 201, JSON.stringify(po.data)); return po.data
+  }
+  await mk('ร้านปูนดี', [{ desc: 'ปูนซีเมนต์ตราเสือ 50 กก.', qty: 30, unit: 'ถุง', price: 120 }, { desc: 'เหล็กเส้นกลม 9 มม.', qty: 10, unit: 'เส้น', price: 95 }])
+  await mk('ร้านวัสดุเจริญ', [{ desc: 'ปูนตราเสือ ซีเมนต์ผสม', qty: 20, unit: 'ถุง', price: 118 }])
+  // PR ใหม่: ชื่อไม่ตรงเป๊ะ + เหล็ก 12 มม. (ต้องไม่ดึง 9 มม. มาเป็น "ตรง")
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ปูนตราเสือ', qty: 40, unit: 'ถุง', price: 0 }, { desc: 'เหล็กเส้น 12 มม.', qty: 5, unit: 'เส้น', price: 0 }] })
+  const h = await GET(`/purchase-requests/${pr.data.id}/price-history`)
+  assert.equal(h.status, 200, JSON.stringify(h.data)); assert.equal(h.data.length, 2)
+  const cement = h.data[0]
+  assert.ok(cement.matches.length >= 2, 'ต้องเจอทั้งสองร้าน: ' + JSON.stringify(cement.matches))
+  const vendors = cement.vendors.map((v) => v.vendor)
+  assert.ok(vendors.includes('ร้านปูนดี') && vendors.includes('ร้านวัสดุเจริญ'))
+  const pd = cement.matches.find((m) => m.vendor === 'ร้านปูนดี'); assert.equal(pd.price, 120); assert.equal(pd.per_unit, true); assert.match(pd.po_no, /^PO-/)
+  assert.ok(!cement.matches.some((m) => /เหล็ก/.test(m.desc)), 'ปูนต้องไม่จับคู่กับเหล็ก')
+  const steel = h.data[1]
+  assert.ok(!steel.matches.some((m) => m.exact && /9\s*มม/.test(m.desc)), 'เหล็ก 12 มม. ไม่ควรถือว่า "ตรง" กับ 9 มม.')
+  const nine = steel.matches.find((m) => /9\s*มม/.test(m.desc)); if (nine) assert.ok(nine.score < 0.6, 'ขนาดต่างกันคะแนนต้องต่ำ: ' + nine.score)
+  // เอาราคาที่เคยซื้อมาเป็นใบเทียบราคา: 120 × 40
+  const q = await POST(`/purchase-requests/${pr.data.id}/quotes`, { vendor: pd.vendor, price: pd.price * 40, terms: `เคยซื้อ ${pd.po_no}` })
+  assert.equal(q.status, 201); assert.equal(q.data.price, 4800)
+  // โฟร์แมน (site) ดูไม่ได้
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  assert.equal((await GET(`/purchase-requests/${pr.data.id}/price-history`)).status, 403)
+  token = adminToken
+})
