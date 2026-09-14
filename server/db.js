@@ -282,6 +282,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS line_order_files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   uid TEXT, image TEXT, created TEXT
 )`) // รูปสินค้าที่ส่งมาในแชทระหว่างร่างใบขอซื้อ (ต่อคน) — ย้ายเข้าใบตอนตกลง
+db.exec(`CREATE TABLE IF NOT EXISTS fuel_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  no TEXT, date TEXT, date_iso TEXT, by TEXT, user_id INTEGER, amount REAL,
+  house_code TEXT, house_name TEXT, vehicle TEXT, note TEXT,
+  status TEXT, approved_by TEXT, approved_at TEXT, reject_note TEXT,
+  entry_id INTEGER, source TEXT, created TEXT
+)`) // คำขอเบิกค่าน้ำมันรถ (โฟร์แมนขอผ่าน LINE/เว็บ → ผู้บริหารอนุมัติ → จ่ายจากกองค่าน้ำมัน 1031)
 db.exec(`CREATE TABLE IF NOT EXISTS pr_quote_files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   pr_id INTEGER, image TEXT, by TEXT, source TEXT, created TEXT
