@@ -1782,3 +1782,30 @@ test('CRM ลูกค้าทาง LINE: ผูกด้วยรหัส �
   const st = await PUT('/crm/settings', { crm_inst_days: '10', crm_auto_anniv: '0' }); assert.equal(st.data.crm_inst_days, '10'); assert.equal(st.data.crm_auto_anniv, '0')
   await DEL(`/crm/customers/${c.id}/line`)
 })
+
+test('พอร์ทัลลูกค้า: เปิดด้วยโทเคนส่วนตัวไม่ต้องล็อกอิน (ความคืบหน้า/งวด/เคส/ประกัน/เอกสาร) · โทเคนผิด 404 · แจ้งซ่อมจากพอร์ทัลเปิดเคสได้ · หน้า /portal/ เสิร์ฟหน้าเว็บ', async () => {
+  const c = (await GET('/crm/customers')).data.find((x) => x.name === 'คุณทดสอบ ซีอาร์เอ็ม')
+  const full = (await GET(`/crm/customers/${c.id}/360`)).data
+  assert.ok(full.portal_token && full.portal_token.length >= 16)
+  const adminToken = token; token = null
+  const bad = await GET('/pub/portal/NOPE'); assert.equal(bad.status, 404)
+  const p = await GET('/pub/portal/' + full.portal_token)
+  assert.equal(p.status, 200, JSON.stringify(p.data))
+  assert.equal(p.data.customer.name, 'คุณทดสอบ ซีอาร์เอ็ม'); assert.ok(p.data.customer.referral_code.startsWith('REF-'))
+  const h = p.data.houses.find((x) => x.code === 'TS-01'); assert.ok(h, 'ต้องเห็นบ้าน TS-01')
+  assert.equal(h.qc.total, 10); assert.ok(Array.isArray(h.installments)); assert.ok(Array.isArray(h.cases)); assert.ok(h.warranty && 'delivered' in h.warranty)
+  assert.ok(!('phone' in h), 'ข้อมูลภายในต้องไม่หลุด')
+  // แจ้งซ่อมจากพอร์ทัล
+  const n0 = h.cases.length
+  const cs = await POST('/pub/portal/' + full.portal_token + '/case', { house_code: 'TS-01', title: 'ประตูรั้วปิดไม่สนิท', note: 'สะดวกช่วงเย็น' })
+  assert.equal(cs.status, 201, JSON.stringify(cs.data)); assert.match(cs.data.case_no, /^CS-/)
+  assert.equal((await POST('/pub/portal/' + full.portal_token + '/case', { title: '' })).status, 400)
+  const p2 = (await GET('/pub/portal/' + full.portal_token)).data
+  assert.equal(p2.houses.find((x) => x.code === 'TS-01').cases.length, n0 + 1)
+  // หน้าเว็บพอร์ทัล (SPA) เปิดได้โดยไม่ต้องล็อกอิน
+  const html = await fetch(BASE.replace(/\/api$/, '') + '/portal/' + full.portal_token)
+  assert.equal(html.status, 200); assert.match(await html.text(), /<div id="root"/)
+  token = adminToken
+  const row = (await GET('/crm/cases')).data.find((x) => x.case_no === cs.data.case_no)
+  assert.equal(row.source, 'portal'); assert.equal(row.customer_id, c.id)
+})

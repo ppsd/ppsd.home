@@ -152,6 +152,7 @@ function Customer360({ id, onClose, onChanged }: { id: number; onClose: () => vo
             <div style={{ fontSize: 11.5, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ color: c.line_linked ? '#06C755' : '#94A0A8' }}>● LINE {c.line_linked ? 'ผูกแล้ว' : 'ยังไม่ผูก'}</span>
               <span style={{ color: '#6B4E9E' }}>รหัสบอกต่อ <b className="num">{c.referral_code}</b>{c.referrals.length ? ` · แนะนำมาแล้ว ${c.referrals.length} ราย` : ''}</span>
+              {c.portal_token && <a href={'/portal/' + c.portal_token} target="_blank" rel="noreferrer" style={{ color: '#30506A' }} title="หน้าพอร์ทัลลูกค้า (ลิงก์ส่วนตัว ไม่ต้องล็อกอิน) — ลูกค้าพิมพ์ 'เอกสาร' ในไลน์จะได้ลิงก์นี้">🔗 พอร์ทัลลูกค้า ↗</a>}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -572,7 +573,8 @@ function AutoTab() {
 // ---------- รายงาน CRM ----------
 function ReportTab() {
   const [m, setM] = useState<Metrics | null>(null)
-  useEffect(() => { api.get<Metrics>('/crm/metrics').then(setM).catch(() => setM(null)) }, [])
+  const [svc, setSvc] = useState<{ open: number; overdue: number; resolved_30d: number; avg_hours: number | null } | null>(null)
+  useEffect(() => { api.get<Metrics>('/crm/metrics').then(setM).catch(() => setM(null)); api.get<typeof svc>('/crm/service-summary').then(setSvc).catch(() => {}) }, [])
   if (!m) return <div style={{ color: '#94A0A8', padding: 20 }}>กำลังโหลด…</div>
   const tile = (label: string, value: string, sub?: string, color = '#1C2730') => <div style={{ ...card, padding: 14 }}><div style={{ fontSize: 11.5, color: '#5C6770' }}>{label}</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>{sub && <div style={{ fontSize: 11, color: '#94A0A8' }}>{sub}</div>}</div>
   const maxM = Math.max(1, ...m.per_month.map((x) => x.leads))
@@ -584,7 +586,7 @@ function ReportTab() {
         {tile('อัตราปิดการขาย', m.conversion + '%', `ปิดได้ ${m.leads_won}/${m.leads_total}`, '#2E7D55')}
         {tile('เวลาปิดการขายเฉลี่ย', m.avg_close_days == null ? '-' : m.avg_close_days + ' วัน')}
         {tile('มาจากการบอกต่อ', String(m.referrals), 'Lead ที่มีรหัสแนะนำ', '#6B4E9E')}
-        {tile('เคสบริการค้าง', String(m.open_cases), m.avg_resolve_hours == null ? 'ยังไม่มีข้อมูลเวลาแก้' : `แก้เฉลี่ย ${m.avg_resolve_hours} ชม.`, m.open_cases ? '#C0852C' : '#1C2730')}
+        {tile('เคสบริการค้าง', String(svc?.open ?? m.open_cases), svc ? `เกิน SLA ${svc.overdue} · ปิดใน 30 วัน ${svc.resolved_30d}${svc.avg_hours != null ? ` · แก้เฉลี่ย ${svc.avg_hours} ชม.` : ''}` : '', svc?.overdue ? '#C24036' : (svc?.open ?? m.open_cases) ? '#C0852C' : '#1C2730')}
         {tile('NPS', m.nps ? String(m.nps.score) : '-', m.nps ? `เฉลี่ย ${m.nps.avg}/10 จาก ${m.nps.n} คำตอบ` : 'ยังไม่มีคำตอบ', m.nps && m.nps.score < 0 ? '#C24036' : '#2E7D55')}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 12 }}>
