@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdir
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { registerCrm, crmNotifications } from './crm.js'
-import { registerCrmService, serviceNotifications, customerByLine, consumeCustomerCode, handleCustomerLineMessage, handleCustomerLineImage, onQcSaved } from './crm_service.js'
+import { registerCrmService, registerCrmPublic, serviceNotifications, customerByLine, consumeCustomerCode, handleCustomerLineMessage, handleCustomerLineImage, onQcSaved } from './crm_service.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin, verifyToken } from './security.js'
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
@@ -38,6 +38,8 @@ app.use((req, res, next) => {
   const host = String(req.headers.host || '')
   if (!/\.trycloudflare\.com$/i.test(host) && !req.headers['cf-connecting-ip']) return next()
   if (req.path.startsWith('/api/line/webhook') || req.path.startsWith('/api/pub/')) return next()
+  // พอร์ทัลลูกค้า (ลิงก์ส่วนตัว) + ไฟล์ JS/CSS ของหน้าเว็บ — เปิดผ่านลิงก์สาธารณะได้โดยไม่ต้องเปิด ERP ทั้งระบบ
+  if (/^\/portal\//.test(req.path) || req.path.startsWith('/assets/') || /^\/(favicon|vite\.svg|logo)/.test(req.path)) return next()
   if (getSetting('tunnel_expose', '0') === '1') return next()
   res.status(404).type('text/plain').send('ลิงก์นี้เปิดไว้สำหรับ LINE webhook เท่านั้น — ถ้าต้องการใช้ ERP นอกออฟฟิศ ให้แอดมินเปิดที่ ผู้ใช้งาน → แจ้งเตือน LINE → "อนุญาตเปิด ERP ผ่านลิงก์นี้"')
 })
@@ -1932,6 +1934,7 @@ api.get('/pub/doc/:kind/:id/:key.png', (req, res) => {
   res.setHeader('Content-Type', 'image/png'); res.setHeader('Cache-Control', 'public, max-age=86400')
   res.send(row.png)
 })
+registerCrmPublic(api, () => crmDeps) // พอร์ทัลลูกค้า (ไม่ต้องล็อกอิน · ใช้โทเคนส่วนตัว)
 api.use(requireAuth)
 
 // ===== สิทธิ์รายโมดูล: แอดมินปิดการเข้าถึงบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (users.deny_mods) =====

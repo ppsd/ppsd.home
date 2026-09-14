@@ -106,7 +106,7 @@ function docsMessage(c, publicBase) {
   let t = docs.length ? '📄 เอกสารของคุณ:\n' + docs.map((d) => `• ${d.type} ${d.no} ${d.date} ${fmt(d.total)} บาท (${d.status})`).join('\n') : '📄 ยังไม่มีเอกสารขายในระบบค่ะ'
   if (files.length) t += '\n\n📁 ไฟล์บ้าน:\n' + files.map((f) => '• ' + f).join('\n')
   const base = publicBase?.()
-  if (base && c.portal_token) t += `\n\n🔗 ดูทุกอย่างของบ้านคุณได้ที่\n${base}/#portal/${c.portal_token}`
+  if (base && c.portal_token) t += `\n\n🔗 ดูทุกอย่างของบ้านคุณได้ที่\n${base}/portal/${c.portal_token}`
   return t
 }
 function helpMessage(c) {
@@ -395,6 +395,36 @@ export function serviceNotifications(user) {
   return out.slice(0, 12)
 }
 
+// ---- พอร์ทัลลูกค้า (สาธารณะด้วยโทเคนส่วนตัว) ----
+export function portalData(c) {
+  const s = crmSettings()
+  const houses = housesOfCustomer(c).map((h) => {
+    const inst = db.prepare("SELECT no, detail, amount, COALESCE(paid,0) paid, due, status FROM installments WHERE house_code=? AND COALESCE(side,'customer')='customer' ORDER BY no").all(h.code)
+    const paid = inst.reduce((x, i) => x + (Number(i.paid) || 0), 0), total = inst.reduce((x, i) => x + (Number(i.amount) || 0), 0)
+    const cases = db.prepare('SELECT case_no, title, status, date, assignee FROM issues WHERE house_code=? ORDER BY id DESC LIMIT 20').all(h.code).map((i) => ({ ...i, open: CASE_OPEN(i.status) }))
+    const photos = db.prepare('SELECT images FROM qc_inspections WHERE house_code=? AND images IS NOT NULL ORDER BY id DESC LIMIT 8').all(h.code).flatMap((r) => jparse(r.images) || []).slice(0, 8)
+    const lastQc = db.prepare('SELECT date, type, status FROM qc_inspections WHERE house_code=? ORDER BY id DESC LIMIT 1').get(h.code) || null
+    return { code: h.code, name: h.name, project: h.project || '', status: h.status, pct: Number(h.pct) || 0, deliver_date: h.deliver_date || '', manager: h.manager || '', photo: h.photo || null, photos, qc: qcProgressOf(h.code), installments: inst, inst_paid: paid, inst_total: total, next_due: inst.find((i) => (Number(i.paid) || 0) < (Number(i.amount) || 0)) || null, cases, warranty: warrantyOf(h), last_qc: lastQc }
+  })
+  const docs = db.prepare('SELECT type,no,date,total,status FROM sales_docs WHERE customer=? ORDER BY id DESC LIMIT 30').all(c.name)
+  let company = 'PPSD'
+  try { company = getS('company_name', '') || company } catch { /* ignore */ }
+  return { customer: { name: c.name, code: c.code || '', referral_code: c.referral_code || '' }, houses, docs, contact: { phone: s.crm_contact_phone, line: s.crm_contact_line }, company }
+}
+export function registerCrmPublic(api, getDeps) {
+  const byToken = (t) => (/^[A-Za-z0-9]{16,40}$/.test(String(t || '')) ? db.prepare('SELECT * FROM customers WHERE portal_token=?').get(t) : null)
+  api.get('/pub/portal/:token', (req, res) => { const c = byToken(req.params.token); if (!c) return res.status(404).json({ error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' }); res.setHeader('Cache-Control', 'no-store'); res.json(portalData(c)) })
+  api.post('/pub/portal/:token/case', (req, res) => {
+    const c = byToken(req.params.token); if (!c) return res.status(404).json({ error: 'ลิงก์ไม่ถูกต้อง' })
+    const b = req.body || {}; const title = String(b.title || '').trim().slice(0, 200)
+    if (!title) return res.status(400).json({ error: 'ระบุเรื่องที่ต้องการแจ้ง' })
+    const hs = housesOfCustomer(c)
+    const hc = hs.find((h) => h.code === b.house_code)?.code || hs[0]?.code || ''
+    const row = createCase(getDeps(), { house_code: hc, customer_id: c.id, title, note: String(b.note || '').slice(0, 1000), source: 'portal', by: c.name })
+    logContact(c.id, 'พอร์ทัล', `แจ้งซ่อม ${row.case_no}: ${title}`, c.name, hc)
+    res.status(201).json({ case_no: row.case_no, sla_hours: crmSettings().crm_sla_hours })
+  })
+}
 export function registerCrmService(api, d) {
   const { canWrite, audit, notifyChange } = d
   hooks.warrantyOf = warrantyOf; hooks.caseRow = caseRow
