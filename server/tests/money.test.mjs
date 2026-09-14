@@ -1535,3 +1535,63 @@ test('ค่าน้ำมันรถ: กองแยกจากเงิน
   const pnl = (await GET('/project-pnl')).data.find((h) => h.house_code === 'TS-01')
   assert.ok(pnl.cost + pnl.expense >= 1200.25)
 })
+
+test('เบิกค่าน้ำมันผ่าน LINE: โฟร์แมนพิมพ์ "เบิกน้ำมัน 1500 บ้าน… ทะเบียน…" → ตกลง → การ์ดถึง CEO → อนุมัติ = จ่ายจากกองน้ำมัน (ผูกบ้าน) · ปฏิเสธถามเหตุผล · กองไม่พอถูกกัน', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const postback = (uid, data) => hook(uid, { type: 'postback', postback: { data } })
+  const wait = () => new Promise((r) => setTimeout(r, 600))
+  // ผูก CEO + โฟร์แมน (somchai, site)
+  const c1 = await POST('/line-link/code', {}); await msg('Uceo', c1.data.code); await wait()
+  const adminToken = token
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  const c2 = await POST('/line-link/code', {}); token = adminToken
+  await msg('Usomchai', c2.data.code); await wait()
+  // ตั้งกองน้ำมันให้มีเงินพอ (ลิมิต 5000 เติมเต็ม)
+  await POST('/petty-cash/float', { fund: 'fuel', float: 5000 }); await POST('/petty-cash/topup', { fund: 'fuel' })
+  const fuel0 = (await GET('/petty-cash?fund=fuel')).data.balance
+  const n0 = (await GET('/fuel-requests')).data.length
+  // ไม่ระบุยอด → บอทถามยอด → ตอบตัวเลข → ตกลง
+  await msg('Usomchai', 'ขอเบิกน้ำมัน บ้านเทสต์ ทะเบียน กข 1234'); await wait()
+  await msg('Usomchai', '1500'); await wait()
+  await msg('Usomchai', 'ตกลง'); await wait()
+  const reqs = (await GET('/fuel-requests')).data
+  assert.equal(reqs.length, n0 + 1, 'ต้องมีคำขอเบิกใหม่ 1 ใบ')
+  const fr = reqs[0]
+  assert.match(fr.no, /^FR-\d{2}-\d{4}$/); assert.equal(fr.by, 'สมชาย ช่างหลังคา'); assert.equal(fr.amount, 1500)
+  assert.equal(fr.house_code, 'TS-01'); assert.equal(fr.house_name, 'บ้านเทสต์'); assert.equal(fr.vehicle, 'กข 1234'); assert.equal(fr.status, 'รออนุมัติ'); assert.equal(fr.source, 'line')
+  // โฟร์แมนเห็นเฉพาะของตัวเอง · กดอนุมัติเองไม่ได้
+  token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  assert.ok((await GET('/fuel-requests')).data.every((r) => r.by === 'สมชาย ช่างหลังคา'))
+  assert.equal((await POST(`/fuel-requests/${fr.id}/approve`, {})).status, 403)
+  token = adminToken
+  await postback('Usomchai', `fuel:${fr.id}:approve`); await wait()
+  assert.equal((await GET('/fuel-requests')).data.find((r) => r.id === fr.id).status, 'รออนุมัติ', 'โฟร์แมนกดการ์ดอนุมัติเองไม่ได้')
+  // CEO กดอนุมัติในการ์ด → จ่ายจากกองน้ำมัน ผูกบ้าน TS-01 + ทะเบียน
+  await postback('Uceo', `fuel:${fr.id}:approve`); await wait()
+  const ok = (await GET('/fuel-requests')).data.find((r) => r.id === fr.id)
+  assert.equal(ok.status, 'อนุมัติ'); assert.ok(ok.entry_id, 'ต้องมีเลขรายการบัญชี')
+  const st = (await GET('/petty-cash?fund=fuel')).data
+  assert.equal(Math.round((fuel0 - st.balance) * 100) / 100, 1500, 'กองน้ำมันต้องลด 1500')
+  const row = st.rows.find((r) => r.ref === fr.no)
+  assert.ok(row, 'ต้องเห็นรายการอ้างเลข FR ในความเคลื่อนไหวกองน้ำมัน'); assert.equal(row.house_code, 'TS-01'); assert.match(row.memo, /ทะเบียน กข 1234/)
+  assert.equal((await postback('Uceo', `fuel:${fr.id}:approve`)).status, 200) // กดซ้ำไม่พัง ไม่จ่ายซ้ำ
+  await wait(); assert.equal((await GET('/petty-cash?fund=fuel')).data.balance, st.balance)
+  // ระบุครบในบรรทัดเดียว → ตกลง → CEO ปฏิเสธ (ถามเหตุผล) → สถานะปฏิเสธ กองไม่ขยับ
+  await msg('Usomchai', 'เบิกค่าน้ำมัน 800 บาท ทะเบียน 1กข 555 ไปดูงานบ้านเทสต์'); await wait()
+  await msg('Usomchai', 'ตกลง'); await wait()
+  const fr2 = (await GET('/fuel-requests')).data[0]
+  assert.equal(fr2.amount, 800); assert.equal(fr2.house_code, 'TS-01'); assert.equal(fr2.vehicle, '1กข 555'); assert.equal(fr2.status, 'รออนุมัติ')
+  await postback('Uceo', `fuel:${fr2.id}:reject`); await wait()
+  await msg('Uceo', 'ใช้รถบริษัทเติมบัตรฟลีทแทน'); await wait()
+  const rj = (await GET('/fuel-requests')).data.find((r) => r.id === fr2.id)
+  assert.equal(rj.status, 'ปฏิเสธ'); assert.equal(rj.reject_note, 'ใช้รถบริษัทเติมบัตรฟลีทแทน')
+  assert.equal((await GET('/petty-cash?fund=fuel')).data.balance, st.balance)
+  // ขอเกินกองที่เหลือ → อนุมัติในเว็บถูกกัน (409) จนกว่าจะเติม
+  const big = await POST('/fuel-requests', { amount: 99999, house_code: 'TS-01', vehicle: 'ผก 1', note: 'ทดสอบเกิน' })
+  assert.equal(big.status, 201)
+  const blocked = await POST(`/fuel-requests/${big.data.id}/approve`, {})
+  assert.equal(blocked.status, 409); assert.match(blocked.data.error, /ไม่พอ/)
+  assert.equal((await POST('/fuel-requests', { amount: 0 })).status, 400)
+  await DEL('/line-link')
+})

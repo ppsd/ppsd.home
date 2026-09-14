@@ -216,6 +216,7 @@ const sseClients = new Set()
 let changeSeq = 0
 // เส้นทาง API ที่เขียนข้อมูล → ชุดข้อมูลในหน้าเว็บที่ต้องโหลดใหม่
 const CHANGE_MAP = [
+  [/^\/(fuel-requests|petty-cash)/, ['fuel', 'dashboard', 'notifications']],
   [/^\/(purchase-requests|pr-quotes|pr-quote-files|approve\/pr|reject\/pr|procurement\/flow)/, ['prs', 'purchaseOrders', 'notifications']],
   [/^\/(purchase-orders|approve\/po|reject\/po|goods-receipts|payables)/, ['purchaseOrders', 'prs', 'expenses', 'dashboard', 'notifications']],
   [/^\/(payments|approve\/payment|reject\/payment)/, ['payments', 'expenses', 'dashboard', 'notifications']],
@@ -639,11 +640,115 @@ async function lineApprovalAction(u, docType, docId, action, note, replyToken) {
     return lineReply(replyToken, `❌ ปฏิเสธ ${cfg.label} ${no} แล้ว${note ? ' (' + note + ')' : ''}${docType === 'po' || docType === 'pr' ? ' — ใบนี้ยกเลิกทันที แจ้งจัดซื้อ/ผู้ขอแล้วค่ะ' : ''}`)
   } catch (e) { return lineReply(replyToken, `ทำรายการไม่ได้ค่ะ: ${e.msg || e.message}`) }
 }
+// ===== เบิกค่าน้ำมันรถผ่าน LINE: โฟร์แมนพิมพ์ "เบิกน้ำมัน 1500 บ้านคุณพร ทะเบียน กข1234" → ร่าง → 'ตกลง' → การ์ดถึงผู้บริหาร → อนุมัติ = จ่ายจากกองค่าน้ำมัน (1031) =====
+const FUEL_CMD_RE = /(?:^|\s)(?:ขอ|ช่วย|อยาก|ต้องการ)?\s*(?:เบิก|ขอเบิก)\s*(?:ค่า)?\s*(?:เติม)?\s*(?:น้ำมัน|น้ํามัน|ดีเซล|เบนซิน|แก๊ส|gas|fuel)|^(?:ค่า)?(?:น้ำมัน|น้ํามัน)\s*(?:รถ)?\s*[\d,]+/i
+const canApproveFuel = (u) => !!u && (u.role === 'admin' || u.role === 'accounting' || isManager(u))
+const fuelHouseName = (code) => code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code) : ''
+// ดึง ยอด/บ้าน/ทะเบียน/หมายเหตุ จากข้อความคน
+function parseFuelText(text) {
+  let t = String(text || '').replace(/ํา/g, 'ำ').trim()
+  const h = matchHouseInText(t); t = h.text
+  let vehicle = ''
+  // ทะเบียนรถไทย: "กข 1234" / "1กข 555" / "กข-1234" — จบที่เลขท้าย ไม่ดึงคำถัดไป (เช่น "ไปดูงาน") มาด้วย
+  const vm = t.match(/(?:ทะเบียน(?:รถ)?|รถ(?:ทะเบียน)?|คัน)\s*[:：]?\s*((?:\d\s?)?[ก-๙]{1,3}\s?-?\s?\d{1,4})(?=\s|$|[^\d])/)
+  if (vm) { vehicle = vm[1].replace(/\s+/g, ' ').trim(); t = t.replace(vm[0], ' ') }
+  let amount = 0
+  const am = t.match(/([\d,]+(?:\.\d+)?)\s*(?:บาท|บ\.|฿)?/)
+  if (am) { amount = Number(am[1].replace(/,/g, '')) || 0; t = t.replace(am[0], ' ') }
+  const note = t.replace(FUEL_CMD_RE, ' ').replace(/(?:ค่า)?(?:น้ำมัน|น้ํามัน)(?:รถ)?/g, ' ').replace(/\s+/g, ' ').replace(/^[\s,:.\-]+|[\s,:.\-]+$/g, '').trim()
+  return { amount, house_code: h.code, house_name: h.name, vehicle, note }
+}
+function fuelDraftText(d) {
+  return `⛽ ขอเบิกค่าน้ำมันรถ\n• ยอด: ${d.amount ? fmtMoney(d.amount) + ' บาท' : '— ยังไม่ระบุ —'}\n• บ้าน: ${d.house_name || 'ส่วนกลาง (ไม่ระบุ)'}\n• ทะเบียนรถ: ${d.vehicle || '-'}${d.note ? '\n• หมายเหตุ: ' + d.note : ''}`
+}
+async function handleLineFuel(uid, u, t, replyToken, ctx) {
+  let d = ctx?.kind === 'fuel' ? { ...ctx.draft } : { amount: 0, house_code: '', house_name: '', vehicle: '', note: '' }
+  if (ctx?.kind === 'fuel' && ctx.pending === 'amount' && /^[\d,]+(?:\.\d+)?\s*(?:บาท|บ\.)?$/.test(t)) d.amount = Number(t.replace(/[^\d.]/g, '')) || 0
+  else {
+    const p = parseFuelText(t)
+    d = { amount: p.amount || d.amount, house_code: p.house_code || d.house_code, house_name: p.house_name || d.house_name, vehicle: p.vehicle || d.vehicle, note: p.note || d.note }
+  }
+  if (!d.amount) { setLineCtx(uid, { kind: 'fuel', draft: d, pending: 'amount' }); return lineReply(replyToken, `${fuelDraftText(d)}\n\nเบิกกี่บาทคะ? (พิมพ์ตัวเลข เช่น 1500)`) }
+  setLineCtx(uid, { kind: 'fuel', draft: d, pending: null })
+  const st = acct.pettyState('fuel')
+  return lineReply(replyToken, `${fuelDraftText(d)}\n\nกองค่าน้ำมันคงเหลือ ${fmtMoney(st.balance)} บาท${st.balance < d.amount ? ' ⚠ ไม่พอ — บัญชีต้องเติมก่อน' : ''}\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งขออนุมัติ หรือพิมพ์แก้ เช่น "1200 บ้านคุณพร ทะเบียน กข1234" (หรือ 'ยกเลิก')`)
+}
+function fuelFlex(fr) {
+  const row = ([label, value]) => ({ type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+    { type: 'text', text: String(label || ' '), size: 'sm', color: '#94A0A8', flex: 2 },
+    { type: 'text', text: String(value || '-'), size: 'sm', color: '#1C2730', flex: 5, wrap: true }] })
+  const st = acct.pettyState('fuel')
+  const lines = [['ผู้ขอ', fr.by], ['บ้าน', fr.house_name || 'ส่วนกลาง'], ['ทะเบียนรถ', fr.vehicle || '-'], ['หมายเหตุ', fr.note || '-'], ['วันที่', fr.date], ['กองน้ำมันคงเหลือ', `${fmtMoney(st.balance)} / ${fmtMoney(st.float)} บาท`]]
+  return {
+    type: 'flex', altText: `ขอเบิกค่าน้ำมัน ${fr.no} ${fmtMoney(fr.amount)} บาท จาก ${fr.by}`,
+    contents: { type: 'bubble', size: 'mega',
+      header: { type: 'box', layout: 'vertical', backgroundColor: '#30506A', paddingAll: '14px', contents: [
+        { type: 'text', text: `⛽ ขอเบิกค่าน้ำมันรถ ${fr.no}`, color: '#FFFFFF', weight: 'bold', size: 'md' },
+        { type: 'text', text: 'รออนุมัติ · จ่ายจากกองค่าน้ำมัน', color: '#DCE6EE', size: 'xs' }] },
+      body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+        { type: 'text', text: `${fmtMoney(fr.amount)} บาท`, weight: 'bold', size: 'xl', color: '#1C2730' },
+        { type: 'separator', margin: 'sm' }, ...lines.map(row),
+        ...(st.balance < fr.amount ? [{ type: 'text', text: '⚠ กองค่าน้ำมันไม่พอ — ต้องเติมให้เต็มวงเงินก่อนจึงอนุมัติได้', size: 'xs', color: '#C24036', wrap: true, margin: 'md' }] : []),
+        { type: 'text', text: 'อนุมัติไหมคะ?', weight: 'bold', size: 'md', color: '#30506A', margin: 'md', align: 'center' }] },
+      footer: { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+        { type: 'button', style: 'primary', color: '#2E7D55', height: 'sm', action: { type: 'postback', label: 'อนุมัติ', data: `fuel:${fr.id}:approve`, displayText: `อนุมัติ ${fr.no}` } },
+        { type: 'button', style: 'secondary', height: 'sm', action: { type: 'postback', label: 'ปฏิเสธ', data: `fuel:${fr.id}:reject`, displayText: `ปฏิเสธ ${fr.no}` } }] } },
+  }
+}
+const fuelById = (id) => db.prepare('SELECT * FROM fuel_requests WHERE id=?').get(Number(id))
+// สร้างคำขอเบิก + ส่งการ์ดถึงผู้บริหารที่ผูก LINE (ไม่ส่งให้ผู้ขอเอง)
+async function createFuelRequest({ amount, house_code, vehicle, note, date_iso }, user, source) {
+  const amt = Math.round((Number(String(amount ?? '').replace(/,/g, '')) || 0) * 100) / 100
+  if (amt <= 0) throw Object.assign(new Error('ยอดเบิกไม่ถูกต้อง'), { status: 400 })
+  const hc = String(house_code || '').trim()
+  if (hc && !db.prepare('SELECT code FROM houses WHERE code=?').get(hc)) throw Object.assign(new Error('ไม่พบบ้าน ' + hc), { status: 400 })
+  const seq = nextSeq('fuel', () => Math.max(maxNoSuffix('fuel_requests'), db.prepare('SELECT COUNT(*) c FROM fuel_requests').get().c))
+  const no = `FR-${docYear()}-${String(seq).padStart(4, '0')}`
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(date_iso || '')) ? date_iso : new Date().toISOString().slice(0, 10)
+  const info = db.prepare('INSERT INTO fuel_requests (no,date,date_iso,by,user_id,amount,house_code,house_name,vehicle,note,status,source,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(no, todayTH(), iso, user.name, user.id, amt, hc, fuelHouseName(hc), String(vehicle || '').trim(), String(note || '').trim(), 'รออนุมัติ', source || 'web', nowTS())
+  const fr = fuelById(info.lastInsertRowid)
+  let notified = 0
+  if (getSetting('line_token', '')) {
+    for (const a of lineApprovers(user.name)) { if (await linePush(a.line_uid, [`⛽ ${fr.by} ขอเบิกค่าน้ำมันรถ ${fr.no} ยอด ${fmtMoney(fr.amount)} บาท${fr.house_name ? ' (' + fr.house_name + ')' : ''} — กดอนุมัติในการ์ดได้เลยค่ะ`, fuelFlex(fr)])) notified++ }
+  }
+  notifyChange(['fuel', 'notifications'])
+  return { ...fr, notified }
+}
+// อนุมัติ = ลงบัญชีจ่ายจากกองค่าน้ำมันทันที (Dr 6030 / Cr 1031) ผูกบ้าน+ทะเบียน · แจ้งผู้ขอทาง LINE
+function approveFuelRequest(fr, u) {
+  if (fr.status !== 'รออนุมัติ') throw Object.assign(new Error(`ใบนี้${fr.status}ไปแล้ว`), { status: 409 })
+  const st = acct.pettyState('fuel')
+  if (st.balance < fr.amount) throw Object.assign(new Error(`กองค่าน้ำมันคงเหลือ ${fmtMoney(st.balance)} บาท ไม่พอจ่าย ${fmtMoney(fr.amount)} บาท — ให้บัญชีกด "เติมให้เต็มวงเงิน" ในหน้าค่าน้ำมันรถก่อน`), { status: 409 })
+  const entryId = acct.pettyExpense({ fund: 'fuel', date_iso: fr.date_iso, cat: 'ค่าน้ำมันรถ', item: `เบิกค่าน้ำมัน ${fr.by}${fr.note ? ' · ' + fr.note : ''}`, amount: fr.amount, ref: fr.no, house_code: fr.house_code, vehicle: fr.vehicle, by: u.name })
+  db.prepare("UPDATE fuel_requests SET status='อนุมัติ', approved_by=?, approved_at=?, entry_id=? WHERE id=?").run(u.name, nowTS(), Number(entryId) || null, fr.id)
+  const reqUid = lineUidOfName(fr.by); if (reqUid && reqUid !== u.line_uid) linePush(reqUid, `✅ ${fr.no} เบิกค่าน้ำมัน ${fmtMoney(fr.amount)} บาท ได้รับอนุมัติแล้วโดย ${u.name} — รับเงินจากกองค่าน้ำมันได้เลยค่ะ`)
+  for (const a of lineApprovers(u.name)) if (a.name !== fr.by) linePush(a.line_uid, `ℹ️ ${fr.no} เบิกค่าน้ำมัน ${fmtMoney(fr.amount)} บาท อนุมัติแล้วโดย ${u.name} — ไม่ต้องกดซ้ำค่ะ`)
+  notifyChange(['fuel', 'notifications'])
+  return fuelById(fr.id)
+}
+function rejectFuelRequest(fr, u, note) {
+  if (fr.status !== 'รออนุมัติ') throw Object.assign(new Error(`ใบนี้${fr.status}ไปแล้ว`), { status: 409 })
+  db.prepare("UPDATE fuel_requests SET status='ปฏิเสธ', approved_by=?, approved_at=?, reject_note=? WHERE id=?").run(u.name, nowTS(), String(note || ''), fr.id)
+  const reqUid = lineUidOfName(fr.by); if (reqUid && reqUid !== u.line_uid) linePush(reqUid, `❌ ${fr.no} เบิกค่าน้ำมัน ${fmtMoney(fr.amount)} บาท ถูกปฏิเสธโดย ${u.name}${note ? '\nเหตุผล: ' + note : ''}`)
+  notifyChange(['fuel', 'notifications'])
+  return fuelById(fr.id)
+}
 async function handleLinePostback(uid, data, replyToken) {
   const u = userByLine(uid)
   if (!u) return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ')
   const m = String(data || '').match(/^apv:(pr|po|payment|expense):(\d+):(approve|hold|reject)$/)
   if (m) return lineApprovalAction(u, m[1], Number(m[2]), m[3], '', replyToken)
+  // การ์ดขอเบิกค่าน้ำมัน: อนุมัติ = จ่ายจากกองน้ำมันทันที · ปฏิเสธ = ถามเหตุผลก่อน
+  const fm = String(data || '').match(/^fuel:(\d+):(approve|reject)$/)
+  if (fm) {
+    const fr = fuelById(fm[1])
+    if (!fr) return lineReply(replyToken, 'ไม่พบคำขอเบิกนี้ค่ะ')
+    if (!canApproveFuel(u)) return lineReply(replyToken, 'อนุมัติเบิกค่าน้ำมันได้เฉพาะผู้บริหาร/ผู้จัดการ/บัญชีค่ะ')
+    if (fm[2] === 'reject') { setLineCtx(uid, { kind: 'fuel_note', fr_id: fr.id }); return lineReply(replyToken, `จะปฏิเสธ ${fr.no} ของ ${fr.by} — เหตุผลคืออะไรคะ? (พิมพ์ข้อความ หรือ '-' ถ้าไม่ระบุ)`) }
+    try { const r = approveFuelRequest(fr, u); return lineReply(replyToken, `✅ อนุมัติ ${r.no} เบิกค่าน้ำมัน ${fmtMoney(r.amount)} บาท แล้ว — ลงบัญชีจ่ายจากกองค่าน้ำมัน (คงเหลือ ${fmtMoney(acct.pettyState('fuel').balance)} บาท) และแจ้ง ${r.by} ทาง LINE แล้วค่ะ`) }
+    catch (e) { return lineReply(replyToken, '❌ ' + e.message) }
+  }
   // ผู้ตรวจสอบกดในการ์ด "ตรวจสอบใบขอซื้อ": ตรวจแล้ว → ออก PR + ส่งอนุมัติ · ส่งกลับ → ถามเหตุผลก่อน
   const c = String(data || '').match(/^chk:(\d+):(ok|back)$/)
   if (c) {
@@ -1205,7 +1310,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (/^(ช่วย|help|\?|คำสั่ง)$/i.test(t)) {
     return lineReply(replyToken, (lineCanCommand(u)
       ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• รออนุมัติ — เอกสารที่รอคุณอนุมัติ (กดปุ่มในการ์ดได้เลย) · อนุมัติ PR-69-0144 / ปฏิเสธ PR-69-0144 เหตุผล\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
-      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ / เปิด PR / ขอจ้าง … เช่น "เปิด PR ปูนซีเมนต์ 50 ถุง บ้านคุณพร" หรือ "ขอจ้าง ช่างทาสีเก็บงานที่ออฟฟิศ" → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ`)
+      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ / เปิด PR / ขอจ้าง … เช่น "เปิด PR ปูนซีเมนต์ 50 ถุง บ้านคุณพร" หรือ "ขอจ้าง ช่างทาสีเก็บงานที่ออฟฟิศ" → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ\n\nค่าน้ำมันรถ:\n• เบิกน้ำมัน 1500 บ้านคุณพร ทะเบียน กข1234 — ขอเบิกค่าน้ำมันรถ → 'ตกลง' ส่งให้ผู้บริหารอนุมัติ (จ่ายจากกองค่าน้ำมัน)`)
   }
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
   const ctx = getLineCtx(uid)
@@ -1219,6 +1324,27 @@ async function handleLineUserMessage(uid, text, replyToken) {
       return lineReply(replyToken, `รับทราบค่ะ ${pr?.no || ''}: ${SRC_PREF_LABEL[m]}${m !== 'shop' ? ' — พอใบอนุมัติครบ AI จะค้นร้านออนไลน์แล้วส่งลิงก์ให้จัดซื้อ (และคุณ) ทาง LINE' : ''}`)
     }
   }
+  // ---- เบิกค่าน้ำมันรถ: ร่าง → 'ตกลง' ส่งขออนุมัติ · ผู้บริหารตอบเหตุผลปฏิเสธ ----
+  if (ctx?.kind === 'fuel_note') {
+    setLineCtx(uid, null)
+    const fr = fuelById(ctx.fr_id)
+    if (!fr) return lineReply(replyToken, 'ไม่พบคำขอเบิกนี้แล้วค่ะ')
+    try { const r = rejectFuelRequest(fr, u, t === '-' ? '' : t); return lineReply(replyToken, `❌ ปฏิเสธ ${r.no} แล้ว${t !== '-' ? ' (เหตุผล: ' + t + ')' : ''} — แจ้ง ${r.by} ทาง LINE แล้วค่ะ`) }
+    catch (e) { return lineReply(replyToken, '❌ ' + e.message) }
+  }
+  if (ctx?.kind === 'fuel') {
+    if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { setLineCtx(uid, null); return lineReply(replyToken, 'ยกเลิกคำขอเบิกค่าน้ำมันแล้วค่ะ') }
+    if (/^(ตกลง|ok|โอเค|ยืนยัน|ใช่|confirm|ส่ง|ส่งเลย)$/i.test(t)) {
+      if (!ctx.draft?.amount) return lineReply(replyToken, 'ยังไม่ได้ระบุยอดค่ะ พิมพ์ตัวเลข เช่น 1500')
+      setLineCtx(uid, null)
+      try {
+        const fr = await createFuelRequest({ ...ctx.draft }, u, 'line')
+        return lineReply(replyToken, `✅ ส่งคำขอเบิกค่าน้ำมัน ${fr.no} ยอด ${fmtMoney(fr.amount)} บาท แล้ว\n${fr.notified ? `📨 ส่งการ์ดให้ผู้บริหาร ${fr.notified} คนอนุมัติทาง LINE แล้ว` : '⚠ ยังไม่มีผู้บริหารที่ผูก LINE — ใบรออนุมัติในเว็บ (บัญชี → ค่าน้ำมันรถ)'} — อนุมัติแล้วระบบจะแจ้งคุณกลับมาที่นี่ค่ะ`)
+      } catch (e) { return lineReply(replyToken, '❌ ' + e.message) }
+    }
+    return handleLineFuel(uid, u, t, replyToken, ctx)
+  }
+  if (FUEL_CMD_RE.test(t) && !ORDER_CMD_RE.test(t)) return handleLineFuel(uid, u, t, replyToken, null)
   if (ORDER_CMD_RE.test(t) || (/^สั่ง\s+[ก-๙a-zA-Z]/.test(t) && !lineCanCommand(u))) return handleLineOrder(uid, u, t, replyToken, ctx)
   if (ctx?.kind === 'clarify') {
     setLineCtx(uid, null)
@@ -2423,6 +2549,26 @@ api.get('/petty-cash/overview', financeOnly, (_req, res) => res.json(acct.pettyO
 api.post('/petty-cash/float', financeOnly, (req, res) => { try { const k = pettyFundOf(req); acct.setPettyFloat(req.body?.float, k); audit(req, `ตั้งวงเงิน${acct.pettyFund(k).label}`, String(req.body?.float || '')); res.json(acct.pettyState(k)) } catch (e) { res.status(400).json({ error: e.message }) } })
 api.post('/petty-cash/expense', financeOnly, (req, res) => { try { const k = pettyFundOf(req); acct.pettyExpense({ ...(req.body || {}), fund: k, by: req.user.name }); audit(req, `จ่าย${acct.pettyFund(k).label}`, `${req.body?.item || ''} ${req.body?.amount || ''}${req.body?.house_code ? ' บ้าน ' + req.body.house_code : ''}`); res.json(acct.pettyState(k)) } catch (e) { res.status(400).json({ error: e.message }) } })
 api.post('/petty-cash/topup', financeOnly, (req, res) => { try { const k = pettyFundOf(req); const r = acct.pettyTopup({ ...(req.body || {}), fund: k, by: req.user.name }); audit(req, `เติม${acct.pettyFund(k).label}`, String(r.amount)); res.json({ ...acct.pettyState(k), added: r.amount }) } catch (e) { res.status(400).json({ error: e.message }) } })
+// ---- คำขอเบิกค่าน้ำมันรถ (จาก LINE หรือเว็บ) ----
+api.get('/fuel-requests', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM fuel_requests ORDER BY id DESC LIMIT 300').all()
+  const mine = !(canApproveFuel(req.user) || req.user.role === 'accounting')
+  res.json(mine ? rows.filter((r) => r.user_id === req.user.id || r.by === req.user.name) : rows)
+})
+api.post('/fuel-requests', requireAuth, async (req, res) => {
+  try { const fr = await createFuelRequest(req.body || {}, req.user, 'web'); audit(req, 'ขอเบิกค่าน้ำมัน', `${fr.no} ${fr.amount}`); res.status(201).json(fr) }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }) }
+})
+api.post('/fuel-requests/:id/approve', requireAuth, (req, res) => {
+  const fr = fuelById(req.params.id); if (!fr) return res.status(404).json({ error: 'ไม่พบคำขอ' })
+  if (!canApproveFuel(req.user)) return res.status(403).json({ error: 'อนุมัติได้เฉพาะผู้บริหาร/บัญชี' })
+  try { const r = approveFuelRequest(fr, req.user); audit(req, 'อนุมัติเบิกค่าน้ำมัน', `${r.no} ${r.amount}`); res.json(r) } catch (e) { res.status(e.status || 400).json({ error: e.message }) }
+})
+api.post('/fuel-requests/:id/reject', requireAuth, (req, res) => {
+  const fr = fuelById(req.params.id); if (!fr) return res.status(404).json({ error: 'ไม่พบคำขอ' })
+  if (!canApproveFuel(req.user)) return res.status(403).json({ error: 'ปฏิเสธได้เฉพาะผู้บริหาร/บัญชี' })
+  try { const r = rejectFuelRequest(fr, req.user, req.body?.note || ''); audit(req, 'ปฏิเสธเบิกค่าน้ำมัน', r.no); res.json(r) } catch (e) { res.status(e.status || 400).json({ error: e.message }) }
+})
 api.get('/petty-cash/statement', financeOnly, (req, res) => { try { res.json(acct.pettyStatement({ from: req.query.from || undefined, to: req.query.to || undefined, fund: pettyFundOf(req) })) } catch (e) { res.status(400).json({ error: e.message }) } })
 // สร้าง/ซ่อมรายการบัญชีอัตโนมัติจากข้อมูลเดิมทั้งหมด (idempotent)
 api.post('/accounting/rebuild', financeOnly, (req, res) => {

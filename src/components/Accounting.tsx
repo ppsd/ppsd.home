@@ -3,7 +3,7 @@ import { api } from '../api'
 import { baht } from '../data'
 import { exportXlsx, ExportButton } from '../exportCsv'
 import { company } from '../erpData'
-import { useAppOptional } from '../store'
+import { useAppOptional, useLiveRefresh } from '../store'
 
 // ระบบบัญชีคู่ (Double-entry / General Ledger) — เฟส 1
 // งบการเงิน · งบทดลอง · สมุดรายวัน · แยกประเภท · ผังบัญชี
@@ -901,6 +901,7 @@ function Closing({ accounts }: { accounts: Account[] }) {
 interface PettyRow { no: string; date: string; memo: string; debit: number; credit: number; balance: number; house_code?: string; house_name?: string }
 interface PettyState { fund?: string; label?: string; float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number }
 interface PettyOverviewRow { fund: string; label: string; float: number; balance: number; toReplenish: number }
+interface FuelRequest { id: number; no: string; date: string; date_iso: string; by: string; amount: number; house_code: string; house_name: string; vehicle: string; note: string; status: string; approved_by?: string; approved_at?: string; reject_note?: string; source: string }
 interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string; house_code?: string; house_name?: string }
 interface PettyStatement { fund?: string; label?: string; float: number; from: string; to: string; opening: number; rows: PettyStmtRow[]; totalOut: number; totalIn: number; closing: number; toReplenish: number }
 // กองเงินสดย่อย 2 กอง วงเงินแยกกัน: เงินสดย่อยทั่วไป และ ค่าน้ำมันรถ (แยกออกมาเพื่อคุมลิมิตน้ำมันต่างหาก ปรับเพิ่ม-ลดได้เหมือนกัน)
@@ -929,6 +930,9 @@ function PettyCash({ fund }: { fund: PettyFundKey }) {
   const fq = 'fund=' + fund
   const app = useAppOptional()
   const [overview, setOverview] = useState<PettyOverviewRow[]>([])
+  const [reqs, setReqs] = useState<FuelRequest[]>([])
+  const loadReqs = () => { if (fund === 'fuel') api.get<FuelRequest[]>('/fuel-requests').then(setReqs).catch(() => setReqs([])) }
+  useLiveRefresh(['fuel'], () => { load(); loadReqs() })
   // รายชื่อบ้านให้เลือกผูก (บ้านที่ยังไม่ปิดงานขึ้นก่อน แล้วตามด้วยที่เหลือ) — เผื่อโฟร์แมนเบิกไปซื้อของให้บ้านหลังนั้น
   const houses = (app?.data.houses || []).slice().sort((a, b) => (a.status === 'ส่งมอบแล้ว' ? 1 : 0) - (b.status === 'ส่งมอบแล้ว' ? 1 : 0) || a.code.localeCompare(b.code))
   const [st, setSt] = useState<PettyState | null>(null)
@@ -943,7 +947,7 @@ function PettyCash({ fund }: { fund: PettyFundKey }) {
     api.get<PettyState>('/petty-cash?' + fq).then((s) => { setSt(s); setFloatEdit(String(s.float)) }).catch(() => setSt(null))
     api.get<PettyOverviewRow[]>('/petty-cash/overview').then(setOverview).catch(() => setOverview([]))
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); loadReqs() }, [])
   const printStatement = async () => {
     const q = new URLSearchParams(); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)
     q.set('fund', fund); const s = await api.get<PettyStatement>('/petty-cash/statement?' + q.toString()); setStmt(s)
@@ -1010,6 +1014,9 @@ function PettyCash({ fund }: { fund: PettyFundKey }) {
         </div>
       </div>
 
+      {/* คำขอเบิกค่าน้ำมัน (โฟร์แมนขอผ่าน LINE: "เบิกน้ำมัน 1500 บ้านคุณพร ทะเบียน กข1234") — อนุมัติแล้วจ่ายจากกองนี้ทันที */}
+      {fund === 'fuel' && <FuelRequestPanel reqs={reqs} balance={st.balance} onDone={() => { load(); loadReqs() }} setMsg={setMsg} />}
+
       {/* พิมพ์ใบสรุปตามรอบ */}
       <div style={{ ...card, padding: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 600 }}>ใบสรุปรายจ่าย{FUND.label}</span>
@@ -1044,6 +1051,54 @@ function PettyCash({ fund }: { fund: PettyFundKey }) {
       </div>
 
       {stmt && <PettyStatementDoc s={stmt} onClose={() => setStmt(null)} />}
+    </div>
+  )
+}
+
+// คำขอเบิกค่าน้ำมันรถ: รออนุมัติ (กดอนุมัติ/ปฏิเสธได้ที่นี่ เหมือนกดในการ์ด LINE) + ประวัติล่าสุด
+function FuelRequestPanel({ reqs, balance, onDone, setMsg }: { reqs: FuelRequest[]; balance: number; onDone: () => void; setMsg: (m: string) => void }) {
+  const pending = reqs.filter((r) => r.status === 'รออนุมัติ')
+  const done = reqs.filter((r) => r.status !== 'รออนุมัติ').slice(0, 8)
+  const act = async (r: FuelRequest, kind: 'approve' | 'reject') => {
+    let note = ''
+    if (kind === 'reject') { const n = window.prompt(`เหตุผลที่ปฏิเสธ ${r.no} (เว้นว่างได้)`); if (n === null) return; note = n }
+    try { await api.post(`/fuel-requests/${r.id}/${kind}`, { note }); setMsg(kind === 'approve' ? `✅ อนุมัติ ${r.no} แล้ว — จ่าย ${baht(r.amount)} จากกองค่าน้ำมัน แจ้ง ${r.by} ทาง LINE แล้ว` : `❌ ปฏิเสธ ${r.no} แล้ว`); onDone() }
+    catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
+  }
+  const stColor = (s: string) => s === 'อนุมัติ' ? '#2E7D55' : s === 'ปฏิเสธ' ? '#C24036' : '#C0852C'
+  return (
+    <div style={card}>
+      <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>คำขอเบิกค่าน้ำมัน</span>
+        {pending.length > 0 && <span style={{ fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#FBF1DF', borderRadius: 20, padding: '2px 9px' }}>รออนุมัติ {pending.length}</span>}
+        <span style={{ fontSize: 11.5, color: '#94A0A8' }}>โฟร์แมนพิมพ์ในไลน์ “เบิกน้ำมัน 1500 บ้านคุณพร ทะเบียน กข1234” → ผู้บริหารกดอนุมัติในการ์ด LINE หรือที่นี่ → หักจากกองนี้ทันที</span>
+      </div>
+      {pending.length === 0 && done.length === 0 && <div style={{ padding: 18, textAlign: 'center', color: '#94A0A8', fontSize: 12.5 }}>ยังไม่มีคำขอเบิก</div>}
+      {(pending.length > 0 || done.length > 0) && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead><tr style={{ background: '#F7F9FB' }}>
+            <th style={{ ...th, paddingLeft: 16 }}>เลขที่/วันที่</th><th style={th}>ผู้ขอ</th><th style={th}>บ้าน · ทะเบียน · หมายเหตุ</th>
+            <th style={{ ...th, textAlign: 'right' }}>ยอด</th><th style={th}>สถานะ</th><th style={{ ...th, paddingRight: 16 }} />
+          </tr></thead>
+          <tbody>
+            {[...pending, ...done].map((r) => (
+              <tr key={r.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6', background: r.status === 'รออนุมัติ' ? '#FFFDF7' : undefined }}>
+                <td style={{ padding: '8px 16px' }}><span className="num" style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.no}</span><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.date}{r.source === 'line' ? ' · LINE' : ''}</div></td>
+                <td style={{ padding: '8px 12px' }}>{r.by}</td>
+                <td style={{ padding: '8px 12px', color: '#5C6770' }}>{r.house_name ? <HouseTag code={r.house_code} name={r.house_name} /> : <span style={{ color: '#94A0A8' }}>ส่วนกลาง</span>}{r.vehicle ? <span style={{ marginLeft: 8 }}>🚗 {r.vehicle}</span> : null}{r.note ? <div style={{ fontSize: 11.5 }}>{r.note}</div> : null}</td>
+                <td className="num" style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: r.status === 'รออนุมัติ' && r.amount > balance ? '#C24036' : '#1E2E3B' }} title={r.status === 'รออนุมัติ' && r.amount > balance ? 'กองค่าน้ำมันไม่พอ ต้องเติมก่อน' : ''}>{baht(r.amount)}</td>
+                <td style={{ padding: '8px 12px' }}><span style={{ fontSize: 11.5, fontWeight: 600, color: stColor(r.status) }}>{r.status}</span>{r.approved_by ? <div style={{ fontSize: 10.5, color: '#94A0A8' }}>โดย {r.approved_by}{r.reject_note ? ' · ' + r.reject_note : ''}</div> : null}</td>
+                <td style={{ padding: '8px 16px 8px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {r.status === 'รออนุมัติ' && <>
+                    <button onClick={() => act(r, 'approve')} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '6px 11px', cursor: 'pointer', marginRight: 6 }}>อนุมัติ</button>
+                    <button onClick={() => act(r, 'reject')} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, color: '#C24036', background: '#fff', border: '1px solid #E8C9C5', borderRadius: 7, padding: '6px 11px', cursor: 'pointer' }}>ปฏิเสธ</button>
+                  </>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }
