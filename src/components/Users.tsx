@@ -206,7 +206,8 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const [flowMsg, setFlowMsg] = useState('')
   const [docRecips, setDocRecips] = useState<number[]>([]) // ผู้รับใบ PR (รูป) ทาง LINE หลังอนุมัติครบ
   const [flowPublic, setFlowPublic] = useState('')
-  const loadFlow = () => api.get<{ checker: { id: number; name: string; line: boolean } | null; doc_recipients?: { id: number }[]; public_url?: string }>('/procurement/flow').then((r) => { setFlowChecker(r.checker); setFlowSel(r.checker ? String(r.checker.id) : ''); setDocRecips((r.doc_recipients || []).map((x) => x.id)); setFlowPublic(r.public_url || '') }).catch(() => {})
+  const [lineErr, setLineErr] = useState<{ at: string; status: number; reason: string } | null>(null) // ข้อผิดพลาดล่าสุดจาก LINE (บอกว่าส่งไม่ได้เพราะอะไร)
+  const loadFlow = () => api.get<{ checker: { id: number; name: string; line: boolean } | null; doc_recipients?: { id: number }[]; public_url?: string; line_last_error?: { at: string; status: number; reason: string } | null }>('/procurement/flow').then((r) => { setFlowChecker(r.checker); setFlowSel(r.checker ? String(r.checker.id) : ''); setDocRecips((r.doc_recipients || []).map((x) => x.id)); setFlowPublic(r.public_url || ''); setLineErr(r.line_last_error || null) }).catch(() => {})
   useEffect(() => { if (users && isAdmin) loadFlow() /* eslint-disable-next-line */ }, [users])
   const saveFlow = async () => {
     try { const r = await api.put<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow', { checker_user_id: Number(flowSel) || 0, doc_recipients: docRecips }); setFlowChecker(r.checker); setFlowMsg(r.checker ? `บันทึกแล้ว — ใบขอซื้อใหม่ทุกใบจะส่งให้ ${r.checker.name} ตรวจก่อนออก PR${r.checker.line ? '' : ' (ยังไม่ผูก LINE — จะเห็นเฉพาะในเว็บ)'}` : 'ยกเลิกขั้นตรวจสอบแล้ว — ใบขอซื้อไปรออนุมัติทันที') }
@@ -466,6 +467,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                 </label>
               })}
             </div>
+            {lineErr && <div style={{ fontSize: 12, color: '#C24036', background: '#FBEEEC', border: '1px solid #E8C9C5', borderRadius: 8, padding: '7px 11px', marginTop: 8 }}>⚠ LINE ส่งไม่สำเร็จล่าสุด ({lineErr.at}): {lineErr.reason}</div>}
             <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 6 }}>รูปใบ PR สร้างด้วย Google Chrome/Edge ในเครื่องเซิร์ฟเวอร์ · LINE ดึงรูปผ่านลิงก์สาธารณะ{flowPublic ? ` (${flowPublic})` : ' — ยังไม่มีลิงก์: เปิด "ลิงก์สาธารณะอัตโนมัติ" ที่การ์ดแจ้งเตือน LINE ก่อน ไม่งั้นจะส่งเป็นข้อความสรุปแทน'} · กด "บันทึก" ด้านบนเพื่อบันทึกผู้รับ</div>
             {flowMsg && <div style={{ fontSize: 12, marginTop: 8, color: '#2E7D55' }}>{flowMsg}</div>}
             {flowChecker && !flowChecker.line && (
