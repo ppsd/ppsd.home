@@ -222,7 +222,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     if (st.startsWith('sent')) return { t: '📨 ส่งการ์ด LINE แล้ว ' + st.slice(5, 16), c: '#2E7D55' }
     if (st === 'no_line') return { t: `⚠ ${flow?.checker?.name || 'ผู้ตรวจสอบ'} ยังไม่ผูก LINE`, c: '#C24036' }
     if (st === 'no_token') return { t: '⚠ ยังไม่ตั้ง LINE token', c: '#C24036' }
-    if (st === 'failed') return { t: '⚠ ส่ง LINE ไม่สำเร็จ', c: '#C24036' }
+    if (st.startsWith('failed')) { const why = st.slice(7); return { t: '⚠ ส่ง LINE ไม่สำเร็จ' + (why ? ' — ' + why : ''), c: '#C24036' } }
     return null
   }
   const sendDoc = async (r: ApiPR) => {

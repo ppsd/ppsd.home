@@ -469,17 +469,34 @@ async function lineSourceName(type, id, token) {
 // ส่งข้อความ LINE (push ถึง user/group) — ไม่มี token = ไม่ส่ง ไม่พัง
 // แปลง text หรือ array ของข้อความ/การ์ด (Flex) ให้เป็น messages ของ LINE (สูงสุด 5 ต่อครั้ง)
 const lineMessages = (m) => (Array.isArray(m) ? m : [m]).slice(0, 5).map((x) => (typeof x === 'string' ? { type: 'text', text: x.slice(0, 4900) } : x))
+// อธิบายสาเหตุที่ LINE ปฏิเสธ (ภาษาคน) — เก็บไว้ให้หน้าเว็บบอกได้ว่าติดตรงไหน
+function explainLineError(status, body) {
+  const b = String(body || '')
+  if (status === 429 || /monthly limit|quota/i.test(b)) return 'โควตาข้อความ LINE ของเดือนนี้หมด (แพ็กเกจฟรี 200 ข้อความ/เดือน) — รอเดือนถัดไปหรืออัปเกรดแพ็กเกจ LINE OA'
+  if (status === 401 || /invalid.*token|authentication/i.test(b)) return 'LINE token ไม่ถูกต้องหรือหมดอายุ — ออก Channel access token ใหม่ใน LINE Developers แล้วใส่ที่ ผู้ใช้งาน → แจ้งเตือน LINE'
+  if (/Failed to send messages/i.test(b)) return 'ผู้รับยังไม่ได้เพิ่ม LINE OA ของบริษัทเป็นเพื่อน หรือบล็อกไว้ — ให้ผู้รับสแกน QR เพิ่มเพื่อนก่อน'
+  if (/property.*to.*invalid|invalid user id/i.test(b)) return 'รหัสผู้ใช้ LINE ที่ผูกไว้ไม่ถูกต้อง — ให้ผู้รับผูก LINE ใหม่ (ผู้ใช้งาน → ผูก LINE)'
+  if (status === 400) return 'LINE ปฏิเสธข้อความ (400): ' + b.slice(0, 120)
+  if (status === 0) return 'เชื่อมต่อ api.line.me ไม่ได้ (เน็ต/ไฟร์วอลล์/หมดเวลา)'
+  return `LINE ตอบ ${status}: ${b.slice(0, 120)}`
+}
+let lineLastError = null // { at, to, status, reason }
+function noteLineError(to, status, body) {
+  lineLastError = { at: nowTS(), to: String(to || '').slice(0, 8) + '…', status, reason: explainLineError(status, body) }
+  try { setSetting('line_last_error', JSON.stringify(lineLastError)) } catch { /* ignore */ }
+  console.error('[line push]', status, String(body || '').slice(0, 200))
+}
 async function linePush(to, msg) {
   const token = getSetting('line_token', '')
-  if (!token || !to) return false
+  if (!token || !to) { if (!token) lineLastError = { at: nowTS(), to: '', status: 0, reason: 'ยังไม่ได้ตั้ง LINE token' }; return false }
   try {
     const r = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
       body: JSON.stringify({ to, messages: lineMessages(msg) }), signal: AbortSignal.timeout(10000),
     })
-    if (!r.ok) console.error('[line push]', r.status, (await r.text()).slice(0, 200))
+    if (!r.ok) noteLineError(to, r.status, await r.text())
     return r.ok
-  } catch { return false }
+  } catch (e) { noteLineError(to, 0, e.message); return false }
 }
 async function lineReply(replyToken, msg) {
   const token = getSetting('line_token', '')
@@ -964,7 +981,7 @@ async function notifyChecker(pr) {
   if (!c) st = 'no_checker'
   else if (!getSetting('line_token', '')) st = 'no_token'
   else if (!c.line_uid) st = 'no_line'
-  else st = (await linePush(c.line_uid, [`มีใบขอซื้อรอตรวจสอบค่ะ — ${pr.no} จาก ${pr.by || '-'} ยอด ${fmtMoney(pr.amount)} บาท`, checkFlex(pr)])) ? 'sent:' + nowTS() : 'failed'
+  else st = (await linePush(c.line_uid, [`มีใบขอซื้อรอตรวจสอบค่ะ — ${pr.no} จาก ${pr.by || '-'} ยอด ${fmtMoney(pr.amount)} บาท`, checkFlex(pr)])) ? 'sent:' + nowTS() : 'failed:' + (lineLastError?.reason || 'ไม่ทราบสาเหตุ')
   try { db.prepare('UPDATE purchase_requests SET check_notify=? WHERE id=?').run(st, pr.id) } catch { /* ignore */ }
   if (st !== 'sent:' + st.slice(5)) console.log(`[pr-check] ${pr.no} ไม่ได้ส่งการ์ดให้ผู้ตรวจสอบ: ${st}`)
   return st
@@ -4022,7 +4039,7 @@ api.post('/purchase-requests/:id/check', canWrite, (req, res) => {
   catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) }
 })
 // ตั้งค่าขั้นตอนจัดซื้อ: ใครเป็นผู้ตรวจสอบใบขอซื้อก่อนออก PR (ว่าง = ข้ามขั้นตรวจสอบ ไปรออนุมัติเลย)
-const flowInfo = () => { const c = prChecker(); return { checker: c ? { id: c.id, name: c.name, line: !!c.line_uid } : null, line_token: !!getSetting('line_token', ''), doc_recipients: docRecipients().map((u) => ({ id: u.id, name: u.name, line: !!u.line_uid })), public_url: publicBaseUrl() } }
+const flowInfo = () => { const c = prChecker(); return { checker: c ? { id: c.id, name: c.name, line: !!c.line_uid } : null, line_token: !!getSetting('line_token', ''), doc_recipients: docRecipients().map((u) => ({ id: u.id, name: u.name, line: !!u.line_uid })), public_url: publicBaseUrl(), line_last_error: lineLastError || (() => { try { return JSON.parse(getSetting('line_last_error', '')) } catch { return null } })() } }
 api.get('/procurement/flow', canWrite, (_req, res) => res.json(flowInfo()))
 api.put('/procurement/flow', adminOnly, (req, res) => {
   const b = req.body || {}
