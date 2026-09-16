@@ -1,6 +1,7 @@
 import { company } from '../erpData'
 import { PPSD_LOGO_FULL } from '../assets'
 import { bahtText } from '../data'
+import { docMoney } from '../money'
 import { useAppOptional } from '../store'
 import type { ApiPO, ApiVendor } from '../store'
 import ApproverSigns from './ApproverSigns'
@@ -16,9 +17,12 @@ export default function PoDoc({ po, houseName, onClose, standalone, vendorInfo }
   // ดึงที่อยู่/เลขภาษีผู้ขายจากทะเบียน (ถ้ากรอกไว้) มาแสดงบนเอกสาร
   const app = useAppOptional()
   const vend = vendorInfo ?? (app?.data.vendors || []).find((v) => v.name === po.vendor)
-  const net = po.amount || 0
-  const vat = Math.round(net * 0.07 * 100) / 100
-  const grand = net + vat
+  // สรุปยอดจากใบ (ใบเก่า: amount รวม VAT แล้วถ้ามี vat_amount) — ไม่บวก 7% ซ้ำอีก
+  const m = docMoney(po)
+  const net = m.subtotal
+  const vat = m.vat_amount
+  const grand = m.total
+  const lines = (po.items && po.items.length ? po.items : [{ desc: po.item, qty: 0, unit: '', price: net }])
   const credit = po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'
   const lbl: React.CSSProperties = { color: '#333', width: 78, display: 'inline-block', verticalAlign: 'top' }
   return (
@@ -73,19 +77,21 @@ export default function PoDoc({ po, houseName, onClose, standalone, vendorInfo }
               <th style={{ ...th, width: 52 }}>จำนวน</th>
               <th style={{ ...th, width: 60 }}>หน่วยละ</th>
               <th style={{ ...th, width: 60 }}>ส่วนลด</th>
-              <th style={{ ...th, width: 90 }}>ราคารวมภาษี</th>
+              <th style={{ ...th, width: 90 }}>จำนวนเงิน</th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td style={{ ...td, textAlign: 'center' }} className="num">1</td>
-              <td style={td}>{po.item}</td>
-              <td style={{ ...td, textAlign: 'right' }} className="num">-</td>
-              <td style={{ ...td, textAlign: 'right' }} className="num">-</td>
-              <td style={{ ...td, textAlign: 'right' }} className="num">0.00</td>
-              <td style={{ ...td, textAlign: 'right' }} className="num">{money(net)}</td>
-            </tr>
-            {Array.from({ length: 6 }).map((_, i) => (
+            {lines.map((it, i) => (
+              <tr key={i}>
+                <td style={{ ...td, textAlign: 'center' }} className="num">{i + 1}</td>
+                <td style={td}>{it.desc}</td>
+                <td style={{ ...td, textAlign: 'right' }} className="num">{it.qty > 0 ? it.qty.toLocaleString() + (it.unit ? ' ' + it.unit : '') : '-'}</td>
+                <td style={{ ...td, textAlign: 'right' }} className="num">{it.qty > 0 ? money(it.price) : '-'}</td>
+                <td style={{ ...td, textAlign: 'right' }} className="num">-</td>
+                <td style={{ ...td, textAlign: 'right' }} className="num">{money(it.qty > 0 ? it.qty * it.price : it.price)}</td>
+              </tr>
+            ))}
+            {Array.from({ length: Math.max(0, 7 - lines.length) }).map((_, i) => (
               <tr key={i}><td style={{ ...td, height: 20 }}>&nbsp;</td><td style={td} /><td style={td} /><td style={td} /><td style={td} /><td style={td} /></tr>
             ))}
           </tbody>
@@ -98,7 +104,7 @@ export default function PoDoc({ po, houseName, onClose, standalone, vendorInfo }
             <div style={{ marginTop: 18, paddingTop: 6, borderTop: '1px dotted #999' }}>ตัวอักษร: <b>({bahtText(grand)})</b></div>
           </div>
           <div style={{ width: 260 }}>
-            {[['ราคาสินค้า', money(net)], ['หัก ส่วนลด', '0.00'], ['ภาษีมูลค่าเพิ่ม 7%', money(vat)]].map(([l, v], i) => (
+            {[['ราคาสินค้า', money(net)], ['หัก ส่วนลด', m.discount ? money(m.discount) : '0.00'], ['ยอดก่อนภาษีมูลค่าเพิ่ม', money(m.before_vat)], [m.vat_mode === 'none' ? 'ภาษีมูลค่าเพิ่ม (ไม่มี VAT)' : 'ภาษีมูลค่าเพิ่ม 7%', m.vat_mode === 'none' ? '-' : money(vat)]].map(([l, v], i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: '1px solid #E1E5EA' }}><span style={{ color: '#333' }}>{l}</span><span className="num">{v}</span></div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 10px', background: '#F2F2F2', fontWeight: 700, fontSize: 13 }}><span>จำนวนเงินรวมทั้งสิ้น</span><span className="num">{money(grand)}</span></div>
