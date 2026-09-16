@@ -1914,6 +1914,8 @@ test('ค่าน้ำมัน: ยอดแต่ละบรรทัดป
   assert.equal(b.data.expense.amount, 357, '356.50 → 357 (ปัดขึ้น)')
   const c = await POST('/petty-cash/expense', { fund: 'fuel', ref: 'TIO-3', amount: 499.49, vat_mode: 'none' })
   assert.equal(c.data.expense.amount, 499, 'ยอดรวมอย่างเดียว 499.49 → 499')
+  const nf = await POST('/petty-cash/expense', { fund: 'fuel', amount: 200, vat_mode: 'none' })
+  assert.equal(nf.data.expense.doc_no, '', 'กองน้ำมันไม่ออกใบสำคัญรับเงิน')
   const d = await POST('/petty-cash/expense', { fund: 'petty', ref: 'B-1', items: [{ desc: 'ตะปู', qty: 2.5, unit: 'กก.', price: 40.82 }], vat_mode: 'none' })
   assert.equal(d.data.expense.amount, 102.05, 'เงินสดย่อยทั่วไปยังคิดสตางค์')
 })
