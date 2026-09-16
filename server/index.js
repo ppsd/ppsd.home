@@ -2704,9 +2704,12 @@ api.get('/petty-cash/refs', financeOnly, (req, res) => {
     const grs = db.prepare('SELECT g.id, g.po_id, g.po_no, g.date, g.result, p.vendor, p.amount, p.item FROM goods_receipts g LEFT JOIN purchase_orders p ON p.id=g.po_id ORDER BY g.id DESC LIMIT 200').all()
     const seenPo = new Set(grs.map((g) => g.po_id))
     rows = grs.map((g) => ({ id: g.id, no: `RR-${String(g.id).padStart(5, '0')}`, label: `RR-${String(g.id).padStart(5, '0')} · ${g.po_no || ''} ${g.vendor || ''} · ${g.item || ''} (${g.result || ''}) ${g.date || ''}`, amount: g.amount || 0, date: g.date || '' }))
-    for (const p of db.prepare("SELECT id, no, date, vendor, amount, item, gr_date FROM purchase_orders WHERE status IN ('รับของแล้ว','ตรวจรับแล้ว','ปิดใบ') AND status<>'ยกเลิก' ORDER BY id DESC LIMIT 200").all()) {
+    // PO ทุกใบที่ไม่ถูกยกเลิก (รับของแล้ว/ปิดงาน ขึ้นก่อน · รอส่งของก็เลือกได้ เผื่อจ่ายเงินสดย่อยตอนรับของหน้างาน) — บอกสถานะรับของไว้ในรายการ
+    const pos = db.prepare("SELECT id, no, date, vendor, amount, item, status, gr_date FROM purchase_orders WHERE status<>'ยกเลิก' ORDER BY (status IN ('รับของแล้ว','ปิดงาน')) DESC, id DESC LIMIT 300").all()
+    for (const p of pos) {
       if (seenPo.has(p.id)) continue
-      rows.push({ id: p.id, no: `RR-${p.no}`, label: `RR-${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ. (รับของแล้ว${p.gr_date ? ' ' + p.gr_date : ''})`, amount: p.amount || 0, date: p.gr_date || p.date || '' })
+      const st = p.status === 'รับของแล้ว' || p.status === 'ปิดงาน' ? `รับของแล้ว${p.gr_date ? ' ' + p.gr_date : ''}` : (p.status || 'รอส่งของ')
+      rows.push({ id: p.id, no: `RR-${p.no}`, label: `RR-${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ. (${st})`, amount: p.amount || 0, date: p.gr_date || p.date || '' })
     }
   }
   else if (kind === 'OE') rows = db.prepare('SELECT id, date, item, vendor, amount, house_code FROM expenses ORDER BY id DESC LIMIT 200').all().map((e) => ({ id: e.id, no: `OE-${String(e.id).padStart(6, '0')}`, label: `OE-${String(e.id).padStart(6, '0')} · ${e.item || ''} ${e.vendor ? '· ' + e.vendor : ''} · ${fmtMoney(e.amount)} บ.`, amount: e.amount || 0, date: e.date || '' }))
