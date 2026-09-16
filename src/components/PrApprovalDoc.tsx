@@ -3,6 +3,7 @@ import { PPSD_LOGO_FULL } from '../assets'
 import type { ApiPR } from '../store'
 import ApproverSigns from './ApproverSigns'
 import { catLabelOf } from '../data'
+import { docMoney } from '../money'
 
 // ใบขอซื้อ / ขอจ้าง (PR) — เลย์เอาต์ตามแบบฟอร์มบริษัท
 const bd = '1px solid #333'
@@ -89,9 +90,13 @@ export default function PrApprovalDoc({ pr, onClose, standalone }: { pr: ApiPR; 
             <div>{chk(false)} ให้ร้านจัดส่งสินค้า วันที่ ......../......../........</div>
           </div>
           <div style={{ width: 260, fontSize: 11 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: '1px solid #E1E5EA' }}><span>รวมราคาสินค้า</span><span className="num">{f2(pr.amount)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: '1px solid #E1E5EA', color: '#333' }}><span>หัก ณ ที่จ่าย 3% (กรณีจ้าง)</span><span className="num">-</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: '#F2F2F2', fontWeight: 700, fontSize: 12.5 }}><span>รวมทั้งสิ้น</span><span className="num">{f2(pr.amount)}</span></div>
+            {(() => { const m = docMoney(pr); const row = (l: string, v: string, bold = false) => <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: '1px solid #E1E5EA', fontWeight: bold ? 600 : 400 }}><span>{l}</span><span className="num">{v}</span></div>; return (<>
+              {row('รวมราคาสินค้า', f2(m.subtotal))}
+              {row('หัก ส่วนลด', m.discount ? f2(m.discount) : '-')}
+              {row('ยอดก่อนภาษีมูลค่าเพิ่ม', f2(m.before_vat))}
+              {row(m.vat_mode === 'none' ? 'ภาษีมูลค่าเพิ่ม (ไม่มี VAT)' : 'ภาษีมูลค่าเพิ่ม 7%', m.vat_mode === 'none' ? '-' : f2(m.vat_amount))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: '#F2F2F2', fontWeight: 700, fontSize: 12.5 }}><span>รวมทั้งสิ้น</span><span className="num">{f2(m.total)}</span></div>
+            </>) })()}
           </div>
         </div>
         <div style={{ border: bd, borderTop: 'none', padding: '5px 8px', fontSize: 10.5 }}>หมายเหตุ ................................................................................................................................................</div>

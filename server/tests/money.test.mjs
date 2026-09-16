@@ -1809,3 +1809,26 @@ test('พอร์ทัลลูกค้า: เปิดด้วยโทเ
   const row = (await GET('/crm/cases')).data.find((x) => x.case_no === cs.data.case_no)
   assert.equal(row.source, 'portal'); assert.equal(row.customer_id, c.id)
 })
+
+test('PR/PO: ส่วนลด + VAT (ไม่มี / รวมแล้ว / ก่อน VAT) → ยอดก่อน VAT, VAT, รวมทั้งสิ้น คำนวณอัตโนมัติ · ใบเก่าแบบ vat_amount ยังใช้ได้', async () => {
+  await PUT('/controls', { enforce_approval_flow: false, enforce_po_over_pr: false })
+  // PR: 2 รายการ 1,000 + 500 = 1,500 − ส่วนลด 100 = 1,400 ก่อน VAT → +7% = 98 → รวม 1,498
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ปูน', qty: 10, unit: 'ถุง', price: 100 }, { desc: 'ทราย', qty: 1, unit: 'คิว', price: 500 }], discount: 100, vat_mode: 'excl' })
+  assert.equal(pr.status, 201, JSON.stringify(pr.data))
+  assert.equal(pr.data.subtotal, 1500); assert.equal(pr.data.discount, 100); assert.equal(pr.data.before_vat, 1400); assert.equal(pr.data.vat_amount, 98); assert.equal(pr.data.amount, 1498); assert.equal(pr.data.vat_mode, 'excl')
+  // PR ไม่มี VAT ไม่ส่งอะไรมา → เหมือนเดิม
+  const pr0 = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ตะปู', qty: 2, unit: 'กก.', price: 50 }] })
+  assert.equal(pr0.data.amount, 100); assert.equal(pr0.data.vat_mode, 'none'); assert.equal(pr0.data.vat_amount, 0)
+  // PO แบบใหม่: ราคารวม VAT แล้ว 1,070 − ส่วนลด 0 → ก่อน VAT 1,000 VAT 70 รวม 1,070
+  const po = await POST('/purchase-orders', { vendor: 'ร้าน VAT', item: 'ปูน', subtotal: 1070, discount: 0, vat_mode: 'incl', amount: 1070, tax_invoice_no: 'TX-001', pr_no: pr.data.no })
+  assert.equal(po.status, 201, JSON.stringify(po.data))
+  assert.equal(po.data.amount, 1070); assert.equal(po.data.before_vat, 1000); assert.equal(po.data.vat_amount, 70); assert.equal(po.data.vat_mode, 'incl')
+  // PO ก่อน VAT 2,000 ส่วนลด 200 → ฐาน 1,800 VAT 126 รวม 1,926
+  const po2 = await POST('/purchase-orders', { vendor: 'ร้าน VAT', item: 'ทราย', subtotal: 2000, discount: 200, vat_mode: 'excl', pr_no: pr0.data.no })
+  assert.equal(po2.data.amount, 1926); assert.equal(po2.data.before_vat, 1800); assert.equal(po2.data.vat_amount, 126); assert.equal(po2.data.discount, 200)
+  // PO แบบเก่า (amount รวม + vat_amount) → ถือว่ารวม VAT แล้ว ไม่คำนวณซ้ำ
+  const po3 = await POST('/purchase-orders', { vendor: 'ร้านเก่า', item: 'เหล็ก', amount: 535, vat_amount: 35, pr_no: pr0.data.no })
+  assert.equal(po3.data.amount, 535); assert.equal(po3.data.vat_amount, 35); assert.equal(po3.data.before_vat, 500); assert.equal(po3.data.vat_mode, 'incl')
+  // VAT เกินยอดถูกกัน
+  assert.equal((await POST('/purchase-orders', { vendor: 'ร้านเก่า', item: 'x', amount: 100, vat_amount: 200 })).status, 400)
+})

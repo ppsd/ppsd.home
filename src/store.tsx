@@ -189,6 +189,13 @@ export interface ApiPO {
   vendor: string
   item: string
   amount: number
+  // สรุปยอด (amount = รวมทั้งสิ้น) — ใบเก่าไม่มี vat_mode
+  subtotal?: number | null
+  discount?: number | null
+  vat_mode?: string | null
+  before_vat?: number | null
+  vat_amount?: number | null
+  tax_invoice_no?: string | null
   status: string
   image?: string | null
   pr_no?: string
@@ -272,6 +279,11 @@ export interface ApiPR {
   id: number
   no: string
   date: string
+  subtotal?: number | null
+  discount?: number | null
+  vat_mode?: string | null
+  before_vat?: number | null
+  vat_amount?: number | null
   house: string
   house_code?: string
   category?: string

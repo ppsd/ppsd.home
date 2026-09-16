@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdir
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { registerCrm, crmNotifications } from './crm.js'
+import { moneySummary } from './money.js'
 import { registerCrmService, registerCrmPublic, serviceNotifications, customerByLine, consumeCustomerCode, handleCustomerLineMessage, handleCustomerLineImage, onQcSaved } from './crm_service.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin, verifyToken } from './security.js'
@@ -3610,12 +3611,17 @@ function createPurchaseOrder(b, user) {
     ? b.items.map((it) => ({ desc: String(it.desc || '').trim(), qty: Number(it.qty) || 0, unit: String(it.unit || ''), price: Number(it.price) || 0 })).filter((it) => it.desc)
     : [{ desc: String(b.item || '').trim(), qty: 0, unit: '', price: Number(b.amount) || 0 }]
   const poVendorId = db.prepare('SELECT id FROM vendors WHERE name=?').get(String(b.vendor))?.id ?? null // ผูกทะเบียนผู้ขาย (ชื่อตรง)
-  // ภาษีซื้อจากใบกำกับจริง (ยอดรวมถือเป็นราคารวม VAT)
-  const poVat = Math.max(0, Number(b.vat_amount) || 0)
+  // สรุปยอด: แบบใหม่ส่ง vat_mode (+subtotal/discount) มา → คำนวณให้ · แบบเก่าส่ง amount(รวม) + vat_amount → ถือว่ารวม VAT แล้ว
+  const poMoney = b.vat_mode
+    ? moneySummary({ subtotal: b.subtotal != null ? b.subtotal : b.amount, discount: b.discount, vat_mode: b.vat_mode })
+    : (() => { const total = Number(b.amount) || 0, vat = Math.max(0, Number(b.vat_amount) || 0); return { subtotal: total, discount: 0, vat_mode: vat > 0 ? 'incl' : 'none', before_vat: Math.round((total - vat) * 100) / 100, vat_amount: vat, total } })()
+  b = { ...b, amount: poMoney.total }
+  const poVat = poMoney.vat_amount
   if (poVat > (Number(b.amount) || 0)) throw { code: 400, msg: 'ยอด VAT มากกว่ามูลค่า PO — ตรวจตัวเลขอีกครั้ง' }
   const info = db
     .prepare('INSERT INTO purchase_orders (no,date,vendor,item,amount,status,image,pr_no,by,payment_type,credit_days,due_date,house_code,due_iso,items,vendor_id,vat_amount,tax_invoice_no) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, todayTH(), b.vendor, b.item, Number(b.amount) || 0, 'รอส่งของ', img, b.pr_no || '', user.name, paymentType, creditDays, dueDate, b.house_code || '', dueIso, JSON.stringify(orderItems), poVendorId, poVat, String(b.tax_invoice_no || '').trim())
+  db.prepare('UPDATE purchase_orders SET discount=?, subtotal=?, before_vat=?, vat_mode=? WHERE id=?').run(poMoney.discount, poMoney.subtotal, poMoney.before_vat, poMoney.vat_mode, info.lastInsertRowid)
   notifyApprovers('po', info.lastInsertRowid, user.name) // ขั้น 5: ส่งการ์ดขออนุมัติ PO ทาง LINE
   audit({ user }, 'ออกใบสั่งซื้อ', `${no} ${b.vendor} ${fmtMoney(Number(b.amount) || 0)}`)
   return poRow(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(info.lastInsertRowid))
@@ -3974,7 +3980,7 @@ api.post('/purchase-requests', canWrite, (req, res) => {
 })
 // สร้างใบขอซื้อ (ใช้ทั้งฟอร์มในเว็บ และสั่งของผ่าน LINE) — ตั้งผู้ตรวจสอบไว้ → สถานะ "รอตรวจสอบ" + ส่งการ์ดให้ผู้ตรวจสอบ · ไม่ตั้ง → รออนุมัติ + ส่งการ์ดอนุมัติ
 function createPurchaseRequest(body, user) {
-  const { house, house_code, category, item, amount, image, items, images, source_pref } = body || {}
+  const { house, house_code, category, item, amount, image, items, images, source_pref, discount, vat_mode } = body || {}
   const srcPref = ['shop', 'online', 'both'].includes(source_pref) ? source_pref : 'shop'
   // รูปแนบ: รับได้สูงสุด 3 รูป (data URL รูปภาพ)
   const imgs = (Array.isArray(images) ? images : (image ? [image] : []))
@@ -3990,6 +3996,9 @@ function createPurchaseRequest(body, user) {
     if (!item) throw { code: 400, msg: 'กรุณากรอกรายการ' }
     total = Number(amount) || 0; summary = item; lineItems = null
   }
+  // ส่วนลด + VAT (มี/ไม่มี) → ยอดก่อน VAT / VAT / รวมทั้งสิ้น (amount ของใบ = รวมทั้งสิ้น)
+  const prMoney = moneySummary({ subtotal: total, discount, vat_mode })
+  total = prMoney.total
   const me = { ...db.prepare('SELECT name FROM users WHERE id = ?').get(user.id), signature: sigOfUser(user.id) }
   const checker = prChecker()
   const needCheck = !!checker && checker.id !== user.id // ตั้งผู้ตรวจสอบไว้ → ทุกใบต้องผ่านการตรวจก่อนออก PR (ยกเว้นผู้ตรวจสอบขอเอง)
@@ -4000,7 +4009,7 @@ function createPurchaseRequest(body, user) {
   const info = db
     .prepare('INSERT INTO purchase_requests (no,date,house,by,item,amount,status,requester_sig,image,house_code,category,items,images) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, todayTH(), hName, me.name, summary, total, needCheck ? 'รอตรวจสอบ' : 'รออนุมัติ', me.signature || null, imgs[0] || null, house_code || '', cat, lineItems ? JSON.stringify(lineItems) : null, imgs.length ? JSON.stringify(imgs) : null)
-  db.prepare('UPDATE purchase_requests SET source_pref=? WHERE id=?').run(srcPref, info.lastInsertRowid)
+  db.prepare('UPDATE purchase_requests SET source_pref=?, discount=?, subtotal=?, before_vat=?, vat_amount=?, vat_mode=? WHERE id=?').run(srcPref, prMoney.discount, prMoney.subtotal, prMoney.before_vat, prMoney.vat_amount, prMoney.vat_mode, info.lastInsertRowid)
   const row = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(info.lastInsertRowid)
   if (needCheck) notifyChecker(row) // ขั้น 2: ส่งการ์ดให้ผู้ตรวจสอบก่อน (ออก PR + ส่งอนุมัติเมื่อผู้ตรวจสอบยืนยัน)
   else notifyApprovers('pr', info.lastInsertRowid, me.name)
