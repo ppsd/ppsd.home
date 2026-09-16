@@ -35,7 +35,7 @@ const PETTY_FUND_INFO: Record<PettyFundKey, { label: string; icon: string; cats:
   fuel: {
     label: 'ค่าน้ำมันรถ', icon: '⛽',
     cats: ['ค่าน้ำมันรถ', 'ค่าทางด่วน/ค่าจอดรถ', 'ค่าซ่อม/บำรุงรักษารถ', 'อื่นๆ (รถ)'],
-    intro: 'กองค่าน้ำมันรถแยกจากเงินสดย่อยทั่วไป มีวงเงินของตัวเอง · ใส่ผู้เบิก ทะเบียนรถ บ้านที่วิ่งไป เลือกได้ว่ามีภาษีซื้อไหม (ใบกำกับภาษีจากปั๊ม) ระบบแยกยอดก่อน/หลัง VAT ให้ · เงินเข้ากอง (เติม) อ้างอิงใบจ่าย OE / ใบสำคัญจ่าย PS ได้',
+    intro: 'กองค่าน้ำมันรถแยกจากเงินสดย่อยทั่วไป มีวงเงินของตัวเอง · ใส่ผู้เบิก ทะเบียนรถ บ้านที่วิ่งไป เลือกได้ว่ามีภาษีซื้อไหม (ใบกำกับภาษีจากปั๊ม) ระบบแยกยอดก่อน/หลัง VAT ให้ ปัดเศษสตางค์เป็นบาทเต็ม · ไม่ออกใบสำคัญรับเงิน (ใช้บิลปั๊ม) · เงินเข้ากอง (เติม) อ้างอิงใบจ่าย OE / ใบสำคัญจ่าย PS ได้',
   },
 }
 const REF_KINDS: { key: string; label: string }[] = [{ key: '', label: '— ไม่อ้างอิง —' }, { key: 'RR', label: 'RR ใบรับของ' }, { key: 'PO', label: 'PO ใบสั่งซื้อ' }, { key: 'OE', label: 'OE ใบจ่ายรายจ่าย' }, { key: 'PS', label: 'PS ใบสำคัญจ่าย (PV)' }]
@@ -111,7 +111,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
       const h = houses.find((x) => x.code === f.house_code)
       setMsg(`${editId || adoptEntry ? 'แก้ไข' : 'บันทึกจ่าย'}${FUND.label}แล้ว${r.expense?.doc_no ? ` — ออกใบสำคัญรับเงิน ${r.expense.doc_no} ให้อัตโนมัติ (ไม่มีเลขที่บิลร้าน)` : ''}${h ? ` · ผูกบ้าน ${h.code} ${h.name}` : ''}${money.vat_amount ? ` · ภาษีซื้อ ${baht(money.vat_amount)} ลงบัญชี 1160` : ''}`)
       resetForm(); load()
-      if (r.expense && !editId && r.expense.doc_no) setVoucher(r.expense)
+      if (fund === 'petty' && r.expense && !editId && r.expense.doc_no) setVoucher(r.expense)
     } catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
   }
   // รายการเก่า (ไม่มีแถวรายการ): เติมฟอร์มจากรายการบัญชีเดิม แล้วบันทึกเป็นรายการแบบใหม่ (ถอนบัญชีเดิมให้)
@@ -178,7 +178,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>{editId ? `✎ แก้ไขรายการ #${editId}` : adoptEntry ? `✎ แก้ไขรายการเก่า (บัญชี #${adoptEntry}) — บันทึกแล้วจะกลายเป็นรายการแบบใหม่ ถอนรายการบัญชีเดิมให้` : `บันทึกจ่าย${FUND.label}`}{(editId || adoptEntry) && <button onClick={resetForm} style={{ ...ghost, padding: '3px 9px', fontSize: 11 }}>ยกเลิกแก้ไข</button>}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
           <label style={{ fontSize: 11.5, color: '#5C6770' }}>วันที่<input type="date" style={{ ...field, width: '100%', marginTop: 3 }} value={f.date_iso} onChange={(e) => setF({ ...f, date_iso: e.target.value })} /></label>
-          <label style={{ fontSize: 11.5, color: '#5C6770' }}>เลขที่บิล/ใบเสร็จร้าน<input style={{ ...field, width: '100%', marginTop: 3 }} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} placeholder="ว่าง = ออกใบสำคัญรับเงิน RV ให้" /></label>
+          <label style={{ fontSize: 11.5, color: '#5C6770' }}>เลขที่บิล/ใบเสร็จร้าน<input style={{ ...field, width: '100%', marginTop: 3 }} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} placeholder={fund === 'fuel' ? 'เลขที่บิล/ใบกำกับจากปั๊ม' : 'ว่าง = ออกใบสำคัญรับเงิน RV ให้'} /></label>
           <label style={{ fontSize: 11.5, color: '#5C6770' }}>ร้านค้า / ผู้รับเงิน<input list={'petty-vendors-' + fund} style={{ ...field, width: '100%', marginTop: 3 }} value={f.vendor} onChange={(e) => setF({ ...f, vendor: e.target.value })} placeholder="พิมพ์หรือเลือก" /><datalist id={'petty-vendors-' + fund}>{vendors.map((v) => <option key={v.id} value={v.name} />)}</datalist></label>
           <label style={{ fontSize: 11.5, color: '#5C6770' }}>ผู้เบิก<input list={'petty-emps-' + fund} style={{ ...field, width: '100%', marginTop: 3 }} value={f.requester} onChange={(e) => setF({ ...f, requester: e.target.value })} placeholder="ชื่อพนักงานที่เบิก" /><datalist id={'petty-emps-' + fund}>{employees.map((e) => <option key={e.id} value={e.name} />)}</datalist></label>
           <label style={{ fontSize: 11.5, color: '#5C6770' }}>{fund === 'fuel' ? 'บ้าน (วิ่งไปบ้านไหน)' : 'บ้าน (ถ้าซื้อให้บ้าน)'}<select style={{ ...field, width: '100%', marginTop: 3, color: f.house_code ? '#1E2E3B' : '#94A0A8' }} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— ส่วนกลางบริษัท —</option>{houses.map((h) => <option key={h.code} value={h.code}>{h.code} · {h.name}</option>)}</select></label>
@@ -230,7 +230,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
 
       {/* ประวัติ */}
       <div style={card}>
-        <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600 }}>ความเคลื่อนไหว{FUND.label} <span style={{ fontSize: 11, color: '#94A0A8', fontWeight: 400 }}>· บัญชี/ผู้ดูแลระบบกด ✎ แก้ไข หรือ 🖨 พิมพ์ใบสำคัญรับเงินได้</span></div>
+        <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600 }}>ความเคลื่อนไหว{FUND.label} <span style={{ fontSize: 11, color: '#94A0A8', fontWeight: 400 }}>· บัญชี/ผู้ดูแลระบบกด ✎ แก้ไขได้{fund === 'petty' ? ' หรือ 🖨 พิมพ์ใบสำคัญรับเงิน' : ''}</span></div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead><tr style={{ background: '#F7F9FB' }}>
@@ -249,7 +249,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.credit ? '#C24036' : '#CBD3DA' }}>{r.credit ? baht(r.credit) : '-'}</td>
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{baht(r.balance)}</td>
                   <td style={{ padding: '8px 16px 8px 4px', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                    {e && <><button onClick={() => setVoucher(e)} title="พิมพ์ใบสำคัญรับเงิน" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>🖨</button> <button onClick={() => startEdit(e)} title="แก้ไข" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎</button> <button onClick={() => del(e)} title="ลบ" style={{ ...ghost, padding: '2px 7px', fontSize: 11, color: '#C24036' }}>✕</button></>}
+                    {e && <>{fund === 'petty' && <><button onClick={() => setVoucher(e)} title="พิมพ์ใบสำคัญรับเงิน" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>🖨</button> </>}<button onClick={() => startEdit(e)} title="แก้ไข" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎</button> <button onClick={() => del(e)} title="ลบ" style={{ ...ghost, padding: '2px 7px', fontSize: 11, color: '#C24036' }}>✕</button></>}
                     {!e && r.credit > 0 && <button onClick={() => startAdopt(r)} title="แก้ไขรายการเก่า (เติมร้าน/รายการ/ผู้เบิก/VAT ได้ · บันทึกแล้วกลายเป็นรายการแบบใหม่)" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎ แก้ไข</button>}
                     {!e && r.debit > 0 && r.entry_id && <button onClick={() => setTopupEdit({ entry_id: r.entry_id!, date_iso: r.date_iso || today, amount: String(r.debit), ref_kind: '', ref_no: '', note: r.memo || '' })} title="แก้ไขรายการเติมเงิน (จำนวน/วันที่/อ้างอิง)" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎ แก้ไข</button>}
                   </td>

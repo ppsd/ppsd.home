@@ -628,7 +628,8 @@ export function pettyExpense(d) {
     if (!db.prepare('SELECT 1 FROM journal_lines WHERE entry_id=? AND account=? AND credit>0').get(oldE.id, f.account)) throw new Error('รายการเดิมไม่ใช่รายการจ่ายของกองนี้')
     removeEntryById(oldE.id, 'แก้ไขรายการเงินสดย่อยเก่า')
   }
-  const docNo = ref ? '' : (row?.doc_no || nextRvNo())
+  // ใบสำคัญรับเงิน (RV) ออกให้เฉพาะเงินสดย่อยทั่วไปที่ไม่มีเลขบิลร้าน — กองน้ำมันไม่ออก (ใช้เลขบิลปั๊ม/ใบกำกับ)
+  const docNo = f.key === 'petty' && !ref ? (row?.doc_no || nextRvNo()) : ''
   const dateIso = /^\d{4}-\d{2}-\d{2}$/.test(String(d.date_iso || '')) ? d.date_iso : (row?.date_iso || todayISO())
   if (row) {
     db.prepare('UPDATE petty_expenses SET fund=?, date_iso=?, cat=?, vendor=?, item=?, items=?, qty_total=?, ref=?, doc_no=?, ref_kind=?, ref_id=?, ref_no=?, house_code=?, vehicle=?, requester=?, note=?, vat_mode=?, discount=?, subtotal=?, before_vat=?, vat_amount=?, amount=?, updated=? WHERE id=?')
