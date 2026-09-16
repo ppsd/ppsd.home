@@ -744,7 +744,7 @@ function approveFuelRequest(fr, u) {
   if (fr.status !== 'รออนุมัติ') throw Object.assign(new Error(`ใบนี้${fr.status}ไปแล้ว`), { status: 409 })
   const st = acct.pettyState('fuel')
   if (st.balance < fr.amount) throw Object.assign(new Error(`กองค่าน้ำมันคงเหลือ ${fmtMoney(st.balance)} บาท ไม่พอจ่าย ${fmtMoney(fr.amount)} บาท — ให้บัญชีกด "เติมให้เต็มวงเงิน" ในหน้าค่าน้ำมันรถก่อน`), { status: 409 })
-  const entryId = acct.pettyExpense({ fund: 'fuel', date_iso: fr.date_iso, cat: 'ค่าน้ำมันรถ', item: `เบิกค่าน้ำมัน ${fr.by}${fr.note ? ' · ' + fr.note : ''}`, amount: fr.amount, ref: fr.no, house_code: fr.house_code, vehicle: fr.vehicle, by: u.name })
+  const entryId = acct.pettyExpense({ fund: 'fuel', date_iso: fr.date_iso, cat: 'ค่าน้ำมันรถ', item: `เบิกค่าน้ำมัน${fr.note ? ' · ' + fr.note : ''}`, amount: fr.amount, ref: fr.no, house_code: fr.house_code, vehicle: fr.vehicle, requester: fr.by, vat_mode: 'none', by: u.name })
   db.prepare("UPDATE fuel_requests SET status='อนุมัติ', approved_by=?, approved_at=?, entry_id=? WHERE id=?").run(u.name, nowTS(), Number(entryId) || null, fr.id)
   const reqUid = lineUidOfName(fr.by); if (reqUid && reqUid !== u.line_uid) linePush(reqUid, `✅ ${fr.no} เบิกค่าน้ำมัน ${fmtMoney(fr.amount)} บาท ได้รับอนุมัติแล้วโดย ${u.name} — รับเงินจากกองค่าน้ำมันได้เลยค่ะ`)
   for (const a of lineApprovers(u.name)) if (a.name !== fr.by) linePush(a.line_uid, `ℹ️ ${fr.no} เบิกค่าน้ำมัน ${fmtMoney(fr.amount)} บาท อนุมัติแล้วโดย ${u.name} — ไม่ต้องกดซ้ำค่ะ`)
@@ -2657,8 +2657,41 @@ const pettyFundOf = (req) => { const k = String(req.query?.fund || req.body?.fun
 api.get('/petty-cash', financeOnly, (req, res) => { try { res.json(acct.pettyState(pettyFundOf(req))) } catch (e) { res.status(400).json({ error: e.message }) } })
 api.get('/petty-cash/overview', financeOnly, (_req, res) => res.json(acct.pettyOverview()))
 api.post('/petty-cash/float', financeOnly, (req, res) => { try { const k = pettyFundOf(req); acct.setPettyFloat(req.body?.float, k); audit(req, `ตั้งวงเงิน${acct.pettyFund(k).label}`, String(req.body?.float || '')); res.json(acct.pettyState(k)) } catch (e) { res.status(400).json({ error: e.message }) } })
-api.post('/petty-cash/expense', financeOnly, (req, res) => { try { const k = pettyFundOf(req); acct.pettyExpense({ ...(req.body || {}), fund: k, by: req.user.name }); audit(req, `จ่าย${acct.pettyFund(k).label}`, `${req.body?.item || ''} ${req.body?.amount || ''}${req.body?.house_code ? ' บ้าน ' + req.body.house_code : ''}`); res.json(acct.pettyState(k)) } catch (e) { res.status(400).json({ error: e.message }) } })
-api.post('/petty-cash/topup', financeOnly, (req, res) => { try { const k = pettyFundOf(req); const r = acct.pettyTopup({ ...(req.body || {}), fund: k, by: req.user.name }); audit(req, `เติม${acct.pettyFund(k).label}`, String(r.amount)); res.json({ ...acct.pettyState(k), added: r.amount }) } catch (e) { res.status(400).json({ error: e.message }) } })
+// รายการจ่าย (มีร้านค้า/รายการสินค้า+จำนวน/ผู้เบิก/VAT/ส่วนลด/อ้างอิง RR-OE-PS) — บัญชีและผู้ดูแลระบบแก้ไข/ลบได้
+api.get('/petty-cash/expenses', financeOnly, (req, res) => { try { res.json(acct.listPettyExpenses(pettyFundOf(req))) } catch (e) { res.status(400).json({ error: e.message }) } })
+api.post('/petty-cash/expense', financeOnly, (req, res) => {
+  try {
+    const k = pettyFundOf(req)
+    const entryId = acct.pettyExpense({ ...(req.body || {}), id: undefined, fund: k, by: req.user.name })
+    const row = db.prepare('SELECT * FROM petty_expenses WHERE entry_id=?').get(entryId)
+    audit(req, `จ่าย${acct.pettyFund(k).label}`, `${row?.doc_no || row?.ref || ''} ${row?.item || ''} ${row?.amount || ''}${row?.house_code ? ' บ้าน ' + row.house_code : ''}`)
+    res.json({ ...acct.pettyState(k), expense: acct.pettyExpenseRow(row) })
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+api.put('/petty-cash/expense/:id', financeOnly, (req, res) => {
+  try {
+    const cur = acct.pettyExpenseById(req.params.id); if (!cur) return res.status(404).json({ error: 'ไม่พบรายการ' })
+    acct.pettyExpense({ ...(req.body || {}), id: cur.id, fund: cur.fund, by: cur.by || req.user.name })
+    audit(req, `แก้ไข${acct.pettyFund(cur.fund).label}`, `${cur.doc_no || cur.ref || '#' + cur.id}`)
+    res.json({ ...acct.pettyState(cur.fund), expense: acct.pettyExpenseById(cur.id) })
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+api.delete('/petty-cash/expense/:id', financeOnly, (req, res) => {
+  try { const row = acct.deletePettyExpense(req.params.id); audit(req, `ลบรายการ${acct.pettyFund(row.fund).label}`, `${row.doc_no || row.ref || '#' + row.id} ${row.amount}`); res.json(acct.pettyState(row.fund)) } catch (e) { res.status(400).json({ error: e.message }) }
+})
+// เอกสารให้อ้างอิง: RR = ใบรับของ (ตรวจรับ PO) · OE = ใบจ่ายรายจ่าย · PS = ใบสำคัญจ่าย (PV) · PO = ใบสั่งซื้อ
+api.get('/petty-cash/refs', financeOnly, (req, res) => {
+  const kind = String(req.query.kind || '').toUpperCase()
+  const q = String(req.query.q || '').toLowerCase()
+  let rows = []
+  if (kind === 'RR') rows = db.prepare('SELECT g.id, g.po_no, g.date, g.result, p.vendor, p.amount, p.item FROM goods_receipts g LEFT JOIN purchase_orders p ON p.id=g.po_id ORDER BY g.id DESC LIMIT 200').all().map((g) => ({ id: g.id, no: `RR-${String(g.id).padStart(5, '0')}`, label: `RR-${String(g.id).padStart(5, '0')} · ${g.po_no || ''} ${g.vendor || ''} · ${g.item || ''} (${g.result || ''})`, amount: g.amount || 0, date: g.date || '' }))
+  else if (kind === 'OE') rows = db.prepare('SELECT id, date, item, vendor, amount, house_code FROM expenses ORDER BY id DESC LIMIT 200').all().map((e) => ({ id: e.id, no: `OE-${String(e.id).padStart(6, '0')}`, label: `OE-${String(e.id).padStart(6, '0')} · ${e.item || ''} ${e.vendor ? '· ' + e.vendor : ''} · ${fmtMoney(e.amount)} บ.`, amount: e.amount || 0, date: e.date || '' }))
+  else if (kind === 'PS') rows = db.prepare('SELECT id, no, date, payee, net, note FROM payments ORDER BY id DESC LIMIT 200').all().map((p) => ({ id: p.id, no: p.no, label: `${p.no} · ${p.payee || ''} · ${fmtMoney(p.net)} บ.${p.note ? ' · ' + p.note : ''}`, amount: p.net || 0, date: p.date || '' }))
+  else if (kind === 'PO') rows = db.prepare("SELECT id, no, date, vendor, amount, item FROM purchase_orders WHERE status<>'ยกเลิก' ORDER BY id DESC LIMIT 200").all().map((p) => ({ id: p.id, no: p.no, label: `${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ.`, amount: p.amount || 0, date: p.date || '' }))
+  if (q) rows = rows.filter((r) => r.label.toLowerCase().includes(q))
+  res.json(rows.slice(0, 60))
+})
+api.post('/petty-cash/topup', financeOnly, (req, res) => { try { const k = pettyFundOf(req); const r = acct.pettyTopup({ ...(req.body || {}), fund: k, by: req.user.name }); audit(req, `เติม${acct.pettyFund(k).label}`, `${r.amount}${req.body?.ref_no ? ' อ้างอิง ' + req.body.ref_kind + ' ' + req.body.ref_no : ''}`); res.json({ ...acct.pettyState(k), added: r.amount }) } catch (e) { res.status(400).json({ error: e.message }) } })
 // ---- คำขอเบิกค่าน้ำมันรถ (จาก LINE หรือเว็บ) ----
 api.get('/fuel-requests', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT * FROM fuel_requests ORDER BY id DESC LIMIT 300').all()

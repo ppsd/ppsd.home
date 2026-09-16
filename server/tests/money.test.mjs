@@ -1832,3 +1832,53 @@ test('PR/PO: ส่วนลด + VAT (ไม่มี / รวมแล้ว /
   // VAT เกินยอดถูกกัน
   assert.equal((await POST('/purchase-orders', { vendor: 'ร้านเก่า', item: 'x', amount: 100, vat_amount: 200 })).status, 400)
 })
+
+test('เงินสดย่อยแบบใหม่: รายการสินค้า+จำนวน ร้านค้า ผู้เบิก · ไม่มีเลขบิล = ออก RV อัตโนมัติ · VAT/ส่วนลดคำนวณ + ลงภาษีซื้อ 1160 · แก้ไข/ลบ · อ้างอิง RR/OE/PS · เติมเงินอ้างอิง PS · ใบสรุปมีคอลัมน์ VAT', async () => {
+  await POST('/petty-cash/float', { fund: 'petty', float: 20000 }); await POST('/petty-cash/topup', { fund: 'petty' })
+  const bal0 = (await GET('/petty-cash')).data.balance
+  // จ่าย 2 รายการ: ตะปู 3 กก.×50 + กาว 2 หลอด×40 = 230 − ส่วนลด 10 = 220 ก่อน VAT +7% = 15.40 → รวม 235.40 (ไม่มีเลขบิล → RV)
+  const ex = await POST('/petty-cash/expense', { fund: 'petty', cat: 'วัสดุ/ของใช้หน้างาน', vendor: 'ร้านสมชายฮาร์ดแวร์', requester: 'สมชาย ช่างหลังคา', house_code: 'TS-01', items: [{ desc: 'ตะปู 2 นิ้ว', qty: 3, unit: 'กก.', price: 50 }, { desc: 'กาวยาง', qty: 2, unit: 'หลอด', price: 40 }], discount: 10, vat_mode: 'excl' })
+  assert.equal(ex.status, 200, JSON.stringify(ex.data))
+  const e = ex.data.expense
+  assert.match(e.doc_no, /^RV-\d{2}-\d{4}$/, 'ไม่มีเลขบิลต้องออก RV'); assert.equal(e.subtotal, 230); assert.equal(e.discount, 10); assert.equal(e.before_vat, 220); assert.equal(e.vat_amount, 15.4); assert.equal(e.amount, 235.4)
+  assert.equal(e.items.length, 2); assert.equal(e.qty_total, 5); assert.equal(e.vendor, 'ร้านสมชายฮาร์ดแวร์'); assert.equal(e.requester, 'สมชาย ช่างหลังคา'); assert.equal(e.house_code, 'TS-01')
+  assert.equal(Math.round((bal0 - ex.data.balance) * 100) / 100, 235.4, 'กองต้องลดเท่ายอดรวมหลัง VAT')
+  // ลงบัญชี: ภาษีซื้อ 1160 = 15.40 · แถวความเคลื่อนไหวมี expense แนบ
+  const gl = (await GET('/gl/1160')).data
+  assert.ok(gl.rows.some((r) => Math.abs(r.debit - 15.4) < 0.005 && String(r.ref).startsWith('RV-')), 'VAT ต้องลงภาษีซื้อ 1160: ' + JSON.stringify(gl.rows.slice(-2)))
+  const row = ex.data.rows.find((r) => r.expense && r.expense.id === e.id); assert.ok(row); assert.equal(row.credit, 235.4)
+  // มีเลขบิลร้าน → ไม่ออก RV · ไม่มี VAT · อ้างอิง PO
+  const po = (await GET('/purchase-orders')).data[0]
+  const ex2 = await POST('/petty-cash/expense', { fund: 'petty', cat: 'ของใช้สำนักงาน', vendor: 'ร้านเครื่องเขียน', ref: 'INV-778', item: 'กระดาษ A4', amount: 120, vat_mode: 'none', ref_kind: 'PO', ref_id: po?.id, ref_no: po?.no })
+  assert.equal(ex2.status, 200, JSON.stringify(ex2.data)); assert.equal(ex2.data.expense.doc_no, ''); assert.equal(ex2.data.expense.ref, 'INV-778'); assert.equal(ex2.data.expense.amount, 120); assert.equal(ex2.data.expense.ref_no, po?.no || '')
+  // แก้ไข: เปลี่ยนจำนวนตะปูเป็น 5 กก. + ราคารวม VAT แล้ว → ยอดใหม่ 5×50+2×40 = 330 − 10 = 320 (รวม VAT) ก่อน VAT 299.07 VAT 20.93 · กองปรับตาม (ลงบัญชีใหม่แทนของเดิม ไม่ซ้ำ)
+  const up = await PUT('/petty-cash/expense/' + e.id, { cat: e.cat, vendor: e.vendor, requester: e.requester, house_code: 'TS-01', items: [{ desc: 'ตะปู 2 นิ้ว', qty: 5, unit: 'กก.', price: 50 }, { desc: 'กาวยาง', qty: 2, unit: 'หลอด', price: 40 }], discount: 10, vat_mode: 'incl' })
+  assert.equal(up.status, 200, JSON.stringify(up.data)); assert.equal(up.data.expense.amount, 320); assert.equal(up.data.expense.before_vat, 299.07); assert.equal(up.data.expense.vat_amount, 20.93); assert.equal(up.data.expense.doc_no, e.doc_no, 'เลข RV เดิมต้องคงอยู่')
+  assert.equal(Math.round((bal0 - up.data.balance) * 100) / 100, 440, 'กอง = 320 + 120 ไม่ซ้ำรายการเดิม')
+  assert.equal((await GET('/petty-cash/expenses?fund=petty')).data.filter((x) => x.id === e.id).length, 1)
+  // เอกสารอ้างอิง: รายการ RR/OE/PS ดึงได้
+  for (const k of ['RR', 'OE', 'PS', 'PO']) { const r = await GET('/petty-cash/refs?kind=' + k); assert.equal(r.status, 200); assert.ok(Array.isArray(r.data)) }
+  assert.equal((await POST('/payments', { payee: 'ร้านทดสอบอ้างอิง', gross: 1000 })).status, 201)
+  assert.ok((await GET('/petty-cash/refs?kind=PS')).data.some((r) => /^PV-/.test(r.no)), 'PS ต้องเป็นใบสำคัญจ่าย PV')
+  // ใบสรุป: แถวมี ก่อน VAT / VAT / ส่วนลด / ร้าน / ผู้เบิก / เลข RV
+  const stmt = (await GET('/petty-cash/statement?fund=petty')).data
+  const sr = stmt.rows.find((r) => r.doc_no === e.doc_no)
+  assert.ok(sr, 'ใบสรุปต้องมีแถว RV'); assert.equal(sr.before_vat, 299.07); assert.equal(sr.vat_amount, 20.93); assert.equal(sr.discount, 10); assert.equal(sr.vendor, 'ร้านสมชายฮาร์ดแวร์'); assert.equal(sr.requester, 'สมชาย ช่างหลังคา'); assert.equal(sr.out, 320)
+  // ลบ → กองกลับมา
+  const dl = await DEL('/petty-cash/expense/' + ex2.data.expense.id); assert.equal(dl.status, 200)
+  assert.equal(Math.round((bal0 - dl.data.balance) * 100) / 100, 320)
+  // เติมเงินเข้ากองน้ำมัน อ้างอิงใบสำคัญจ่าย PS
+  await POST('/petty-cash/float', { fund: 'fuel', float: 6000 })
+  const pv = (await GET('/petty-cash/refs?kind=PS')).data[0]
+  const tp = await POST('/petty-cash/topup', { fund: 'fuel', amount: 500, ref_kind: 'PS', ref_no: pv?.no || 'PV-TEST', note: 'ทดสอบเงินเข้า' })
+  assert.equal(tp.status, 200, JSON.stringify(tp.data)); assert.equal(tp.data.added, 500)
+  const fr = tp.data.rows[0]; assert.ok(String(fr.ref).startsWith('PS '), 'เงินเข้าต้องเก็บอ้างอิง: ' + fr.ref); assert.equal(fr.debit, 500)
+  // น้ำมัน: ผู้เบิก + ทะเบียน + VAT จากใบกำกับปั๊ม (ราคารวม VAT) 1,070 → ก่อน VAT 1,000 VAT 70
+  const fx = await POST('/petty-cash/expense', { fund: 'fuel', requester: 'สมชาย ช่างหลังคา', vehicle: 'ผก 1234', vendor: 'ปตท. บางนา', ref: 'TX-9001', items: [{ desc: 'ดีเซล B7', qty: 30, unit: 'ลิตร', price: 35.6 }], vat_mode: 'incl' })
+  assert.equal(fx.status, 200, JSON.stringify(fx.data)); assert.equal(fx.data.expense.amount, 1068); assert.equal(fx.data.expense.before_vat, 998.13); assert.equal(fx.data.expense.vat_amount, 69.87); assert.equal(fx.data.expense.requester, 'สมชาย ช่างหลังคา'); assert.equal(fx.data.expense.vehicle, 'ผก 1234')
+  // อนุมัติคำขอเบิกน้ำมันจาก LINE เดิม → สร้างรายการแบบมีโครงสร้าง (ผู้เบิก = ผู้ขอ)
+  const req = await POST('/fuel-requests', { amount: 300, house_code: 'TS-01', vehicle: 'กข 1', note: 'ไปดูงาน' })
+  const ap = await POST(`/fuel-requests/${req.data.id}/approve`, {}); assert.equal(ap.status, 200, JSON.stringify(ap.data))
+  const fe = (await GET('/petty-cash/expenses?fund=fuel')).data.find((x) => x.ref === req.data.no)
+  assert.ok(fe, 'อนุมัติเบิกน้ำมันต้องมีแถวรายการ'); assert.equal(fe.amount, 300); assert.equal(fe.vehicle, 'กข 1'); assert.ok(fe.requester)
+})

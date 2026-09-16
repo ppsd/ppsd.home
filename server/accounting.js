@@ -2,6 +2,7 @@
 // เครื่องยนต์ลงบัญชี + ผังบัญชี + สมุดรายวัน + แยกประเภท + งบทดลอง + งบการเงินเบื้องต้น
 // หลักการ: ทุกรายการต้อง เดบิตรวม = เครดิตรวม เสมอ
 import { db } from './db.js'
+import { moneySummary } from './money.js'
 
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
 function todayISO() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
@@ -538,45 +539,107 @@ export function pettyFund(key) {
 }
 export function pettyFloat(fund = 'petty') { const f = pettyFund(fund); return Number(getSetting(f.floatKey, String(f.defaultFloat))) || f.defaultFloat }
 export function setPettyFloat(n, fund = 'petty') { setSettingRaw(pettyFund(fund).floatKey, Math.max(0, Number(n) || 0)) }
+// รายการจ่ายเงินสดย่อยแบบมีโครงสร้าง (ร้านค้า/รายการสินค้า+จำนวน/ผู้เบิก/VAT/ส่วนลด/อ้างอิงเอกสาร) — แก้ไขได้ ลงบัญชีซ้ำแบบ idempotent (source+source_id)
+db.exec(`CREATE TABLE IF NOT EXISTS petty_expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fund TEXT, date_iso TEXT, cat TEXT, vendor TEXT, item TEXT, items TEXT, qty_total REAL,
+  ref TEXT, doc_no TEXT, ref_kind TEXT, ref_id INTEGER, ref_no TEXT,
+  house_code TEXT, vehicle TEXT, requester TEXT, note TEXT,
+  vat_mode TEXT, discount REAL, subtotal REAL, before_vat REAL, vat_amount REAL, amount REAL,
+  by TEXT, created TEXT, updated TEXT, entry_id INTEGER
+)`)
+const _jp = (s) => { if (!s) return null; try { return JSON.parse(s) } catch { return null } }
 // ชื่อบ้านจากรหัส (ใช้แสดงในรายการเงินสดย่อย) — ไม่พบ = คืนรหัสเดิม
 function houseNameOf(code) {
   if (!code) return ''
   try { return db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code } catch { return code }
 }
-const withHouseName = (r) => ({ ...r, house_code: r.house_code || '', house_name: houseNameOf(r.house_code) })
+// ใบสำคัญรับเงิน (RV) ออกให้อัตโนมัติเมื่อไม่มีเลขที่เอกสารจากร้าน — เลขต่อเนื่องต่อปี พ.ศ.
+function nextRvNo() {
+  const yy = String((new Date().getFullYear() + 543) % 100).padStart(2, '0')
+  const max = db.prepare("SELECT MAX(CAST(SUBSTR(doc_no, 7) AS INTEGER)) m FROM petty_expenses WHERE doc_no LIKE ?").get(`RV-${yy}-%`)?.m || 0
+  return `RV-${yy}-${String(max + 1).padStart(4, '0')}`
+}
+export function pettyExpenseRow(r) {
+  if (!r) return r
+  return { ...r, items: _jp(r.items) || [], house_name: houseNameOf(r.house_code), fund_label: pettyFund(r.fund).label }
+}
+const withExpense = (r) => {
+  const e = r.entry_id ? db.prepare('SELECT * FROM petty_expenses WHERE entry_id=?').get(r.entry_id) : null
+  return { ...r, house_code: r.house_code || '', house_name: houseNameOf(r.house_code), expense: e ? pettyExpenseRow(e) : null }
+}
 export function pettyState(fund = 'petty') {
   const f = pettyFund(fund)
   const float = pettyFloat(fund)
   const gl = ledgerOf(f.account)
   const balance = gl.rows.length ? gl.rows[gl.rows.length - 1].balance : 0
-  return { fund: f.key, label: f.label, account: f.account, float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-60).reverse().map(withHouseName) }
+  return { fund: f.key, label: f.label, account: f.account, float, balance: r2(balance), toReplenish: r2(Math.max(0, float - balance)), rows: gl.rows.slice(-80).reverse().map(withExpense) }
 }
 // สรุปทุกกองในหน้าเดียว (ใช้โชว์ยอดรวม/แจ้งเตือนใกล้หมด)
 export function pettyOverview() {
   return Object.keys(PETTY_FUNDS).map((k) => { const s = pettyState(k); return { fund: s.fund, label: s.label, float: s.float, balance: s.balance, toReplenish: s.toReplenish } })
 }
-// บันทึกจ่ายค่าใช้จ่ายจากกองเงินสดย่อย: Dr ค่าใช้จ่าย(ตามหมวด) / Cr บัญชีของกอง
-// ผูกบ้านได้ (house_code) เช่น โฟร์แมนเบิกไปซื้อของเล็กน้อยให้บ้านหลังนั้น → ต้นทุนไปรวมที่บ้าน; ไม่ระบุ = ส่วนกลางบริษัท
-// กองน้ำมัน: ระบุทะเบียนรถ (vehicle) ได้ จะต่อท้ายรายการให้
-export function pettyExpense({ date_iso, cat, item, amount, ref, by, house_code, fund, vehicle }) {
-  const f = pettyFund(fund)
-  const amt = r2(Number(String(amount).replace(/,/g, '')) || 0)
-  if (amt <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
-  const hc = String(house_code || '').trim()
+// บันทึก/แก้ไข จ่ายจากกองเงินสดย่อย: Dr ค่าใช้จ่าย(ตามหมวด) ยอดก่อน VAT (+ Dr ภาษีซื้อ 1160 ถ้ามี VAT) / Cr บัญชีของกอง ยอดรวม
+// รายการสินค้า items=[{desc,qty,unit,price}] → ยอดสินค้า = Σ(qty×price) − ส่วนลด → ก่อน VAT / VAT / รวม · ไม่มีรายการ = ใช้ amount ที่กรอก
+// ผูกบ้าน (house_code) ได้ · ทะเบียนรถ (vehicle) · ผู้เบิก (requester) · อ้างอิง RR/OE/PS (ref_kind/ref_no) · ไม่มีเลขเอกสารร้าน (ref) → ออก RV ให้
+export function pettyExpense(d) {
+  const f = pettyFund(d.fund)
+  const hc = String(d.house_code || '').trim()
   if (hc && !db.prepare('SELECT code FROM houses WHERE code=?').get(hc)) throw new Error('ไม่พบบ้าน ' + hc)
+  const items = (Array.isArray(d.items) ? d.items : []).filter((it) => it && String(it.desc || '').trim())
+    .map((it) => ({ desc: String(it.desc).trim(), qty: r2(Number(String(it.qty ?? '').toString().replace(/,/g, '')) || 0), unit: String(it.unit || '').trim(), price: r2(Number(String(it.price ?? '').toString().replace(/,/g, '')) || 0) }))
+  const lineSum = items.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : it.price), 0)
+  const subtotal = items.length ? lineSum : r2(Number(String(d.amount ?? '').replace(/,/g, '')) || 0)
+  const m = moneySummary({ subtotal, discount: d.discount, vat_mode: d.vat_mode })
+  if (m.total <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
+  const cat = String(d.cat || (f.key === 'fuel' ? 'ค่าน้ำมันรถ' : '')).trim()
+  const summary = items.length ? items.map((it) => it.desc + (it.qty > 0 ? ` ${it.qty}${it.unit ? ' ' + it.unit : ''}` : '')).join(', ') : String(d.item || cat || 'ค่าใช้จ่าย').trim()
+  const veh = String(d.vehicle || '').trim()
+  const vendor = String(d.vendor || '').trim()
+  const requester = String(d.requester || '').trim()
+  const ref = String(d.ref || '').trim()
+  const refKind = ['RR', 'OE', 'PS', 'PO'].includes(String(d.ref_kind || '').toUpperCase()) ? String(d.ref_kind).toUpperCase() : ''
+  const refNo = refKind ? String(d.ref_no || '').trim() : ''
+  const now = nowTS()
+  let row = d.id ? db.prepare('SELECT * FROM petty_expenses WHERE id=?').get(d.id) : null
+  if (d.id && !row) throw new Error('ไม่พบรายการเงินสดย่อยนี้')
+  const docNo = ref ? '' : (row?.doc_no || nextRvNo())
+  const dateIso = /^\d{4}-\d{2}-\d{2}$/.test(String(d.date_iso || '')) ? d.date_iso : (row?.date_iso || todayISO())
+  if (row) {
+    db.prepare('UPDATE petty_expenses SET fund=?, date_iso=?, cat=?, vendor=?, item=?, items=?, qty_total=?, ref=?, doc_no=?, ref_kind=?, ref_id=?, ref_no=?, house_code=?, vehicle=?, requester=?, note=?, vat_mode=?, discount=?, subtotal=?, before_vat=?, vat_amount=?, amount=?, updated=? WHERE id=?')
+      .run(f.key, dateIso, cat, vendor, summary, JSON.stringify(items), r2(items.reduce((s, it) => s + it.qty, 0)), ref, docNo, refKind, Number(d.ref_id) || null, refNo, hc, veh, requester, String(d.note || ''), m.vat_mode, m.discount, m.subtotal, m.before_vat, m.vat_amount, m.total, now, row.id)
+  } else {
+    const info = db.prepare('INSERT INTO petty_expenses (fund,date_iso,cat,vendor,item,items,qty_total,ref,doc_no,ref_kind,ref_id,ref_no,house_code,vehicle,requester,note,vat_mode,discount,subtotal,before_vat,vat_amount,amount,by,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(f.key, dateIso, cat, vendor, summary, JSON.stringify(items), r2(items.reduce((s, it) => s + it.qty, 0)), ref, docNo, refKind, Number(d.ref_id) || null, refNo, hc, veh, requester, String(d.note || ''), m.vat_mode, m.discount, m.subtotal, m.before_vat, m.vat_amount, m.total, d.by || '', now)
+    row = db.prepare('SELECT * FROM petty_expenses WHERE id=?').get(info.lastInsertRowid)
+  }
   const acc = f.key === 'fuel' && !cat ? '6030' : expenseAccountFor(cat || (f.key === 'fuel' ? 'ค่าน้ำมัน' : ''))
-  const veh = String(vehicle || '').trim()
-  const memo = `${item || cat || (f.key === 'fuel' ? 'ค่าน้ำมันรถ' : 'ค่าใช้จ่าย')}${veh ? ' · ทะเบียน ' + veh : ''}`.trim()
-  return postJournal({ date_iso, memo, ref: ref || '', house_code: hc, source: f.source, by, lines: [{ account: acc, debit: amt, credit: 0, memo }, { account: f.account, debit: 0, credit: amt, memo }] })
+  const memo = `${summary}${vendor ? ' · ' + vendor : ''}${requester ? ' · เบิกโดย ' + requester : ''}${veh ? ' · ทะเบียน ' + veh : ''}`.trim()
+  const lines = [{ account: acc, debit: m.before_vat, credit: 0, memo }]
+  if (m.vat_amount > 0) lines.push({ account: '1160', debit: m.vat_amount, credit: 0, memo: 'ภาษีซื้อ ' + (ref || docNo) })
+  lines.push({ account: f.account, debit: 0, credit: m.total, memo })
+  const entryId = postJournal({ date_iso: dateIso, memo, ref: ref || docNo, house_code: hc, source: f.source, source_id: row.id, by: d.by || row.by, lines })
+  db.prepare('UPDATE petty_expenses SET entry_id=? WHERE id=?').run(entryId, row.id)
+  return entryId
 }
-// เติมกองให้เต็มวงเงิน: Dr บัญชีของกอง / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float)
-export function pettyTopup({ date_iso, amount, from, ref, note, by, fund }) {
+export function pettyExpenseById(id) { return pettyExpenseRow(db.prepare('SELECT * FROM petty_expenses WHERE id=?').get(Number(id))) }
+export function listPettyExpenses(fund, limit = 200) { return db.prepare('SELECT * FROM petty_expenses WHERE fund=? ORDER BY date_iso DESC, id DESC LIMIT ?').all(pettyFund(fund).key, limit).map(pettyExpenseRow) }
+export function deletePettyExpense(id) {
+  const row = db.prepare('SELECT * FROM petty_expenses WHERE id=?').get(Number(id))
+  if (!row) throw new Error('ไม่พบรายการ')
+  removeAutoJournal(pettyFund(row.fund).source, row.id)
+  db.prepare('DELETE FROM petty_expenses WHERE id=?').run(row.id)
+  return row
+}
+// เติมกองให้เต็มวงเงิน (เงินเข้า): Dr บัญชีของกอง / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float) · อ้างอิงเอกสารเงินเข้าได้ (OE/PS/PV)
+export function pettyTopup({ date_iso, amount, from, ref, note, by, fund, ref_kind, ref_no }) {
   const f = pettyFund(fund)
   const st = pettyState(f.key)
   const amt = amount != null && amount !== '' ? r2(Number(String(amount).replace(/,/g, '')) || 0) : st.toReplenish
   if (amt <= 0) throw new Error(`${f.label}เต็มวงเงินอยู่แล้ว ไม่ต้องเติม`)
   const bank = from || defaultBank()
-  postJournal({ date_iso, memo: note || `เติม/ทดแทน${f.label}ให้เต็มวงเงิน (${st.float.toLocaleString('en-US')})`, ref: ref || '', source: f.topupSource, by, lines: [{ account: f.account, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
+  const refText = String(ref || (ref_kind && ref_no ? `${String(ref_kind).toUpperCase()} ${ref_no}` : '') || '').trim()
+  postJournal({ date_iso, memo: note || `เติม/ทดแทน${f.label}ให้เต็มวงเงิน (${st.float.toLocaleString('en-US')})${refText ? ' อ้างอิง ' + refText : ''}`, ref: refText, source: f.topupSource, by, lines: [{ account: f.account, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
   return { amount: amt, float: st.float, fund: f.key }
 }
 // ยอดคงเหลือของบัญชีก่อนวันที่ (สินทรัพย์ = เดบิต − เครดิต)
@@ -595,7 +658,9 @@ export function pettyStatement({ from, to, fund } = {}) {
   const rows = gl.rows.map((r) => {
     const inAmt = r2(r.debit || 0), outAmt = r2(r.credit || 0)
     bal = r2(bal + inAmt - outAmt)
-    return { date: r.date, date_iso: r.date_iso || '', ref: r.ref || '', memo: r.memo, house_code: r.house_code || '', house_name: houseNameOf(r.house_code), in: inAmt, out: outAmt, balance: bal, seq: outAmt > 0 ? String(++seq).padStart(3, '0') : '' }
+    const e = r.entry_id ? db.prepare('SELECT * FROM petty_expenses WHERE entry_id=?').get(r.entry_id) : null
+    return { date: r.date, date_iso: r.date_iso || '', ref: r.ref || '', memo: r.memo, house_code: r.house_code || '', house_name: houseNameOf(r.house_code), in: inAmt, out: outAmt, balance: bal, seq: outAmt > 0 ? String(++seq).padStart(3, '0') : '',
+      vendor: e?.vendor || '', requester: e?.requester || '', vehicle: e?.vehicle || '', doc_no: e?.doc_no || '', ref_kind: e?.ref_kind || '', ref_no: e?.ref_no || '', items: e ? (_jp(e.items) || []) : [], discount: e ? r2(e.discount || 0) : 0, before_vat: e ? r2(e.before_vat || 0) : (outAmt > 0 ? outAmt : 0), vat_amount: e ? r2(e.vat_amount || 0) : 0, vat_mode: e?.vat_mode || 'none', subtotal: e ? r2(e.subtotal || 0) : 0 }
   })
   const totalOut = r2(rows.reduce((s, r) => s + r.out, 0))
   const totalInMoves = r2(rows.reduce((s, r) => s + r.in, 0))
