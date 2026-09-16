@@ -93,9 +93,10 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
   useEffect(() => { load(); loadReqs() }, [])
   useLiveRefresh(['fuel', 'petty'], () => { load(); loadReqs() })
   // สรุปยอดฟอร์ม: รายการสินค้า (หรือยอดที่กรอกถ้าไม่มีรายการ) − ส่วนลด → ก่อน VAT / VAT / รวม
-  const lineAmt = (l: { qty: string; price: string }) => { const q = unm(l.qty), p = unm(l.price); return q > 0 ? q * p : p }
+  // กองน้ำมัน: ปัดยอดแต่ละบรรทัดเป็นบาทเต็ม (≥ 50 สตางค์ปัดขึ้น, < 50 ปัดลง) ให้ตรงกับใบเสร็จปั๊ม — ตรงกับฝั่งเซิร์ฟเวอร์
+  const lineAmt = (l: { qty: string; price: string }) => { const q = unm(l.qty), p = unm(l.price); const a = q > 0 ? q * p : p; return fund === 'fuel' ? Math.round(a) : a }
   const hasLines = f.lines.some((l) => l.desc.trim())
-  const subtotal = hasLines ? f.lines.filter((l) => l.desc.trim()).reduce((s, l) => s + lineAmt(l), 0) : unm(f.amount)
+  const subtotal = hasLines ? f.lines.filter((l) => l.desc.trim()).reduce((s, l) => s + lineAmt(l), 0) : (fund === 'fuel' ? Math.round(unm(f.amount)) : unm(f.amount))
   const money = moneySummary(subtotal, unm(f.discount), f.vat_mode)
   const printStatement = async () => {
     const q = new URLSearchParams(); q.set('fund', fund); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)

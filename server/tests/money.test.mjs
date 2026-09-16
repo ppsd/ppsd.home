@@ -1516,15 +1516,15 @@ test('ค่าน้ำมันรถ: กองแยกจากเงิน
   assert.equal((await GET('/petty-cash')).data.balance, petty0.balance, 'เติมกองน้ำมันต้องไม่กระทบเงินสดย่อยทั่วไป')
   assert.equal((await GET('/petty-cash')).data.float, petty0.float, 'ลิมิตเงินสดย่อยต้องไม่เปลี่ยนตาม')
   // จ่ายค่าน้ำมัน ผูกบ้าน + ทะเบียนรถ
-  const ex = await POST('/petty-cash/expense', { fund: 'fuel', item: 'เติมดีเซล', amount: 1200.25, house_code: 'TS-01', vehicle: 'ผก 1234' })
+  const ex = await POST('/petty-cash/expense', { fund: 'fuel', item: 'เติมดีเซล', amount: 1200, house_code: 'TS-01', vehicle: 'ผก 1234' })
   assert.equal(ex.status, 200, JSON.stringify(ex.data))
   const row = ex.data.rows.find((r) => r.memo.startsWith('เติมดีเซล'))
-  assert.ok(row); assert.match(row.memo, /ทะเบียน ผก 1234/); assert.equal(row.house_code, 'TS-01'); assert.equal(row.credit, 1200.25)
-  assert.equal(ex.data.balance, 1799.75); assert.equal(ex.data.toReplenish, 1200.25)
+  assert.ok(row); assert.match(row.memo, /ทะเบียน ผก 1234/); assert.equal(row.house_code, 'TS-01'); assert.equal(row.credit, 1200)
+  assert.equal(ex.data.balance, 1800); assert.equal(ex.data.toReplenish, 1200)
   assert.equal((await GET('/petty-cash')).data.balance, petty0.balance, 'จ่ายกองน้ำมันต้องไม่ตัดเงินสดย่อยทั่วไป')
   // ปรับลิมิตลง (2000) → ต้องเติมเป็น 200.25 · ปรับขึ้น (5000) → 3200.25
-  assert.equal((await POST('/petty-cash/float', { fund: 'fuel', float: 2000 })).data.toReplenish, 200.25)
-  assert.equal((await POST('/petty-cash/float', { fund: 'fuel', float: 5000 })).data.toReplenish, 3200.25)
+  assert.equal((await POST('/petty-cash/float', { fund: 'fuel', float: 2000 })).data.toReplenish, 200)
+  assert.equal((await POST('/petty-cash/float', { fund: 'fuel', float: 5000 })).data.toReplenish, 3200)
   // ใบสรุปแยกกอง + overview เห็นทั้งสองกอง
   const stmt = (await GET('/petty-cash/statement?fund=fuel')).data
   assert.equal(stmt.fund, 'fuel'); assert.equal(stmt.label, 'ค่าน้ำมันรถ'); assert.ok(stmt.rows.some((r) => r.memo.startsWith('เติมดีเซล')))
@@ -1533,7 +1533,7 @@ test('ค่าน้ำมันรถ: กองแยกจากเงิน
   assert.deepEqual(ov.map((o) => o.fund), ['petty', 'fuel']); assert.equal(ov.find((o) => o.fund === 'fuel').float, 5000)
   // ต้นทุนบ้านต้องรวมค่าน้ำมันที่ผูกบ้าน
   const pnl = (await GET('/project-pnl')).data.find((h) => h.house_code === 'TS-01')
-  assert.ok(pnl.cost + pnl.expense >= 1200.25)
+  assert.ok(pnl.cost + pnl.expense >= 1200)
 })
 
 test('เบิกค่าน้ำมันผ่าน LINE: โฟร์แมนพิมพ์ "เบิกน้ำมัน 1500 บ้าน… ทะเบียน…" → ตกลง → การ์ดถึง CEO → อนุมัติ = จ่ายจากกองน้ำมัน (ผูกบ้าน) · ปฏิเสธถามเหตุผล · กองไม่พอถูกกัน', async () => {
@@ -1905,4 +1905,15 @@ test('เงินสดย่อย: แก้ไขรายการเก่
   assert.equal(te.status, 200, JSON.stringify(te.data))
   const after = te.data.rows.find((r) => r.debit === 900); assert.ok(after, 'ต้องมีรายการเติม 900'); assert.equal(after.ref, 'OE OE-000001'); assert.ok(!te.data.rows.some((r) => r.debit === 700))
   assert.equal(Math.round((te.data.balance - ad.data.balance) * 100) / 100, 900)
+})
+
+test('ค่าน้ำมัน: ยอดแต่ละบรรทัดปัดเศษสตางค์เป็นบาทเต็ม (≥50 สต. ปัดขึ้น, <50 ปัดลง) แล้วค่อยคิด VAT · เงินสดย่อยทั่วไปไม่ปัด', async () => {
+  const a = await POST('/petty-cash/expense', { fund: 'fuel', requester: 'พี่มาตร', vehicle: 'ผค6915', vendor: 'บจก.บุญไสภา พาวเวอร์', ref: 'TIO-1', items: [{ desc: 'ดีเซล', qty: 24.5, unit: 'ลิตร', price: 40.82 }], vat_mode: 'incl' })
+  assert.equal(a.status, 200, JSON.stringify(a.data)); assert.equal(a.data.expense.amount, 1000, '1,000.09 → 1,000'); assert.equal(a.data.expense.before_vat, 934.58); assert.equal(a.data.expense.vat_amount, 65.42)
+  const b = await POST('/petty-cash/expense', { fund: 'fuel', ref: 'TIO-2', items: [{ desc: 'ดีเซล', qty: 10, unit: 'ลิตร', price: 35.65 }], vat_mode: 'none' })
+  assert.equal(b.data.expense.amount, 357, '356.50 → 357 (ปัดขึ้น)')
+  const c = await POST('/petty-cash/expense', { fund: 'fuel', ref: 'TIO-3', amount: 499.49, vat_mode: 'none' })
+  assert.equal(c.data.expense.amount, 499, 'ยอดรวมอย่างเดียว 499.49 → 499')
+  const d = await POST('/petty-cash/expense', { fund: 'petty', ref: 'B-1', items: [{ desc: 'ตะปู', qty: 2.5, unit: 'กก.', price: 40.82 }], vat_mode: 'none' })
+  assert.equal(d.data.expense.amount, 102.05, 'เงินสดย่อยทั่วไปยังคิดสตางค์')
 })
