@@ -54,7 +54,9 @@ function RefPicker({ kind, refNo, onKind, onPick, allowed }: { kind: string; ref
   return (
     <>
       <select style={field} value={kind} onChange={(e) => { onKind(e.target.value); onPick(null) }}>{kinds.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}</select>
-      {kind && <select style={{ ...field, minWidth: 260 }} value={refNo} onChange={(e) => onPick(opts.find((o) => o.no === e.target.value) || null)}><option value="">— เลือกเอกสาร {kind} —</option>{opts.map((o) => <option key={o.id} value={o.no}>{o.label}</option>)}</select>}
+      {kind && <select style={{ ...field, minWidth: 320 }} value={refNo} onChange={(e) => onPick(opts.find((o) => o.no === e.target.value) || null)}><option value="">— เลือกเอกสาร {kind} ({opts.length} ใบ) —</option>{opts.map((o) => <option key={o.id} value={o.no}>{o.label}</option>)}</select>}
+      {kind && refNo && (() => { const o = opts.find((x) => x.no === refNo); return <span style={{ fontSize: 11.5, color: '#2E7D55', background: '#E2F1EA', borderRadius: 6, padding: '3px 8px' }}>✓ {kind} <b className="num">{refNo}</b>{o ? ' — ' + o.label.replace(/^[^·]*·\s*/, '') : ''}</span> })()}
+      {kind && !opts.length && <span style={{ fontSize: 11.5, color: '#C0852C' }}>ยังไม่มีเอกสาร {kind} ในระบบ</span>}
     </>
   )
 }
@@ -93,10 +95,10 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
   useEffect(() => { load(); loadReqs() }, [])
   useLiveRefresh(['fuel', 'petty'], () => { load(); loadReqs() })
   // สรุปยอดฟอร์ม: รายการสินค้า (หรือยอดที่กรอกถ้าไม่มีรายการ) − ส่วนลด → ก่อน VAT / VAT / รวม
-  // กองน้ำมัน: ปัดยอดแต่ละบรรทัดเป็นบาทเต็ม (≥ 50 สตางค์ปัดขึ้น, < 50 ปัดลง) ให้ตรงกับใบเสร็จปั๊ม — ตรงกับฝั่งเซิร์ฟเวอร์
-  const lineAmt = (l: { qty: string; price: string }) => { const q = unm(l.qty), p = unm(l.price); const a = q > 0 ? q * p : p; return fund === 'fuel' ? Math.round(a) : a }
+  // ปัดยอดแต่ละบรรทัดเป็นบาทเต็ม (≥ 50 สตางค์ปัดขึ้น, < 50 ปัดลง) ทั้งเงินสดย่อยและน้ำมัน — ตรงกับฝั่งเซิร์ฟเวอร์
+  const lineAmt = (l: { qty: string; price: string }) => { const q = unm(l.qty), p = unm(l.price); return Math.round(q > 0 ? q * p : p) }
   const hasLines = f.lines.some((l) => l.desc.trim())
-  const subtotal = hasLines ? f.lines.filter((l) => l.desc.trim()).reduce((s, l) => s + lineAmt(l), 0) : (fund === 'fuel' ? Math.round(unm(f.amount)) : unm(f.amount))
+  const subtotal = hasLines ? f.lines.filter((l) => l.desc.trim()).reduce((s, l) => s + lineAmt(l), 0) : Math.round(unm(f.amount))
   const money = moneySummary(subtotal, unm(f.discount), f.vat_mode)
   const printStatement = async () => {
     const q = new URLSearchParams(); q.set('fund', fund); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)
@@ -166,7 +168,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>เงินเข้ากอง</span>
             <MoneyInput style={{ ...field, width: 130 }} decimal placeholder={`เต็มวงเงิน ${baht(st.toReplenish)}`} value={topup.amount} onChange={(v) => setTopup({ ...topup, amount: v })} />
             <span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิงเงินเข้า</span>
-            <RefPicker kind={topup.ref_kind} refNo={topup.ref_no} allowed={['OE', 'PS']} onKind={(k) => setTopup({ ...topup, ref_kind: k, ref_no: '' })} onPick={(o) => setTopup({ ...topup, ref_no: o?.no || '' })} />
+            <RefPicker kind={topup.ref_kind} refNo={topup.ref_no} allowed={['OE', 'PS']} onKind={(k) => setTopup((cur) => cur && ({ ...cur, ref_kind: k, ref_no: '' }))} onPick={(o) => setTopup((cur) => cur && ({ ...cur, ref_no: o?.no || '' }))} />
             <input style={{ ...field, flex: 1, minWidth: 160 }} placeholder="หมายเหตุ" value={topup.note} onChange={(e) => setTopup({ ...topup, note: e.target.value })} />
             <button onClick={doTopup} style={btn('#2E7D55')}>บันทึกเงินเข้า</button><button onClick={() => setTopup(null)} style={ghost}>ยกเลิก</button>
           </div>
@@ -212,7 +214,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิง</span>
-          <RefPicker kind={f.ref_kind} refNo={f.ref_no} onKind={(k) => setF({ ...f, ref_kind: k, ref_no: '', ref_id: null })} onPick={(o) => setF({ ...f, ref_no: o?.no || '', ref_id: o?.id ?? null })} />
+          <RefPicker kind={f.ref_kind} refNo={f.ref_no} onKind={(k) => setF((cur) => ({ ...cur, ref_kind: k, ref_no: '', ref_id: null }))} onPick={(o) => setF((cur) => ({ ...cur, ref_no: o?.no || '', ref_id: o?.id ?? null }))} />
           <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="หมายเหตุ" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
           <button onClick={submit} className="btn-primary" style={{ ...btn(editId ? '#C0852C' : '#30506A'), fontSize: 13, padding: '9px 16px' }}>{editId ? 'บันทึกการแก้ไข' : 'บันทึกจ่าย'}</button>
         </div>
@@ -267,7 +269,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
               <label style={{ fontSize: 11.5, color: '#5C6770' }}>วันที่<input type="date" style={{ ...field, width: '100%', marginTop: 3 }} value={topupEdit.date_iso} onChange={(e) => setTopupEdit({ ...topupEdit, date_iso: e.target.value })} /></label>
               <label style={{ fontSize: 11.5, color: '#5C6770' }}>จำนวนเงิน<MoneyInput style={{ ...field, width: '100%', marginTop: 3 }} decimal value={topupEdit.amount} onChange={(v) => setTopupEdit({ ...topupEdit, amount: v })} /></label>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}><span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิงเงินเข้า</span><RefPicker kind={topupEdit.ref_kind} refNo={topupEdit.ref_no} allowed={['OE', 'PS']} onKind={(k) => setTopupEdit({ ...topupEdit, ref_kind: k, ref_no: '' })} onPick={(o) => setTopupEdit({ ...topupEdit, ref_no: o?.no || '' })} /></div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}><span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิงเงินเข้า</span><RefPicker kind={topupEdit.ref_kind} refNo={topupEdit.ref_no} allowed={['OE', 'PS']} onKind={(k) => setTopupEdit((cur) => cur && ({ ...cur, ref_kind: k, ref_no: '' }))} onPick={(o) => setTopupEdit((cur) => cur && ({ ...cur, ref_no: o?.no || '' }))} /></div>
             <input style={{ ...field, width: '100%', marginTop: 8 }} placeholder="หมายเหตุ/รายละเอียด" value={topupEdit.note} onChange={(e) => setTopupEdit({ ...topupEdit, note: e.target.value })} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}><button onClick={() => setTopupEdit(null)} style={ghost}>ยกเลิก</button><button onClick={saveTopupEdit} style={btn('#C0852C')}>บันทึกการแก้ไข</button></div>
           </div>

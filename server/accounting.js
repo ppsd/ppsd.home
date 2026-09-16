@@ -602,11 +602,11 @@ export function pettyExpense(d) {
   if (hc && !db.prepare('SELECT code FROM houses WHERE code=?').get(hc)) throw new Error('ไม่พบบ้าน ' + hc)
   const items = (Array.isArray(d.items) ? d.items : []).filter((it) => it && String(it.desc || '').trim())
     .map((it) => ({ desc: String(it.desc).trim(), qty: r2(Number(String(it.qty ?? '').toString().replace(/,/g, '')) || 0), unit: String(it.unit || '').trim(), price: r2(Number(String(it.price ?? '').toString().replace(/,/g, '')) || 0) }))
-  // กองน้ำมัน: ยอดแต่ละบรรทัดปัดเป็นบาทเต็ม (≥ 50 สตางค์ปัดขึ้น, < 50 ปัดลง) ตามใบเสร็จปั๊ม เช่น 24.5 ลิตร × 40.82 = 1,000.09 → 1,000
-  const lineTotal = (it) => { const a = it.qty > 0 ? it.qty * it.price : it.price; return f.key === 'fuel' ? Math.round(a) : a }
+  // ยอดแต่ละบรรทัดปัดเป็นบาทเต็ม (≥ 50 สตางค์ปัดขึ้น, < 50 ปัดลง) ทั้งเงินสดย่อยและน้ำมัน เช่น 24.5 ลิตร × 40.82 = 1,000.09 → 1,000
+  const lineTotal = (it) => Math.round(it.qty > 0 ? it.qty * it.price : it.price)
   const lineSum = items.reduce((s, it) => s + lineTotal(it), 0)
   const rawAmt = r2(Number(String(d.amount ?? '').replace(/,/g, '')) || 0)
-  const subtotal = items.length ? lineSum : (f.key === 'fuel' ? Math.round(rawAmt) : rawAmt)
+  const subtotal = items.length ? lineSum : Math.round(rawAmt)
   const m = moneySummary({ subtotal, discount: d.discount, vat_mode: d.vat_mode })
   if (m.total <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
   const cat = String(d.cat || (f.key === 'fuel' ? 'ค่าน้ำมันรถ' : '')).trim()
