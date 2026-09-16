@@ -562,6 +562,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS petty_expenses (
   vat_mode TEXT, discount REAL, subtotal REAL, before_vat REAL, vat_amount REAL, amount REAL,
   by TEXT, created TEXT, updated TEXT, entry_id INTEGER
 )`)
+for (const c of ['bill_amount', 'paid_amount']) { if (!db.prepare('PRAGMA table_info(petty_expenses)').all().some((x) => x.name === c)) db.exec(`ALTER TABLE petty_expenses ADD COLUMN ${c} REAL`) }
 const _jp = (s) => { if (!s) return null; try { return JSON.parse(s) } catch { return null } }
 // ชื่อบ้านจากรหัส (ใช้แสดงในรายการเงินสดย่อย) — ไม่พบ = คืนรหัสเดิม
 function houseNameOf(code) {
@@ -607,7 +608,13 @@ export function pettyExpense(d) {
   const lineSum = items.reduce((s, it) => s + lineTotal(it), 0)
   const rawAmt = r2(Number(String(d.amount ?? '').replace(/,/g, '')) || 0)
   const subtotal = items.length ? lineSum : Math.round(rawAmt)
-  const m = moneySummary({ subtotal, discount: d.discount, vat_mode: d.vat_mode })
+  const m0 = moneySummary({ subtotal, discount: d.discount, vat_mode: d.vat_mode })
+  // ราคาตามบิล (bill_amount) = ยอดตามใบเสร็จ (ค่าเริ่มต้น = ยอดที่คำนวณ) · ราคาจ่ายจริง (paid_amount) = เงินที่ออกจากกองจริง (ค่าเริ่มต้น = ตามบิล)
+  // ส่วนต่างจ่ายจริง−ตามบิล ลงเป็นค่าใช้จ่าย (บวก) หรือลดค่าใช้จ่าย (ลบ) · VAT คิดตามบิล
+  const num = (v) => (v == null || v === '' ? null : Math.round(Number(String(v).replace(/,/g, '')) || 0))
+  const billAmt = num(d.bill_amount) ?? m0.total
+  const paidAmt = num(d.paid_amount) ?? billAmt
+  const m = { ...m0, total: paidAmt, before_vat: r2(paidAmt - m0.vat_amount), bill_amount: billAmt, paid_amount: paidAmt }
   if (m.total <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
   const cat = String(d.cat || (f.key === 'fuel' ? 'ค่าน้ำมันรถ' : '')).trim()
   const summary = items.length ? items.map((it) => it.desc + (it.qty > 0 ? ` ${it.qty}${it.unit ? ' ' + it.unit : ''}` : '')).join(', ') : String(d.item || cat || 'ค่าใช้จ่าย').trim()
@@ -632,15 +639,15 @@ export function pettyExpense(d) {
   const docNo = f.key === 'petty' && !ref ? (row?.doc_no || nextRvNo()) : ''
   const dateIso = /^\d{4}-\d{2}-\d{2}$/.test(String(d.date_iso || '')) ? d.date_iso : (row?.date_iso || todayISO())
   if (row) {
-    db.prepare('UPDATE petty_expenses SET fund=?, date_iso=?, cat=?, vendor=?, item=?, items=?, qty_total=?, ref=?, doc_no=?, ref_kind=?, ref_id=?, ref_no=?, house_code=?, vehicle=?, requester=?, note=?, vat_mode=?, discount=?, subtotal=?, before_vat=?, vat_amount=?, amount=?, updated=? WHERE id=?')
-      .run(f.key, dateIso, cat, vendor, summary, JSON.stringify(items), r2(items.reduce((s, it) => s + it.qty, 0)), ref, docNo, refKind, Number(d.ref_id) || null, refNo, hc, veh, requester, String(d.note || ''), m.vat_mode, m.discount, m.subtotal, m.before_vat, m.vat_amount, m.total, now, row.id)
+    db.prepare('UPDATE petty_expenses SET fund=?, date_iso=?, cat=?, vendor=?, item=?, items=?, qty_total=?, ref=?, doc_no=?, ref_kind=?, ref_id=?, ref_no=?, house_code=?, vehicle=?, requester=?, note=?, vat_mode=?, discount=?, subtotal=?, before_vat=?, vat_amount=?, amount=?, bill_amount=?, paid_amount=?, updated=? WHERE id=?')
+      .run(f.key, dateIso, cat, vendor, summary, JSON.stringify(items), r2(items.reduce((s, it) => s + it.qty, 0)), ref, docNo, refKind, Number(d.ref_id) || null, refNo, hc, veh, requester, String(d.note || ''), m.vat_mode, m.discount, m.subtotal, m.before_vat, m.vat_amount, m.total, m.bill_amount, m.paid_amount, now, row.id)
   } else {
-    const info = db.prepare('INSERT INTO petty_expenses (fund,date_iso,cat,vendor,item,items,qty_total,ref,doc_no,ref_kind,ref_id,ref_no,house_code,vehicle,requester,note,vat_mode,discount,subtotal,before_vat,vat_amount,amount,by,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(f.key, dateIso, cat, vendor, summary, JSON.stringify(items), r2(items.reduce((s, it) => s + it.qty, 0)), ref, docNo, refKind, Number(d.ref_id) || null, refNo, hc, veh, requester, String(d.note || ''), m.vat_mode, m.discount, m.subtotal, m.before_vat, m.vat_amount, m.total, d.by || '', now)
+    const info = db.prepare('INSERT INTO petty_expenses (fund,date_iso,cat,vendor,item,items,qty_total,ref,doc_no,ref_kind,ref_id,ref_no,house_code,vehicle,requester,note,vat_mode,discount,subtotal,before_vat,vat_amount,amount,bill_amount,paid_amount,by,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(f.key, dateIso, cat, vendor, summary, JSON.stringify(items), r2(items.reduce((s, it) => s + it.qty, 0)), ref, docNo, refKind, Number(d.ref_id) || null, refNo, hc, veh, requester, String(d.note || ''), m.vat_mode, m.discount, m.subtotal, m.before_vat, m.vat_amount, m.total, m.bill_amount, m.paid_amount, d.by || '', now)
     row = db.prepare('SELECT * FROM petty_expenses WHERE id=?').get(info.lastInsertRowid)
   }
   const acc = f.key === 'fuel' && !cat ? '6030' : expenseAccountFor(cat || (f.key === 'fuel' ? 'ค่าน้ำมัน' : ''))
-  const memo = `${summary}${vendor ? ' · ' + vendor : ''}${requester ? ' · เบิกโดย ' + requester : ''}${veh ? ' · ทะเบียน ' + veh : ''}`.trim()
+  const memo = `${summary}${vendor ? ' · ' + vendor : ''}${requester ? ' · เบิกโดย ' + requester : ''}${veh ? ' · ทะเบียน ' + veh : ''}${m.paid_amount !== m.bill_amount ? ` · ตามบิล ${m.bill_amount} จ่ายจริง ${m.paid_amount}` : ''}`.trim()
   const lines = [{ account: acc, debit: m.before_vat, credit: 0, memo }]
   if (m.vat_amount > 0) lines.push({ account: '1160', debit: m.vat_amount, credit: 0, memo: 'ภาษีซื้อ ' + (ref || docNo) })
   lines.push({ account: f.account, debit: 0, credit: m.total, memo })
@@ -701,7 +708,7 @@ export function pettyStatement({ from, to, fund } = {}) {
     bal = r2(bal + inAmt - outAmt)
     const e = r.entry_id ? db.prepare('SELECT * FROM petty_expenses WHERE entry_id=?').get(r.entry_id) : null
     return { date: r.date, date_iso: r.date_iso || '', ref: r.ref || '', memo: r.memo, house_code: r.house_code || '', house_name: houseNameOf(r.house_code), in: inAmt, out: outAmt, balance: bal, seq: outAmt > 0 ? String(++seq).padStart(3, '0') : '',
-      vendor: e?.vendor || '', requester: e?.requester || '', vehicle: e?.vehicle || '', doc_no: e?.doc_no || '', ref_kind: e?.ref_kind || '', ref_no: e?.ref_no || '', items: e ? (_jp(e.items) || []) : [], discount: e ? r2(e.discount || 0) : 0, before_vat: e ? r2(e.before_vat || 0) : (outAmt > 0 ? outAmt : 0), vat_amount: e ? r2(e.vat_amount || 0) : 0, vat_mode: e?.vat_mode || 'none', subtotal: e ? r2(e.subtotal || 0) : 0 }
+      vendor: e?.vendor || '', requester: e?.requester || '', vehicle: e?.vehicle || '', doc_no: e?.doc_no || '', ref_kind: e?.ref_kind || '', ref_no: e?.ref_no || '', items: e ? (_jp(e.items) || []) : [], bill_amount: e?.bill_amount ?? null, paid_amount: e?.paid_amount ?? null, discount: e ? r2(e.discount || 0) : 0, before_vat: e ? r2(e.before_vat || 0) : (outAmt > 0 ? outAmt : 0), vat_amount: e ? r2(e.vat_amount || 0) : 0, vat_mode: e?.vat_mode || 'none', subtotal: e ? r2(e.subtotal || 0) : 0 }
   })
   const totalOut = r2(rows.reduce((s, r) => s + r.out, 0))
   const totalInMoves = r2(rows.reduce((s, r) => s + r.in, 0))

@@ -2699,7 +2699,16 @@ api.get('/petty-cash/refs', financeOnly, (req, res) => {
   const kind = String(req.query.kind || '').toUpperCase()
   const q = String(req.query.q || '').toLowerCase()
   let rows = []
-  if (kind === 'RR') rows = db.prepare('SELECT g.id, g.po_no, g.date, g.result, p.vendor, p.amount, p.item FROM goods_receipts g LEFT JOIN purchase_orders p ON p.id=g.po_id ORDER BY g.id DESC LIMIT 200').all().map((g) => ({ id: g.id, no: `RR-${String(g.id).padStart(5, '0')}`, label: `RR-${String(g.id).padStart(5, '0')} · ${g.po_no || ''} ${g.vendor || ''} · ${g.item || ''} (${g.result || ''})`, amount: g.amount || 0, date: g.date || '' }))
+  if (kind === 'RR') {
+    // ใบรับของ = ผลตรวจรับ (goods_receipts) + PO ที่เปลี่ยนสถานะเป็น "รับของแล้ว" (ไม่ได้ผ่านหน้าตรวจรับ) → มีให้เลือกครบ
+    const grs = db.prepare('SELECT g.id, g.po_id, g.po_no, g.date, g.result, p.vendor, p.amount, p.item FROM goods_receipts g LEFT JOIN purchase_orders p ON p.id=g.po_id ORDER BY g.id DESC LIMIT 200').all()
+    const seenPo = new Set(grs.map((g) => g.po_id))
+    rows = grs.map((g) => ({ id: g.id, no: `RR-${String(g.id).padStart(5, '0')}`, label: `RR-${String(g.id).padStart(5, '0')} · ${g.po_no || ''} ${g.vendor || ''} · ${g.item || ''} (${g.result || ''}) ${g.date || ''}`, amount: g.amount || 0, date: g.date || '' }))
+    for (const p of db.prepare("SELECT id, no, date, vendor, amount, item, gr_date FROM purchase_orders WHERE status IN ('รับของแล้ว','ตรวจรับแล้ว','ปิดใบ') AND status<>'ยกเลิก' ORDER BY id DESC LIMIT 200").all()) {
+      if (seenPo.has(p.id)) continue
+      rows.push({ id: p.id, no: `RR-${p.no}`, label: `RR-${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ. (รับของแล้ว${p.gr_date ? ' ' + p.gr_date : ''})`, amount: p.amount || 0, date: p.gr_date || p.date || '' })
+    }
+  }
   else if (kind === 'OE') rows = db.prepare('SELECT id, date, item, vendor, amount, house_code FROM expenses ORDER BY id DESC LIMIT 200').all().map((e) => ({ id: e.id, no: `OE-${String(e.id).padStart(6, '0')}`, label: `OE-${String(e.id).padStart(6, '0')} · ${e.item || ''} ${e.vendor ? '· ' + e.vendor : ''} · ${fmtMoney(e.amount)} บ.`, amount: e.amount || 0, date: e.date || '' }))
   else if (kind === 'PS') rows = db.prepare('SELECT id, no, date, payee, net, note FROM payments ORDER BY id DESC LIMIT 200').all().map((p) => ({ id: p.id, no: p.no, label: `${p.no} · ${p.payee || ''} · ${fmtMoney(p.net)} บ.${p.note ? ' · ' + p.note : ''}`, amount: p.net || 0, date: p.date || '' }))
   else if (kind === 'PO') rows = db.prepare("SELECT id, no, date, vendor, amount, item FROM purchase_orders WHERE status<>'ยกเลิก' ORDER BY id DESC LIMIT 200").all().map((p) => ({ id: p.id, no: p.no, label: `${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ.`, amount: p.amount || 0, date: p.date || '' }))
