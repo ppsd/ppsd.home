@@ -2676,6 +2676,21 @@ api.put('/petty-cash/expense/:id', financeOnly, (req, res) => {
     res.json({ ...acct.pettyState(cur.fund), expense: acct.pettyExpenseById(cur.id) })
   } catch (e) { res.status(400).json({ error: e.message }) }
 })
+// แก้ไขรายการเก่า (ก่อนปรับระบบ ยังไม่มีแถวรายการ) → ถอนบัญชีเดิม + สร้างเป็นรายการแบบใหม่ (ได้เลข RV ถ้าไม่มีเลขบิล)
+api.put('/petty-cash/adopt/:entryId', financeOnly, (req, res) => {
+  try {
+    const k = pettyFundOf(req)
+    const entryId = acct.pettyExpense({ ...(req.body || {}), id: undefined, adopt_entry_id: Number(req.params.entryId), fund: k, by: req.user.name })
+    const row = db.prepare('SELECT * FROM petty_expenses WHERE entry_id=?').get(entryId)
+    audit(req, `แก้ไขรายการเก่า${acct.pettyFund(k).label}`, `entry#${req.params.entryId} → ${row?.doc_no || row?.ref || ''} ${row?.amount || ''}`)
+    res.json({ ...acct.pettyState(k), expense: acct.pettyExpenseRow(row) })
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+// แก้ไขรายการเติมเงินเข้ากอง (จำนวน/วันที่/อ้างอิง/หมายเหตุ)
+api.put('/petty-cash/topup/:entryId', financeOnly, (req, res) => {
+  try { const k = pettyFundOf(req); const r = acct.pettyTopupEdit({ ...(req.body || {}), entry_id: req.params.entryId, fund: k, by: req.user.name }); audit(req, `แก้ไขรายการเติม${acct.pettyFund(k).label}`, `entry#${req.params.entryId} → ${r.amount}`); res.json(acct.pettyState(k)) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
 api.delete('/petty-cash/expense/:id', financeOnly, (req, res) => {
   try { const row = acct.deletePettyExpense(req.params.id); audit(req, `ลบรายการ${acct.pettyFund(row.fund).label}`, `${row.doc_no || row.ref || '#' + row.id} ${row.amount}`); res.json(acct.pettyState(row.fund)) } catch (e) { res.status(400).json({ error: e.message }) }
 })
