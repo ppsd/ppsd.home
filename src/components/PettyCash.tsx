@@ -16,12 +16,12 @@ const ghost = btn('#fff', '#30506A', '1px solid #D2DAE1')
 const f2 = (n: number) => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 interface Line { desc: string; qty: number; unit: string; price: number }
-export interface PettyExpense { id: number; fund: string; date_iso: string; cat: string; vendor: string; item: string; items: Line[]; qty_total: number; ref: string; doc_no: string; ref_kind: string; ref_id: number | null; ref_no: string; house_code: string; house_name?: string; vehicle: string; requester: string; note: string; vat_mode: string; discount: number; subtotal: number; before_vat: number; vat_amount: number; amount: number; by: string; created: string; updated?: string; entry_id: number }
+export interface PettyExpense { id: number; fund: string; bill_amount?: number | null; paid_amount?: number | null; date_iso: string; cat: string; vendor: string; item: string; items: Line[]; qty_total: number; ref: string; doc_no: string; ref_kind: string; ref_id: number | null; ref_no: string; house_code: string; house_name?: string; vehicle: string; requester: string; note: string; vat_mode: string; discount: number; subtotal: number; before_vat: number; vat_amount: number; amount: number; by: string; created: string; updated?: string; entry_id: number }
 interface PettyRow { no: string; date: string; date_iso?: string; memo: string; ref?: string; debit: number; credit: number; balance: number; house_code?: string; house_name?: string; entry_id?: number; expense?: PettyExpense | null }
 interface PettyState { fund?: string; label?: string; float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number; expense?: PettyExpense }
 interface PettyOverviewRow { fund: string; label: string; float: number; balance: number; toReplenish: number }
 interface FuelRequest { id: number; no: string; date: string; date_iso: string; by: string; amount: number; house_code: string; house_name: string; vehicle: string; note: string; status: string; approved_by?: string; approved_at?: string; reject_note?: string; source: string }
-interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string; house_code?: string; house_name?: string; vendor?: string; requester?: string; vehicle?: string; doc_no?: string; ref_kind?: string; ref_no?: string; items?: Line[]; discount?: number; before_vat?: number; vat_amount?: number; vat_mode?: string; subtotal?: number }
+interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string; bill_amount?: number | null; paid_amount?: number | null; house_code?: string; house_name?: string; vendor?: string; requester?: string; vehicle?: string; doc_no?: string; ref_kind?: string; ref_no?: string; items?: Line[]; discount?: number; before_vat?: number; vat_amount?: number; vat_mode?: string; subtotal?: number }
 interface PettyStatement { fund?: string; label?: string; float: number; from: string; to: string; opening: number; rows: PettyStmtRow[]; totalOut: number; totalIn: number; closing: number; toReplenish: number }
 interface RefOpt { id: number; no: string; label: string; amount: number; date: string }
 
@@ -61,7 +61,7 @@ function RefPicker({ kind, refNo, onKind, onPick, allowed }: { kind: string; ref
   )
 }
 
-const emptyForm = (fund: PettyFundKey, today: string) => ({ date_iso: today, cat: PETTY_FUND_INFO[fund].cats[0], vendor: '', requester: '', house_code: '', vehicle: '', ref: '', ref_kind: '', ref_id: null as number | null, ref_no: '', note: '', vat_mode: 'none', discount: '', amount: '', lines: [{ desc: '', qty: '', unit: '', price: '' }] as { desc: string; qty: string; unit: string; price: string }[] })
+const emptyForm = (fund: PettyFundKey, today: string) => ({ date_iso: today, bill_amount: '', paid_amount: '', cat: PETTY_FUND_INFO[fund].cats[0], vendor: '', requester: '', house_code: '', vehicle: '', ref: '', ref_kind: '', ref_id: null as number | null, ref_no: '', note: '', vat_mode: 'none', discount: '', amount: '', lines: [{ desc: '', qty: '', unit: '', price: '' }] as { desc: string; qty: string; unit: string; price: string }[] })
 type Form = ReturnType<typeof emptyForm>
 const unm = (s: string) => Number(String(s || '').replace(/,/g, '')) || 0
 
@@ -99,7 +99,11 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
   const lineAmt = (l: { qty: string; price: string }) => { const q = unm(l.qty), p = unm(l.price); return Math.round(q > 0 ? q * p : p) }
   const hasLines = f.lines.some((l) => l.desc.trim())
   const subtotal = hasLines ? f.lines.filter((l) => l.desc.trim()).reduce((s, l) => s + lineAmt(l), 0) : Math.round(unm(f.amount))
-  const money = moneySummary(subtotal, unm(f.discount), f.vat_mode)
+  const money0 = moneySummary(subtotal, unm(f.discount), f.vat_mode)
+  // เงินสดย่อย: ราคาตามบิล (ค่าเริ่มต้น = ยอดที่คำนวณ) และราคาจ่ายจริง (ค่าเริ่มต้น = ตามบิล) — ตัดเงินจากกองตามที่จ่ายจริง
+  const billAmt = f.bill_amount.trim() ? Math.round(unm(f.bill_amount)) : money0.total
+  const paidAmt = f.paid_amount.trim() ? Math.round(unm(f.paid_amount)) : billAmt
+  const money = { ...money0, total: paidAmt, before_vat: Math.round((paidAmt - money0.vat_amount) * 100) / 100, bill_amount: billAmt, paid_amount: paidAmt }
   const printStatement = async () => {
     const q = new URLSearchParams(); q.set('fund', fund); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)
     const s = await api.get<PettyStatement>('/petty-cash/statement?' + q.toString()); setStmt(s)
@@ -107,7 +111,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
   const resetForm = () => { setF(emptyForm(fund, today)); setEditId(null); setAdoptEntry(null) }
   const submit = async () => {
     if (money.total <= 0) { setMsg('ผิดพลาด: ใส่รายการสินค้า/จำนวนเงิน'); return }
-    const body = { fund, date_iso: f.date_iso, cat: f.cat, vendor: f.vendor, requester: f.requester, house_code: f.house_code, vehicle: f.vehicle, ref: f.ref, ref_kind: f.ref_kind, ref_id: f.ref_id, ref_no: f.ref_no, note: f.note, vat_mode: f.vat_mode, discount: money.discount, amount: money.subtotal, items: f.lines.filter((l) => l.desc.trim()).map((l) => ({ desc: l.desc.trim(), qty: unm(l.qty), unit: l.unit, price: unm(l.price) })) }
+    const body = { fund, date_iso: f.date_iso, cat: f.cat, vendor: f.vendor, requester: f.requester, house_code: f.house_code, vehicle: f.vehicle, ref: f.ref, ref_kind: f.ref_kind, ref_id: f.ref_id, ref_no: f.ref_no, note: f.note, vat_mode: f.vat_mode, discount: money.discount, amount: money.subtotal, bill_amount: fund === 'petty' ? money.bill_amount : undefined, paid_amount: fund === 'petty' ? money.paid_amount : undefined, items: f.lines.filter((l) => l.desc.trim()).map((l) => ({ desc: l.desc.trim(), qty: unm(l.qty), unit: l.unit, price: unm(l.price) })) }
     try {
       const r = editId ? await api.put<PettyState>('/petty-cash/expense/' + editId, body) : adoptEntry ? await api.put<PettyState>('/petty-cash/adopt/' + adoptEntry, body) : await api.post<PettyState>('/petty-cash/expense', body)
       const h = houses.find((x) => x.code === f.house_code)
@@ -131,7 +135,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
   const startEdit = (e: PettyExpense) => {
     setAdoptEntry(null)
     setEditId(e.id)
-    setF({ date_iso: e.date_iso, cat: e.cat || FUND.cats[0], vendor: e.vendor || '', requester: e.requester || '', house_code: e.house_code || '', vehicle: e.vehicle || '', ref: e.ref || '', ref_kind: e.ref_kind || '', ref_id: e.ref_id, ref_no: e.ref_no || '', note: e.note || '', vat_mode: e.vat_mode || 'none', discount: e.discount ? String(e.discount) : '', amount: e.items.length ? '' : String(e.subtotal || e.amount), lines: e.items.length ? e.items.map((l) => ({ desc: l.desc, qty: l.qty ? String(l.qty) : '', unit: l.unit, price: String(l.price) })) : [{ desc: '', qty: '', unit: '', price: '' }] })
+    setF({ date_iso: e.date_iso, bill_amount: e.bill_amount != null ? String(e.bill_amount) : '', paid_amount: e.paid_amount != null && e.paid_amount !== e.bill_amount ? String(e.paid_amount) : '', cat: e.cat || FUND.cats[0], vendor: e.vendor || '', requester: e.requester || '', house_code: e.house_code || '', vehicle: e.vehicle || '', ref: e.ref || '', ref_kind: e.ref_kind || '', ref_id: e.ref_id, ref_no: e.ref_no || '', note: e.note || '', vat_mode: e.vat_mode || 'none', discount: e.discount ? String(e.discount) : '', amount: e.items.length ? '' : String(e.subtotal || e.amount), lines: e.items.length ? e.items.map((l) => ({ desc: l.desc, qty: l.qty ? String(l.qty) : '', unit: l.unit, price: String(l.price) })) : [{ desc: '', qty: '', unit: '', price: '' }] })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
   const del = async (e: PettyExpense) => { if (!confirm(`ลบรายการ ${e.doc_no || e.ref || '#' + e.id} ${e.item} ${baht(e.amount)}? (บัญชีที่ลงไว้จะถูกถอน/กลับรายการ)`)) return; try { await api.del('/petty-cash/expense/' + e.id); setMsg('ลบรายการแล้ว'); load() } catch (er) { setMsg('ผิดพลาด: ' + (er as Error).message) } }
@@ -212,6 +216,15 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
             <span>รวมจ่าย <b className="num" style={{ color: '#1C2730', fontSize: 14 }}>{f2(money.total)}</b></span>
           </div>
         </div>
+        {fund === 'petty' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap', background: '#FBF8F1', border: '1px solid #EEDFC0', borderRadius: 8, padding: '7px 10px' }}>
+            <span style={{ fontSize: 12, color: '#5C6770' }}>ราคาตามบิล</span>
+            <MoneyInput style={{ ...field, width: 120 }} decimal placeholder={f2(money0.total)} value={f.bill_amount} onChange={(v) => setF((cur) => ({ ...cur, bill_amount: v }))} />
+            <span style={{ fontSize: 12, color: '#5C6770', marginLeft: 6 }}>ราคาจ่ายจริง</span>
+            <MoneyInput style={{ ...field, width: 120 }} decimal placeholder={f2(billAmt)} value={f.paid_amount} onChange={(v) => setF((cur) => ({ ...cur, paid_amount: v }))} />
+            <span style={{ fontSize: 11.5, color: money.paid_amount !== money.bill_amount ? '#C0852C' : '#94A0A8' }}>{money.paid_amount !== money.bill_amount ? `ส่วนต่าง ${money.paid_amount > money.bill_amount ? '+' : ''}${f2(money.paid_amount - money.bill_amount)} บาท (ตัดกองตามที่จ่ายจริง ${f2(money.paid_amount)})` : 'เว้นว่าง = ใช้ยอดที่คำนวณ · ตัดเงินจากกองตามราคาจ่ายจริง'}</span>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิง</span>
           <RefPicker kind={f.ref_kind} refNo={f.ref_no} onKind={(k) => setF((cur) => ({ ...cur, ref_kind: k, ref_no: '', ref_id: null }))} onPick={(o) => setF((cur) => ({ ...cur, ref_no: o?.no || '', ref_id: o?.id ?? null }))} />
@@ -244,7 +257,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
               {st.rows.map((r, i) => { const e = r.expense; return (
                 <tr key={i} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ padding: '8px 16px' }}><span className="num" style={{ fontFamily: 'monospace', fontWeight: 600 }}>{e?.doc_no || e?.ref || r.ref || r.no}</span><div style={{ fontSize: 10.5, color: '#94A0A8' }}>{r.date}{e?.doc_no ? ' · ใบสำคัญรับเงิน' : ''}{e?.ref_no ? ` · อ้าง ${e.ref_kind} ${e.ref_no}` : ''}</div></td>
-                  <td style={{ padding: '8px 12px', color: '#5C6770' }}>{e ? <>{e.item}{e.vendor ? <span> · <b style={{ color: '#1C2730', fontWeight: 500 }}>{e.vendor}</b></span> : null}{e.requester ? <span> · เบิก {e.requester}</span> : null}{e.vehicle ? <span> · 🚗 {e.vehicle}</span> : null}</> : r.memo}<HouseTag code={r.house_code} name={r.house_name} /></td>
+                  <td style={{ padding: '8px 12px', color: '#5C6770' }}>{e ? <>{e.item}{e.vendor ? <span> · <b style={{ color: '#1C2730', fontWeight: 500 }}>{e.vendor}</b></span> : null}{e.requester ? <span> · เบิก {e.requester}</span> : null}{e.vehicle ? <span> · 🚗 {e.vehicle}</span> : null}{e.bill_amount != null && e.paid_amount != null && e.bill_amount !== e.paid_amount ? <span style={{ color: '#C0852C' }}> · ตามบิล {f2(e.bill_amount)} จ่ายจริง {f2(e.paid_amount)}</span> : null}</> : r.memo}<HouseTag code={r.house_code} name={r.house_name} /></td>
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: '#5C6770' }}>{e ? f2(e.before_vat) : (r.credit ? f2(r.credit) : '-')}</td>
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: e?.vat_amount ? '#6B4E9E' : '#CBD3DA' }}>{e?.vat_amount ? f2(e.vat_amount) : '-'}</td>
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.debit ? '#2E7D55' : '#CBD3DA' }}>{r.debit ? baht(r.debit) : '-'}</td>
@@ -402,7 +415,7 @@ function PettyStatementDoc({ s, onClose }: { s: PettyStatement; onClose: () => v
                 <td style={{ ...cell, textAlign: 'center', whiteSpace: 'nowrap' }} className="num">{r.date_iso ? thDate(r.date_iso) : r.date}</td>
                 <td style={{ ...cell, textAlign: 'center' }} className="num">{r.seq}</td>
                 <td style={{ ...cell, textAlign: 'center' }} className="num">{r.doc_no || r.ref}</td>
-                <td style={cell}>{r.memo}{r.house_code ? <span style={{ fontSize: 10, color: '#444' }}> [บ้าน {r.house_code}{r.house_name && r.house_name !== r.house_code ? ' ' + r.house_name : ''}]</span> : null}{r.ref_no ? <span style={{ fontSize: 10, color: '#444' }}> [อ้าง {r.ref_kind} {r.ref_no}]</span> : null}</td>
+                <td style={cell}>{r.memo}{r.house_code ? <span style={{ fontSize: 10, color: '#444' }}> [บ้าน {r.house_code}{r.house_name && r.house_name !== r.house_code ? ' ' + r.house_name : ''}]</span> : null}{r.ref_no ? <span style={{ fontSize: 10, color: '#444' }}> [อ้าง {r.ref_kind} {r.ref_no}]</span> : null}{r.bill_amount != null && r.paid_amount != null && r.bill_amount !== r.paid_amount ? <span style={{ fontSize: 10, color: '#444' }}> [ตามบิล {m(r.bill_amount)}]</span> : null}</td>
                 <td style={{ ...cell, textAlign: 'right' }} className="num">{r.out ? m(r.before_vat || 0) : ''}</td>
                 <td style={{ ...cell, textAlign: 'right' }} className="num">{r.vat_amount ? m(r.vat_amount) : ''}</td>
                 <td style={{ ...cell, textAlign: 'right' }} className="num">{r.discount ? m(r.discount) : ''}</td>

@@ -1919,3 +1919,20 @@ test('เงินสดย่อย/น้ำมัน: ยอดแต่ล�
   const d = await POST('/petty-cash/expense', { fund: 'petty', ref: 'B-1', items: [{ desc: 'ตะปู', qty: 2.5, unit: 'กก.', price: 40.82 }], vat_mode: 'none' })
   assert.equal(d.data.expense.amount, 102, 'เงินสดย่อยทั่วไปก็ปัดเป็นบาทเต็ม (102.05 → 102)')
 })
+
+test('เงินสดย่อย: ราคาตามบิล/ราคาจ่ายจริง — ตัดกองตามจ่ายจริง VAT ตามบิล · RR มีให้เลือกจาก PO ที่รับของแล้ว', async () => {
+  const bal0 = (await GET('/petty-cash')).data.balance
+  // บิล 1,070 (รวม VAT) จ่ายจริง 1,000 (ร้านลดให้) → ตัดกอง 1,000 · VAT 70 ตามบิล · ค่าใช้จ่าย 930
+  const ex = await POST('/petty-cash/expense', { fund: 'petty', vendor: 'ร้านลดท้าย', ref: 'B-77', items: [{ desc: 'สีทาบ้าน', qty: 1, unit: 'ถัง', price: 1070 }], vat_mode: 'incl', paid_amount: 1000 })
+  assert.equal(ex.status, 200, JSON.stringify(ex.data)); assert.equal(ex.data.expense.bill_amount, 1070); assert.equal(ex.data.expense.paid_amount, 1000); assert.equal(ex.data.expense.amount, 1000); assert.equal(ex.data.expense.vat_amount, 70); assert.equal(ex.data.expense.before_vat, 930)
+  assert.equal(Math.round((bal0 - ex.data.balance) * 100) / 100, 1000)
+  // ระบุตามบิลเอง 500 จ่ายจริง 520
+  const ex2 = await POST('/petty-cash/expense', { fund: 'petty', ref: 'B-78', item: 'ค่าแรงยกของ', amount: 480, vat_mode: 'none', bill_amount: 500, paid_amount: 520 })
+  assert.equal(ex2.data.expense.bill_amount, 500); assert.equal(ex2.data.expense.paid_amount, 520); assert.equal(ex2.data.expense.amount, 520)
+  const st = (await GET('/petty-cash/statement?fund=petty')).data.rows.find((r) => r.ref === 'B-78'); assert.equal(st.bill_amount, 500); assert.equal(st.paid_amount, 520); assert.equal(st.out, 520)
+  // RR: PO ที่รับของแล้วต้องขึ้นเป็น RR-<เลข PO>
+  const po = (await GET('/purchase-orders')).data.find((p) => p.status === 'รับของแล้ว')
+  const rr = (await GET('/petty-cash/refs?kind=RR')).data
+  if (po) assert.ok(rr.some((r) => r.no === 'RR-' + po.no || r.label.includes(po.no)), 'PO รับของแล้วต้องเป็นตัวเลือก RR (จากใบตรวจรับหรือจาก PO): ' + JSON.stringify(rr.slice(0, 2)))
+  else assert.ok(Array.isArray(rr))
+})
