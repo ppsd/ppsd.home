@@ -245,7 +245,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
 
       {/* ประวัติ */}
       <div style={card}>
-        <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600 }}>ความเคลื่อนไหว{FUND.label} <span style={{ fontSize: 11, color: '#94A0A8', fontWeight: 400 }}>· บัญชี/ผู้ดูแลระบบกด ✎ แก้ไขได้{fund === 'petty' ? ' หรือ 🖨 พิมพ์ใบสำคัญรับเงิน' : ''}</span></div>
+        <div style={{ padding: '11px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13, fontWeight: 600 }}>ความเคลื่อนไหว{FUND.label} <span style={{ fontSize: 11, color: '#94A0A8', fontWeight: 400 }}>· บัญชี/ผู้ดูแลระบบกด ✎ แก้ไขได้{fund === 'petty' ? ' · 🖨 ใบสำคัญรับเงินมีเฉพาะรายการที่ไม่มีเลขบิล/ใบเสร็จร้าน (เลข RV-)' : ''}</span></div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead><tr style={{ background: '#F7F9FB' }}>
@@ -264,7 +264,7 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.credit ? '#C24036' : '#CBD3DA' }}>{r.credit ? baht(r.credit) : '-'}</td>
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{baht(r.balance)}</td>
                   <td style={{ padding: '8px 16px 8px 4px', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                    {e && <>{fund === 'petty' && <><button onClick={() => setVoucher(e)} title="พิมพ์ใบสำคัญรับเงิน" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>🖨</button> </>}<button onClick={() => startEdit(e)} title="แก้ไข" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎</button> <button onClick={() => del(e)} title="ลบ" style={{ ...ghost, padding: '2px 7px', fontSize: 11, color: '#C24036' }}>✕</button></>}
+                    {e && <>{fund === 'petty' && e.doc_no && !e.ref && <><button onClick={() => setVoucher(e)} title={`พิมพ์ใบสำคัญรับเงิน ${e.doc_no}`} style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>🖨</button> </>}<button onClick={() => startEdit(e)} title="แก้ไข" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎</button> <button onClick={() => del(e)} title="ลบ" style={{ ...ghost, padding: '2px 7px', fontSize: 11, color: '#C24036' }}>✕</button></>}
                     {!e && r.credit > 0 && <button onClick={() => startAdopt(r)} title="แก้ไขรายการเก่า (เติมร้าน/รายการ/ผู้เบิก/VAT ได้ · บันทึกแล้วกลายเป็นรายการแบบใหม่)" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎ แก้ไข</button>}
                     {!e && r.debit > 0 && r.entry_id && <button onClick={() => setTopupEdit({ entry_id: r.entry_id!, date_iso: r.date_iso || today, amount: String(r.debit), ref_kind: '', ref_no: '', note: r.memo || '' })} title="แก้ไขรายการเติมเงิน (จำนวน/วันที่/อ้างอิง)" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎ แก้ไข</button>}
                   </td>
