@@ -107,6 +107,20 @@ export function removeAutoJournal(source, source_id) {
   }
   try { db.prepare('DELETE FROM journal_issues WHERE source=? AND source_id=?').run(source, String(source_id)) } catch { /* ignore */ }
 }
+// ถอนรายการบัญชีรายตัว (ใช้กับรายการเก่าที่ไม่มีเอกสารต้นทาง เช่น เงินสดย่อยก่อนปรับระบบ) — งวดปิดแล้ว = กลับรายการแทนลบ
+export function removeEntryById(id, note = 'แก้ไขรายการ') {
+  const o = db.prepare('SELECT * FROM journal_entries WHERE id=?').get(Number(id))
+  if (!o) return false
+  if (isDateLocked(o.date_iso, o.source)) {
+    const lines = db.prepare('SELECT account, debit, credit, memo FROM journal_lines WHERE entry_id=?').all(o.id).map((l) => ({ account: l.account, debit: l.credit, credit: l.debit, memo: l.memo }))
+    postJournal({ memo: `กลับรายการ (${note} แต่งวดบัญชีปิดแล้ว): ${o.memo || o.no}`, house_code: o.house_code, source: 'rev', source_id: `entry:${o.id}`, ref: o.no, lines })
+    db.prepare('UPDATE journal_entries SET source_id=NULL, void=1 WHERE id=?').run(o.id)
+  } else {
+    db.prepare('DELETE FROM journal_lines WHERE entry_id=?').run(o.id)
+    db.prepare('DELETE FROM journal_entries WHERE id=?').run(o.id)
+  }
+  return true
+}
 
 // ---- ลงบัญชีอัตโนมัติจากเอกสารการเงินที่มีอยู่ ----
 // วันที่ของรายการบัญชีเดิม (ถ้าเคยลงไว้แล้ว) — เวลาลงซ้ำ (แก้ไข/rebuild) วันที่ต้องไม่เลื่อนมาเป็นวันนี้
@@ -603,6 +617,14 @@ export function pettyExpense(d) {
   const now = nowTS()
   let row = d.id ? db.prepare('SELECT * FROM petty_expenses WHERE id=?').get(d.id) : null
   if (d.id && !row) throw new Error('ไม่พบรายการเงินสดย่อยนี้')
+  // แก้ไขรายการเก่า (ลงไว้ก่อนปรับระบบ ไม่มีแถว petty_expenses): ถอนรายการบัญชีเดิม แล้วสร้างเป็นรายการแบบใหม่แทน
+  if (!row && d.adopt_entry_id) {
+    const oldE = db.prepare('SELECT * FROM journal_entries WHERE id=?').get(Number(d.adopt_entry_id))
+    if (!oldE) throw new Error('ไม่พบรายการบัญชีเดิม')
+    if (db.prepare('SELECT id FROM petty_expenses WHERE entry_id=?').get(oldE.id)) throw new Error('รายการนี้แก้ไขได้จากปุ่มแก้ไขปกติ')
+    if (!db.prepare('SELECT 1 FROM journal_lines WHERE entry_id=? AND account=? AND credit>0').get(oldE.id, f.account)) throw new Error('รายการเดิมไม่ใช่รายการจ่ายของกองนี้')
+    removeEntryById(oldE.id, 'แก้ไขรายการเงินสดย่อยเก่า')
+  }
   const docNo = ref ? '' : (row?.doc_no || nextRvNo())
   const dateIso = /^\d{4}-\d{2}-\d{2}$/.test(String(d.date_iso || '')) ? d.date_iso : (row?.date_iso || todayISO())
   if (row) {
@@ -632,6 +654,21 @@ export function deletePettyExpense(id) {
   return row
 }
 // เติมกองให้เต็มวงเงิน (เงินเข้า): Dr บัญชีของกอง / Cr ธนาคาร (ถ้าไม่ระบุจำนวน = เติมให้เต็ม float) · อ้างอิงเอกสารเงินเข้าได้ (OE/PS/PV)
+// แก้ไขรายการเติมเงินเข้ากอง (รายการเก่าหรือใหม่ก็ได้): ถอนรายการเดิม แล้วลงใหม่ตามค่าที่แก้
+export function pettyTopupEdit({ entry_id, date_iso, amount, ref, note, by, fund, ref_kind, ref_no }) {
+  const f = pettyFund(fund)
+  const o = db.prepare('SELECT * FROM journal_entries WHERE id=?').get(Number(entry_id))
+  if (!o) throw new Error('ไม่พบรายการเติมเงินเดิม')
+  if (!db.prepare('SELECT 1 FROM journal_lines WHERE entry_id=? AND account=? AND debit>0').get(o.id, f.account)) throw new Error('รายการเดิมไม่ใช่รายการเติมเงินของกองนี้')
+  const amt = r2(Number(String(amount ?? '').replace(/,/g, '')) || 0)
+  if (amt <= 0) throw new Error('จำนวนเงินไม่ถูกต้อง')
+  const bank = db.prepare('SELECT account FROM journal_lines WHERE entry_id=? AND credit>0').get(o.id)?.account || defaultBank()
+  removeEntryById(o.id, 'แก้ไขรายการเติมเงิน')
+  const refText = String(ref || (ref_kind && ref_no ? `${String(ref_kind).toUpperCase()} ${ref_no}` : '') || '').trim()
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(date_iso || '')) ? date_iso : o.date_iso
+  const id = postJournal({ date_iso: iso, memo: note || o.memo || `เติม/ทดแทน${f.label}ให้เต็มวงเงิน`, ref: refText, source: f.topupSource, by, lines: [{ account: f.account, debit: amt, credit: 0 }, { account: bank, debit: 0, credit: amt }] })
+  return { amount: amt, entry_id: id }
+}
 export function pettyTopup({ date_iso, amount, from, ref, note, by, fund, ref_kind, ref_no }) {
   const f = pettyFund(fund)
   const st = pettyState(f.key)

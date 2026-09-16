@@ -17,7 +17,7 @@ const f2 = (n: number) => (Number(n) || 0).toLocaleString('en-US', { minimumFrac
 
 interface Line { desc: string; qty: number; unit: string; price: number }
 export interface PettyExpense { id: number; fund: string; date_iso: string; cat: string; vendor: string; item: string; items: Line[]; qty_total: number; ref: string; doc_no: string; ref_kind: string; ref_id: number | null; ref_no: string; house_code: string; house_name?: string; vehicle: string; requester: string; note: string; vat_mode: string; discount: number; subtotal: number; before_vat: number; vat_amount: number; amount: number; by: string; created: string; updated?: string; entry_id: number }
-interface PettyRow { no: string; date: string; memo: string; ref?: string; debit: number; credit: number; balance: number; house_code?: string; house_name?: string; entry_id?: number; expense?: PettyExpense | null }
+interface PettyRow { no: string; date: string; date_iso?: string; memo: string; ref?: string; debit: number; credit: number; balance: number; house_code?: string; house_name?: string; entry_id?: number; expense?: PettyExpense | null }
 interface PettyState { fund?: string; label?: string; float: number; balance: number; toReplenish: number; rows: PettyRow[]; added?: number; expense?: PettyExpense }
 interface PettyOverviewRow { fund: string; label: string; float: number; balance: number; toReplenish: number }
 interface FuelRequest { id: number; no: string; date: string; date_iso: string; by: string; amount: number; house_code: string; house_name: string; vehicle: string; note: string; status: string; approved_by?: string; approved_at?: string; reject_note?: string; source: string }
@@ -78,6 +78,8 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
   const firstOfMonth = today.slice(0, 8) + '01'
   const [f, setF] = useState<Form>(emptyForm(fund, today))
   const [editId, setEditId] = useState<number | null>(null)
+  const [adoptEntry, setAdoptEntry] = useState<number | null>(null) // แก้ไขรายการเก่า (ก่อนปรับระบบ) → สร้างเป็นรายการแบบใหม่แทน
+  const [topupEdit, setTopupEdit] = useState<{ entry_id: number; date_iso: string; amount: string; ref_kind: string; ref_no: string; note: string } | null>(null)
   const [floatEdit, setFloatEdit] = useState('')
   const [range, setRange] = useState({ from: firstOfMonth, to: today })
   const [stmt, setStmt] = useState<PettyStatement | null>(null)
@@ -99,19 +101,32 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
     const q = new URLSearchParams(); q.set('fund', fund); if (range.from) q.set('from', range.from); if (range.to) q.set('to', range.to)
     const s = await api.get<PettyStatement>('/petty-cash/statement?' + q.toString()); setStmt(s)
   }
-  const resetForm = () => { setF(emptyForm(fund, today)); setEditId(null) }
+  const resetForm = () => { setF(emptyForm(fund, today)); setEditId(null); setAdoptEntry(null) }
   const submit = async () => {
     if (money.total <= 0) { setMsg('ผิดพลาด: ใส่รายการสินค้า/จำนวนเงิน'); return }
     const body = { fund, date_iso: f.date_iso, cat: f.cat, vendor: f.vendor, requester: f.requester, house_code: f.house_code, vehicle: f.vehicle, ref: f.ref, ref_kind: f.ref_kind, ref_id: f.ref_id, ref_no: f.ref_no, note: f.note, vat_mode: f.vat_mode, discount: money.discount, amount: money.subtotal, items: f.lines.filter((l) => l.desc.trim()).map((l) => ({ desc: l.desc.trim(), qty: unm(l.qty), unit: l.unit, price: unm(l.price) })) }
     try {
-      const r = editId ? await api.put<PettyState>('/petty-cash/expense/' + editId, body) : await api.post<PettyState>('/petty-cash/expense', body)
+      const r = editId ? await api.put<PettyState>('/petty-cash/expense/' + editId, body) : adoptEntry ? await api.put<PettyState>('/petty-cash/adopt/' + adoptEntry, body) : await api.post<PettyState>('/petty-cash/expense', body)
       const h = houses.find((x) => x.code === f.house_code)
-      setMsg(`${editId ? 'แก้ไข' : 'บันทึกจ่าย'}${FUND.label}แล้ว${r.expense?.doc_no ? ` — ออกใบสำคัญรับเงิน ${r.expense.doc_no} ให้อัตโนมัติ (ไม่มีเลขที่บิลร้าน)` : ''}${h ? ` · ผูกบ้าน ${h.code} ${h.name}` : ''}${money.vat_amount ? ` · ภาษีซื้อ ${baht(money.vat_amount)} ลงบัญชี 1160` : ''}`)
+      setMsg(`${editId || adoptEntry ? 'แก้ไข' : 'บันทึกจ่าย'}${FUND.label}แล้ว${r.expense?.doc_no ? ` — ออกใบสำคัญรับเงิน ${r.expense.doc_no} ให้อัตโนมัติ (ไม่มีเลขที่บิลร้าน)` : ''}${h ? ` · ผูกบ้าน ${h.code} ${h.name}` : ''}${money.vat_amount ? ` · ภาษีซื้อ ${baht(money.vat_amount)} ลงบัญชี 1160` : ''}`)
       resetForm(); load()
       if (r.expense && !editId && r.expense.doc_no) setVoucher(r.expense)
     } catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
   }
+  // รายการเก่า (ไม่มีแถวรายการ): เติมฟอร์มจากรายการบัญชีเดิม แล้วบันทึกเป็นรายการแบบใหม่ (ถอนบัญชีเดิมให้)
+  const startAdopt = (r: PettyRow) => {
+    setEditId(null); setAdoptEntry(r.entry_id || null)
+    const memoParts = String(r.memo || '').split(' · ')
+    setF({ ...emptyForm(fund, today), date_iso: r.date_iso || today, ref: r.ref && !/^JV-/.test(r.ref) ? r.ref : '', house_code: r.house_code || '', amount: String(r.credit || ''), lines: [{ desc: memoParts[0] || '', qty: '', unit: '', price: String(r.credit || '') }], vendor: memoParts[1] && !/เบิกโดย|ทะเบียน/.test(memoParts[1]) ? memoParts[1] : '' })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  const saveTopupEdit = async () => {
+    if (!topupEdit) return
+    try { await api.put('/petty-cash/topup/' + topupEdit.entry_id, { fund, date_iso: topupEdit.date_iso, amount: unm(topupEdit.amount), ref_kind: topupEdit.ref_kind, ref_no: topupEdit.ref_no, note: topupEdit.note }); setMsg('แก้ไขรายการเติมเงินแล้ว'); setTopupEdit(null); load() }
+    catch (e) { setMsg('ผิดพลาด: ' + (e as Error).message) }
+  }
   const startEdit = (e: PettyExpense) => {
+    setAdoptEntry(null)
     setEditId(e.id)
     setF({ date_iso: e.date_iso, cat: e.cat || FUND.cats[0], vendor: e.vendor || '', requester: e.requester || '', house_code: e.house_code || '', vehicle: e.vehicle || '', ref: e.ref || '', ref_kind: e.ref_kind || '', ref_id: e.ref_id, ref_no: e.ref_no || '', note: e.note || '', vat_mode: e.vat_mode || 'none', discount: e.discount ? String(e.discount) : '', amount: e.items.length ? '' : String(e.subtotal || e.amount), lines: e.items.length ? e.items.map((l) => ({ desc: l.desc, qty: l.qty ? String(l.qty) : '', unit: l.unit, price: String(l.price) })) : [{ desc: '', qty: '', unit: '', price: '' }] })
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -158,8 +173,8 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
       </div>
 
       {/* ฟอร์มจ่าย (สร้าง/แก้ไข) */}
-      <div style={{ ...card, padding: 16, border: editId ? '2px solid #C0852C' : undefined }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>{editId ? `✎ แก้ไขรายการ #${editId}` : `บันทึกจ่าย${FUND.label}`}{editId && <button onClick={resetForm} style={{ ...ghost, padding: '3px 9px', fontSize: 11 }}>ยกเลิกแก้ไข</button>}</div>
+      <div style={{ ...card, padding: 16, border: editId || adoptEntry ? '2px solid #C0852C' : undefined }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>{editId ? `✎ แก้ไขรายการ #${editId}` : adoptEntry ? `✎ แก้ไขรายการเก่า (บัญชี #${adoptEntry}) — บันทึกแล้วจะกลายเป็นรายการแบบใหม่ ถอนรายการบัญชีเดิมให้` : `บันทึกจ่าย${FUND.label}`}{(editId || adoptEntry) && <button onClick={resetForm} style={{ ...ghost, padding: '3px 9px', fontSize: 11 }}>ยกเลิกแก้ไข</button>}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
           <label style={{ fontSize: 11.5, color: '#5C6770' }}>วันที่<input type="date" style={{ ...field, width: '100%', marginTop: 3 }} value={f.date_iso} onChange={(e) => setF({ ...f, date_iso: e.target.value })} /></label>
           <label style={{ fontSize: 11.5, color: '#5C6770' }}>เลขที่บิล/ใบเสร็จร้าน<input style={{ ...field, width: '100%', marginTop: 3 }} value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} placeholder="ว่าง = ออกใบสำคัญรับเงิน RV ให้" /></label>
@@ -232,13 +247,31 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.debit ? '#2E7D55' : '#CBD3DA' }}>{r.debit ? baht(r.debit) : '-'}</td>
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', color: r.credit ? '#C24036' : '#CBD3DA' }}>{r.credit ? baht(r.credit) : '-'}</td>
                   <td className="num" style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{baht(r.balance)}</td>
-                  <td style={{ padding: '8px 16px 8px 4px', whiteSpace: 'nowrap', textAlign: 'right' }}>{e && <><button onClick={() => setVoucher(e)} title="พิมพ์ใบสำคัญรับเงิน" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>🖨</button> <button onClick={() => startEdit(e)} title="แก้ไข" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎</button> <button onClick={() => del(e)} title="ลบ" style={{ ...ghost, padding: '2px 7px', fontSize: 11, color: '#C24036' }}>✕</button></>}</td>
+                  <td style={{ padding: '8px 16px 8px 4px', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    {e && <><button onClick={() => setVoucher(e)} title="พิมพ์ใบสำคัญรับเงิน" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>🖨</button> <button onClick={() => startEdit(e)} title="แก้ไข" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎</button> <button onClick={() => del(e)} title="ลบ" style={{ ...ghost, padding: '2px 7px', fontSize: 11, color: '#C24036' }}>✕</button></>}
+                    {!e && r.credit > 0 && <button onClick={() => startAdopt(r)} title="แก้ไขรายการเก่า (เติมร้าน/รายการ/ผู้เบิก/VAT ได้ · บันทึกแล้วกลายเป็นรายการแบบใหม่)" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎ แก้ไข</button>}
+                    {!e && r.debit > 0 && r.entry_id && <button onClick={() => setTopupEdit({ entry_id: r.entry_id!, date_iso: r.date_iso || today, amount: String(r.debit), ref_kind: '', ref_no: '', note: r.memo || '' })} title="แก้ไขรายการเติมเงิน (จำนวน/วันที่/อ้างอิง)" style={{ ...ghost, padding: '2px 7px', fontSize: 11 }}>✎ แก้ไข</button>}
+                  </td>
                 </tr>) })}
             </tbody>
           </table>
         </div>
       </div>
 
+      {topupEdit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.45)', zIndex: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setTopupEdit(null)}>
+          <div style={{ ...card, padding: 18, width: 520, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>✎ แก้ไขรายการเติมเงินเข้ากอง</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <label style={{ fontSize: 11.5, color: '#5C6770' }}>วันที่<input type="date" style={{ ...field, width: '100%', marginTop: 3 }} value={topupEdit.date_iso} onChange={(e) => setTopupEdit({ ...topupEdit, date_iso: e.target.value })} /></label>
+              <label style={{ fontSize: 11.5, color: '#5C6770' }}>จำนวนเงิน<MoneyInput style={{ ...field, width: '100%', marginTop: 3 }} decimal value={topupEdit.amount} onChange={(v) => setTopupEdit({ ...topupEdit, amount: v })} /></label>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}><span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิงเงินเข้า</span><RefPicker kind={topupEdit.ref_kind} refNo={topupEdit.ref_no} allowed={['OE', 'PS']} onKind={(k) => setTopupEdit({ ...topupEdit, ref_kind: k, ref_no: '' })} onPick={(o) => setTopupEdit({ ...topupEdit, ref_no: o?.no || '' })} /></div>
+            <input style={{ ...field, width: '100%', marginTop: 8 }} placeholder="หมายเหตุ/รายละเอียด" value={topupEdit.note} onChange={(e) => setTopupEdit({ ...topupEdit, note: e.target.value })} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}><button onClick={() => setTopupEdit(null)} style={ghost}>ยกเลิก</button><button onClick={saveTopupEdit} style={btn('#C0852C')}>บันทึกการแก้ไข</button></div>
+          </div>
+        </div>
+      )}
       {stmt && <PettyStatementDoc s={stmt} onClose={() => setStmt(null)} />}
       {voucher && <PettyVoucherDoc e={voucher} fundLabel={FUND.label} onClose={() => setVoucher(null)} />}
     </div>

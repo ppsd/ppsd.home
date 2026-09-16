@@ -1882,3 +1882,27 @@ test('เงินสดย่อยแบบใหม่: รายการส
   const fe = (await GET('/petty-cash/expenses?fund=fuel')).data.find((x) => x.ref === req.data.no)
   assert.ok(fe, 'อนุมัติเบิกน้ำมันต้องมีแถวรายการ'); assert.equal(fe.amount, 300); assert.equal(fe.vehicle, 'กข 1'); assert.ok(fe.requester)
 })
+
+test('เงินสดย่อย: แก้ไขรายการเก่า (ลงบัญชีไว้ก่อนปรับระบบ) → กลายเป็นรายการแบบใหม่ ถอนบัญชีเดิม ยอดกองไม่ซ้ำ · แก้ไขรายการเติมเงินเก่าได้', async () => {
+  const bal0 = (await GET('/petty-cash')).data.balance
+  // จำลองรายการเก่า: ลงสมุดรายวันเอง Dr 6020 / Cr 1030 = 300 (ไม่มีแถว petty_expenses)
+  const jv = await POST('/journal', { memo: 'ค่าถ่ายเอกสาร (รายการเก่า)', lines: [{ account: '6020', debit: 300, credit: 0 }, { account: '1030', debit: 0, credit: 300 }] })
+  assert.equal(jv.status, 201, JSON.stringify(jv.data))
+  let st = (await GET('/petty-cash')).data
+  assert.equal(Math.round((bal0 - st.balance) * 100) / 100, 300)
+  const legacy = st.rows.find((r) => r.memo === 'ค่าถ่ายเอกสาร (รายการเก่า)')
+  assert.ok(legacy && !legacy.expense, 'รายการเก่าต้องไม่มีแถวรายการแนบ')
+  // แก้ไข: ใส่ร้าน/รายการ/จำนวน 320 บาท → ถอนของเดิม กองต้องลด 320 (ไม่ใช่ 620)
+  const ad = await PUT('/petty-cash/adopt/' + legacy.entry_id, { fund: 'petty', cat: 'ของใช้สำนักงาน', vendor: 'ร้านถ่ายเอกสาร', requester: 'ธุรการ', items: [{ desc: 'ถ่ายเอกสาร A4', qty: 320, unit: 'แผ่น', price: 1 }], vat_mode: 'none' })
+  assert.equal(ad.status, 200, JSON.stringify(ad.data)); assert.match(ad.data.expense.doc_no, /^RV-/); assert.equal(ad.data.expense.amount, 320)
+  assert.equal(Math.round((bal0 - ad.data.balance) * 100) / 100, 320, 'ต้องถอนรายการเดิมออก')
+  assert.ok(!ad.data.rows.some((r) => r.memo === 'ค่าถ่ายเอกสาร (รายการเก่า)'), 'รายการเดิมต้องหายไป')
+  assert.equal((await PUT('/petty-cash/adopt/' + legacy.entry_id, { fund: 'petty', item: 'x', amount: 1 })).status, 400, 'แก้ซ้ำรายการที่ถูกถอนแล้วต้องกัน')
+  // แก้ไขรายการเติมเงินเก่า: เติม 700 → แก้เป็น 900 อ้างอิง OE
+  const tp = await POST('/petty-cash/topup', { fund: 'petty', amount: 700 }); assert.equal(tp.status, 200)
+  const trow = tp.data.rows.find((r) => r.debit === 700); assert.ok(trow?.entry_id)
+  const te = await PUT('/petty-cash/topup/' + trow.entry_id, { fund: 'petty', amount: 900, ref_kind: 'OE', ref_no: 'OE-000001', note: 'แก้ยอดเติม' })
+  assert.equal(te.status, 200, JSON.stringify(te.data))
+  const after = te.data.rows.find((r) => r.debit === 900); assert.ok(after, 'ต้องมีรายการเติม 900'); assert.equal(after.ref, 'OE OE-000001'); assert.ok(!te.data.rows.some((r) => r.debit === 700))
+  assert.equal(Math.round((te.data.balance - ad.data.balance) * 100) / 100, 900)
+})
