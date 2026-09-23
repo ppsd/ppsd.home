@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { moneySummary } from '../money'
+import type { VatMode } from '../money'
 import { useApp } from '../store'
 import type { ApiSalesDoc, SalesItem } from '../store'
 import { baht } from '../data'
@@ -51,16 +53,20 @@ export default function Sales() {
   const [err, setErr] = useState('')
   const [printDoc, setPrintDoc] = useState<ApiSalesDoc | null>(null)
 
-  const subtotal = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0)
-  const vat = Math.round(subtotal * 0.07)
+  // ภาษีขาย: ลูกค้าบางรายไม่ต้องการ VAT (ราคารวมถูกลง) → เลือกได้ ไม่มี VAT / บวก VAT 7% / ราคารวม VAT แล้ว
+  const [vatMode, setVatMode] = useState<VatMode>('excl')
+  const lineSum = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0)
+  const sm = moneySummary(lineSum, 0, vatMode)
+  const subtotal = sm.before_vat
+  const vat = sm.vat_amount
 
   const setItem = (i: number, patch: Partial<SalesItem>) => setItems((prev) => prev.map((it, j) => (j === i ? { ...it, ...patch } : it)))
 
   const submit = async () => {
     setBusy(true); setErr('')
     try {
-      const doc = await addSalesDoc({ type, customer, house_code: houseCode, items: items.filter((it) => it.desc.trim()) })
-      setAdding(false); setCustomer(''); setHouseCode(''); setItems([{ desc: '', qty: 1, price: 0 }])
+      const doc = await addSalesDoc({ type, customer, house_code: houseCode, items: items.filter((it) => it.desc.trim()), vat_mode: vatMode })
+      setAdding(false); setCustomer(''); setHouseCode(''); setItems([{ desc: '', qty: 1, price: 0 }]); setVatMode('excl')
       setPrintDoc(doc)
     } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
@@ -110,10 +116,19 @@ export default function Sales() {
             </tbody>
           </table>
           <button onClick={() => setItems([...items, { desc: '', qty: 1, price: 0 }])} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>+ เพิ่มแถว</button>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 24, marginTop: 12, fontSize: 13 }}>
-            <span style={{ color: '#5C6770' }}>รวม <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{baht(subtotal)}</span></span>
-            <span style={{ color: '#5C6770' }}>VAT 7% <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{baht(vat)}</span></span>
-            <span style={{ color: '#5C6770' }}>สุทธิ <span className="num" style={{ fontWeight: 700, color: '#2E7D55' }}>{baht(subtotal + vat)}</span></span>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 24, marginTop: 12, fontSize: 13, flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: '#5C6770', marginRight: 'auto' }}>
+              ภาษีมูลค่าเพิ่ม
+              <select style={{ ...field, width: 'auto', padding: '6px 9px', fontSize: 12.5 }} value={vatMode} onChange={(e) => setVatMode(e.target.value as VatMode)}>
+                <option value="excl">รวม VAT — บวก 7% จากราคา</option>
+                <option value="none">ไม่รวม VAT — ไม่คิดภาษี (ราคารวมถูกลง)</option>
+                <option value="incl">ราคาที่กรอกรวม VAT แล้ว (ถอด 7/107)</option>
+              </select>
+              {vatMode === 'none' && <span style={{ fontSize: 11.5, color: '#C0852C' }}>ในใบจะไม่มีบรรทัดภาษี</span>}
+            </label>
+            <span style={{ color: '#5C6770' }}>{vatMode === 'none' ? 'รวม' : 'ก่อน VAT'} <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{baht(subtotal)}</span></span>
+            {vatMode !== 'none' && <span style={{ color: '#5C6770' }}>VAT 7% <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{baht(vat)}</span></span>}
+            <span style={{ color: '#5C6770' }}>สุทธิ <span className="num" style={{ fontWeight: 700, color: '#2E7D55' }}>{baht(sm.total)}</span></span>
           </div>
           {err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{err}</div>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
