@@ -2701,20 +2701,22 @@ api.get('/petty-cash/refs', financeOnly, (req, res) => {
   let rows = []
   if (kind === 'RR') {
     // ใบรับของ = ผลตรวจรับ (goods_receipts) + PO ที่เปลี่ยนสถานะเป็น "รับของแล้ว" (ไม่ได้ผ่านหน้าตรวจรับ) → มีให้เลือกครบ
-    const grs = db.prepare('SELECT g.id, g.po_id, g.po_no, g.date, g.result, p.vendor, p.amount, p.item FROM goods_receipts g LEFT JOIN purchase_orders p ON p.id=g.po_id ORDER BY g.id DESC LIMIT 200').all()
+    // รายละเอียดรายการ (items) / ร้าน / บ้าน ติดไปด้วย → หน้าเงินสดย่อยเติมฟอร์มให้เอง ไม่ต้องพิมพ์ใหม่
+    const poLines = (p) => { const it = jparse(p.items); return Array.isArray(it) && it.length ? it : [{ desc: p.item || '', qty: 0, unit: '', price: p.amount || 0 }] }
+    const grs = db.prepare('SELECT g.id, g.po_id, g.po_no, g.date, g.result, g.delivery_items, p.vendor, p.amount, p.item, p.items, p.house_code FROM goods_receipts g LEFT JOIN purchase_orders p ON p.id=g.po_id ORDER BY g.id DESC LIMIT 200').all()
     const seenPo = new Set(grs.map((g) => g.po_id))
-    rows = grs.map((g) => ({ id: g.id, no: `RR-${String(g.id).padStart(5, '0')}`, label: `RR-${String(g.id).padStart(5, '0')} · ${g.po_no || ''} ${g.vendor || ''} · ${g.item || ''} (${g.result || ''}) ${g.date || ''}`, amount: g.amount || 0, date: g.date || '' }))
+    rows = grs.map((g) => { const dl = jparse(g.delivery_items); return { id: g.id, no: `RR-${String(g.id).padStart(5, '0')}`, label: `RR-${String(g.id).padStart(5, '0')} · ${g.po_no || ''} ${g.vendor || ''} · ${g.item || ''} (${g.result || ''}) ${g.date || ''}`, amount: g.amount || 0, date: g.date || '', vendor: g.vendor || '', house_code: g.house_code || '', items: Array.isArray(dl) && dl.length ? dl.map((x) => ({ desc: x.desc || x.name || '', qty: Number(x.qty) || 0, unit: x.unit || '', price: Number(x.price) || 0 })) : poLines(g) } })
     // PO ทุกใบที่ไม่ถูกยกเลิก (รับของแล้ว/ปิดงาน ขึ้นก่อน · รอส่งของก็เลือกได้ เผื่อจ่ายเงินสดย่อยตอนรับของหน้างาน) — บอกสถานะรับของไว้ในรายการ
-    const pos = db.prepare("SELECT id, no, date, vendor, amount, item, status, gr_date FROM purchase_orders WHERE status<>'ยกเลิก' ORDER BY (status IN ('รับของแล้ว','ปิดงาน')) DESC, id DESC LIMIT 300").all()
+    const pos = db.prepare("SELECT id, no, date, vendor, amount, item, items, house_code, status, gr_date FROM purchase_orders WHERE status<>'ยกเลิก' ORDER BY (status IN ('รับของแล้ว','ปิดงาน')) DESC, id DESC LIMIT 300").all()
     for (const p of pos) {
       if (seenPo.has(p.id)) continue
       const st = p.status === 'รับของแล้ว' || p.status === 'ปิดงาน' ? `รับของแล้ว${p.gr_date ? ' ' + p.gr_date : ''}` : (p.status || 'รอส่งของ')
-      rows.push({ id: p.id, no: `RR-${p.no}`, label: `RR-${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ. (${st})`, amount: p.amount || 0, date: p.gr_date || p.date || '' })
+      rows.push({ id: p.id, no: `RR-${p.no}`, label: `RR-${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ. (${st})`, amount: p.amount || 0, date: p.gr_date || p.date || '', vendor: p.vendor || '', house_code: p.house_code || '', items: poLines(p) })
     }
   }
-  else if (kind === 'OE') rows = db.prepare('SELECT id, date, item, vendor, amount, house_code FROM expenses ORDER BY id DESC LIMIT 200').all().map((e) => ({ id: e.id, no: `OE-${String(e.id).padStart(6, '0')}`, label: `OE-${String(e.id).padStart(6, '0')} · ${e.item || ''} ${e.vendor ? '· ' + e.vendor : ''} · ${fmtMoney(e.amount)} บ.`, amount: e.amount || 0, date: e.date || '' }))
-  else if (kind === 'PS') rows = db.prepare('SELECT id, no, date, payee, net, note FROM payments ORDER BY id DESC LIMIT 200').all().map((p) => ({ id: p.id, no: p.no, label: `${p.no} · ${p.payee || ''} · ${fmtMoney(p.net)} บ.${p.note ? ' · ' + p.note : ''}`, amount: p.net || 0, date: p.date || '' }))
-  else if (kind === 'PO') rows = db.prepare("SELECT id, no, date, vendor, amount, item FROM purchase_orders WHERE status<>'ยกเลิก' ORDER BY id DESC LIMIT 200").all().map((p) => ({ id: p.id, no: p.no, label: `${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ.`, amount: p.amount || 0, date: p.date || '' }))
+  else if (kind === 'OE') rows = db.prepare('SELECT id, date, item, vendor, amount, house_code FROM expenses ORDER BY id DESC LIMIT 200').all().map((e) => ({ id: e.id, no: `OE-${String(e.id).padStart(6, '0')}`, label: `OE-${String(e.id).padStart(6, '0')} · ${e.item || ''} ${e.vendor ? '· ' + e.vendor : ''} · ${fmtMoney(e.amount)} บ.`, amount: e.amount || 0, date: e.date || '', vendor: e.vendor || '', house_code: e.house_code || '', items: [{ desc: e.item || '', qty: 0, unit: '', price: e.amount || 0 }] }))
+  else if (kind === 'PS') rows = db.prepare('SELECT id, no, date, payee, net, note, house_code FROM payments ORDER BY id DESC LIMIT 200').all().map((p) => ({ id: p.id, no: p.no, label: `${p.no} · ${p.payee || ''} · ${fmtMoney(p.net)} บ.${p.note ? ' · ' + p.note : ''}`, amount: p.net || 0, date: p.date || '', vendor: p.payee || '', house_code: p.house_code || '', items: [{ desc: p.note || 'จ่ายเงิน ' + (p.payee || ''), qty: 0, unit: '', price: p.net || 0 }] }))
+  else if (kind === 'PO') rows = db.prepare("SELECT id, no, date, vendor, amount, item, items, house_code FROM purchase_orders WHERE status<>'ยกเลิก' ORDER BY id DESC LIMIT 200").all().map((p) => { const it = jparse(p.items); return { id: p.id, no: p.no, label: `${p.no} · ${p.vendor} · ${p.item} · ${fmtMoney(p.amount)} บ.`, amount: p.amount || 0, date: p.date || '', vendor: p.vendor || '', house_code: p.house_code || '', items: Array.isArray(it) && it.length ? it : [{ desc: p.item || '', qty: 0, unit: '', price: p.amount || 0 }] } })
   if (q) rows = rows.filter((r) => r.label.toLowerCase().includes(q))
   res.json(rows.slice(0, 60))
 })

@@ -23,7 +23,7 @@ interface PettyOverviewRow { fund: string; label: string; float: number; balance
 interface FuelRequest { id: number; no: string; date: string; date_iso: string; by: string; amount: number; house_code: string; house_name: string; vehicle: string; note: string; status: string; approved_by?: string; approved_at?: string; reject_note?: string; source: string }
 interface PettyStmtRow { date: string; date_iso: string; ref: string; memo: string; in: number; out: number; balance: number; seq: string; bill_amount?: number | null; paid_amount?: number | null; house_code?: string; house_name?: string; vendor?: string; requester?: string; vehicle?: string; doc_no?: string; ref_kind?: string; ref_no?: string; items?: Line[]; discount?: number; before_vat?: number; vat_amount?: number; vat_mode?: string; subtotal?: number }
 interface PettyStatement { fund?: string; label?: string; float: number; from: string; to: string; opening: number; rows: PettyStmtRow[]; totalOut: number; totalIn: number; closing: number; toReplenish: number }
-interface RefOpt { id: number; no: string; label: string; amount: number; date: string }
+interface RefOpt { id: number; no: string; label: string; amount: number; date: string; vendor?: string; house_code?: string; items?: { desc: string; qty: number; unit: string; price: number }[] }
 
 export type PettyFundKey = 'petty' | 'fuel'
 const PETTY_FUND_INFO: Record<PettyFundKey, { label: string; icon: string; cats: string[]; intro: string }> = {
@@ -227,7 +227,16 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิง</span>
-          <RefPicker kind={f.ref_kind} refNo={f.ref_no} onKind={(k) => setF((cur) => ({ ...cur, ref_kind: k, ref_no: '', ref_id: null }))} onPick={(o) => setF((cur) => ({ ...cur, ref_no: o?.no || '', ref_id: o?.id ?? null }))} />
+          <RefPicker kind={f.ref_kind} refNo={f.ref_no} onKind={(k) => setF((cur) => ({ ...cur, ref_kind: k, ref_no: '', ref_id: null }))} onPick={(o) => {
+            // เลือกเอกสารแล้วดึงรายละเอียดมาใส่ฟอร์มให้ (รายการ+จำนวน+ราคา / ร้าน / บ้าน) — ถ้ากรอกรายการไว้แล้วถามก่อนแทนที่
+            const hasTyped = f.lines.some((l) => l.desc.trim())
+            const fill = !!o?.items?.length && (!hasTyped || confirm(`แทนที่รายการที่กรอกอยู่ด้วยรายการจาก ${o.no}?`))
+            setF((cur) => ({ ...cur, ref_no: o?.no || '', ref_id: o?.id ?? null,
+              ...(fill ? { lines: o!.items!.map((it) => ({ desc: it.desc, qty: it.qty ? String(it.qty) : '', unit: it.unit || '', price: String(it.price || '') })), amount: '' } : {}),
+              ...(o?.vendor && !cur.vendor ? { vendor: o.vendor } : {}),
+              ...(o?.house_code && !cur.house_code && houses.some((h) => h.code === o.house_code) ? { house_code: o.house_code } : {}) }))
+            if (fill) setMsg(`ดึงรายการจาก ${o!.no} มาให้แล้ว ${o!.items!.length} รายการ — แก้จำนวน/ราคาให้ตรงกับที่จ่ายจริงได้`)
+          }} />
           <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="หมายเหตุ" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
           <button onClick={submit} className="btn-primary" style={{ ...btn(editId ? '#C0852C' : '#30506A'), fontSize: 13, padding: '9px 16px' }}>{editId ? 'บันทึกการแก้ไข' : 'บันทึกจ่าย'}</button>
         </div>
