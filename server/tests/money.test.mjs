@@ -1971,3 +1971,16 @@ test('เอกสารขาย: อัปโหลดใบเก่า (PDF)
   const bad = await POST('/sales-docs', { type: 'quote', customer: 'x', items: [{ desc: 'a', qty: 1, price: 1 }], attachment_file_id: 999999 })
   assert.equal(bad.data.attachment_file_id, null, 'ไฟล์ไม่มีจริงต้องไม่ผูก')
 })
+
+test('เอกสารขาย: ลบได้ (บัญชี/ผู้ดูแลระบบ) · ใบที่ถูกออกใบต่อแล้วลบไม่ได้ · AI อ่านใบเก่าใช้ประเภท/ภาษีที่ผู้ใช้เลือกก่อน', async () => {
+  const q = await POST('/sales-docs', { type: 'quote', customer: 'ลูกค้าลบ', items: [{ desc: 'x', qty: 1, price: 100 }] })
+  const inv = await POST(`/sales-docs/${q.data.id}/derive`, { to: 'invoice' }); assert.equal(inv.status, 201)
+  assert.equal((await DEL('/sales-docs/' + q.data.id)).status, 409, 'มีใบแจ้งหนี้อ้างถึงแล้วต้องลบไม่ได้')
+  assert.equal((await DEL('/sales-docs/' + inv.data.id)).status, 200)
+  assert.equal((await DEL('/sales-docs/' + q.data.id)).status, 200, 'ลบใบต่อแล้วค่อยลบใบต้นได้')
+  assert.ok(!(await GET('/sales-docs')).data.some((d) => d.id === q.data.id))
+  const adminToken = token; token = (await POST('/login', { username: 'somchai', pin: '5555' })).data.token
+  assert.equal((await DEL('/sales-docs/1')).status, 403, 'โฟร์แมนลบไม่ได้'); token = adminToken
+  const r = await fetch(`${BASE}/sales-docs/extract?mime=application/pdf&doc_type=invoice&vat_mode=excl`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF-1.4 x') })
+  const d = await r.json(); assert.equal(d.doc_type, 'invoice', 'ต้องใช้ประเภทที่ผู้ใช้เลือก ไม่ใช่ที่ AI เดา'); assert.equal(d.vat_mode, 'excl'); assert.equal(d.items.length, 2)
+})
