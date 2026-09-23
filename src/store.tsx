@@ -514,6 +514,7 @@ interface AppCtx {
   addPO: (b: Record<string, unknown>) => Promise<void>
   setPOStatus: (id: number, status: string) => Promise<void>
   addPr: (b: Record<string, unknown>) => Promise<void>
+  deleteSalesDoc: (id: number) => Promise<void>
   decidePr: (id: number, status: string) => Promise<void>
   addUser: (b: Record<string, unknown>) => Promise<void>
   updateUser: (id: number, b: Record<string, unknown>) => Promise<void>
@@ -816,6 +817,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return contacts
         },
         getCustomer: (id) => api.get<ApiCustomer & { contacts: ApiContact[] }>('/customers/' + id),
+        deleteSalesDoc: async (id) => { await api.del('/sales-docs/' + id); await reload('salesDocs', '/sales-docs') },
         addTask: async (b) => {
           await api.post('/tasks', b)
           await reload('tasks', '/tasks')

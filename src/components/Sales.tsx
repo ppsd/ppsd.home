@@ -19,7 +19,7 @@ function typeStyle(t: string) {
 }
 
 export default function Sales() {
-  const { data, addSalesDoc, convertQuote, deriveSalesDoc } = useApp()
+  const { data, user, deleteSalesDoc, addSalesDoc, convertQuote, deriveSalesDoc } = useApp()
   const docs = data.salesDocs
   // ต่อสายเอกสาร: ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จรับเงิน (เลขใหม่ อ้างอิงใบเดิม)
   const derive = async (d: ApiSalesDoc, to: 'invoice' | 'receipt') => {
@@ -57,20 +57,25 @@ export default function Sales() {
   const [attach, setAttach] = useState<File | null>(null)
   const [reading, setReading] = useState('')
   const [readNote, setReadNote] = useState('')
-  const pickOld = async (e: React.ChangeEvent<HTMLInputElement>, useAi: boolean) => {
+  // ขั้นที่ 1: เลือกไฟล์ → ขั้นที่ 2: เลือกประเภทเอกสาร/ภาษี/บ้าน ก่อน → ขั้นที่ 3: ให้ AI อ่านเฉพาะรายการ+ลูกค้า
+  const [pending, setPending] = useState<File | null>(null)
+  const pickOld = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; e.target.value = ''
     if (!file) return
     if (!/pdf|image\//.test(file.type)) { setErr('รองรับ PDF หรือรูปภาพ'); return }
     if (file.size > 40 * 1024 * 1024) { setErr('ไฟล์ใหญ่เกิน 40MB'); return }
-    setAttach(file); setErr(''); setReadNote('')
-    if (!useAi) { setReadNote(`แนบไฟล์ ${file.name} แล้ว (ไม่ให้ AI อ่าน)`); return }
+    setErr(''); setReadNote(''); setPending(file)
+  }
+  const attachOnly = () => { if (!pending) return; setAttach(pending); setReadNote(`แนบไฟล์ ${pending.name} แล้ว (ไม่ให้ AI อ่าน)`); setPending(null) }
+  const readWithAi = async () => {
+    const file = pending; if (!file) return
+    setAttach(file); setPending(null)
     setReading('AI กำลังอ่านใบเก่า… (อาจใช้เวลาสักครู่)')
     try {
-      const r = await api.uploadRaw<{ doc_type: 'quote' | 'invoice' | 'receipt'; customer: string; items: { desc: string; qty: number; unit: string; price: number }[]; vat_mode: VatMode; total: number; note: string }>('/sales-docs/extract', file)
+      const r = await api.uploadRaw<{ doc_type: 'quote' | 'invoice' | 'receipt'; customer: string; items: { desc: string; qty: number; unit: string; price: number }[]; vat_mode: VatMode; total: number; note: string }>(`/sales-docs/extract?doc_type=${type}&vat_mode=${vatMode}`, file)
       if (!r.items.length) { setErr('AI อ่านไม่พบรายการในไฟล์นี้ — กรอกเองได้ ไฟล์ยังแนบอยู่'); return }
-      setType(r.doc_type || 'quote'); if (r.customer) setCustomer(r.customer)
+      if (r.customer && !customer.trim()) setCustomer(r.customer)
       setItems(r.items.map((it) => ({ desc: it.desc + (it.unit ? ` (${it.unit})` : ''), qty: it.qty || 1, price: it.price || 0 })))
-      setVatMode(r.vat_mode || 'excl')
       setReadNote(`ดึงจาก ${file.name} แล้ว ${r.items.length} รายการ${r.total ? ` · ยอดในใบเดิม ${baht(r.total)}` : ''} — ตรวจ/แก้ราคาให้เป็นปัจจุบันก่อนบันทึก${r.note ? ' · ' + r.note : ''}`)
     } catch (ex) { setErr((ex as Error).message) } finally { setReading('') }
   }
@@ -119,12 +124,28 @@ export default function Sales() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap', background: '#F6F3FB', border: '1px solid #D9D2EA', borderRadius: 9, padding: '8px 12px', fontSize: 12.5 }}>
             <span style={{ fontWeight: 600, color: '#6B4E9E' }}>📄 มีใบเก่า (PDF/รูป)?</span>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#fff', background: '#6B4E9E', borderRadius: 8, padding: '6px 12px', cursor: reading ? 'wait' : 'pointer', fontWeight: 600 }}>🤖 อัปโหลดให้ AI อ่านมาเป็นร่าง<input type="file" accept="application/pdf,image/*" disabled={!!reading} onChange={(e) => pickOld(e, true)} style={{ display: 'none' }} /></label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>📎 แนบไฟล์อย่างเดียว<input type="file" accept="application/pdf,image/*" onChange={(e) => pickOld(e, false)} style={{ display: 'none' }} /></label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#fff', background: '#6B4E9E', borderRadius: 8, padding: '6px 12px', cursor: reading ? 'wait' : 'pointer', fontWeight: 600 }}>📤 อัปโหลดไฟล์<input type="file" accept="application/pdf,image/*" disabled={!!reading} onChange={pickOld} style={{ display: 'none' }} /></label>
+            {pending && (
+              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', background: '#fff', border: '1px solid #D9D2EA', borderRadius: 8, padding: '8px 10px' }}>
+                <span style={{ fontWeight: 600 }}>ไฟล์ {pending.name} — เลือกก่อนแล้วค่อยให้ AI อ่าน:</span>
+                <select style={{ ...field, width: 'auto', padding: '6px 9px', fontSize: 12.5 }} value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+                  <option value="quote">ใบเสนอราคา</option><option value="invoice">ใบแจ้งหนี้</option><option value="receipt">ใบเสร็จรับเงิน</option>
+                </select>
+                <select style={{ ...field, width: 'auto', padding: '6px 9px', fontSize: 12.5 }} value={vatMode} onChange={(e) => setVatMode(e.target.value as VatMode)}>
+                  <option value="excl">รวม VAT (+7%)</option><option value="none">ไม่รวม VAT</option><option value="incl">ราคารวม VAT แล้ว</option>
+                </select>
+                <select style={{ ...field, width: 'auto', padding: '6px 9px', fontSize: 12.5 }} value={houseCode} onChange={(e) => pickHouse(e.target.value)}>
+                  <option value="">— ผูกกับบ้าน (ถ้ามี) —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
+                </select>
+                <button onClick={readWithAi} style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#6B4E9E', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>🤖 ให้ AI อ่านรายการ</button>
+                <button onClick={attachOnly} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>📎 แนบอย่างเดียว</button>
+                <button onClick={() => setPending(null)} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer' }}>ยกเลิก</button>
+              </div>
+            )}
             {reading && <span style={{ color: '#6B4E9E' }}>{reading}</span>}
             {!reading && readNote && <span style={{ color: '#2E7D55' }}>{readNote}</span>}
             {attach && !reading && <button onClick={() => { setAttach(null); setReadNote('') }} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer' }}>✕ เอาไฟล์ออก</button>}
-            <span style={{ fontSize: 11, color: '#94A0A8', width: '100%' }}>ใบเสนอราคาเก่าของบ้านอื่นเอามาใช้เป็นต้นแบบได้ — AI ดึงลูกค้า/รายการ/จำนวน/ราคา/แบบภาษี มาให้แล้วค่อยแก้ · ไฟล์จะแนบไว้กับเอกสารใหม่ (กด 📎 ในตารางเพื่อเปิดดู)</span>
+            <span style={{ fontSize: 11, color: '#94A0A8', width: '100%' }}>ใบเสนอราคาเก่าของบ้านอื่นเอามาใช้เป็นต้นแบบได้ — เลือกประเภทเอกสาร/ภาษี/บ้านก่อน แล้ว AI ดึงรายการ/จำนวน/ราคา (และชื่อลูกค้าถ้ายังว่าง) มาให้ · ไฟล์จะแนบไว้กับเอกสารใหม่ (กด 📎 ในตารางเพื่อเปิดดู)</span>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 10 }}>
             <thead>
@@ -213,7 +234,7 @@ export default function Sales() {
                       {d.type === 'invoice' && d.status !== 'ชำระแล้ว' && (
                         <button onClick={() => derive(d, 'receipt')} title="รับเงินแล้ว → ออกใบเสร็จรับเงินจากใบแจ้งหนี้นี้" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>→ ใบเสร็จ</button>
                       )}
-                      <button onClick={() => setPrintDoc(d)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>พิมพ์</button>
+                      <button onClick={() => setPrintDoc(d)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>พิมพ์</button>{(user?.role === 'admin' || user?.role === 'accounting') && <button onClick={async (e) => { e.stopPropagation(); if (!window.confirm(`ลบ ${d.no} (${d.customer} ${baht(d.total)})? ลบแล้วกู้คืนไม่ได้`)) return; try { await deleteSalesDoc(d.id) } catch (ex) { alert((ex as Error).message) } }} title="ลบเอกสาร" style={{ fontFamily: 'inherit', fontSize: 12, color: '#C24036', background: '#fff', border: '1px solid #E8C9C5', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', marginLeft: 6 }}>ลบ</button>}
                     </div>
                   </td>
                 </tr>

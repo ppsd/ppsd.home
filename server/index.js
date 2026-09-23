@@ -2429,6 +2429,9 @@ api.post('/sales-docs/extract', canWrite, express.raw({ type: 'application/octet
   const buf = req.body
   if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
   const mime = String(req.query.mime || 'application/pdf')
+  // ผู้ใช้เลือกประเภทเอกสาร/แบบภาษีไว้ก่อน → AI อ่านเฉพาะรายการ+ลูกค้า ไม่เดาแทน
+  const wantType = ['quote', 'invoice', 'receipt'].includes(String(req.query.doc_type)) ? String(req.query.doc_type) : ''
+  const wantVat = ['none', 'excl', 'incl'].includes(String(req.query.vat_mode)) ? String(req.query.vat_mode) : ''
   let parsed
   if (process.env.PPSD_AI_MOCK_SALES) parsed = JSON.parse(process.env.PPSD_AI_MOCK_SALES) // ทดสอบ: ผลจำลอง
   else {
@@ -2437,12 +2440,13 @@ api.post('/sales-docs/extract', canWrite, express.raw({ type: 'application/octet
     const media = mime.includes('pdf')
       ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
       : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
-    const ai = await aiAsk({ media, prompt: SALES_EXTRACT_PROMPT })
+    const hint = (wantType || wantVat) ? `\nผู้ใช้ระบุแล้ว: ${wantType ? 'doc_type=' + wantType : ''} ${wantVat ? 'vat_mode=' + wantVat : ''} — ให้ใช้ค่านี้ ไม่ต้องเดาจากเอกสาร` : ''
+    const ai = await aiAsk({ media, prompt: SALES_EXTRACT_PROMPT + hint })
     if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error })
     parsed = extractJsonBlock(ai.text) || {}
   }
   const items = (Array.isArray(parsed?.items) ? parsed.items : []).map((it) => ({ desc: String(it.desc || '').trim(), qty: Number(String(it.qty ?? 1).replace(/,/g, '')) || 1, unit: String(it.unit || ''), price: Number(String(it.price ?? 0).replace(/,/g, '')) || 0 })).filter((it) => it.desc)
-  const out = { doc_type: ['quote', 'invoice', 'receipt'].includes(parsed?.doc_type) ? parsed.doc_type : 'quote', customer: String(parsed?.customer || '').trim(), date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed?.date || '')) ? parsed.date : '', items, vat_mode: ['none', 'excl', 'incl'].includes(parsed?.vat_mode) ? parsed.vat_mode : 'excl', total: Number(String(parsed?.total ?? 0).replace(/,/g, '')) || 0, note: String(parsed?.note || '') }
+  const out = { doc_type: wantType || (['quote', 'invoice', 'receipt'].includes(parsed?.doc_type) ? parsed.doc_type : 'quote'), customer: String(parsed?.customer || '').trim(), date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed?.date || '')) ? parsed.date : '', items, vat_mode: wantVat || (['none', 'excl', 'incl'].includes(parsed?.vat_mode) ? parsed.vat_mode : 'excl'), total: Number(String(parsed?.total ?? 0).replace(/,/g, '')) || 0, note: String(parsed?.note || '') }
   audit(req, 'AI อ่านใบเก่าเป็นเอกสารขาย', `${out.customer || '-'} ${items.length} รายการ`)
   res.json(out)
 })
@@ -5913,6 +5917,17 @@ const SIGN_MILESTONES = [
 ]
 // เซ็นสัญญา: เปลี่ยนใบเสนอราคาเป็นโครงการบ้าน + สร้างงวดงานลูกค้าตามแผนมาตรฐาน
 // ต่อสายเอกสารขาย: ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จรับเงิน (สำเนารายการ + อ้างอิงใบต้นทาง)
+// ลบเอกสารขาย (บัญชี/ผู้ดูแลระบบ) — ใบที่ถูกออกใบต่อไปแล้ว (มีใบอ้างอิงถึง) หรือเซ็นสัญญาแล้ว ลบไม่ได้
+api.delete('/sales-docs/:id', financeOnly, (req, res) => {
+  const doc = db.prepare('SELECT * FROM sales_docs WHERE id=?').get(req.params.id)
+  if (!doc) return res.status(404).json({ error: 'ไม่พบเอกสาร' })
+  const child = db.prepare('SELECT no FROM sales_docs WHERE ref=?').get(doc.no)
+  if (child) return res.status(409).json({ error: `ลบไม่ได้ — มี ${child.no} ออกต่อจากใบนี้แล้ว ให้ลบใบนั้นก่อน` })
+  if (doc.status === 'เซ็นสัญญาแล้ว') return res.status(409).json({ error: 'ใบเสนอราคาที่เซ็นสัญญาแล้ว (สร้างบ้าน/งวดงานไปแล้ว) ลบไม่ได้' })
+  db.prepare('DELETE FROM sales_docs WHERE id=?').run(doc.id)
+  audit(req, 'ลบเอกสารขาย', `${doc.no} ${doc.customer} ${fmtMoney(doc.total)}`)
+  res.json({ ok: true })
+})
 api.post('/sales-docs/:id/derive', canWrite, (req, res) => {
   const src = db.prepare('SELECT * FROM sales_docs WHERE id=?').get(req.params.id)
   if (!src) return res.status(404).json({ error: 'ไม่พบเอกสาร' })
