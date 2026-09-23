@@ -1936,3 +1936,13 @@ test('เงินสดย่อย: ราคาตามบิล/ราค�
   if (po) assert.ok(rr.some((r) => r.no === 'RR-' + po.no || r.label.includes(po.no)), 'PO รับของแล้วต้องเป็นตัวเลือก RR (จากใบตรวจรับหรือจาก PO): ' + JSON.stringify(rr.slice(0, 2)))
   else assert.ok(Array.isArray(rr))
 })
+
+test('เงินสดย่อย: ตัวเลือกอ้างอิง RR/PO/OE/PS แนบรายละเอียดรายการ (items) ร้าน บ้าน มาให้เติมฟอร์ม', async () => {
+  const po = await POST('/purchase-orders', { vendor: 'ร้านอ้างอิง', item: 'ปูน+ทราย', amount: 700, house_code: 'TS-01', items: [{ desc: 'ปูน', qty: 5, unit: 'ถุง', price: 100 }, { desc: 'ทราย', qty: 1, unit: 'คิว', price: 200 }] })
+  assert.equal(po.status, 201, JSON.stringify(po.data))
+  const rr = (await GET('/petty-cash/refs?kind=RR')).data.find((r) => r.no === 'RR-' + po.data.no)
+  assert.ok(rr, 'PO ใหม่ต้องเป็นตัวเลือก RR'); assert.equal(rr.vendor, 'ร้านอ้างอิง'); assert.equal(rr.house_code, 'TS-01'); assert.equal(rr.items.length, 2); assert.equal(rr.items[0].desc, 'ปูน'); assert.equal(rr.items[0].qty, 5); assert.equal(rr.items[0].price, 100)
+  const p2 = (await GET('/petty-cash/refs?kind=PO')).data.find((r) => r.no === po.data.no); assert.equal(p2.items.length, 2)
+  const oe = (await GET('/petty-cash/refs?kind=OE')).data[0]; if (oe) { assert.ok(Array.isArray(oe.items)); assert.equal(oe.items.length, 1) }
+  const ps = (await GET('/petty-cash/refs?kind=PS')).data[0]; if (ps) { assert.ok(ps.items.length === 1); assert.ok('vendor' in ps) }
+})
