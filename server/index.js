@@ -2415,6 +2415,37 @@ api.post('/houses/:code/installments/extract', canWrite, express.raw({ type: 'ap
   audit(req, 'AI อ่านงวดงานจากสัญญา', `${req.params.code} ${items.length} งวด`)
   res.json({ items })
 })
+// ให้ AI อ่านใบเสนอราคา/ใบแจ้งหนี้เก่า (PDF/รูป) → ร่างเอกสารขายใหม่ (ลูกค้า รายการ จำนวน ราคา VAT) ไม่ต้องพิมพ์ใหม่
+const SALES_EXTRACT_PROMPT = `คุณเป็นผู้ช่วยกรอกเอกสารขายของบริษัทรับสร้างบ้าน อ่านเอกสารนี้ (ใบเสนอราคา/ใบแจ้งหนี้/ใบเสร็จ ภาษาไทย) แล้วสรุปเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
+รูปแบบ: {"doc_type":"quote","customer":"ชื่อลูกค้า","date":"YYYY-MM-DD","items":[{"desc":"รายการ","qty":1,"unit":"งาน","price":100000}],"vat_mode":"excl","total":107000,"note":"ข้อสังเกต"}
+กติกา:
+- doc_type = quote (ใบเสนอราคา) | invoice (ใบแจ้งหนี้/ใบวางบิล) | receipt (ใบเสร็จรับเงิน)
+- customer = ชื่อลูกค้า/ผู้ซื้อ (ไม่ใช่ชื่อบริษัทผู้ขาย) ถ้าไม่พบให้ ""
+- items: ทุกบรรทัดรายการ desc เป็นข้อความตามเอกสาร qty และ price เป็นตัวเลขล้วน (price = ราคาต่อหน่วย ถ้าเอกสารมีแต่ยอดรวมบรรทัด ให้ qty=1 price=ยอดนั้น)
+- vat_mode = "excl" ถ้าเอกสารบวก VAT 7% ต่างหาก · "incl" ถ้าระบุว่าราคารวม VAT แล้ว · "none" ถ้าไม่มีภาษีมูลค่าเพิ่มเลย
+- total = ยอดสุทธิท้ายเอกสาร (ตัวเลขล้วน) ถ้าไม่พบให้ 0
+- ถ้าไม่ใช่เอกสารขายให้คืน {"items":[]}`
+api.post('/sales-docs/extract', canWrite, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
+  const buf = req.body
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
+  const mime = String(req.query.mime || 'application/pdf')
+  let parsed
+  if (process.env.PPSD_AI_MOCK_SALES) parsed = JSON.parse(process.env.PPSD_AI_MOCK_SALES) // ทดสอบ: ผลจำลอง
+  else {
+    if (!aiKey()) return res.status(400).json({ error: AI_NO_KEY + ' — หรือกรอกรายการเองแล้วแนบไฟล์ได้' })
+    const b64 = buf.toString('base64')
+    const media = mime.includes('pdf')
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+      : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
+    const ai = await aiAsk({ media, prompt: SALES_EXTRACT_PROMPT })
+    if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error })
+    parsed = extractJsonBlock(ai.text) || {}
+  }
+  const items = (Array.isArray(parsed?.items) ? parsed.items : []).map((it) => ({ desc: String(it.desc || '').trim(), qty: Number(String(it.qty ?? 1).replace(/,/g, '')) || 1, unit: String(it.unit || ''), price: Number(String(it.price ?? 0).replace(/,/g, '')) || 0 })).filter((it) => it.desc)
+  const out = { doc_type: ['quote', 'invoice', 'receipt'].includes(parsed?.doc_type) ? parsed.doc_type : 'quote', customer: String(parsed?.customer || '').trim(), date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed?.date || '')) ? parsed.date : '', items, vat_mode: ['none', 'excl', 'incl'].includes(parsed?.vat_mode) ? parsed.vat_mode : 'excl', total: Number(String(parsed?.total ?? 0).replace(/,/g, '')) || 0, note: String(parsed?.note || '') }
+  audit(req, 'AI อ่านใบเก่าเป็นเอกสารขาย', `${out.customer || '-'} ${items.length} รายการ`)
+  res.json(out)
+})
 // ตั้งค่ากุญแจ AI (admin) — เก็บใน settings · เลือกรุ่นได้ · ปุ่มทดสอบยิงคำถามสั้นๆ เช็คว่ากุญแจใช้ได้จริง
 api.get('/ai-settings', adminOnly, (_req, res) => res.json({ hasKey: !!aiKey(), model: aiModel(), models: AI_MODELS, fromEnv: !getSetting('ai_api_key', '') && !!process.env.ANTHROPIC_API_KEY }))
 api.post('/ai-settings', adminOnly, (req, res) => {
@@ -5851,8 +5882,9 @@ api.put('/tasks/:id', canWrite, (req, res) => {
 // ---------- Sales documents (quote / invoice / receipt) ----------
 api.get('/sales-docs', (_req, res) => res.json(db.prepare('SELECT * FROM sales_docs ORDER BY id DESC').all()))
 api.post('/sales-docs', canWrite, (req, res) => {
-  const { type, customer, items, house_code, vat_mode } = req.body || {}
+  const { type, customer, items, house_code, vat_mode, attachment_file_id } = req.body || {}
   const kind = ['quote', 'invoice', 'receipt'].includes(type) ? type : 'quote'
+  const attachId = Number(attachment_file_id) > 0 && db.prepare('SELECT id FROM files WHERE id=?').get(Number(attachment_file_id)) ? Number(attachment_file_id) : null
   const list = Array.isArray(items) ? items : []
   if (!customer || list.length === 0) return res.status(400).json({ error: 'กรุณากรอกลูกค้าและรายการอย่างน้อย 1 แถว' })
   const lineSum = list.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0)
@@ -5865,8 +5897,8 @@ api.post('/sales-docs', canWrite, (req, res) => {
   const seq = nextSeq('sales-' + kind, () => Math.max(maxNoSuffix('sales_docs'), db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(kind).c))
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
   const info = db
-    .prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,vat_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(kind, no, customer, todayTH(), todayISO(), JSON.stringify(list), subtotal, vat, sm.total, kind === 'receipt' ? 'ชำระแล้ว' : 'รออนุมัติ', house_code || '', vm)
+    .prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,vat_mode,attachment_file_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(kind, no, customer, todayTH(), todayISO(), JSON.stringify(list), subtotal, vat, sm.total, kind === 'receipt' ? 'ชำระแล้ว' : 'รออนุมัติ', house_code || '', vm, attachId)
   res.status(201).json(db.prepare('SELECT * FROM sales_docs WHERE id=?').get(info.lastInsertRowid))
 })
 // standard customer payment milestones (% of contract) used when signing a quote

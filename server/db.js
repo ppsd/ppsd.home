@@ -270,7 +270,8 @@ ensureColumn('purchase_requests', 'online_options', 'TEXT') // ผล AI หา�
 ensureColumn('purchase_requests', 'online_status', 'TEXT')
 // สรุปยอดเงิน: ยอดสินค้า − ส่วนลด → ก่อน VAT / VAT / รวม (amount = รวมทั้งสิ้น)
 for (const t of ['purchase_requests', 'purchase_orders']) { for (const c of ['discount', 'subtotal', 'before_vat', 'vat_amount']) ensureColumn(t, c, 'REAL'); ensureColumn(t, 'vat_mode', 'TEXT') }
-ensureColumn('sales_docs', 'vat_mode', 'TEXT') // เอกสารขาย: none = ไม่มี VAT (ลูกค้าไม่ต้องการ) · excl = บวก VAT 7% · incl = ราคารวม VAT แล้ว
+ensureColumn('sales_docs', 'vat_mode', 'TEXT')
+ensureColumn('sales_docs', 'attachment_file_id', 'INTEGER') // ไฟล์ใบเก่า (PDF/รูป) ที่อัปโหลดไว้เป็นต้นแบบ/แนบ // เอกสารขาย: none = ไม่มี VAT (ลูกค้าไม่ต้องการ) · excl = บวก VAT 7% · incl = ราคารวม VAT แล้ว
 ensureColumn('purchase_requests', 'doc_key', 'TEXT')      // กุญแจลิงก์สาธารณะของรูปใบ PR (ส่งเข้า LINE)
 ensureColumn('purchase_requests', 'doc_sent', 'TEXT')     // ผลส่งใบ PR เป็นรูปเข้า LINE: sent:<เวลา>|no_recipients|no_public_url|render_failed:…|push_failed
 db.exec(`CREATE TABLE IF NOT EXISTS doc_images (
