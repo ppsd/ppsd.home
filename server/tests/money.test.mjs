@@ -1946,3 +1946,14 @@ test('เงินสดย่อย: ตัวเลือกอ้างอิ
   const oe = (await GET('/petty-cash/refs?kind=OE')).data[0]; if (oe) { assert.ok(Array.isArray(oe.items)); assert.equal(oe.items.length, 1) }
   const ps = (await GET('/petty-cash/refs?kind=PS')).data[0]; if (ps) { assert.ok(ps.items.length === 1); assert.ok('vendor' in ps) }
 })
+
+test('เอกสารขาย: เลือก ไม่รวม VAT / รวม VAT (+7%) / ราคารวม VAT แล้ว — ยอดในใบและภาษีขายตาม · ใบแจ้งหนี้/ใบเสร็จที่ต่อจากใบเสนอราคาสืบทอด', async () => {
+  const q0 = await POST('/sales-docs', { type: 'quote', customer: 'ลูกค้าไม่เอา VAT', items: [{ desc: 'สร้างบ้าน', qty: 1, price: 1000000 }], vat_mode: 'none' })
+  assert.equal(q0.status, 201, JSON.stringify(q0.data)); assert.equal(q0.data.vat, 0); assert.equal(q0.data.total, 1000000); assert.equal(q0.data.vat_mode, 'none')
+  const q1 = await POST('/sales-docs', { type: 'quote', customer: 'ลูกค้าเอา VAT', items: [{ desc: 'สร้างบ้าน', qty: 1, price: 1000000 }] })
+  assert.equal(q1.data.vat, 70000); assert.equal(q1.data.total, 1070000); assert.equal(q1.data.vat_mode, 'excl', 'ไม่ส่งมา = บวก VAT เหมือนเดิม')
+  const q2 = await POST('/sales-docs', { type: 'quote', customer: 'ราคารวม VAT', items: [{ desc: 'ต่อเติม', qty: 1, price: 107000 }], vat_mode: 'incl' })
+  assert.equal(q2.data.total, 107000); assert.equal(q2.data.vat, 7000); assert.equal(q2.data.subtotal, 100000)
+  const inv = await POST(`/sales-docs/${q0.data.id}/derive`, { to: 'invoice' })
+  assert.equal(inv.status, 201, JSON.stringify(inv.data)); assert.equal(inv.data.vat, 0); assert.equal(inv.data.total, 1000000); assert.equal(inv.data.vat_mode, 'none')
+})

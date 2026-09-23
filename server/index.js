@@ -5851,18 +5851,22 @@ api.put('/tasks/:id', canWrite, (req, res) => {
 // ---------- Sales documents (quote / invoice / receipt) ----------
 api.get('/sales-docs', (_req, res) => res.json(db.prepare('SELECT * FROM sales_docs ORDER BY id DESC').all()))
 api.post('/sales-docs', canWrite, (req, res) => {
-  const { type, customer, items, house_code } = req.body || {}
+  const { type, customer, items, house_code, vat_mode } = req.body || {}
   const kind = ['quote', 'invoice', 'receipt'].includes(type) ? type : 'quote'
   const list = Array.isArray(items) ? items : []
   if (!customer || list.length === 0) return res.status(400).json({ error: 'กรุณากรอกลูกค้าและรายการอย่างน้อย 1 แถว' })
-  const subtotal = list.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0)
-  const vat = Math.round(subtotal * 0.07)
+  const lineSum = list.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0)
+  // ภาษีขาย: ลูกค้าเลือกได้ว่า ไม่มี VAT (ราคาถูกลง) / บวก VAT 7% (ค่าเริ่มต้นเหมือนเดิม) / ราคารวม VAT แล้ว
+  const vm = ['none', 'excl', 'incl'].includes(vat_mode) ? vat_mode : 'excl'
+  const sm = moneySummary({ subtotal: lineSum, discount: 0, vat_mode: vm })
+  const subtotal = sm.before_vat
+  const vat = sm.vat_amount
   const prefix = { quote: 'QT', invoice: 'INV', receipt: 'RC' }[kind]
   const seq = nextSeq('sales-' + kind, () => Math.max(maxNoSuffix('sales_docs'), db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(kind).c))
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
   const info = db
-    .prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-    .run(kind, no, customer, todayTH(), todayISO(), JSON.stringify(list), subtotal, vat, subtotal + vat, kind === 'receipt' ? 'ชำระแล้ว' : 'รออนุมัติ', house_code || '')
+    .prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,vat_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(kind, no, customer, todayTH(), todayISO(), JSON.stringify(list), subtotal, vat, sm.total, kind === 'receipt' ? 'ชำระแล้ว' : 'รออนุมัติ', house_code || '', vm)
   res.status(201).json(db.prepare('SELECT * FROM sales_docs WHERE id=?').get(info.lastInsertRowid))
 })
 // standard customer payment milestones (% of contract) used when signing a quote
@@ -5888,8 +5892,8 @@ api.post('/sales-docs/:id/derive', canWrite, (req, res) => {
   const prefix = { invoice: 'INV', receipt: 'RC' }[to]
   const seq = nextSeq('sales-' + to, () => Math.max(maxNoSuffix('sales_docs'), db.prepare('SELECT COUNT(*) c FROM sales_docs WHERE type=?').get(to).c))
   const no = `${prefix}-${docYear()}-${String(seq).padStart(4, '0')}`
-  const info = db.prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(to, no, src.customer, todayTH(), todayISO(), src.items, src.subtotal, src.vat, src.total, to === 'receipt' ? 'ชำระแล้ว' : 'รอชำระ', src.house_code || '', src.no)
+  const info = db.prepare('INSERT INTO sales_docs (type,no,customer,date,date_iso,items,subtotal,vat,total,status,house_code,ref,vat_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(to, no, src.customer, todayTH(), todayISO(), src.items, src.subtotal, src.vat, src.total, to === 'receipt' ? 'ชำระแล้ว' : 'รอชำระ', src.house_code || '', src.no, src.vat_mode || (src.vat > 0 ? 'excl' : 'none'))
   // ใบเสนอราคาที่เซ็นสัญญาแล้ว คงสถานะสัญญาไว้ (สำคัญกว่า) — ใบอื่นอัปเดตตามขั้น
   if (src.status !== 'เซ็นสัญญาแล้ว') db.prepare('UPDATE sales_docs SET status=? WHERE id=?').run(to === 'invoice' ? 'ออกใบแจ้งหนี้แล้ว' : 'ชำระแล้ว', src.id)
   audit(req, to === 'invoice' ? 'ออกใบแจ้งหนี้จากใบเสนอราคา' : 'ออกใบเสร็จจากใบแจ้งหนี้', `${src.no} → ${no}`)

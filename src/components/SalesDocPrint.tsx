@@ -64,7 +64,8 @@ export default function SalesDocPrint({ doc, onClose }: { doc: ApiSalesDoc; onCl
           </tbody>
           <tfoot>
             <tr><td style={cell} colSpan={3}>รวมเป็นเงิน</td><td className="num" style={{ ...cell, textAlign: 'right' }}>{baht(doc.subtotal)}</td></tr>
-            <tr><td style={cell} colSpan={3}>ภาษีมูลค่าเพิ่ม 7%</td><td className="num" style={{ ...cell, textAlign: 'right' }}>{baht(doc.vat)}</td></tr>
+            {/* ไม่มี VAT (ลูกค้าไม่ต้องการ) → ไม่แสดงบรรทัดภาษี */}
+            {(doc.vat_mode ? doc.vat_mode !== 'none' : doc.vat > 0) && <tr><td style={cell} colSpan={3}>ภาษีมูลค่าเพิ่ม 7%</td><td className="num" style={{ ...cell, textAlign: 'right' }}>{baht(doc.vat)}</td></tr>}
             <tr><td style={{ ...hcell, textAlign: 'left' }} colSpan={3}>ยอดสุทธิ</td><td className="num" style={{ ...hcell, textAlign: 'right', fontSize: 14 }}>{baht(doc.total)}</td></tr>
           </tfoot>
         </table>
