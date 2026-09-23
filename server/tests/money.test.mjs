@@ -42,6 +42,7 @@ before(async () => {
       ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1',
       PPSD_CHROME: process.env.PPSD_CHROME || '/opt/pw-browsers/chromium', // สร้างรูปใบ PR (เทสต์ข้ามถ้าไม่มี Chrome)
       PPSD_AUTOCOMPARE_MS: '400', // เทียบราคาอัตโนมัติหลังรูปสุดท้าย (จริง 60 วิ)
+      PPSD_AI_MOCK_SALES: JSON.stringify({ doc_type: 'quote', customer: 'คุณสมศรี ใจดี', date: '2025-03-01', items: [{ desc: 'งานโครงสร้าง', qty: 1, unit: 'งาน', price: 1500000 }, { desc: 'งานหลังคา', qty: 1, unit: 'งาน', price: 350000 }], vat_mode: 'none', total: 1850000, note: 'ใบเก่าบ้านอื่น' }),
       // AI หาของออนไลน์ (ผลจำลอง)
       PPSD_AI_MOCK_SEARCH: JSON.stringify({ items: [{ desc: 'สีทาบ้าน TOA', offers: [
         { rank: 1, shop: 'HomePro', name: 'สี TOA ชิลด์ 1 ถัง', price: 1150, unit: 'ถัง', url: 'https://www.homepro.co.th/p/1', note: 'ส่งฟรี' },
@@ -1956,4 +1957,17 @@ test('เอกสารขาย: เลือก ไม่รวม VAT / ร�
   assert.equal(q2.data.total, 107000); assert.equal(q2.data.vat, 7000); assert.equal(q2.data.subtotal, 100000)
   const inv = await POST(`/sales-docs/${q0.data.id}/derive`, { to: 'invoice' })
   assert.equal(inv.status, 201, JSON.stringify(inv.data)); assert.equal(inv.data.vat, 0); assert.equal(inv.data.total, 1000000); assert.equal(inv.data.vat_mode, 'none')
+})
+
+test('เอกสารขาย: อัปโหลดใบเก่า (PDF) ให้ AI อ่านเป็นร่าง (ลูกค้า/รายการ/แบบภาษี) · แนบไฟล์ไว้กับเอกสารใหม่', async () => {
+  const pdf = Buffer.from('%PDF-1.4 fake')
+  const r = await fetch(`${BASE}/sales-docs/extract?mime=application/pdf`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: pdf })
+  assert.equal(r.status, 200); const d = await r.json()
+  assert.equal(d.doc_type, 'quote'); assert.equal(d.customer, 'คุณสมศรี ใจดี'); assert.equal(d.items.length, 2); assert.equal(d.items[0].price, 1500000); assert.equal(d.vat_mode, 'none'); assert.equal(d.total, 1850000)
+  const up = await fetch(`${BASE}/files?name=old-quote.pdf&mime=application/pdf&category=${encodeURIComponent('เอกสารขาย (ใบเก่า)')}`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: pdf })
+  const upText = await up.text(); assert.equal(up.status, 201, upText); const f = JSON.parse(upText)
+  const doc = await POST('/sales-docs', { type: d.doc_type, customer: d.customer, items: d.items, vat_mode: d.vat_mode, attachment_file_id: f.id })
+  assert.equal(doc.status, 201, JSON.stringify(doc.data)); assert.equal(doc.data.attachment_file_id, f.id); assert.equal(doc.data.total, 1850000); assert.equal(doc.data.vat, 0)
+  const bad = await POST('/sales-docs', { type: 'quote', customer: 'x', items: [{ desc: 'a', qty: 1, price: 1 }], attachment_file_id: 999999 })
+  assert.equal(bad.data.attachment_file_id, null, 'ไฟล์ไม่มีจริงต้องไม่ผูก')
 })

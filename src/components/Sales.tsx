@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { moneySummary } from '../money'
 import type { VatMode } from '../money'
 import { useApp } from '../store'
+import { api } from '../api'
 import type { ApiSalesDoc, SalesItem } from '../store'
 import { baht } from '../data'
 import SalesDocPrint from './SalesDocPrint'
@@ -52,6 +53,27 @@ export default function Sales() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [printDoc, setPrintDoc] = useState<ApiSalesDoc | null>(null)
+  // อัปโหลดใบเก่า (PDF/รูป) → AI อ่านมาเป็นร่าง + แนบไฟล์ไว้กับเอกสารใหม่
+  const [attach, setAttach] = useState<File | null>(null)
+  const [reading, setReading] = useState('')
+  const [readNote, setReadNote] = useState('')
+  const pickOld = async (e: React.ChangeEvent<HTMLInputElement>, useAi: boolean) => {
+    const file = e.target.files?.[0]; e.target.value = ''
+    if (!file) return
+    if (!/pdf|image\//.test(file.type)) { setErr('รองรับ PDF หรือรูปภาพ'); return }
+    if (file.size > 40 * 1024 * 1024) { setErr('ไฟล์ใหญ่เกิน 40MB'); return }
+    setAttach(file); setErr(''); setReadNote('')
+    if (!useAi) { setReadNote(`แนบไฟล์ ${file.name} แล้ว (ไม่ให้ AI อ่าน)`); return }
+    setReading('AI กำลังอ่านใบเก่า… (อาจใช้เวลาสักครู่)')
+    try {
+      const r = await api.uploadRaw<{ doc_type: 'quote' | 'invoice' | 'receipt'; customer: string; items: { desc: string; qty: number; unit: string; price: number }[]; vat_mode: VatMode; total: number; note: string }>('/sales-docs/extract', file)
+      if (!r.items.length) { setErr('AI อ่านไม่พบรายการในไฟล์นี้ — กรอกเองได้ ไฟล์ยังแนบอยู่'); return }
+      setType(r.doc_type || 'quote'); if (r.customer) setCustomer(r.customer)
+      setItems(r.items.map((it) => ({ desc: it.desc + (it.unit ? ` (${it.unit})` : ''), qty: it.qty || 1, price: it.price || 0 })))
+      setVatMode(r.vat_mode || 'excl')
+      setReadNote(`ดึงจาก ${file.name} แล้ว ${r.items.length} รายการ${r.total ? ` · ยอดในใบเดิม ${baht(r.total)}` : ''} — ตรวจ/แก้ราคาให้เป็นปัจจุบันก่อนบันทึก${r.note ? ' · ' + r.note : ''}`)
+    } catch (ex) { setErr((ex as Error).message) } finally { setReading('') }
+  }
 
   // ภาษีขาย: ลูกค้าบางรายไม่ต้องการ VAT (ราคารวมถูกลง) → เลือกได้ ไม่มี VAT / บวก VAT 7% / ราคารวม VAT แล้ว
   const [vatMode, setVatMode] = useState<VatMode>('excl')
@@ -65,8 +87,10 @@ export default function Sales() {
   const submit = async () => {
     setBusy(true); setErr('')
     try {
-      const doc = await addSalesDoc({ type, customer, house_code: houseCode, items: items.filter((it) => it.desc.trim()), vat_mode: vatMode })
-      setAdding(false); setCustomer(''); setHouseCode(''); setItems([{ desc: '', qty: 1, price: 0 }]); setVatMode('excl')
+      let attachment_file_id: number | undefined
+      if (attach) { const f = await api.uploadFile<{ id: number }>(attach, { house: houseCode, category: 'เอกสารขาย (ใบเก่า)' }); attachment_file_id = f.id }
+      const doc = await addSalesDoc({ type, customer, house_code: houseCode, items: items.filter((it) => it.desc.trim()), vat_mode: vatMode, attachment_file_id })
+      setAdding(false); setCustomer(''); setHouseCode(''); setItems([{ desc: '', qty: 1, price: 0 }]); setVatMode('excl'); setAttach(null); setReadNote('')
       setPrintDoc(doc)
     } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
@@ -92,6 +116,15 @@ export default function Sales() {
               {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
             </select>
             <input style={{ ...field, flex: 1 }} placeholder="ชื่อลูกค้า *" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap', background: '#F6F3FB', border: '1px solid #D9D2EA', borderRadius: 9, padding: '8px 12px', fontSize: 12.5 }}>
+            <span style={{ fontWeight: 600, color: '#6B4E9E' }}>📄 มีใบเก่า (PDF/รูป)?</span>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#fff', background: '#6B4E9E', borderRadius: 8, padding: '6px 12px', cursor: reading ? 'wait' : 'pointer', fontWeight: 600 }}>🤖 อัปโหลดให้ AI อ่านมาเป็นร่าง<input type="file" accept="application/pdf,image/*" disabled={!!reading} onChange={(e) => pickOld(e, true)} style={{ display: 'none' }} /></label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>📎 แนบไฟล์อย่างเดียว<input type="file" accept="application/pdf,image/*" onChange={(e) => pickOld(e, false)} style={{ display: 'none' }} /></label>
+            {reading && <span style={{ color: '#6B4E9E' }}>{reading}</span>}
+            {!reading && readNote && <span style={{ color: '#2E7D55' }}>{readNote}</span>}
+            {attach && !reading && <button onClick={() => { setAttach(null); setReadNote('') }} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer' }}>✕ เอาไฟล์ออก</button>}
+            <span style={{ fontSize: 11, color: '#94A0A8', width: '100%' }}>ใบเสนอราคาเก่าของบ้านอื่นเอามาใช้เป็นต้นแบบได้ — AI ดึงลูกค้า/รายการ/จำนวน/ราคา/แบบภาษี มาให้แล้วค่อยแก้ · ไฟล์จะแนบไว้กับเอกสารใหม่ (กด 📎 ในตารางเพื่อเปิดดู)</span>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 10 }}>
             <thead>
@@ -159,7 +192,7 @@ export default function Sales() {
                 <tr key={d.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ ...td, padding: '11px 18px' }}><span style={{ fontSize: 11, fontWeight: 600, color: ts.c, background: ts.bg, padding: '3px 11px', borderRadius: 20 }}>{TYPE_LABEL[d.type]}</span></td>
                   <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>
-                    <div>{d.no}</div>
+                    <div>{d.no}{d.attachment_file_id ? <button onClick={(e) => { e.stopPropagation(); api.openFile('/files/' + d.attachment_file_id + '/view') }} title="เปิดไฟล์ใบเก่าที่แนบ" style={{ marginLeft: 6, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12 }}>📎</button> : null}</div>
                     {d.ref && <div style={{ fontSize: 10.5, color: '#94A0A8' }}>อ้างอิง {d.ref}</div>}
                   </td>
                   <td style={{ ...td, fontWeight: 500 }}>

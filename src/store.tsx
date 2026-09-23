@@ -417,6 +417,7 @@ export interface ApiSalesDoc {
   house_code?: string
   ref?: string
   vat_mode?: string | null // none = ไม่มี VAT · excl = บวก 7% · incl = ราคารวม VAT แล้ว
+  attachment_file_id?: number | null // ไฟล์ใบเก่าที่แนบ (PDF/รูป)
 }
 export interface ApiFile {
   id: number
