@@ -7,6 +7,7 @@ import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { registerCrm, crmNotifications } from './crm.js'
 import { moneySummary } from './money.js'
+import zlib from 'node:zlib'
 import { registerCrmService, registerCrmPublic, serviceNotifications, customerByLine, consumeCustomerCode, handleCustomerLineMessage, handleCustomerLineImage, onQcSaved } from './crm_service.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin, verifyToken } from './security.js'
@@ -215,6 +216,18 @@ const api = express.Router()
 
 // ทุก API = ข้อมูลสด ห้ามเบราว์เซอร์แคช (กด F5 แล้วเห็นข้อมูลล่าสุดเสมอ)
 api.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next() })
+// บีบอัด JSON ขนาดใหญ่ด้วย gzip (ไม่ต้องติดตั้งแพ็กเกจเพิ่ม) — ลดเวลาโหลดหน้าแรกบน LAN/ผ่านลิงก์สาธารณะหลายเท่า
+api.use((req, res, next) => {
+  if (!/\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) return next()
+  const orig = res.json.bind(res)
+  res.json = (obj) => {
+    const s = JSON.stringify(obj)
+    if (s.length < 2048 || res.headersSent) return orig(obj)
+    res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.setHeader('Content-Encoding', 'gzip'); res.setHeader('Vary', 'Accept-Encoding'); res.removeHeader('Content-Length')
+    return res.end(zlib.gzipSync(Buffer.from(s), { level: 4 }))
+  }
+  next()
+})
 
 // ===== อัปเดตสด (SSE): ทุกหน้าที่เปิดอยู่รู้ทันทีเมื่อข้อมูลเปลี่ยน (จากคนอื่น/บอท LINE/ระบบ) → โหลดเฉพาะส่วนที่เปลี่ยน ไม่ต้องกด F5 =====
 const sseClients = new Set()
@@ -2139,6 +2152,9 @@ function cancelPo(po, byName, note) {
   audit({ user: { name: byName } }, 'ยกเลิกใบสั่งซื้อ (ถูกปฏิเสธ)', `${po.no}${note ? ' · ' + note : ''}`)
 }
 const attachApproval = (docType) => (r) => r ? { ...r, approval: approvalState(docType, r.id) } : r
+// สำหรับ "รายการ" (list): สถานะอนุมัติแบบไม่แนบรูปลายเซ็น (base64) — ลดขนาดข้อมูลหน้าแรกมาก · ใบเต็ม (มีลายเซ็น) ดึงจาก /:id ตอนเปิดพิมพ์
+const approvalLite = (docType, id) => { const st = approvalState(docType, id); return { ...st, approvals: st.approvals.map(({ sig, ...a }) => ({ ...a, has_sig: !!sig })) } }
+const attachApprovalLite = (docType) => (r) => r ? { ...r, approval: approvalLite(docType, r.id) } : r
 // กติกาจำนวนผู้อนุมัติเปลี่ยน (เช่น 3 → 1) → เอกสารที่ "รออนุมัติ" แต่ตอนนี้นับว่าครบแล้ว ต้องเปลี่ยนสถานะเป็น "อนุมัติ" ให้ตรง
 // (เรียกตอนบูต และหลังแก้กติกาในหน้าตรวจสอบ) — ไม่แตะเอกสารที่ถูกปฏิเสธ
 function syncApprovalStatuses() {
@@ -3682,7 +3698,9 @@ api.put('/settings/attendance', adminOnly, (req, res) => {
 })
 
 // ---------- purchase orders (PO) ----------
-api.get('/purchase-orders', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM purchase_orders ORDER BY id DESC').all().map((r) => attachApproval('po')(poRow(r)))))
+// รายการ PO: ตัดรูปสินค้า (base64) ออก ส่งแค่ has_image — ใบเต็มดึงจาก /purchase-orders/:id
+api.get('/purchase-orders', financeOnly, (_req, res) => res.json(db.prepare('SELECT * FROM purchase_orders ORDER BY id DESC').all().map((r) => { const { image, ...rest } = r; return attachApprovalLite('po')(poRow({ ...rest, image: null, has_image: !!image })) })))
+api.get('/purchase-orders/:id', financeOnly, (req, res) => { const r = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id); if (!r) return res.status(404).json({ error: 'ไม่พบใบสั่งซื้อ' }); res.json(attachApproval('po')(poRow(r))) })
 api.post('/purchase-orders', financeOnly, (req, res) => {
   try { res.status(201).json(createPurchaseOrder(req.body || {}, req.user)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) }
 })
@@ -4061,15 +4079,26 @@ api.put('/vendors/:id', financeOnly, (req, res) => {
 function jparse(s) { if (!s) return null; try { return JSON.parse(s) } catch { return null } }
 function prRow(r) { return r ? { ...r, items: jparse(r.items), images: jparse(r.images), ai_compare: jparse(r.ai_compare), online_options: jparse(r.online_options) } : r }
 function poRow(r) { return r ? { ...r, items: jparse(r.items) || [] } : r }
+// ข้อมูลประกอบใบขอซื้อ (ความคืบหน้าขั้นตอน): จำนวนรูปใบเสนอราคา · ร้านที่เลือก · PO ล่าสุดที่ยังไม่ถูกปฏิเสธ
+function prExtras(r) {
+  const quote_files = db.prepare('SELECT COUNT(*) c FROM pr_quote_files WHERE pr_id=?').get(r.id).c
+  const chosen = db.prepare('SELECT vendor FROM pr_quotes WHERE pr_id=? AND chosen=1').get(r.id)?.vendor || ''
+  const po = db.prepare("SELECT id, no, vendor FROM purchase_orders WHERE pr_no=? AND id NOT IN (SELECT doc_id FROM doc_approvals WHERE doc_type='po' AND decision='reject') ORDER BY id DESC LIMIT 1").get(r.no)
+  return { quote_files, chosen_vendor: chosen, po_no: po?.no || '', po_vendor: po?.vendor || '', po_approved: po ? approvalState('po', po.id).done : false }
+}
+// รายการ PR (list): ตัดรูปสินค้า/ลายเซ็น (base64) ออก → has_image, image_count — ใบเต็มดึงจาก /purchase-requests/:id ตอนเปิดพิมพ์/ออก PO
 api.get('/purchase-requests', canWrite, (_req, res) => // โฟร์แมน (หน้างาน) เข้าดู/คีย์ใบขอซื้อได้ — ส่วนเงินจริง (PO/จ่าย) ยังเป็น financeOnly
   res.json(db.prepare('SELECT * FROM purchase_requests ORDER BY id DESC').all().map((r) => {
-    // ความคืบหน้าขั้นตอน: จำนวนรูปใบเสนอราคา · ร้านที่เลือก · PO ล่าสุดที่ยังไม่ถูกปฏิเสธ
-    const quote_files = db.prepare('SELECT COUNT(*) c FROM pr_quote_files WHERE pr_id=?').get(r.id).c
-    const chosen = db.prepare('SELECT vendor FROM pr_quotes WHERE pr_id=? AND chosen=1').get(r.id)?.vendor || ''
-    const po = db.prepare("SELECT id, no, vendor FROM purchase_orders WHERE pr_no=? AND id NOT IN (SELECT doc_id FROM doc_approvals WHERE doc_type='po' AND decision='reject') ORDER BY id DESC LIMIT 1").get(r.no)
-    return { ...prRow(r), approval: approvalState('pr', r.id), quote_files, chosen_vendor: chosen, po_no: po?.no || '', po_vendor: po?.vendor || '', po_approved: po ? approvalState('po', po.id).done : false }
+    const { image, images, requester_sig, checked_sig, ...rest } = r
+    const imgs = jparse(images) || (image ? [image] : [])
+    return { ...prRow({ ...rest, image: null, images: null }), images: [], has_image: imgs.length > 0, image_count: imgs.length, has_requester_sig: !!requester_sig, approval: approvalLite('pr', r.id), ...prExtras(r) }
   }))
 )
+api.get('/purchase-requests/:id', canWrite, (req, res) => {
+  const r = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(req.params.id)
+  if (!r) return res.status(404).json({ error: 'ไม่พบใบขอซื้อ' })
+  res.json({ ...prRow(r), approval: approvalState('pr', r.id), ...prExtras(r) })
+})
 // create a PR — requester = current user, snapshot their signature, optional product image
 // รองรับหลายรายการในใบเดียว: ส่ง items: [{desc,qty,unit,price}] มา (จำนวนเงินรวม = ผลรวมของทุกรายการ)
 api.post('/purchase-requests', canWrite, (req, res) => {
