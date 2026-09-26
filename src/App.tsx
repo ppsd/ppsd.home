@@ -59,7 +59,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
 
 export default function App() {
   const app = useApp()
-  const { user, data, loading } = app
+  const { user, data, loading, loadingMore } = app
 
   const [page, setPage] = useState<Page>('houses') // house-first: เปิดมาเจอรายการบ้านก่อน
   const [selId, setSelId] = useState<number | null>(null)
@@ -81,6 +81,8 @@ export default function App() {
     )
   }
   if (!user) return <Login />
+  // แถบบางๆ บนสุดระหว่างโหลดข้อมูลส่วนที่เหลือ (เฟส 2) — หน้าใช้งานได้แล้ว
+  const moreBar = loadingMore ? <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 999, height: 3, background: 'linear-gradient(90deg,#30506A,#5DBB86,#30506A)', backgroundSize: '200% 100%', animation: 'ppsdbar 1.2s linear infinite' }} title="กำลังโหลดข้อมูลส่วนที่เหลือ…"><style>{'@keyframes ppsdbar{0%{background-position:0 0}100%{background-position:200% 0}}'}</style></div> : null
   if (forcePin) return <ForcePinChange userName={user.name} onDone={() => setForcePin(false)} />
 
   const go = (p: Page) => setPage(p)
@@ -280,7 +282,7 @@ export default function App() {
     })
 
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#F3F5F7', fontFamily: "'Kanit',sans-serif" }}>
+    <>{moreBar}<div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#F3F5F7', fontFamily: "'Kanit',sans-serif" }}>
       <Sidebar activePage={activePage} onNavigate={onNavigate} />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
@@ -329,6 +331,6 @@ export default function App() {
 
       {modal && <Modal modal={modal} onClose={() => setModal(null)} />}
       {printDoc && <PrintDoc kind={printDoc.kind} slip={printDoc.slip} onClose={() => setPrintDoc(null)} />}
-    </div>
+    </div></>
   )
 }

@@ -189,6 +189,7 @@ export interface ApiPO {
   vendor: string
   item: string
   amount: number
+  has_image?: boolean
   // สรุปยอด (amount = รวมทั้งสิ้น) — ใบเก่าไม่มี vat_mode
   subtotal?: number | null
   discount?: number | null
@@ -279,6 +280,8 @@ export interface ApiPR {
   id: number
   no: string
   date: string
+  has_image?: boolean // รายการ (list) ไม่แนบรูป — ใบเต็มดึงจาก /purchase-requests/:id
+  image_count?: number
   subtotal?: number | null
   discount?: number | null
   vat_mode?: string | null
@@ -498,6 +501,7 @@ interface AppCtx {
   user: SessionUser | null
   data: AppData
   loading: boolean
+  loadingMore: boolean // เฟส 2 ของการโหลดครั้งแรก (ข้อมูลส่วนที่เหลือ) ยังไม่เสร็จ
   login: (username: string, pin: string) => Promise<void>
   logout: () => void
   addHouse: (b: Record<string, unknown>) => Promise<void>
@@ -592,46 +596,57 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [data, setData] = useState<AppData>(EMPTY)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
 
+  // โหลดครั้งแรกแบบ 2 เฟส ยิงทุกคำขอพร้อมกัน: เฟส 1 = ชุดที่หน้าแรก/เมนูหลักใช้ → แสดงหน้าได้ทันที · เฟส 2 = ส่วนที่เหลือเติมตามมา (ไม่ต้องรอครบทุกชุด)
   async function loadAll(me: SessionUser) {
     const role = me.role
     const finance = role === 'admin' || role === 'accounting'
+    const site = role === 'site'
     // salary/payroll visible to: บัญชี (accounting) + ผู้จัดการ + HR (บุคคล) + admin
     const salary = finance || me.position === 'ผู้จัดการ' || me.position === 'CEO' || !!me.isManager || me.position === 'บุคคล'
-    const [houses, installments, issues, expenses, employees, ot, dashboard] = await Promise.all([
+    type PayrollResp = { period: string; periodLabel: string; locked: boolean; rows: ApiPayroll[] }
+    const p1 = Promise.all([
       tryGet<ApiHouse[]>('/houses', []),
       tryGet<ApiInstallment[]>('/installments', []),
       tryGet<ApiIssue[]>('/issues', []),
-      tryGet<ApiExpense[]>('/expenses', []),
-      tryGet<ApiEmployee[]>('/employees', []),
-      tryGet<ApiOT[]>('/ot', []),
       tryGet<Dashboard | null>('/dashboard', null),
-    ])
-    type PayrollResp = { period: string; periodLabel: string; locked: boolean; rows: ApiPayroll[] }
-    const payrollResp = salary ? await tryGet<PayrollResp | null>('/payroll', null) : null
-    const payroll = payrollResp ? payrollResp.rows : null
-    const payrollMeta = payrollResp ? { period: payrollResp.period, periodLabel: payrollResp.periodLabel, locked: payrollResp.locked } : null
-    const vendors = finance ? await tryGet<ApiVendor[]>('/vendors', []) : null
-    const prs = finance || role === 'site' ? await tryGet<ApiPR[]>('/purchase-requests', []) : null // โฟร์แมนคีย์ใบขอซื้อได้
-    const payments = finance ? await tryGet<ApiPayment[]>('/payments', []) : null
-    const efilings = finance ? await tryGet<EfilingItem[]>('/efiling', []) : null
-    const users = role === 'admin' ? await tryGet<ApiUser[]>('/users', []) : null
-    const [customers, tasks, salesDocs, notifications, leaves, timeAdjustments, attendance, kioskEmployees] = await Promise.all([
+      tryGet<ApiEmployee[]>('/employees', []),
+      tryGet<Notif[]>('/notifications', []),
       tryGet<ApiCustomer[]>('/customers', []),
       tryGet<ApiTask[]>('/tasks', []),
+      tryGet<string[]>('/positions', []),
+    ])
+    const p2 = Promise.all([
+      tryGet<ApiExpense[]>('/expenses', []),
+      tryGet<ApiOT[]>('/ot', []),
+      salary ? tryGet<PayrollResp | null>('/payroll', null) : Promise.resolve(null),
+      finance ? tryGet<ApiVendor[]>('/vendors', []) : Promise.resolve(null),
+      finance || site ? tryGet<ApiPR[]>('/purchase-requests', []) : Promise.resolve(null), // โฟร์แมนคีย์ใบขอซื้อได้
+      finance ? tryGet<ApiPayment[]>('/payments', []) : Promise.resolve(null),
+      finance ? tryGet<EfilingItem[]>('/efiling', []) : Promise.resolve(null),
+      role === 'admin' ? tryGet<ApiUser[]>('/users', []) : Promise.resolve(null),
       tryGet<ApiSalesDoc[]>('/sales-docs', []),
-      tryGet<Notif[]>('/notifications', []),
       tryGet<ApiLeave[]>('/leaves', []),
       tryGet<ApiTimeAdj[]>('/time-adjustments', []),
       tryGet<ApiAttendance[]>('/attendance', []),
       tryGet<KioskEmp[]>('/kiosk/employees', []),
+      finance ? tryGet<Reports | null>('/reports', null) : Promise.resolve(null),
+      finance ? tryGet<ApiPO[]>('/purchase-orders', []) : Promise.resolve(null),
+      finance || site ? tryGet<ApiMaterialPrice[]>('/material-prices', []) : Promise.resolve(null),
     ])
-    const reports = finance ? await tryGet<Reports | null>('/reports', null) : null
-    const purchaseOrders = finance ? await tryGet<ApiPO[]>('/purchase-orders', []) : null
-    const materialPrices = finance || role === 'site' ? await tryGet<ApiMaterialPrice[]>('/material-prices', []) : null
-    const positions = await tryGet<string[]>('/positions', [])
-    setData({ houses, installments, issues, expenses, employees, payroll, payrollMeta, ot, vendors, prs, payments, users, dashboard, efilings, customers, tasks, salesDocs, notifications, reports, leaves, timeAdjustments, attendance, purchaseOrders, kioskEmployees, positions, materialPrices })
+    const [houses, installments, issues, dashboard, employees, notifications, customers, tasks, positions] = await p1
+    // ค่าชั่วคราวของเฟส 2: ชุดที่ผู้ใช้มีสิทธิ์ = [] (ตารางว่างชั่วครู่) · ไม่มีสิทธิ์ = null (หน้าล็อกตามเดิม)
+    setData({ ...EMPTY, houses, installments, issues, dashboard, employees, notifications, customers, tasks, positions,
+      vendors: finance ? [] : null, prs: finance || site ? [] : null, payments: finance ? [] : null, efilings: finance ? [] : null, users: role === 'admin' ? [] : null, purchaseOrders: finance ? [] : null, materialPrices: finance || site ? [] : null })
+    setLoadingMore(true)
+    p2.then(([expenses, ot, payrollResp, vendors, prs, payments, efilings, users, salesDocs, leaves, timeAdjustments, attendance, kioskEmployees, reports, purchaseOrders, materialPrices]) => {
+      const payroll = payrollResp ? payrollResp.rows : null
+      const payrollMeta = payrollResp ? { period: payrollResp.period, periodLabel: payrollResp.periodLabel, locked: payrollResp.locked } : null
+      setData((prev) => ({ ...prev, expenses, ot, payroll, payrollMeta, vendors, prs, payments, efilings, users, salesDocs, leaves, timeAdjustments, attendance, kioskEmployees, reports, purchaseOrders, materialPrices }))
+    }).finally(() => setLoadingMore(false))
   }
+
 
   // อัปเดตสด: ต่อ SSE เมื่อล็อกอินแล้ว → เหตุการณ์ changed → โหลดชุดข้อมูลที่เปลี่ยน (หน่วง 400ms รวมหลายเหตุการณ์) + แจ้งคอมโพเนนต์ที่โหลดเอง
   const liveRef = useRef<{ es: EventSource | null; timer: ReturnType<typeof setTimeout> | null; pending: Set<string> }>({ es: null, timer: null, pending: new Set() })
@@ -710,7 +725,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         data,
-        loading,
+        loading, loadingMore,
         login,
         logout,
         reloadData: (key, path) => reload(key, path),

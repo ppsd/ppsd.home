@@ -619,7 +619,7 @@ test('ลายเซ็นผู้ขอซื้อ: ประทับจา
   const up = await PUT(`/users/${u.data.id}/signature`, { signature: SIG })
   assert.equal(up.status, 200, JSON.stringify(up.data))
   assert.ok(up.data.filled >= 1, 'ต้องเติมลายเซ็นย้อนหลังให้ใบเก่า')
-  const old = (await GET('/purchase-requests')).data.find((r) => r.id === pr1.data.id)
+  const old = (await GET('/purchase-requests/' + pr1.data.id)).data // รายการ (list) ไม่แนบลายเซ็นแล้ว → ดูจากใบเต็ม
   assert.equal(old.requester_sig, SIG, 'ใบเก่าต้องมีลายเซ็นแล้ว')
   const pr2 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'ทราย 2 คิว', amount: 1200 })
   assert.equal(pr2.data.requester_sig, SIG)
@@ -888,7 +888,7 @@ test('อนุมัติผ่าน LINE: PR ใหม่ → การ์�
   const pr3 = await POST('/purchase-requests', { house: 'บ้านเทสต์', item: 'สีทาบ้าน', amount: 1200 })
   token = adminToken
   await postback('Uceo', `apv:pr:${pr3.data.id}:approve`); await wait()
-  const r3 = (await GET('/purchase-requests')).data.find((r) => r.id === pr3.data.id)
+  const r3 = (await GET('/purchase-requests/' + pr3.data.id)).data // รายการ (list) ไม่แนบลายเซ็นแล้ว → ดูจากใบเต็ม
   assert.equal(r3.status, 'อนุมัติ')
   assert.equal(r3.approval.approvals[0].approver, (await GET('/me')).data.name)
   assert.equal(r3.approval.approvals[0].sig, 'data:image/png;base64,iVBORw0KGgo=', 'ลายเซ็นผู้อนุมัติต้องอยู่ในใบ')
@@ -1393,7 +1393,7 @@ test('สั่งของทาง LINE: บอทถามรูปสิน�
   await msg('Ufore3', 'ตกลง'); await wait()
   const prs = (await GET('/purchase-requests')).data
   assert.equal(prs.length, n0 + 1)
-  assert.equal(prs[0].images.length, 2, 'รูปสินค้าต้องติดไปกับใบ'); assert.ok(prs[0].images[0].startsWith('data:image/png'))
+  assert.equal(prs[0].image_count, 2, 'รูปสินค้าต้องติดไปกับใบ (รายการบอกจำนวนรูป)'); const fullPr = (await GET('/purchase-requests/' + prs[0].id)).data; assert.equal(fullPr.images.length, 2); assert.ok(fullPr.images[0].startsWith('data:image/png'))
   // ไม่มีรูป → พิมพ์ ไม่มี
   await msg('Ufore3', 'สั่งของ ทรายละเอียด 1 คิว บ้านคุณพร'); await wait()
   await msg('Ufore3', 'ไม่มี'); await wait()
@@ -1983,4 +1983,19 @@ test('เอกสารขาย: ลบได้ (บัญชี/ผู้ด
   assert.equal((await DEL('/sales-docs/1')).status, 403, 'โฟร์แมนลบไม่ได้'); token = adminToken
   const r = await fetch(`${BASE}/sales-docs/extract?mime=application/pdf&doc_type=invoice&vat_mode=excl`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF-1.4 x') })
   const d = await r.json(); assert.equal(d.doc_type, 'invoice', 'ต้องใช้ประเภทที่ผู้ใช้เลือก ไม่ใช่ที่ AI เดา'); assert.equal(d.vat_mode, 'excl'); assert.equal(d.items.length, 2)
+})
+
+test('โหลดเร็ว: รายการ PR/PO ไม่แนบรูป/ลายเซ็น (has_image, image_count) · ใบเต็มดึงจาก /:id · JSON ใหญ่ถูก gzip', async () => {
+  const img = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ของมีรูป', qty: 1, unit: 'ชิ้น', price: 10 }], images: [img, img] })
+  assert.equal(pr.status, 201)
+  const row = (await GET('/purchase-requests')).data.find((r) => r.id === pr.data.id)
+  assert.equal(row.has_image, true); assert.equal(row.image_count, 2); assert.equal(row.image, null); assert.deepEqual(row.images, []); assert.ok(!('requester_sig' in row))
+  assert.ok(row.approval && !row.approval.approvals.some((a) => 'sig' in a), 'รายการต้องไม่แนบลายเซ็น')
+  const full = (await GET('/purchase-requests/' + pr.data.id)).data
+  assert.equal(full.images.length, 2); assert.ok(full.images[0].startsWith('data:image/'))
+  const po = (await GET('/purchase-orders')).data[0]
+  if (po) { assert.ok('has_image' in po); const pf = await GET('/purchase-orders/' + po.id); assert.equal(pf.status, 200); assert.equal(pf.data.id, po.id) }
+  const r = await fetch(BASE + '/purchase-requests', { headers: { Authorization: 'Bearer ' + token, 'Accept-Encoding': 'gzip' } })
+  assert.equal(r.status, 200); assert.equal(r.headers.get('content-encoding'), 'gzip'); assert.ok(Array.isArray(await r.json()))
 })

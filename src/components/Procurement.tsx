@@ -332,7 +332,11 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
     } catch { /* ignore */ }
   }
   const houses = data.houses
-  const makePoFromPr = async (r: ApiPR) => {
+  // รายการในตารางไม่แนบรูป/ลายเซ็น (โหลดเร็ว) — ตอนเปิดใบพิมพ์/ออก PO ดึงใบเต็มจากเซิร์ฟเวอร์
+  const openPrDoc = async (r: ApiPR) => { try { setDocPr(await api.get<ApiPR>('/purchase-requests/' + r.id)) } catch { setDocPr(r) } }
+  const openPoDoc = async (r: ApiPO) => { try { setDocPo(await api.get<ApiPO>('/purchase-orders/' + r.id)) } catch { setDocPo(r) } }
+  const makePoFromPr = async (r0: ApiPR) => {
+    const r = r0.has_image && !r0.image ? await api.get<ApiPR>('/purchase-requests/' + r0.id).catch(() => r0) : r0
     // carry the PR's linked house to the PO (fallback: match by name)
     const code = r.house_code || houses.find((x) => x.code === r.house || x.name === r.house)?.code || ''
     // auto-fill ผู้ขาย+ราคา จากใบเทียบราคาที่ "เลือกแล้ว" (ถ้ามี) — ราคาที่ต่อรองได้จริง
@@ -584,7 +588,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <td style={{ ...td, color: '#5C6770' }}>{r.by}</td>
                   <td style={{ ...td, color: '#3C4750' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {r.image && <img src={r.image} alt="สินค้า" style={{ width: 30, height: 30, borderRadius: 5, objectFit: 'cover', border: '1px solid #E1E5EA', flexShrink: 0 }} />}
+                      {r.image ? <img src={r.image} alt="สินค้า" style={{ width: 30, height: 30, borderRadius: 5, objectFit: 'cover', border: '1px solid #E1E5EA', flexShrink: 0 }} /> : r.has_image ? <span title="มีรูปสินค้าแนบ — เปิดใบเพื่อดู" style={{ width: 30, height: 30, borderRadius: 5, background: '#F3F5F7', border: '1px solid #E1E5EA', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>📷</span> : null}
                       <span style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.item}</span>
                       {r.items && r.items.length > 1 && <span style={{ fontSize: 10.5, fontWeight: 600, color: '#30506A', background: '#E2E9EF', padding: '1px 7px', borderRadius: 20, flexShrink: 0 }}>{r.items.length} รายการ</span>}
                     </div>
@@ -624,7 +628,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                         <button onClick={() => sendDoc(r)} title="สร้างรูปใบ PR แล้วส่งเข้า LINE ของผู้รับที่ตั้งไว้ (อีกครั้ง)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 10.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 8px', cursor: 'pointer' }}>📤 ส่งใบเข้า LINE</button>
                       </> })()}
                       <button onClick={() => setQuoteFor(quoteFor === r.id ? null : r.id)} className="hov-f3f5f7" title="เปรียบเทียบราคาผู้ขาย" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>⚖ เทียบราคา</button>
-                      <button onClick={() => setDocPr(r)} className="hov-f3f5f7" title="ดู/พิมพ์ใบ PR" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨 ใบ PR</button>
+                      <button onClick={() => openPrDoc(r)} className="hov-f3f5f7" title="ดู/พิมพ์ใบ PR" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨 ใบ PR</button>
                       {isAdmin && <button onClick={async () => { if (!confirm(`ลบใบขอซื้อ ${r.no} (${r.item})?\nใบเทียบราคา/รูปใบเสนอราคาของใบนี้จะถูกลบด้วย`)) return; try { await api.del('/purchase-requests/' + r.id); await reloadData('prs', '/purchase-requests') } catch (e) { alert((e as Error).message) } }} title="ลบใบขอซื้อ (ผู้ดูแล)" style={{ fontFamily: 'inherit', fontSize: 11.5, color: '#C24036', background: '#fff', border: '1px solid #EDD3CE', borderRadius: 7, padding: '4px 8px', cursor: 'pointer' }}>🗑</button>}
                       {(r.approval?.done || r.status === 'อนุมัติ') && <button onClick={() => makePoFromPr(r)} title="สร้างใบสั่งซื้อจาก PR นี้" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>→ PO</button>}
                     </div>
@@ -738,7 +742,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <td style={{ ...td, fontWeight: 500 }}>{r.vendor}</td>
                   <td style={{ ...td, color: '#3C4750' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {r.image && <img src={r.image} alt="สินค้า" style={{ width: 30, height: 30, borderRadius: 5, objectFit: 'cover', border: '1px solid #E1E5EA', flexShrink: 0 }} />}
+                      {r.image ? <img src={r.image} alt="สินค้า" style={{ width: 30, height: 30, borderRadius: 5, objectFit: 'cover', border: '1px solid #E1E5EA', flexShrink: 0 }} /> : r.has_image ? <span title="มีรูปสินค้าแนบ — เปิดใบเพื่อดู" style={{ width: 30, height: 30, borderRadius: 5, background: '#F3F5F7', border: '1px solid #E1E5EA', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>📷</span> : null}
                       <div>
                         <div>{r.item}</div>
                         {r.house_code && <div style={{ fontSize: 11, color: '#94A0A8' }}>🏠 {houses.find((h) => h.code === r.house_code)?.name || r.house_code}</div>}
@@ -772,7 +776,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                           ? <span title={'ตรวจรับของไม่ผ่าน ' + (r.gr_date || '')} style={{ fontSize: 11, fontWeight: 700, color: '#C24036', background: '#FBEAE7', padding: '2px 9px', borderRadius: 20 }}>✗ ไม่ตรง</span>
                           : null}
                       {r.status !== 'ยกเลิก' && <button onClick={() => setDocReceive(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#2E7D55', background: '#fff', border: '1px solid #B5DDC8', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>📦 ตรวจรับของ</button>}
-                      <button onClick={() => setDocPo(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>🖨 พิมพ์ PO</button>
+                      <button onClick={() => openPoDoc(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>🖨 พิมพ์ PO</button>
                     </div>
                   </td>
                 </tr>
