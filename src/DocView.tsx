@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import PrApprovalDoc from './components/PrApprovalDoc'
-import PoDoc from './components/PoDoc'
+import PrApprovalDoc from './components/procurement/docs/PrApprovalDoc'
+import PoDoc from './components/procurement/docs/PoDoc'
 import type { ApiPR, ApiPO, ApiVendor } from './store'
 
 // หน้าเอกสารเปล่า <url>/#docview/<token> — ระบบเปิดด้วย Chrome ในเครื่องเพื่อถ่ายรูปใบ (PR) ส่งเข้า LINE · โทเคนอายุสั้น ไม่ต้องล็อกอิน
