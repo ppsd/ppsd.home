@@ -109,6 +109,23 @@ test('เงินเดือน: แถวข้อมูลต้องไม
   assert.ok(!('pin' in row) && !('signature' in row) && !('track_token' in row), 'ข้อมูลลับหลุดในแถวเงินเดือน')
 })
 
+test('เงินเดือน: รายได้อื่นๆ บวกเข้ารายได้งวดนั้น และต้องมีรายละเอียด', async () => {
+  const before = (await GET(`/payroll?period=${period}`)).data.rows.find((x) => x.code === empCode)
+  const bad = await POST('/other-income', { emp_code: empCode, amount: 1000, reason: '', period })
+  assert.equal(bad.status, 400, 'ไม่มีรายละเอียดต้องถูกบล็อก')
+  const inc = await POST('/other-income', { emp_code: empCode, amount: 1000, reason: 'โบนัส', period })
+  assert.equal(inc.status, 201, JSON.stringify(inc.data))
+  const list = await GET(`/other-income?period=${period}`)
+  assert.ok(list.data.some((r) => r.id === inc.data.id && r.amount === 1000), 'ต้องเห็นรายการในงวด')
+  const after = (await GET(`/payroll?period=${period}`)).data.rows.find((x) => x.code === empCode)
+  assert.equal(after.other_income, 1000, 'แถวเงินเดือนต้องมี other_income')
+  const net = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
+  assert.equal(net(after) - net(before), 1000, 'สุทธิต้องเพิ่มเท่ารายได้อื่นๆ')
+  await DEL(`/other-income/${inc.data.id}`)
+  const gone = (await GET(`/payroll?period=${period}`)).data.rows.find((x) => x.code === empCode)
+  assert.equal(gone.other_income || 0, 0)
+})
+
 test('เงินเดือน: ห้ามปิดงวดที่มีเงินสุทธิติดลบ', async () => {
   const d = await POST('/deductions', { emp_code: empCode, amount: 999999, reason: 'ทดสอบติดลบ', period })
   assert.equal(d.status, 201)
@@ -135,6 +152,9 @@ test('เงินเดือน: ปิดงวดแล้วลงบัญ
   const ded = await POST('/deductions', { emp_code: empCode, amount: 100, reason: 'x', period })
   assert.equal(ded.status, 400)
   assert.match(ded.data.error, /ปิดแล้ว/)
+  const inc = await POST('/other-income', { emp_code: empCode, amount: 100, reason: 'x', period })
+  assert.equal(inc.status, 400)
+  assert.match(inc.data.error, /ปิดแล้ว/)
 })
 
 // ---------- จัดซื้อ → รับของ → จ่าย → บัญชี ----------
