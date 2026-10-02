@@ -1972,7 +1972,7 @@ api.use(requireAuth)
 // ค่าเริ่มต้น = สิทธิ์ตาม role เดิมทุกอย่าง · แอดมินปิดไม่ได้ (กันล็อกตัวเองออก)
 const MODULE_PATHS = [
   // หมายเหตุ: หน้า 'ลงเวลา' (ตอกบัตร/attendance) ไม่อยู่ใต้ hr — ต้องใช้ได้เสมอ · BOQ อยู่ในหน้าบ้าน ไม่ใช่โมดูลขาย
-  ['hr', [/^\/payroll/, /^\/employees/, /^\/salary-advances/, /^\/deductions/, /^\/ot(\/|$)/, /^\/leaves/, /^\/time-adjustments/]],
+  ['hr', [/^\/payroll/, /^\/employees/, /^\/salary-advances/, /^\/deductions/, /^\/other-income/, /^\/ot(\/|$)/, /^\/leaves/, /^\/time-adjustments/]],
   ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/ar-aging/, /^\/ap-aging/, /^\/reconcile/, /^\/cash-accounts/, /^\/acct-defaults/, /^\/assets/, /^\/export\/express/, /^\/efiling/, /^\/repair/]],
   // ใบจ่ายเงิน (payments) ใช้งานในหน้าจัดซื้อ → คุมด้วยโมดูลจัดซื้อ
   ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/pr-quotes/, /^\/goods-receipts/, /^\/payables/, /^\/payments/, /^\/vendors/, /^\/material-prices/, /^\/procurement/, /^\/stock/]],
@@ -3143,6 +3143,8 @@ function computePayroll(period) {
     const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a
     // หักอื่นๆ (พร้อมเหตุผล) ที่บันทึกในงวดนี้
     const otherDeduct = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM deductions WHERE emp_code=? AND period=?').get(e.code, period).a
+    // รายได้อื่นๆ (โบนัส/เบี้ยขยัน/ค่าคอม ฯลฯ) ที่บันทึกในงวดนี้ → บวกเข้ารายได้
+    const otherIncome = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM other_income WHERE emp_code=? AND period=?').get(e.code, period).a
     // retention: หักเดือนละ (e.retention) แต่ไม่เกินเพดานที่เหลือ — ครบ 5,000 แล้วหักเป็น 0 เอง
     const opening = e.retention_opening || 0
     const paidBefore = retentionPaidBefore(e.code, opening, period)
@@ -3153,7 +3155,7 @@ function computePayroll(period) {
     return {
       ...pub, ot, sso, tax, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
       daily_rate: dailyRate, work_days: workDays, exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
-      retention, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct,
+      retention, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct, other_income: otherIncome,
       retention_cap: RETENTION_CAP, retention_opening: opening,
       retention_monthly: monthly, // ยอดที่ตั้งให้หักต่อเดือน (แก้ได้) — ต่างจาก retention ที่ถูกจำกัดด้วยเพดาน
       retention_paid: paidBefore + retention, // ยอดสะสมถึงงวดนี้ (รวมงวดนี้)
@@ -3161,7 +3163,7 @@ function computePayroll(period) {
     }
   })
 }
-const netOf = (p) => (p.base || 0) + (p.ot || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
+const netOf = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 
 // payroll is salary data → finance only. Supports a period and locked snapshots.
 api.get('/payroll', requireSalary, (req, res) => {
@@ -3180,7 +3182,7 @@ api.get('/payroll/runs', requireSalary, (_req, res) =>
 function postPayrollJournal(period, rows, by) {
   const r2 = (x) => Math.round((x || 0) * 100) / 100
   const sum = (f) => rows.reduce((s, p) => s + (Number(f(p)) || 0), 0)
-  const earned = r2(sum((p) => (p.base || 0) + (p.ot || 0) - (p.leave_deduct || 0)))
+  const earned = r2(sum((p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.leave_deduct || 0)))
   const sid = Number(period.replace('-', ''))
   if (!(earned > 0)) { acct.removeAutoJournal('payroll', sid); return { posted: false } }
   const sso = r2(sum((p) => p.sso || 0)), tax = r2(sum((p) => p.tax || 0)), ret = r2(sum((p) => p.retention || 0))
@@ -3348,6 +3350,34 @@ api.delete('/deductions/:id', financeOnly, (req, res) => {
   res.json({ ok: true })
 })
 
+// ===== รายได้อื่นๆ ต่อคนต่องวด (โบนัส / เบี้ยขยัน / ค่าคอมมิชชัน / ค่าเดินทาง ฯลฯ) → บวกเข้าเงินเดือนงวดนั้น =====
+api.get('/other-income', requireSalary, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  res.json(db.prepare('SELECT * FROM other_income WHERE period=? ORDER BY id DESC').all(period))
+})
+api.post('/other-income', financeOnly, (req, res) => {
+  const b = req.body || {}
+  const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
+  if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
+  const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod()
+  if (periodClosed(period)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว — บันทึกรายได้เข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
+  const amount = Number(b.amount) || 0
+  if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
+  const reason = String(b.reason || '').trim()
+  if (!reason) return res.status(400).json({ error: 'กรุณากรอกรายละเอียดรายได้ (เช่น โบนัส เบี้ยขยัน ค่าคอม)' })
+  const info = db.prepare('INSERT INTO other_income (emp_code,emp_name,period,date,amount,reason,by,created) VALUES (?,?,?,?,?,?,?,?)')
+    .run(emp.code, emp.name, period, todayTH(), amount, reason, req.user.name, todayTH())
+  audit(req, 'รายได้อื่นๆ', `${emp.name} +${amount.toLocaleString()} บาท (${reason})`)
+  res.status(201).json(db.prepare('SELECT * FROM other_income WHERE id=?').get(info.lastInsertRowid))
+})
+api.delete('/other-income/:id', financeOnly, (req, res) => {
+  const d = db.prepare('SELECT * FROM other_income WHERE id=?').get(req.params.id)
+  if (d && periodClosed(d.period)) return res.status(400).json({ error: `งวด ${periodLabelTH(d.period)} ปิดแล้ว — ลบรายได้ของงวดที่ปิดไม่ได้` })
+  db.prepare('DELETE FROM other_income WHERE id=?').run(req.params.id)
+  if (d) audit(req, 'ยกเลิกรายได้อื่นๆ', `${d.emp_name} ${d.amount}`)
+  res.json({ ok: true })
+})
+
 // สรุปเงินเดือนทั้งปี — รวมจ่ายสุทธิ + ประกันสังคมสะสม (จากงวดที่ปิดแล้ว)
 api.get('/payroll/annual', requireSalary, (req, res) => {
   const year = /^\d{4}$/.test(req.query.year) ? req.query.year : String(new Date().getFullYear())
@@ -3390,7 +3420,7 @@ function annualByEmployee(year) {
       for (const p of JSON.parse(r.data)) {
         const k = p.code || p.name
         if (!by[k]) by[k] = { code: p.code || '', prefix: '', name: p.name || '', tax_id: '', income: 0, tax: 0, sso: 0, months: 0 }
-        by[k].income += (p.base || 0) + (p.ot || 0) - (p.leave_deduct || 0)
+        by[k].income += (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.leave_deduct || 0)
         by[k].tax += p.tax || 0
         by[k].sso += p.sso || 0
         by[k].months += 1
@@ -4702,9 +4732,9 @@ function expressCsv(kind, reqPeriod) {
   const run = db.prepare('SELECT data FROM payroll_runs WHERE period=?').get(period)
   const rows = run ? JSON.parse(run.data) : computePayroll(period)
   // "เงินได้" สำหรับ ภงด.1 = เงินได้พึงประเมิน (เงินเดือน+OT−หักวันลา) ไม่ใช่ยอดโอนสุทธิหลังหักเบิก/ประกันผลงาน
-  const earnedOf = (p) => (p.base || 0) + (p.ot || 0) - (p.leave_deduct || 0)
-  const head = ['งวด', 'รหัสพนักงาน', 'ชื่อ-สกุล', 'เลขผู้เสียภาษี', 'เงินเดือน', 'OT', 'ประกันสังคม', 'ภาษีหัก(ภงด.1)', 'เงินได้พึงประเมิน', 'จ่ายสุทธิ', 'ธนาคาร', 'เลขบัญชี']
-  const body = rows.map((p) => [period, p.code || '', p.name, p.tax_id || '', (p.base || 0).toFixed(2), (p.ot || 0).toFixed(2), (p.sso || 0).toFixed(2), (p.tax || 0).toFixed(2), earnedOf(p).toFixed(2), netOf(p).toFixed(2), p.bank_name || '', p.bank_acct || ''])
+  const earnedOf = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.leave_deduct || 0)
+  const head = ['งวด', 'รหัสพนักงาน', 'ชื่อ-สกุล', 'เลขผู้เสียภาษี', 'เงินเดือน', 'OT', 'รายได้อื่นๆ', 'ประกันสังคม', 'ภาษีหัก(ภงด.1)', 'เงินได้พึงประเมิน', 'จ่ายสุทธิ', 'ธนาคาร', 'เลขบัญชี']
+  const body = rows.map((p) => [period, p.code || '', p.name, p.tax_id || '', (p.base || 0).toFixed(2), (p.ot || 0).toFixed(2), (p.other_income || 0).toFixed(2), (p.sso || 0).toFixed(2), (p.tax || 0).toFixed(2), earnedOf(p).toFixed(2), netOf(p).toFixed(2), p.bank_name || '', p.bank_acct || ''])
   return { filename: `express_เงินเดือน_${period}.csv`, content: toCsv(head, body) }
 }
 api.get('/export/express', financeOnly, (_req, res) => {

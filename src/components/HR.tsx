@@ -128,6 +128,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
       loadAdvances()
       loadRetention()
       loadDeds()
+      loadIncs()
     } /* eslint-disable-next-line */
   }, [tab, salaryOk, payrollMeta?.period, payrollMeta?.locked])
   useEffect(() => {
@@ -156,6 +157,19 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     catch (e) { setDedErr((e as Error).message) }
   }
   const delDed = async (id: number) => { try { await apiClient.del('/deductions/' + id); loadDeds(); refreshPayroll() } catch (e) { alert((e as Error).message) } }
+  // รายได้อื่นๆ ต่อคนต่องวด (โบนัส / เบี้ยขยัน / ค่าคอม / ค่าเดินทาง) → บวกเข้าเงินเดือนงวดนั้น
+  const [incs, setIncs] = useState<DedRow[]>([])
+  const [incForm, setIncForm] = useState({ emp_code: '', amount: '', reason: '' })
+  const [incErr, setIncErr] = useState('')
+  const loadIncs = () => { const p = payrollMeta?.period; if (p) apiClient.get<DedRow[]>('/other-income?period=' + p).then(setIncs).catch(() => setIncs([])) }
+  const submitInc = async () => {
+    setIncErr('')
+    if (!incForm.emp_code || !incForm.amount) { setIncErr('เลือกพนักงานและกรอกจำนวนเงิน'); return }
+    if (!incForm.reason.trim()) { setIncErr('กรุณากรอกรายละเอียดรายได้ (เช่น โบนัส เบี้ยขยัน ค่าคอม)'); return }
+    try { await apiClient.post('/other-income', { emp_code: incForm.emp_code, amount: unMoney(incForm.amount), reason: incForm.reason, period: payrollMeta?.period }); setIncForm({ emp_code: '', amount: '', reason: '' }); loadIncs(); refreshPayroll() }
+    catch (e) { setIncErr((e as Error).message) }
+  }
+  const delInc = async (id: number) => { try { await apiClient.del('/other-income/' + id); loadIncs(); refreshPayroll() } catch (e) { alert((e as Error).message) } }
   // วันหยุดบริษัท
   const isAdmin = user?.role === 'admin'
   const [holidays, setHolidays] = useState<{ id: number; date: string; name: string }[]>([])
@@ -509,17 +523,17 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
-              <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={{ ...th, textAlign: 'right' }}>ฐานเงิน</th><th style={{ ...th, textAlign: 'right' }}>OT</th>
+              <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={{ ...th, textAlign: 'right' }}>ฐานเงิน</th><th style={{ ...th, textAlign: 'right' }}>OT</th><th style={{ ...th, textAlign: 'right' }}>รายได้อื่น</th>
               <th style={{ ...th, textAlign: 'right' }}>ปกส.</th><th style={{ ...th, textAlign: 'right' }}>ภาษี <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th>
               <th style={{ ...th, textAlign: 'right' }}>หักลา/ขาด</th><th style={{ ...th, textAlign: 'right' }}>Retention <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>กยศ <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>เบิกล่วงหน้า</th><th style={{ ...th, textAlign: 'right' }}>หักอื่นๆ</th><th style={{ ...th, textAlign: 'right' }}>สุทธิ</th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>สลิป</th>
             </tr></thead>
             <tbody>
-              {(payroll || []).length === 0 && <tr><td colSpan={12} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีพนักงาน</td></tr>}
+              {(payroll || []).length === 0 && <tr><td colSpan={13} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีพนักงาน</td></tr>}
               {(payroll || []).map((p) => {
                 const deduct = p.leave_deduct || 0
-                const ret = p.retention ?? 0, loan = p.student_loan || 0, adv = p.advance || 0, otherDed = p.other_deduct || 0
-                const net = (p.base + p.ot) - p.sso - p.tax - deduct - ret - loan - adv - otherDed
+                const ret = p.retention ?? 0, loan = p.student_loan || 0, adv = p.advance || 0, otherDed = p.other_deduct || 0, otherInc = p.other_income || 0
+                const net = (p.base + p.ot + otherInc) - p.sso - p.tax - deduct - ret - loan - adv - otherDed
                 return (
                   <tr key={p.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                     <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{p.name} <span style={{ fontSize: 11, color: '#94A0A8' }}>({p.pay_type || 'รายเดือน'})</span>{p.exempt_attendance ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#2E7D55', background: '#E7F3EC', padding: '1px 7px', borderRadius: 20 }}>ไม่ต้องลงเวลา</span> : null}</td>
@@ -544,6 +558,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                       ) : null}
                     </td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: '#5C6770' }}>{baht(p.ot)}</td>
+                    <td className="num" style={{ ...td, textAlign: 'right', color: otherInc ? '#2E7D55' : '#94A0A8' }}>{otherInc ? '+' + baht(otherInc) : '฿0'}</td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: '#C0852C' }}>{baht(p.sso)}</td>
                     <td className="num" style={{ ...td, textAlign: 'right' }}>
                       {payrollMeta?.locked
@@ -644,6 +659,48 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   </div>
                 </div>
               ))}
+          </div>
+
+          {/* รายได้อื่นๆ (พร้อมรายละเอียด) — บวกเข้าเงินเดือนงวดนี้ */}
+          <div style={{ borderTop: '8px solid #F3F5F7' }}>
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>รายได้อื่นๆ (งวด {payrollMeta?.periodLabel}) <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5 }}>· ใส่จำนวนเงิน + รายละเอียด → บวกเข้ารายได้ของงวดนี้ (เช่น โบนัส เบี้ยขยัน ค่าคอมมิชชัน ค่าเดินทาง)</span></div>
+            {payrollMeta?.locked && <div style={{ fontSize: 12.5, color: '#8A6D1F', background: '#FBF4E1', padding: '8px 18px' }}>งวดนี้ปิดแล้ว — บันทึก/ลบรายได้ไม่ได้ เลือกงวดที่ยังไม่ปิดก่อน</div>}
+            {!payrollMeta?.locked && <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
+              <select style={{ ...field, width: 'auto', minWidth: 180 }} value={incForm.emp_code} onChange={(e) => setIncForm({ ...incForm, emp_code: e.target.value })}>
+                <option value="">เลือกพนักงาน</option>
+                {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
+              </select>
+              <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนเงิน" value={incForm.amount} onChange={(v) => setIncForm({ ...incForm, amount: v })} />
+              <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="รายละเอียด * (เช่น โบนัส / เบี้ยขยัน / ค่าคอม)" value={incForm.reason} onChange={(e) => setIncForm({ ...incForm, reason: e.target.value })} />
+              <button onClick={submitInc} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึกรายได้</button>
+            </div>}
+            {incErr && <div style={{ fontSize: 12.5, color: '#C24036', padding: '8px 18px' }}>{incErr}</div>}
+            {incs.length === 0
+              ? <div style={{ padding: 20, textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ยังไม่มีรายได้อื่นๆ ในงวดนี้</div>
+              : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
+                    <th style={{ ...th, padding: '9px 18px' }}>พนักงาน</th>
+                    <th style={th}>รายละเอียด</th>
+                    <th style={{ ...th, textAlign: 'right' }}>วันที่</th>
+                    <th style={{ ...th, textAlign: 'right' }}>จำนวนเงิน</th>
+                    <th style={{ ...th, textAlign: 'center', padding: '9px 18px' }}></th>
+                  </tr></thead>
+                  <tbody>
+                    {incs.map((d) => (
+                      <tr key={d.id} style={{ borderTop: '1px solid #EEF1F4' }}>
+                        <td style={{ ...td, padding: '9px 18px', fontWeight: 500 }}>{d.emp_name}</td>
+                        <td style={{ ...td, color: '#5C6770' }}>{d.reason}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right', color: '#94A0A8' }}>{d.date}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#2E7D55' }}>+{baht(d.amount)}</td>
+                        <td style={{ ...td, textAlign: 'center', padding: '9px 18px' }}>
+                          {!payrollMeta?.locked && <button onClick={() => delInc(d.id)} title="ยกเลิกรายการนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 14 }}>✕</button>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
           </div>
 
           {/* หักอื่นๆ (พร้อมเหตุผล) — หักจากเงินเดือนงวดนี้ */}

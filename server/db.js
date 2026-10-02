@@ -195,6 +195,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS deductions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   emp_code TEXT, emp_name TEXT, period TEXT, date TEXT, amount INTEGER, reason TEXT, by TEXT, created TEXT
 )`)
+// รายได้อื่นๆ ต่อคนต่องวด (พร้อมรายละเอียด เช่น โบนัส เบี้ยขยัน ค่าคอมมิชชัน ค่าเดินทาง) — บวกเข้าเงินเดือนงวดนั้น
+db.exec(`CREATE TABLE IF NOT EXISTS other_income (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  emp_code TEXT, emp_name TEXT, period TEXT, date TEXT, amount INTEGER, reason TEXT, by TEXT, created TEXT
+)`)
 ensureColumn('employees', 'bank_name', 'TEXT') // ธนาคารสำหรับโอนเงินเดือน
 ensureColumn('employees', 'bank_acct', 'TEXT') // เลขบัญชีธนาคาร (ไฟล์จ่ายเงินเดือนผ่านธนาคาร)
 ensureColumn('employees', 'tax_id', 'TEXT') // เลขประจำตัวผู้เสียภาษี (ภงด.1)
