@@ -287,6 +287,20 @@ test('สิทธิ์รายโมดูล: ปิด "จัดซื้�
   token = adminToken
 })
 
+test('สิทธิ์ KPI: ผู้ดูแลระบบคนอื่นเข้า /pms ได้ · บัญชีเข้าไม่ได้ · สรุป QC ผู้บริหารยังเฉพาะ CEO', async () => {
+  const nu = await POST('/users', { name: 'แอดมินสอง', username: 'admin2', pin: '2222', role: 'admin', position: 'ผู้ดูแล' })
+  assert.equal(nu.status, 201, JSON.stringify(nu.data))
+  const adminToken = token
+  token = (await POST('/login', { username: 'admin2', pin: '2222' })).data.token
+  assert.equal((await GET('/pms')).status, 200, 'role admin ต้องเข้าหน้าประเมิน KPI ได้')
+  assert.equal((await GET('/qc/summary')).status, 403, 'สรุป QC ผู้บริหาร ยังเฉพาะ CEO')
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.equal((await GET('/pms')).status, 403, 'บัญชีต้องเข้า KPI ไม่ได้')
+  token = adminToken
+  assert.equal((await GET('/pms')).status, 200)
+  assert.equal((await GET('/qc/summary')).status, 200, 'CEO (thawat) เข้าสรุป QC ได้')
+})
+
 test('เอกสารราชการ: ไฟล์ สปส. และ ภงด.1ก ดาวน์โหลดได้', async () => {
   const sso = await fetch(`${BASE}/payroll/sso-file?period=${period}`, { headers: { Authorization: 'Bearer ' + token } })
   assert.equal(sso.status, 200)

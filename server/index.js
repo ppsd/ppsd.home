@@ -2211,10 +2211,16 @@ function auditView(req, res, next) {
   res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงศูนย์ตรวจสอบ' })
 }
 // ประเมินผล KPI (PMS): เข้าได้เฉพาะ ธวัช วรรณสุข เท่านั้น
-function isPmsOwner(u) { return !!u && (u.username === 'thawat' || u.name === 'ธวัช วรรณสุข') }
+// สิทธิ์หน้าผู้บริหาร (กฎเดียวกับ src/data.ts: isCeoUser / canPmsUser)
+function isCeo(u) { return !!u && (u.username === 'thawat' || u.name === 'ธวัช วรรณสุข') }
+function isPmsUser(u) { return !!u && (u.role === 'admin' || isCeo(u)) } // ประเมินผล KPI: ผู้ดูแลระบบทุกคน + CEO
 function pmsOnly(req, res, next) {
-  if (isPmsOwner(req.user)) return next()
-  res.status(403).json({ error: 'หน้าประเมินผล KPI เข้าได้เฉพาะผู้ที่ได้รับสิทธิ์เท่านั้น' })
+  if (isPmsUser(req.user)) return next()
+  res.status(403).json({ error: 'หน้าประเมินผล KPI เข้าได้เฉพาะผู้ดูแลระบบหรือผู้ที่ได้รับสิทธิ์เท่านั้น' })
+}
+function ceoOnly(req, res, next) {
+  if (isCeo(req.user)) return next()
+  res.status(403).json({ error: 'หน้านี้เข้าได้เฉพาะผู้บริหารที่ได้รับสิทธิ์เท่านั้น' })
 }
 
 // ---------- houses + installments ----------
@@ -5335,7 +5341,7 @@ api.put('/qc/:id', canWrite, (req, res) => {
 api.delete('/qc/:id', canWrite, (req, res) => { db.prepare('DELETE FROM qc_inspections WHERE id=?').run(req.params.id); res.json({ ok: true }) })
 
 // สรุป QC สำหรับผู้บริหาร (CEO) — ภาพรวม + แยกตามบ้าน + แยกตามผู้ตรวจ (ผูก KPI) · เฉพาะ CEO
-api.get('/qc/summary', pmsOnly, (_req, res) => {
+api.get('/qc/summary', ceoOnly, (_req, res) => {
   const rows = db.prepare('SELECT * FROM qc_inspections').all().map(qcRow)
   const todayISO = new Date().toISOString().slice(0, 10)
   const nameByCode = Object.fromEntries(db.prepare('SELECT code,name FROM houses').all().map((h) => [h.code, h.name]))

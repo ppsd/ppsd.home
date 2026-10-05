@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { isCeoUser } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
 
@@ -19,7 +20,7 @@ interface FeedWO {
 
 export default function CeoVoice() {
   const { user, data } = useApp()
-  const allowed = user?.username === 'thawat' || user?.name === 'ธวัช วรรณสุข'
+  const allowed = isCeoUser(user) // เข้าได้เฉพาะ CEO
   const [unlocked, setUnlocked] = useState(false)
   const [pin, setPin] = useState(''); const [pinErr, setPinErr] = useState(''); const [checking, setChecking] = useState(false)
   const verify = async () => {
