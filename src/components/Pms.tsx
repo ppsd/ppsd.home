@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { canPmsUser } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
 import { PMS_TEMPLATES, PMS_BONUS, PMS_PENALTY, RATING_MEANING } from '../pmsTemplates'
@@ -43,7 +44,7 @@ function monthToYM(m: string): string {
 
 export default function Pms() {
   const { data, user } = useApp()
-  const allowed = user?.username === 'thawat' || user?.name === 'ธวัช วรรณสุข' // เข้าได้เฉพาะ ธวัช วรรณสุข
+  const allowed = canPmsUser(user) // ผู้ดูแลระบบ + CEO (กฎเดียวกับ server)
   const employees = data.employees || []
   const [rows, setRows] = useState<Pms[]>([])
   const [edit, setEdit] = useState<Draft | null>(null)

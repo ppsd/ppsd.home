@@ -114,8 +114,13 @@ export interface NavDef {
   label: string
   icon: string
   badge?: string
-  gate?: 'finance' | 'manager' | 'hr' | 'pms' // finance=admin/บัญชี/ผจก · manager=ผจก · hr=ผจก/บัญชี/บุคคล · pms=เฉพาะเจ้าของสิทธิ์
+  gate?: 'finance' | 'manager' | 'hr' | 'pms' | 'ceo' // finance=admin/บัญชี/ผจก · manager=ผจก · hr=ผจก/บัญชี/บุคคล · pms=ผู้ดูแลระบบ/CEO · ceo=เฉพาะ CEO
 }
+
+// ---- สิทธิ์หน้าประเมินผล KPI และหน้าผู้บริหาร (กฎเดียวกับ server: isCeo / isPmsUser ใน server/index.js) ----
+type GateUser = { role?: string; username?: string; name?: string } | null | undefined
+export const isCeoUser = (u: GateUser) => !!u && (u.username === 'thawat' || u.name === 'ธวัช วรรณสุข')
+export const canPmsUser = (u: GateUser) => !!u && (u.role === 'admin' || isCeoUser(u)) // ประเมินผล KPI: ผู้ดูแลระบบทุกคน + CEO
 
 export const nav: NavDef[] = [
   { id: 'dashboard', label: 'หน้าสรุป', icon: 'M3 10.5L12 3l9 7.5M5.5 9.5V21h13V9.5' },
@@ -128,8 +133,8 @@ export const nav: NavDef[] = [
   { id: 'sitedocs', label: 'เอกสารหน้างาน', icon: 'M7 3h7l5 5v13H7z M14 3v5h5 M9.5 13h6 M9.5 16.5h6' },
   { id: 'qc', label: 'ตรวจงาน QC', icon: 'M9 11l3 3 8-8 M20 12v7H4V5h11' },
   { id: 'sitereport', label: 'รายงานหน้างาน', icon: 'M4 5h16v14H4z M8 9h8 M8 13h8 M8 17h5' },
-  { id: 'qcsummary', label: 'สรุป QC (ผู้บริหาร)', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18', gate: 'pms' },
-  { id: 'ceovoice', label: 'สั่งงานด้วยเสียง (CEO)', icon: 'M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z M5 11a7 7 0 0014 0 M12 18v3 M8 21h8', gate: 'pms' },
+  { id: 'qcsummary', label: 'สรุป QC (ผู้บริหาร)', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18', gate: 'ceo' },
+  { id: 'ceovoice', label: 'สั่งงานด้วยเสียง (CEO)', icon: 'M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z M5 11a7 7 0 0014 0 M12 18v3 M8 21h8', gate: 'ceo' },
   { id: 'safety', label: 'ความปลอดภัย', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z M9 12l2 2 4-4' },
   { id: 'handover', label: 'ส่งมอบ / รับรองงาน', icon: 'M4 7h16v11H4z M4 7l8 6 8-6 M8 21h8' },
   { id: 'docreg', label: 'ทะเบียนเอกสาร', icon: 'M4 4h9l4 4v12H4z M13 4v4h4 M8 13h6 M8 16h6', gate: 'finance' },

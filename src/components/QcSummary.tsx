@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { isCeoUser } from '../data'
 import { api } from '../api'
 import { useApp } from '../store'
 
@@ -16,7 +17,7 @@ const rateColor = (p: number) => p >= 90 ? '#2E7D55' : p >= 75 ? '#B7791F' : '#C
 
 export default function QcSummary({ onOpenKpi }: { onOpenKpi?: () => void }) {
   const { user } = useApp()
-  const allowed = user?.username === 'thawat' || user?.name === 'ธวัช วรรณสุข' // เข้าได้เฉพาะ CEO
+  const allowed = isCeoUser(user) // เข้าได้เฉพาะ CEO
   const [s, setS] = useState<Summary | null>(null)
   const [unlocked, setUnlocked] = useState(false)
   const [pin, setPin] = useState('')

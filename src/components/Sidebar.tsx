@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Icon from './Icon'
-import { nav, navGroups, deniedPages } from '../data'
+import { nav, navGroups, deniedPages, canPmsUser, isCeoUser } from '../data'
 import type { NavDef } from '../data'
 import { PPSD_MARK } from '../assets'
 import { useApp } from '../store'
@@ -38,9 +38,10 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   const canFinance = user?.role === 'admin' || user?.role === 'accounting' || !!user?.isManager
   const canManager = !!user?.isManager
   const canHr = canFinance || user?.position === 'บุคคล'
-  const canPms = user?.username === 'thawat' || user?.name === 'ธวัช วรรณสุข'
+  const canPms = canPmsUser(user) // ประเมินผล KPI: ผู้ดูแลระบบ + CEO
+  const canCeo = isCeoUser(user)  // สรุป QC ผู้บริหาร / สั่งงานด้วยเสียง: เฉพาะ CEO
   const denied = deniedPages(user?.role === 'admin' ? [] : user?.deny_mods) // โมดูลที่แอดมินปิดสำหรับบัญชีนี้
-  const visible = (item?: NavDef) => !!item && !denied.has(item.id) && (!item.gate || (item.gate === 'finance' ? canFinance : item.gate === 'hr' ? canHr : item.gate === 'pms' ? canPms : canManager))
+  const visible = (item?: NavDef) => !!item && !denied.has(item.id) && (!item.gate || (item.gate === 'finance' ? canFinance : item.gate === 'hr' ? canHr : item.gate === 'pms' ? canPms : item.gate === 'ceo' ? canCeo : canManager))
   const byId = Object.fromEntries(nav.map((n) => [n.id, n]))
 
   // แผนกไหนมีเมนูที่มองเห็นได้บ้าง
