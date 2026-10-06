@@ -18,6 +18,9 @@ const btnP: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13.5, fontW
 const btnS: React.CSSProperties = { fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }
 const lbl: React.CSSProperties = { fontSize: 12, color: '#5C6770', marginBottom: 4, display: 'block' }
 const IDLE_LOCK_MS = 10 * 60 * 1000
+// ป้ายหลังชื่อ = role จริง + ตำแหน่งจาก HR (ไม่ใช่สถานะสิทธิ์คลัง)
+const ROLE_LABEL: Record<string, string> = { admin: 'ผู้ดูแลระบบ', accounting: 'บัญชี', site: 'หน้างาน', viewer: 'ดูอย่างเดียว' }
+const whoLabel = (u: { role: string; position?: string }) => [ROLE_LABEL[u.role] || u.role, u.position].filter(Boolean).join(' · ')
 const REVEAL_MS = 30 * 1000
 
 export default function Vault() {
@@ -245,9 +248,9 @@ export default function Vault() {
           <div style={{ ...card, marginBottom: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>ผู้มีสิทธิ์เข้าคลังรหัสผ่าน</div>
             <div style={{ fontSize: 12.5, color: '#5C6770', marginBottom: 12 }}>CEO และผู้ดูแลระบบเข้าได้เสมอ (ถอดสิทธิ์ได้โดยเปลี่ยน role/ตำแหน่งที่หน้าผู้ใช้งาน) · คนอื่นติ๊กให้/เอาออกได้ที่นี่ แล้วกดบันทึก · ทุกคนต้องรู้รหัสผ่านหลักด้วย (คุณต้องบอกเอง ระบบไม่ส่งให้)</div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#30506A', marginBottom: 6 }}>เข้าได้เสมอ ({execs.length})</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#30506A', marginBottom: 6 }}>เข้าได้เสมอตาม role/ตำแหน่ง ({execs.length}) <span style={{ fontWeight: 400, color: '#94A0A8' }}>— ผู้ดูแลระบบ และตำแหน่ง CEO</span></div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
-              {execs.map((u) => <span key={u.id} style={{ fontSize: 12.5, padding: '5px 10px', background: '#EAF0F5', borderRadius: 20, color: '#30506A' }}>{u.name} <span style={{ color: '#94A0A8', fontSize: 11 }}>{u.role === 'admin' ? 'ผู้ดูแลระบบ' : 'CEO'}</span></span>)}
+              {execs.map((u) => <span key={u.id} style={{ fontSize: 12.5, padding: '5px 10px', background: '#EAF0F5', borderRadius: 20, color: '#30506A' }}>{u.name} <span style={{ color: '#94A0A8', fontSize: 11 }}>{whoLabel(u)}</span></span>)}
             </div>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#30506A', marginBottom: 6 }}>ให้สิทธิ์เพิ่มเติม ({granted.length} คน)</div>
             {granted.length > 0 && (
@@ -264,7 +267,7 @@ export default function Vault() {
               {others.map((u) => (
                 <label key={u.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '7px 10px', border: '1px solid #EEF1F4', borderRadius: 9, cursor: 'pointer', background: userIds.includes(u.id) ? '#F3FAF6' : '#fff' }}>
                   <input type="checkbox" checked={userIds.includes(u.id)} onChange={(e) => toggle(u.id, e.target.checked)} />
-                  <span style={{ fontWeight: 500 }}>{u.name}</span><span style={{ color: '#94A0A8', fontSize: 11.5 }}>{u.position || u.role}</span>
+                  <span style={{ fontWeight: 500 }}>{u.name}</span><span style={{ color: '#94A0A8', fontSize: 11.5 }}>{whoLabel(u)}</span>
                 </label>
               ))}
               {others.length === 0 && <div style={{ fontSize: 12.5, color: '#94A0A8' }}>ไม่มีผู้ใช้อื่นที่ยังไม่ได้เป็น CEO/ผู้ดูแลระบบ</div>}
