@@ -455,6 +455,7 @@ export interface SessionUser {
   signature?: string | null
   position?: string
   isManager?: boolean
+  vaultAllowed?: boolean // เข้าคลังรหัสผ่านบริษัทได้ (CEO หรืออยู่ในรายชื่อที่ CEO กำหนด)
   mustChangePin?: boolean
   lineLinked?: boolean
   deny_mods?: string[] // โมดูลที่แอดมินปิดสำหรับบัญชีนี้
