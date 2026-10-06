@@ -142,6 +142,15 @@ async function migrateFiles() {
   if (!base || !key) { log('  - ข้ามไฟล์แนบ: ไม่มี SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY'); return { uploaded: 0, skipped: 0, failed: 0 } }
   if (!existsSync(FILES_DIR)) { log('  - ไม่มีโฟลเดอร์ไฟล์แนบ', FILES_DIR); return { uploaded: 0, skipped: 0, failed: 0 } }
   const H = { apikey: key, Authorization: 'Bearer ' + key }
+  // ตรวจ key ก่อน: service_role ต้องเป็น JWT (ขึ้นต้น eyJ) ของโปรเจกต์เดียวกับ SUPABASE_URL และ role = service_role
+  const ref = (base.match(/https?:\/\/([a-z0-9]+)\.supabase\.co/i) || [])[1] || ''
+  if (key.startsWith('eyJ')) {
+    try {
+      const payload = JSON.parse(Buffer.from(key.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'))
+      if (payload.role !== 'service_role') { log(`  ✗ key ที่ใส่เป็น role "${payload.role}" ไม่ใช่ service_role — ไปที่ Project Settings → API → ก๊อป "service_role" (secret)`); return { uploaded: 0, skipped: 0, failed: 1 } }
+      if (ref && payload.ref && payload.ref !== ref) { log(`  ✗ key นี้เป็นของโปรเจกต์ ${payload.ref} แต่ SUPABASE_URL เป็นโปรเจกต์ ${ref} — ก๊อป key จากโปรเจกต์เดียวกัน`); return { uploaded: 0, skipped: 0, failed: 1 } }
+    } catch { log('  ! อ่าน key ไม่ได้ (รูปแบบ JWT ผิด) — ลองก๊อปใหม่ทั้งบรรทัด ไม่มีช่องว่าง/ขึ้นบรรทัด') }
+  } else if (!key.startsWith('sb_secret_')) log('  ! SUPABASE_SERVICE_ROLE_KEY ไม่ใช่รูปแบบที่รู้จัก (ควรขึ้นต้น eyJ หรือ sb_secret_)')
   // สร้าง bucket (private) ถ้ายังไม่มี
   const mk = await fetch(`${base}/storage/v1/bucket`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: BUCKET, name: BUCKET, public: false }) })
   if (!mk.ok && mk.status !== 409 && !(await mk.text()).includes('already exists')) log(`  ! สร้าง bucket ${BUCKET} ไม่ได้ (HTTP ${mk.status}) — จะลองอัปโหลดต่อ`)
@@ -155,7 +164,16 @@ async function migrateFiles() {
     if (!DRY) {
       const r = await fetch(`${base}/storage/v1/object/${BUCKET}/${path}`, { method: 'POST', headers: { ...H, 'Content-Type': m?.mime || 'application/octet-stream', 'x-upsert': 'true' }, body: buf })
       if (r.ok) uploaded++
-      else { failed++; log(`  ✗ ${f}: HTTP ${r.status} ${(await r.text()).slice(0, 120)}`) }
+      else {
+        failed++
+        const body = (await r.text()).slice(0, 160)
+        log(`  ✗ ${f}: HTTP ${r.status} ${body}`)
+        if (/signature verification failed|Unauthorized|AccessDenied|invalid.*jwt/i.test(body) && uploaded === 0) {
+          log('  ✗ หยุดอัปโหลด: key ไม่ผ่านการตรวจสอบ — ก๊อป service_role key ใหม่จาก Project Settings → API ของโปรเจกต์นี้ แล้วรัน migrate-supabase.bat --files-only')
+          failed += names.length - (uploaded + failed + skipped)
+          break
+        }
+      }
     } else skipped++
     if ((uploaded + failed + skipped) % 50 === 0) log(`  … ไฟล์ ${uploaded + failed + skipped}/${names.length}`)
   }
@@ -181,6 +199,10 @@ async function migrateFiles() {
     for (const d of descs) log(`\n-- ${d.table} (${d.rowCount} แถว)\n${createSql(d)}`)
     log('\n[dry-run] ไม่ได้เชื่อมต่อปลายทาง ไม่มีอะไรถูกเขียน')
     return
+  }
+  if (FILES_ONLY) { // เฉพาะไฟล์แนบ ไม่ต้องต่อฐานข้อมูล
+    log('\nไฟล์แนบ → Supabase Storage:'); const fr = await migrateFiles(); if (fr.failed) process.exitCode = 2
+    sq.close(); log(`\nใช้เวลา ${((Date.now() - t0) / 1000).toFixed(1)} วินาที`); return
   }
   const client = pgClient()
   await client.connect()
