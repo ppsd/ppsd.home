@@ -303,9 +303,20 @@ test('สิทธิ์ KPI: ผู้ดูแลระบบคนอื่�
   const adminToken = token
   token = (await POST('/login', { username: 'admin2', pin: '2222' })).data.token
   assert.equal((await GET('/pms')).status, 200, 'role admin ต้องเข้าหน้าประเมิน KPI ได้')
-  assert.equal((await GET('/qc/summary')).status, 403, 'สรุป QC ผู้บริหาร ยังเฉพาะ CEO')
+  assert.equal((await GET('/qc/summary')).status, 200, 'ผู้ดูแลระบบเข้าสรุป QC ผู้บริหารได้')
+  assert.equal((await GET('/me')).data.isExec, true)
+  // ตำแหน่ง CEO (role ธรรมดา) ก็เข้าได้ทุกอย่าง
+  token = adminToken
+  assert.equal((await POST('/users', { name: 'ซีอีโอสอง', username: 'ceoexec', pin: '3333', role: 'viewer', position: 'CEO' })).status, 201)
+  token = (await POST('/login', { username: 'ceoexec', pin: '3333' })).data.token
+  assert.equal((await GET('/me')).data.isExec, true, 'ตำแหน่ง CEO ต้องเป็นผู้บริหารระบบ')
+  assert.equal((await GET('/pms')).status, 200)
+  assert.equal((await GET('/qc/summary')).status, 200)
+  assert.equal((await GET('/vault/meta')).status, 200)
   token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
   assert.equal((await GET('/pms')).status, 403, 'บัญชีต้องเข้า KPI ไม่ได้')
+  assert.equal((await GET('/qc/summary')).status, 403)
+  assert.equal((await GET('/me')).data.isExec, false)
   token = adminToken
   assert.equal((await GET('/pms')).status, 200)
   assert.equal((await GET('/qc/summary')).status, 200, 'CEO (thawat) เข้าสรุป QC ได้')
@@ -325,16 +336,19 @@ test('คลังรหัสผ่าน: CEO ตั้งค่า/เพิ�
   assert.ok(!('password' in e1.data) && e1.data.enc === 'aXYx.Y2lwaGVyMQ==', 'ต้องเก็บแค่ ciphertext')
   const list = await GET('/vault/entries')
   assert.equal(list.status, 200); assert.ok(list.data.some((r) => r.id === e1.data.id))
-  // ผู้ใช้ที่ไม่อยู่ในรายชื่อ (แม้เป็น admin) เข้าไม่ได้
-  token = (await POST('/login', { username: 'admin2', pin: '2222' })).data.token
+  // ผู้ใช้ที่ไม่ใช่ CEO/ผู้ดูแลระบบ และไม่อยู่ในรายชื่อ เข้าไม่ได้
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
   assert.equal((await GET('/vault/meta')).status, 403)
   assert.equal((await GET('/vault/entries')).status, 403)
   assert.equal((await GET('/me')).data.vaultAllowed, false)
-  // CEO ให้สิทธิ์ → เข้าได้ แต่ตั้งค่า/ส่งออกไม่ได้
-  token = adminToken
-  const a2 = (await GET('/users')).data.find((u) => u.username === 'admin2')
-  assert.equal((await PUT('/vault/users', { ids: [a2.id] })).status, 200)
+  // ผู้ดูแลระบบคนอื่นเข้าได้เสมอ
   token = (await POST('/login', { username: 'admin2', pin: '2222' })).data.token
+  assert.equal((await GET('/vault/meta')).status, 200)
+  // CEO ให้สิทธิ์บัญชี → เข้าได้ แต่ตั้งค่า/ส่งออกไม่ได้
+  token = adminToken
+  const a2 = (await GET('/users')).data.find((u) => u.username === 'acctest')
+  assert.equal((await PUT('/vault/users', { ids: [a2.id] })).status, 200)
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
   assert.equal((await GET('/me')).data.vaultAllowed, true)
   const m2 = await GET('/vault/meta')
   assert.equal(m2.status, 200); assert.equal(m2.data.is_ceo, false); assert.equal(m2.data.users, undefined, 'คนอื่นไม่เห็นรายชื่อผู้ใช้')

@@ -31,7 +31,7 @@ export default function QcSummary({ onOpenKpi }: { onOpenKpi?: () => void }) {
     try { await api.post('/verify-pin', { pin }); setUnlocked(true) } catch (e) { setPinErr((e as Error).message) } finally { setChecking(false) }
   }
 
-  if (!allowed) return <div style={{ maxWidth: 1200, margin: '0 auto', ...card, textAlign: 'center' }}>หน้าสรุป KPI/QC ผู้บริหาร เข้าได้เฉพาะ <b>ธวัช วรรณสุข</b> เท่านั้น</div>
+  if (!allowed) return <div style={{ maxWidth: 1200, margin: '0 auto', ...card, textAlign: 'center' }}>หน้าสรุป KPI/QC ผู้บริหาร เข้าได้เฉพาะ <b>CEO / ผู้ดูแลระบบ</b> เท่านั้น</div>
   if (!unlocked) return (
     <div style={{ maxWidth: 420, margin: '48px auto', ...card, padding: 34, textAlign: 'center' }}>
       <div style={{ width: 52, height: 52, borderRadius: 13, background: '#F3F5F7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>

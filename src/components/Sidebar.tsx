@@ -38,8 +38,8 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   const canFinance = user?.role === 'admin' || user?.role === 'accounting' || !!user?.isManager
   const canManager = !!user?.isManager
   const canHr = canFinance || user?.position === 'บุคคล'
-  const canPms = canPmsUser(user) // ประเมินผล KPI: ผู้ดูแลระบบ + CEO
-  const canCeo = isCeoUser(user)  // สรุป QC ผู้บริหาร / สั่งงานด้วยเสียง: เฉพาะ CEO
+  const canPms = canPmsUser(user) // ประเมินผล KPI: CEO + ผู้ดูแลระบบ
+  const canCeo = isCeoUser(user)  // สรุป QC ผู้บริหาร / สั่งงานด้วยเสียง: CEO + ผู้ดูแลระบบ
   const canVault = !!user?.vaultAllowed // คลังรหัสผ่าน: CEO + รายชื่อที่ CEO กำหนด (server ตัดสิน)
   const denied = deniedPages(user?.role === 'admin' ? [] : user?.deny_mods) // โมดูลที่แอดมินปิดสำหรับบัญชีนี้
   const visible = (item?: NavDef) => !!item && !denied.has(item.id) && (!item.gate || (item.gate === 'finance' ? canFinance : item.gate === 'hr' ? canHr : item.gate === 'pms' ? canPms : item.gate === 'ceo' ? canCeo : item.gate === 'vault' ? canVault : canManager))
