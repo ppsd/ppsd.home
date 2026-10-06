@@ -136,14 +136,6 @@ export default function Pms() {
     competency: t.competency.map((c) => ({ ...c, rating: 0 })),
     behavior: t.behavior.map((c) => ({ ...c, rating: 0 })) })
   const hasScores = (e: Draft) => e.kpi.some((k) => +k.actual) || e.competency.some((c) => +c.rating) || e.behavior.some((c) => +c.rating)
-  const applyTemplate = (v: string) => {
-    if (!edit) return
-    if (v === 'กำหนดเอง') { setEdit({ ...edit, template: v, kpi_set_id: null, kpi: [{ name: '', weight: 0, target: 100, actual: 0 }], competency: [], behavior: [] }); return }
-    const t = kpiSets.sets.find((x) => x.id === Number(v))
-    if (!t) return
-    if (hasScores(edit) && !confirm(`เปลี่ยนเป็นชุด KPI "${t.name}"? คะแนนที่กรอกไว้จะถูกล้าง`)) return
-    setEdit(withSet(edit, t))
-  }
   // เลือกพนักงาน → ดึงข้อมูลหลัก (ตำแหน่ง/แผนก/อายุงาน/ผลย้อนหลัง) + ใส่ชุด KPI ตามตำแหน่งให้อัตโนมัติ
   const pickEmployee = async (code: string) => {
     if (!edit) return
@@ -210,15 +202,11 @@ export default function Pms() {
     )
     return (
       <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1.6fr 1fr', gap: 10 }}>
+        {/* เลือกแค่พนักงาน — ชุด KPI มาจากตำแหน่ง (หรือที่ตั้งเฉพาะคน) อัตโนมัติ */}
+        <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: 10 }}>
           <select style={field} value={edit.emp_code} onChange={(e) => pickEmployee(e.target.value)}>
             <option value="">— เลือกพนักงาน —</option>
             {employees.filter((emp) => emp.status !== 'ลาออก' || emp.code === edit.emp_code).map((emp) => <option key={emp.id} value={emp.code}>{emp.name} ({emp.role || '-'})</option>)}
-          </select>
-          <select style={field} value={edit.template === 'กำหนดเอง' ? 'กำหนดเอง' : String(edit.kpi_set_id || '')} onChange={(e) => applyTemplate(e.target.value)}>
-            <option value="">{edit.template && !edit.kpi_set_id ? `${edit.template} (ชุดเดิม)` : '— เลือกชุด KPI —'}</option>
-            {kpiSets.sets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            <option value="กำหนดเอง">กำหนดเอง (KPI ว่าง)</option>
           </select>
           <input style={field} placeholder="เดือน (เช่น 7/2568)" value={edit.month} onChange={(e) => setEdit({ ...edit, month: e.target.value })} />
         </div>
@@ -254,7 +242,7 @@ export default function Pms() {
           </div>
         )}
 
-        {edit.kpi.length === 0 && <div style={{ color: '#94A0A8', fontSize: 13, textAlign: 'center', padding: 20, background: '#fff', border: '1px dashed #D2DAE1', borderRadius: 10 }}>เลือกพนักงาน (ระบบดึงชุด KPI ตามตำแหน่งให้) หรือเลือกชุด KPI ด้านบน</div>}
+        {edit.kpi.length === 0 && <div style={{ color: '#94A0A8', fontSize: 13, textAlign: 'center', padding: 20, background: '#fff', border: '1px dashed #D2DAE1', borderRadius: 10 }}>{edit.emp_code ? 'พนักงานคนนี้ยังไม่มีชุด KPI — ผูกตำแหน่งกับชุด KPI ก่อน (หรือเลือก “เฉพาะคนนี้” ในการ์ดด้านบน)' : 'เลือกพนักงาน — ระบบจะดึงชุด KPI ตามตำแหน่งมาให้กรอก'}</div>}
 
         {edit.kpi.length > 0 && (
           <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, overflow: 'hidden' }}>
