@@ -218,6 +218,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   // ----- employee form -----
   const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '', no_sso: false }
   const [addingEmp, setAddingEmp] = useState(false)
+  const [empMax, setEmpMax] = useState(false) // modal ขยายเต็มจอ
   const [editId, setEditId] = useState<number | null>(null)
   const [emp, setEmp] = useState(blankEmp)
   const [empSig, setEmpSig] = useState('')
@@ -340,7 +341,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <span className="num" style={{ fontSize: 11.5, color: '#94A0A8' }}>{empList.length}/{employees.length}</span>
               <input value={empQuery} onChange={(e) => { setEmpQuery(e.target.value); setEmpPage(1) }} placeholder="ค้นหาชื่อ/รหัส/ตำแหน่ง" style={{ ...field, padding: '6px 10px', fontSize: 12.5, width: 200 }} />
               {isAdmin && <button onClick={dedupEmployees} title="รวมพนักงานที่ชื่อซ้ำกันให้เหลือชื่อละ 1 รายการ" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #E8D6AD', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🧹 ล้างข้อมูลซ้ำ</button>}
-              <button onClick={() => { setEditId(null); setEmp(blankEmp); setEmpSig(''); setEmpErr(''); setAddingEmp((v) => !v) }} className="btn-primary" style={{ marginLeft: isAdmin ? 0 : 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มพนักงาน</button>
+              <button onClick={() => { setEditId(null); setEmp(blankEmp); setEmpSig(''); setEmpErr(''); setAddingEmp(true) }} className="btn-primary" style={{ marginLeft: isAdmin ? 0 : 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มพนักงาน</button>
             </div>
             {empPinShown && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 18px', background: '#E2F1EA', borderBottom: '1px solid #CDE3D6', fontSize: 12.5, color: '#1C5B3A', fontWeight: 500 }}>
@@ -348,9 +349,24 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                 <button onClick={() => setEmpPinShown('')} style={{ marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer', color: '#5C6770' }}>✕</button>
               </div>
             )}
+            {/* ฟอร์มเพิ่ม/แก้ไขพนักงาน = modal (ไม่ต้องเลื่อนขึ้นไปแก้บนตาราง) · ขนาดตามจอ + ปุ่มขยายเต็มจอ */}
             {addingEmp && (
-              <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, animation: 'fadeIn .15s ease', padding: empMax ? 0 : 'clamp(8px, 3vw, 28px)' }}>
+              <div role="dialog" aria-modal="true" style={{ background: '#fff', borderRadius: empMax ? 0 : 14, width: empMax ? '100%' : 'min(1080px, 100%)', height: empMax ? '100%' : 'auto', maxHeight: empMax ? '100%' : '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 70px rgba(20,30,40,.3)', animation: 'modalIn .2s ease', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 18px', borderBottom: '1px solid #EEF1F4', flexShrink: 0 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 15.5, fontWeight: 600 }}>{editId ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงาน'}</div>
+                    {editId && <div style={{ fontSize: 12, color: '#94A0A8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employees.find((x) => x.id === editId)?.code} · {emp.name}</div>}
+                  </div>
+                  <button onClick={() => setEmpMax((v) => !v)} title={empMax ? 'ย่อหน้าต่าง' : 'ขยายเต็มจอ'} className="hov-e7ebef" style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F3F5F7', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{empMax ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}</svg>
+                  </button>
+                  <button onClick={() => setAddingEmp(false)} title="ปิด" className="hov-e7ebef" style={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F3F5F7', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
+                </div>
+              <div style={{ padding: '16px 18px', overflowY: 'auto', flex: 1 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(210px, 100%), 1fr))', gap: 10 }}>
                   <select style={field} value={emp.prefix} onChange={(e) => setEmp({ ...emp, prefix: e.target.value })} title="คำนำหน้า (ใช้ในใบสรุปการจ่ายค่าจ้าง)"><option value="">คำนำหน้า</option><option>นาย</option><option>นาง</option><option>น.ส.</option></select>
                   <input style={field} placeholder="ชื่อ-สกุล *" value={emp.name} onChange={(e) => setEmp({ ...emp, name: e.target.value })} />
                   <input style={field} placeholder="ชื่อเล่น (เช่น พี่แมน)" value={emp.nickname} onChange={(e) => setEmp({ ...emp, nickname: e.target.value })} />
@@ -382,12 +398,12 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                 </div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, margin: '14px 0 3px' }}>ข้อมูลจ่ายเงินเดือน / ภาษี</div>
                 <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>ใช้สร้างไฟล์จ่ายเงินเดือนผ่านธนาคาร และแบบ ภ.ง.ด.1</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12 }}>
                   <input style={field} placeholder="ธนาคาร (เช่น กสิกรไทย)" value={emp.bank_name} onChange={(e) => setEmp({ ...emp, bank_name: e.target.value })} />
                   <input style={field} placeholder="เลขบัญชีธนาคาร" value={emp.bank_acct} onChange={(e) => setEmp({ ...emp, bank_acct: e.target.value.replace(/[^\d-]/g, '') })} />
                   <input style={field} placeholder="เลขผู้เสียภาษี 13 หลัก" maxLength={13} value={emp.tax_id} onChange={(e) => setEmp({ ...emp, tax_id: e.target.value.replace(/\D/g, '') })} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginTop: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12, marginTop: 10 }}>
                   <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หัก Retention /เดือน <span style={{ color: '#94A0A8' }}>(ปกติ 500 · หยุดหักเองเมื่อครบ 5,000)</span></div><MoneyInput style={field} placeholder="500" value={emp.retention} onChange={(v) => setEmp({ ...emp, retention: v })} /></div>
                   <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>Retention หักสะสมมาแล้ว <span style={{ color: '#94A0A8' }}>(พนักงานเก่า · ครบแล้วใส่ 5000)</span></div><MoneyInput style={field} placeholder="0" value={emp.retention_opening} onChange={(v) => setEmp({ ...emp, retention_opening: v })} /></div>
                   <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หัก กยศ /เดือน <span style={{ color: '#94A0A8' }}>(เฉพาะคนที่มี · 0 = ไม่มี)</span></div><MoneyInput style={field} placeholder="0" value={emp.student_loan} onChange={(v) => setEmp({ ...emp, student_loan: v })} /></div>
@@ -397,7 +413,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   โควต้าต่อปี: ลาป่วย 30 วัน · ลากิจ 3 วัน · พักร้อน {vacQuota} วัน
                   {emp.start ? (tenureYears >= 1 ? ' (อายุงานครบ 1 ปี → 6 วัน)' : ' (อายุงานยังไม่ถึง 1 ปี → 3 วัน)') : ' (พักร้อนคำนวณจากวันเริ่มงาน)'}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12 }}>
                   {[
                     { key: 'sick_used', label: 'ลาป่วย — ใช้ไปแล้ว (วัน)', q: 30 },
                     { key: 'personal_used', label: 'ลากิจ — ใช้ไปแล้ว (วัน)', q: 3 },
@@ -409,11 +425,13 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     </div>
                   ))}
                 </div>
-                {empErr && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 8 }}>{empErr}</div>}
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-                  <button onClick={() => setAddingEmp(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
-                  <button onClick={submitEmp} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึก</button>
+                {empErr && <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px', marginTop: 12 }}>{empErr}</div>}
+              </div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '12px 18px', borderTop: '1px solid #EEF1F4', background: '#FAFBFC', flexShrink: 0 }}>
+                  <button onClick={() => setAddingEmp(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+                  <button onClick={submitEmp} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '9px 20px', cursor: 'pointer' }}>{editId ? 'บันทึกการแก้ไข' : 'บันทึก'}</button>
                 </div>
+              </div>
               </div>
             )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
