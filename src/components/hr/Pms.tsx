@@ -2,14 +2,15 @@ import { useEffect, useState } from 'react'
 import { canPmsUser } from '../../data'
 import { api } from '../../api'
 import { useApp } from '../../store'
-import { PMS_TEMPLATES, PMS_BONUS, PMS_PENALTY, RATING_MEANING } from '../../pmsTemplates'
+import { PMS_BONUS, PMS_PENALTY, RATING_MEANING, type KpiSet, type KpiSetsPayload, type PmsEmpInfo } from '../../pmsTemplates'
 import PmsPrint from './PmsPrint'
+import PmsKpiSets from './PmsKpiSets'
 
 export interface KpiItem { name: string; weight: number; target: number; actual: number; score?: number }
 export interface RateItem { name: string; weight: number; rating: number; score?: number }
 export interface AttInfo { absent: number; leave: number; late: number; wo_overdue?: number }
 export interface Pms {
-  id: number; no: string; emp_code: string; emp_name: string; position: string; template: string; month: string; evaluator: string
+  id: number; no: string; emp_code: string; emp_name: string; position: string; template: string; kpi_set_id?: number | null; month: string; evaluator: string
   kpi: KpiItem[]; competency: RateItem[]; behavior: RateItem[]
   kpi_score: number; comp_score: number; beh_score: number; raw_total?: number; penalty?: number; att?: AttInfo; total: number; grade: string; bonus_pct: number
   strengths: string; improve: string; plan: string
@@ -32,7 +33,7 @@ export function pmsCompute(d: { kpi: KpiItem[]; competency: RateItem[]; behavior
   return { kpi, comp, beh, ks, cs, bs, raw, penalty, total, grade: g.grade, bonus: g.bonus }
 }
 
-type Draft = { id: number; emp_code: string; emp_name: string; position: string; template: string; month: string; kpi: KpiItem[]; competency: RateItem[]; behavior: RateItem[]; att: AttInfo; strengths: string; improve: string; plan: string }
+type Draft = { id: number; emp_code: string; emp_name: string; position: string; template: string; kpi_set_id: number | null; month: string; kpi: KpiItem[]; competency: RateItem[]; behavior: RateItem[]; att: AttInfo; strengths: string; improve: string; plan: string }
 // แปลงเดือน PMS ("7/2568") -> "2025-07" สำหรับจับคู่ข้อมูลลงเวลา
 function monthToYM(m: string): string {
   const mm = /^(\d{1,2})\s*\/\s*(\d{4})$/.exec((m || '').trim())
@@ -49,6 +50,9 @@ export default function Pms() {
   const [rows, setRows] = useState<Pms[]>([])
   const [edit, setEdit] = useState<Draft | null>(null)
   const [printing, setPrinting] = useState<Pms | null>(null)
+  const [kpiSets, setKpiSets] = useState<KpiSetsPayload>({ sets: [], mapping: {}, positions: [], empCount: {}, overrides: [] })
+  const [view, setView] = useState<'list' | 'sets'>('list')
+  const [empInfo, setEmpInfo] = useState<PmsEmpInfo | null>(null)
   // ต้องยืนยัน PIN ทุกครั้งก่อนเข้า
   const [unlocked, setUnlocked] = useState(false)
   const [pin, setPin] = useState('')
@@ -56,7 +60,8 @@ export default function Pms() {
   const [checking, setChecking] = useState(false)
 
   const load = () => api.get<Pms[]>('/pms').then(setRows).catch(() => setRows([]))
-  useEffect(() => { if (allowed && unlocked) load() /* eslint-disable-next-line */ }, [unlocked])
+  const loadSets = () => api.get<KpiSetsPayload>('/pms/kpi-sets').then(setKpiSets).catch(() => {})
+  useEffect(() => { if (allowed && unlocked) { load(); loadSets() } /* eslint-disable-next-line */ }, [unlocked])
 
   const verify = async () => {
     if (!/^\d{4}$/.test(pin)) { setPinErr('กรอก PIN 4 หลัก'); return }
@@ -82,7 +87,7 @@ export default function Pms() {
   )
 
   const nowMonth = () => { const d = new Date(); return `${d.getMonth() + 1}/${d.getFullYear() + 543}` }
-  const newReview = () => setEdit({ id: 0, emp_code: '', emp_name: '', position: '', template: '', month: nowMonth(), kpi: [], competency: [], behavior: [], att: { absent: 0, leave: 0, late: 0, wo_overdue: 0 }, strengths: '', improve: '', plan: '' })
+  const newReview = () => { setEmpInfo(null); setEdit({ id: 0, emp_code: '', emp_name: '', position: '', template: '', kpi_set_id: null, month: nowMonth(), kpi: [], competency: [], behavior: [], att: { absent: 0, leave: 0, late: 0, wo_overdue: 0 }, strengths: '', improve: '', plan: '' }) }
   // ดึงจำนวนขาด/ลา/สาย จากข้อมูลลงเวลา+ลางาน ของเดือนที่เลือก + ใบสั่งงานเกินกำหนด
   const autoFillAtt = async (e: Draft) => {
     const ym = monthToYM(e.month)
@@ -125,14 +130,43 @@ export default function Pms() {
       alert(`ดึงคะแนนใบสั่งงานของ ${e.emp_name} แล้ว\n• รับงานแล้ว ${s.scoredCount} งาน · คะแนน KPI รวม ${s.kpiPoints >= 0 ? '+' : ''}${s.kpiPoints}\n• ตรงเวลา/ก่อนกำหนด ${s.earlyCount + s.ontimeCount} งาน · ช้า ${s.lateCount} งาน\n• อัตราส่งตรงเวลา ${onTimePct}%\nใส่เป็น KPI ให้แล้ว — กำหนดน้ำหนักได้เอง`)
     } catch (err) { alert((err as Error).message) }
   }
-  const applyTemplate = (pos: string) => {
-    const t = PMS_TEMPLATES.find((x) => x.position === pos)
+  // ใส่หัวข้อจากชุด KPI ลงใบประเมิน (ค่าที่กรอกไว้จะถูกแทน)
+  const withSet = (e: Draft, t: KpiSet): Draft => ({ ...e, template: t.name, kpi_set_id: t.id,
+    kpi: t.kpi.map((k) => ({ ...k, actual: 0 })),
+    competency: t.competency.map((c) => ({ ...c, rating: 0 })),
+    behavior: t.behavior.map((c) => ({ ...c, rating: 0 })) })
+  const hasScores = (e: Draft) => e.kpi.some((k) => +k.actual) || e.competency.some((c) => +c.rating) || e.behavior.some((c) => +c.rating)
+  const applyTemplate = (v: string) => {
     if (!edit) return
-    if (!t) { setEdit({ ...edit, template: pos, kpi: [{ name: '', weight: 0, target: 100, actual: 0 }], competency: [], behavior: [] }); return }
-    setEdit({ ...edit, template: pos, position: edit.position || pos,
-      kpi: t.kpi.map((k) => ({ ...k, actual: 0 })),
-      competency: t.competency.map((c) => ({ ...c, rating: 0 })),
-      behavior: t.behavior.map((c) => ({ ...c, rating: 0 })) })
+    if (v === 'กำหนดเอง') { setEdit({ ...edit, template: v, kpi_set_id: null, kpi: [{ name: '', weight: 0, target: 100, actual: 0 }], competency: [], behavior: [] }); return }
+    const t = kpiSets.sets.find((x) => x.id === Number(v))
+    if (!t) return
+    if (hasScores(edit) && !confirm(`เปลี่ยนเป็นชุด KPI "${t.name}"? คะแนนที่กรอกไว้จะถูกล้าง`)) return
+    setEdit(withSet(edit, t))
+  }
+  // เลือกพนักงาน → ดึงข้อมูลหลัก (ตำแหน่ง/แผนก/อายุงาน/ผลย้อนหลัง) + ใส่ชุด KPI ตามตำแหน่งให้อัตโนมัติ
+  const pickEmployee = async (code: string) => {
+    if (!edit) return
+    const emp = employees.find((x) => x.code === code)
+    let next: Draft = { ...edit, emp_code: code, emp_name: emp?.name || '', position: emp?.role || '' }
+    setEmpInfo(null)
+    if (!code) { setEdit(next); return }
+    try {
+      const info = await api.get<PmsEmpInfo>('/pms/employee/' + encodeURIComponent(code))
+      setEmpInfo(info)
+      next = { ...next, emp_name: info.name, position: info.position }
+      if (info.kpi_set && info.kpi_set.id !== edit.kpi_set_id && (!hasScores(edit) || confirm(`ใช้ชุด KPI "${info.kpi_set.name}" ของ ${info.name}? คะแนนที่กรอกไว้จะถูกล้าง`))) next = withSet(next, info.kpi_set)
+    } catch { /* ใช้ข้อมูลจากรายชื่อพนักงานแทน */ }
+    setEdit(next)
+  }
+  // ตั้งชุด KPI เฉพาะคน (ว่าง = ตามตำแหน่ง) แล้วใส่ชุดนั้นลงใบนี้
+  const setEmpKpiSet = async (setId: number | null) => {
+    if (!edit || !empInfo) return
+    try {
+      const info = await api.put<PmsEmpInfo>('/pms/employee/' + encodeURIComponent(empInfo.code) + '/kpi-set', { set_id: setId })
+      setEmpInfo(info); loadSets()
+      if (info.kpi_set && info.kpi_set.id !== edit.kpi_set_id && (!hasScores(edit) || confirm(`ใช้ชุด KPI "${info.kpi_set.name}" ในใบนี้เลยไหม? คะแนนที่กรอกไว้จะถูกล้าง`))) setEdit(withSet(edit, info.kpi_set))
+    } catch (e) { alert((e as Error).message) }
   }
   const save = async () => {
     if (!edit || !edit.emp_name) { alert('เลือกพนักงานก่อน'); return }
@@ -141,7 +175,11 @@ export default function Pms() {
     setEdit(null); load()
   }
   const remove = async (id: number) => { if (confirm('ลบใบประเมินนี้?')) { await api.del('/pms/' + id); load() } }
-  const openEdit = (r: Pms) => setEdit({ id: r.id, emp_code: r.emp_code, emp_name: r.emp_name, position: r.position, template: r.template, month: r.month, kpi: r.kpi, competency: r.competency, behavior: r.behavior, att: { absent: 0, leave: 0, late: 0, wo_overdue: 0, ...(r.att || {}) }, strengths: r.strengths, improve: r.improve, plan: r.plan })
+  const openEdit = (r: Pms) => {
+    setEmpInfo(null)
+    if (r.emp_code) api.get<PmsEmpInfo>('/pms/employee/' + encodeURIComponent(r.emp_code)).then(setEmpInfo).catch(() => {})
+    setEdit({ id: r.id, emp_code: r.emp_code, emp_name: r.emp_name, position: r.position, template: r.template, kpi_set_id: r.kpi_set_id ?? kpiSets.sets.find((x) => x.name === r.template)?.id ?? null, month: r.month, kpi: r.kpi, competency: r.competency, behavior: r.behavior, att: { absent: 0, leave: 0, late: 0, wo_overdue: 0, ...(r.att || {}) }, strengths: r.strengths, improve: r.improve, plan: r.plan })
+  }
 
   if (edit) {
     const c = pmsCompute(edit)
@@ -173,19 +211,50 @@ export default function Pms() {
     return (
       <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1.6fr 1fr', gap: 10 }}>
-          <select style={field} value={edit.emp_code} onChange={(e) => { const emp = employees.find((x) => x.code === e.target.value); setEdit({ ...edit, emp_code: e.target.value, emp_name: emp?.name || '', position: edit.position || emp?.role || '' }) }}>
+          <select style={field} value={edit.emp_code} onChange={(e) => pickEmployee(e.target.value)}>
             <option value="">— เลือกพนักงาน —</option>
-            {employees.map((emp) => <option key={emp.id} value={emp.code}>{emp.name} ({emp.role || '-'})</option>)}
+            {employees.filter((emp) => emp.status !== 'ลาออก' || emp.code === edit.emp_code).map((emp) => <option key={emp.id} value={emp.code}>{emp.name} ({emp.role || '-'})</option>)}
           </select>
-          <select style={field} value={edit.template} onChange={(e) => applyTemplate(e.target.value)}>
-            <option value="">— เลือกแบบฟอร์มตามตำแหน่ง —</option>
-            {PMS_TEMPLATES.map((t) => <option key={t.position} value={t.position}>{t.position}</option>)}
+          <select style={field} value={edit.template === 'กำหนดเอง' ? 'กำหนดเอง' : String(edit.kpi_set_id || '')} onChange={(e) => applyTemplate(e.target.value)}>
+            <option value="">{edit.template && !edit.kpi_set_id ? `${edit.template} (ชุดเดิม)` : '— เลือกชุด KPI —'}</option>
+            {kpiSets.sets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             <option value="กำหนดเอง">กำหนดเอง (KPI ว่าง)</option>
           </select>
           <input style={field} placeholder="เดือน (เช่น 7/2568)" value={edit.month} onChange={(e) => setEdit({ ...edit, month: e.target.value })} />
         </div>
 
-        {edit.kpi.length === 0 && <div style={{ color: '#94A0A8', fontSize: 13, textAlign: 'center', padding: 20, background: '#fff', border: '1px dashed #D2DAE1', borderRadius: 10 }}>เลือกแบบฟอร์มตามตำแหน่งด้านบน เพื่อดึง KPI มาให้กรอก</div>}
+        {/* ข้อมูลหลักของพนักงาน + ชุด KPI ที่ใช้ + ผลย้อนหลัง */}
+        {empInfo && (
+          <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, padding: '12px 16px', display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{empInfo.prefix}{empInfo.name}{empInfo.nickname && <span style={{ fontWeight: 400, color: '#5C6770' }}> ({empInfo.nickname})</span>}</div>
+              <div style={{ fontSize: 12, color: '#5C6770', marginTop: 3, lineHeight: 1.7 }}>
+                <span className="num">{empInfo.code}</span> · ตำแหน่ง <b style={{ color: '#1C2730' }}>{empInfo.position || '-'}</b>{empInfo.dept && <> · แผนก {empInfo.dept}</>}<br />
+                เริ่มงาน {empInfo.start || '-'} · {empInfo.status || '-'}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: '#5C6770', marginBottom: 4 }}>ชุด KPI ที่ใช้ประเมิน</div>
+              {empInfo.kpi_set
+                ? <div style={{ fontSize: 13, fontWeight: 600, color: '#2E7D55' }}>{empInfo.kpi_set.name} <span style={{ fontWeight: 400, fontSize: 11.5, color: '#94A0A8' }}>{empInfo.kpi_source === 'employee' ? '· ตั้งเฉพาะคนนี้' : `· ตามตำแหน่ง ${empInfo.position}`}</span></div>
+                : <div style={{ fontSize: 12.5, color: '#C24036' }}>ตำแหน่ง “{empInfo.position || '-'}” ยังไม่ได้ผูกชุด KPI — <button onClick={() => { setEdit(null); setView('sets') }} style={{ border: 'none', background: 'none', padding: 0, color: '#30506A', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5 }}>ไปตั้งค่าชุด KPI</button></div>}
+              <select style={{ ...field, marginTop: 6, fontSize: 12, padding: '4px 6px', width: '100%' }} value={empInfo.kpi_set_id || ''} onChange={(e) => setEmpKpiSet(Number(e.target.value) || null)}>
+                <option value="">ใช้ตามตำแหน่ง</option>
+                {kpiSets.sets.map((t) => <option key={t.id} value={t.id}>เฉพาะคนนี้: {t.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: '#5C6770', marginBottom: 4 }}>ผลประเมินย้อนหลัง</div>
+              {empInfo.history.filter((h) => h.id !== edit.id).length === 0
+                ? <div style={{ fontSize: 12, color: '#94A0A8' }}>ยังไม่เคยประเมิน</div>
+                : <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{empInfo.history.filter((h) => h.id !== edit.id).slice(0, 5).map((h) => (
+                  <span key={h.id} title={h.no} className="num" style={{ fontSize: 11.5, border: '1px solid #E1E5EA', borderRadius: 6, padding: '2px 7px' }}>{h.month} · {h.total} <b style={{ color: gradeColor(h.grade) }}>{h.grade}</b></span>
+                ))}</div>}
+            </div>
+          </div>
+        )}
+
+        {edit.kpi.length === 0 && <div style={{ color: '#94A0A8', fontSize: 13, textAlign: 'center', padding: 20, background: '#fff', border: '1px dashed #D2DAE1', borderRadius: 10 }}>เลือกพนักงาน (ระบบดึงชุด KPI ตามตำแหน่งให้) หรือเลือกชุด KPI ด้านบน</div>}
 
         {edit.kpi.length > 0 && (
           <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, overflow: 'hidden' }}>
@@ -259,11 +328,14 @@ export default function Pms() {
     )
   }
 
+  if (view === 'sets') return <PmsKpiSets payload={kpiSets} onChange={setKpiSets} onBack={() => setView('list')} />
+
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>ใบประเมิน <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ใบ</div>
-        <button onClick={newReview} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ ประเมินผลรายเดือน</button>
+        <button onClick={() => setView('sets')} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>⚙ ชุด KPI ตามตำแหน่ง</button>
+        <button onClick={newReview} className="btn-primary" style={{ marginLeft: 8, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ ประเมินผลรายเดือน</button>
       </div>
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
