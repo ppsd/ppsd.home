@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs'
 import * as seed from './seed.js'
 import { materialPrices as matPriceSeed } from './matprices-seed.js'
 import { hashPin, isHashed } from './security.js'
+import { PMS_SEED } from './pms_seed.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const dataDir = join(__dirname, 'data')
@@ -364,6 +365,30 @@ ensureColumn('pms_reviews', 'att_late', 'INTEGER')
 ensureColumn('pms_reviews', 'att_wo_overdue', 'INTEGER') // ใบสั่งงานเกินกำหนด → หักคะแนน KPI
 ensureColumn('pms_reviews', 'penalty', 'REAL')
 ensureColumn('pms_reviews', 'raw_total', 'REAL')
+ensureColumn('pms_reviews', 'kpi_set_id', 'INTEGER') // ชุด KPI ที่ใช้ตอนประเมิน (ตัวหัวข้อเก็บสำเนาไว้ในใบแล้ว — แก้ชุดทีหลังไม่กระทบใบเก่า)
+
+// ชุด KPI (แบบฟอร์มประเมิน) — แก้ไขได้จากหน้าประเมินผล · ผูกกับตำแหน่ง (pms_position_sets) หรือรายคน (employees.kpi_set_id)
+db.exec(`CREATE TABLE IF NOT EXISTS pms_kpi_sets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE, kpi TEXT, competency TEXT, behavior TEXT, note TEXT, updated TEXT, by TEXT
+)`)
+db.exec(`CREATE TABLE IF NOT EXISTS pms_position_sets (
+  position TEXT PRIMARY KEY, set_id INTEGER
+)`)
+ensureColumn('employees', 'kpi_set_id', 'INTEGER') // ชุด KPI เฉพาะคน (ว่าง = ใช้ตามตำแหน่ง)
+if (db.prepare('SELECT COUNT(*) c FROM pms_kpi_sets').get().c === 0) {
+  const ins = db.prepare('INSERT INTO pms_kpi_sets (name,kpi,competency,behavior,note,updated,by) VALUES (?,?,?,?,?,?,?)')
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+  db.transaction(() => {
+    for (const t of PMS_SEED) ins.run(t.position, JSON.stringify(t.kpi), JSON.stringify(t.competency), JSON.stringify(t.behavior), '', now, 'ระบบ')
+    // ผูกตำแหน่งที่มีอยู่กับชุดที่ชื่อตรง/ใกล้เคียง (เช่น "บัญชี" → "เจ้าหน้าที่บัญชี") — ที่เหลือผูกเองในหน้าตั้งค่า
+    const sets = db.prepare('SELECT id, name FROM pms_kpi_sets').all()
+    for (const { name: pos } of db.prepare('SELECT name FROM positions').all()) {
+      const s = sets.find((x) => x.name === pos) || sets.find((x) => x.name.startsWith(pos)) || sets.find((x) => x.name.includes(pos))
+      if (s) db.prepare('INSERT OR IGNORE INTO pms_position_sets (position, set_id) VALUES (?,?)').run(pos, s.id)
+    }
+  })()
+}
 
 // ===== เฟส 4: BOQ/ตีราคา + Cash Flow Forecast + บัญชีรับ-จ่ายละเอียด =====
 db.exec(`CREATE TABLE IF NOT EXISTS boqs (

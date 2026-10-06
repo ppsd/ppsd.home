@@ -85,6 +85,44 @@ test('ตั้งค่า: ปิด enforce_approval_flow / block_dup_pay เ
   assert.equal(r.status, 200)
 })
 
+test('ชุด KPI ตามตำแหน่ง: seed จากค่าเริ่มต้น · เลือกพนักงานได้ชุดตามตำแหน่ง · ตั้งเฉพาะคนได้ · น้ำหนักต้องครบ 70/20/10', async () => {
+  const p = (await GET('/pms/kpi-sets')).data
+  assert.equal(p.sets.length, 15, 'ต้อง seed ชุด KPI เริ่มต้น 15 ชุด')
+  const draft = p.sets.find((s) => s.name === 'ดราฟแมน (เขียนแบบ)')
+  assert.equal(p.mapping['ดราฟแมน'], draft.id, 'ตำแหน่ง "ดราฟแมน" ต้องผูกกับชุดดราฟแมนอัตโนมัติ')
+  assert.equal(p.mapping['บัญชี'], p.sets.find((s) => s.name === 'เจ้าหน้าที่บัญชี').id)
+  // น้ำหนักไม่ครบ → ไม่ให้บันทึก
+  const bad = await POST('/pms/kpi-sets', { name: 'ผิด', kpi: [{ name: 'ก', weight: 60, target: 100 }], competency: draft.competency, behavior: draft.behavior })
+  assert.equal(bad.status, 400)
+  // ชุดใหม่ + ผูกตำแหน่ง (ตำแหน่งที่พนักงานใช้แต่ไม่อยู่ในรายการตำแหน่ง ต้องโผล่ให้ผูกได้)
+  const e = await POST('/employees', { name: 'ทดสอบ KPI', role: 'ผู้ช่วยช่าง', base: 12000 })
+  assert.equal(e.status, 201, JSON.stringify(e.data))
+  const made = await POST('/pms/kpi-sets', { name: 'ผู้ช่วยช่าง', kpi: [{ name: 'งานเสร็จตามแผน', weight: 70, target: 95 }], competency: draft.competency, behavior: draft.behavior })
+  assert.equal(made.status, 201, JSON.stringify(made.data))
+  assert.ok(made.data.positions.includes('ผู้ช่วยช่าง'))
+  const helper = made.data.sets.find((s) => s.name === 'ผู้ช่วยช่าง')
+  assert.equal((await PUT('/pms/position-sets', { position: 'ผู้ช่วยช่าง', set_id: helper.id })).status, 200)
+  let info = (await GET('/pms/employee/' + e.data.code)).data
+  assert.equal(info.position, 'ผู้ช่วยช่าง')
+  assert.equal(info.kpi_set?.id, helper.id)
+  assert.equal(info.kpi_source, 'position')
+  // ตั้งเฉพาะคน → ชนะตำแหน่ง · ล้าง → กลับไปตามตำแหน่ง
+  info = (await PUT(`/pms/employee/${e.data.code}/kpi-set`, { set_id: draft.id })).data
+  assert.equal(info.kpi_set.id, draft.id)
+  assert.equal(info.kpi_source, 'employee')
+  info = (await PUT(`/pms/employee/${e.data.code}/kpi-set`, { set_id: null })).data
+  assert.equal(info.kpi_set.id, helper.id)
+  // ใบประเมินเก็บว่าใช้ชุดไหน + ขึ้นในผลย้อนหลัง · ลบชุดแล้วใบเดิมยังอยู่ครบ
+  const r = await POST('/pms', { emp_code: e.data.code, emp_name: 'ทดสอบ KPI', position: 'ผู้ช่วยช่าง', template: helper.name, kpi_set_id: helper.id, month: '7/2568', kpi: [{ ...helper.kpi[0], actual: 95 }], competency: [], behavior: [] })
+  assert.equal(r.status, 201, JSON.stringify(r.data))
+  assert.equal(r.data.kpi_set_id, helper.id)
+  assert.equal((await GET('/pms/employee/' + e.data.code)).data.history[0].no, r.data.no)
+  const after = (await DEL('/pms/kpi-sets/' + helper.id)).data
+  assert.equal(after.mapping['ผู้ช่วยช่าง'], undefined, 'ลบชุดแล้วต้องถอดการผูกตำแหน่ง')
+  assert.equal((await GET('/pms')).data.find((x) => x.id === r.data.id).kpi[0].name, 'งานเสร็จตามแผน')
+  assert.equal((await GET('/pms/employee/' + e.data.code)).data.kpi_set, null)
+})
+
 // ---------- เงินเดือน ----------
 let empCode
 test('เงินเดือน: OT นับเฉพาะงวดปัจจุบัน (ของเดือนก่อนต้องไม่โผล่ซ้ำ)', async () => {
