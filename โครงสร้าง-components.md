@@ -1,6 +1,28 @@
 # โครงสร้างไฟล์หน้าเว็บ (src/components) — แต่ละไฟล์ทำอะไร และเชื่อมกับไฟล์ไหน
 
-อัปเดต: 29 ก.ย. 2569 · จำนวนไฟล์ใน `src/components`: 72 ไฟล์ (~14,000 บรรทัด)
+อัปเดต: 6 ต.ค. 2569 · จัดโฟลเดอร์ตามหมวดแล้ว (PR #85) · 76 ไฟล์ใน 12 โฟลเดอร์
+
+## 0. โครงสร้างโฟลเดอร์ปัจจุบัน (หลังจัดหมวด)
+
+```
+src/components/
+├── accounting/   Accounting, PettyCash, Expenses, ExpenseVoucher, ExpressExport, DocRegister, ReceiptDoc, EfilingList
+├── admin/        Users, AuditCenter, Vault
+├── auth/         ForcePinChange
+├── cost/         CostFinance, BoqTab, BoqPrint, CashflowTab, LedgerTab
+├── dashboard/    Dashboard, Reports, MonthlyReportDoc, Gantt, QcSummary, CeoVoice
+├── houses/       HouseList, HouseDetail, Installments, InstallmentSection, ImportInstallments, AcceptanceModal,
+│                 ContractorsPanel, FilesPanel, Handover, HandoverPrint
+├── hr/           HR, TimeKiosk, LocationTrack, Pms, PmsPrint, PayrollSummaryDoc, AllSlipsDoc, WhtCertDoc, EmpSignatureCell
+├── materials/    MaterialPrices, LaborRates, Stock, MaterialAutocomplete
+├── procurement/  Procurement, PrApprovalDoc, PoDoc, PaymentVoucher, WhtDoc, GoodsReceipt
+├── sales/        Sales, SalesDocPrint, Crm
+├── shared/       Modal, Pager, Icon, MoneyInput, SignatureCell, ApprovalBar, ApproverSigns, PrintDoc, Sidebar, Topbar
+└── site/         Issues, WorkOrders, WorkOrderPrint, QcInspect, QcPrint, SiteDocs, SiteDocPrint, SiteReports,
+                  SiteReportPrint, Safety, SafetyPrint
+```
+
+กติกา import หลังย้าย: ไฟล์ใน components อ้างไฟล์แกนกลางด้วย `../../api`, `../../store`, `../../data` และอ้างคอมโพเนนต์โฟลเดอร์อื่นด้วย `../<โฟลเดอร์>/<ชื่อ>` · `Placeholder.tsx` ถูกลบ (ไม่มีใครใช้) · ตารางด้านล่างยังใช้ชื่อไฟล์เดิม ให้ดูโฟลเดอร์จากแผนผังนี้
 
 ## 1. วิธีอ่านเอกสารนี้
 
