@@ -171,7 +171,8 @@ async function migrateFiles() {
   log(`ตาราง ${descs.length} · แถวรวม ${totalRows.toLocaleString()} · ไฟล์แนบ ${existsSync(FILES_DIR) ? readdirSync(FILES_DIR).length : 0}`)
   // บอกว่า "สด" แค่ไหน: รายการล่าสุดในตารางหลัก (ถ้าเก่ากว่าที่คาด = เปิดผิดไฟล์/ผิดโฟลเดอร์)
   try {
-    const last = (t, col) => { try { return sq.prepare(`SELECT MAX(${q(col)}) m FROM ${q(t)}`).get().m || '-' } catch { return '-' } }
+    // รายการที่ "เพิ่มล่าสุด" (ตาม id) — ไม่ใช้ MAX(วันที่) เพราะวันที่แบบไทย "9 ก.ย. 69" เรียงเป็นข้อความไม่ได้
+    const last = (t, col) => { try { const r = sq.prepare(`SELECT ${q(col)} v FROM ${q(t)} ORDER BY rowid DESC LIMIT 1`).get(); return r?.v || '-' } catch { return '-' } }
     log(`รายการล่าสุดในต้นทาง: audit ${String(last('audit', 'ts')).slice(0, 19)} · PR ${last('purchase_requests', 'date')} · PO ${last('purchase_orders', 'date')} · ลงเวลา ${last('attendance', 'date')} · รายจ่าย ${last('expenses', 'date')}`)
     const st = statSync(DB_PATH); log(`ไฟล์ต้นทางแก้ไขล่าสุด: ${st.mtime.toLocaleString('th-TH')} · ขนาด ${(st.size / 1048576).toFixed(1)} MB${existsSync(DB_PATH + '-wal') ? ` · WAL ${(statSync(DB_PATH + '-wal').size / 1024).toFixed(0)} KB (รวมอยู่ในการอ่านแล้ว)` : ''}`)
   } catch { /* ignore */ }
@@ -208,4 +209,12 @@ async function migrateFiles() {
     sq.close()
     log(`\nใช้เวลา ${((Date.now() - t0) / 1000).toFixed(1)} วินาที`)
   }
-})().catch((e) => { console.error('ล้มเหลว:', e.message); process.exit(1) })
+})().catch((e) => {
+  console.error('ล้มเหลว:', e.message)
+  const m = String(e.message || '')
+  if (/tenant|not found/i.test(m) && /postgres\./.test(m)) console.error('→ โฮสต์ pooler ใน DATABASE_URL ไม่ตรงกับ region ของโปรเจกต์ (เช่นใช้ aws-0-ap-southeast-1 แต่โปรเจกต์อยู่ ap-northeast-1) — ก๊อป connection string ทั้งบรรทัดจาก Supabase → Connect → Session pooler มาวางแทน อย่าแก้มือ')
+  else if (/password authentication failed/i.test(m)) console.error('→ รหัสผ่าน DB ไม่ถูกต้อง — ตั้งใหม่ได้ที่ Project Settings → Database → Reset database password แล้วใส่แทน [YOUR-PASSWORD]')
+  else if (/ENOTFOUND|EAI_AGAIN/i.test(m)) console.error('→ หาโฮสต์ไม่เจอ — เช็คอินเทอร์เน็ต และโฮสต์ใน DATABASE_URL')
+  else if (/ECONNREFUSED|ETIMEDOUT/i.test(m)) console.error('→ ต่อไม่ถึงพอร์ต 5432 — เครือข่ายออฟฟิศอาจบล็อก ลองใช้ Transaction pooler พอร์ต 6543 หรือเน็ตอื่น')
+  process.exit(1)
+})
