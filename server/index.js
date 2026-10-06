@@ -336,7 +336,7 @@ function backfillSignatures() {
 }
 api.get('/me', requireAuth, (req, res) => {
   const row = db.prepare('SELECT must_change_pin FROM users WHERE id = ?').get(req.user.id)
-  res.json({ ...req.user, signature: sigOfUser(req.user.id), isManager: isManager(req.user), vaultAllowed: isVaultUser(req.user), mustChangePin: !!row?.must_change_pin, lineLinked: !!db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid })
+  res.json({ ...req.user, signature: sigOfUser(req.user.id), isManager: isManager(req.user), isExec: isCeo(req.user), vaultAllowed: isVaultUser(req.user), mustChangePin: !!row?.must_change_pin, lineLinked: !!db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid })
 })
 // ลืม PIN — ผู้ใช้ที่ล็อกอินไม่ได้ส่งคำขอรีเซ็ต (สาธารณะ) แอดมินยืนยันตัวตนแล้วรีเซ็ตให้
 // คืนข้อความกลาง ๆ เสมอ (ไม่บอกว่ามี username นี้จริงไหม เพื่อกันการเดาชื่อผู้ใช้)
@@ -2211,16 +2211,18 @@ function auditView(req, res, next) {
   res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงศูนย์ตรวจสอบ' })
 }
 // ประเมินผล KPI (PMS): เข้าได้เฉพาะ ธวัช วรรณสุข เท่านั้น
-// สิทธิ์หน้าผู้บริหาร (กฎเดียวกับ src/data.ts: isCeoUser / canPmsUser)
-function isCeo(u) { return !!u && (u.username === 'thawat' || u.name === 'ธวัช วรรณสุข') }
-function isPmsUser(u) { return !!u && (u.role === 'admin' || isCeo(u)) } // ประเมินผล KPI: ผู้ดูแลระบบทุกคน + CEO
+// สิทธิ์ "ผู้บริหารระบบ" = ตำแหน่ง CEO หรือ role ผู้ดูแลระบบ (admin) → เข้าได้ทุกฟีเจอร์ (KPI · สรุป QC ผู้บริหาร · สั่งงานด้วยเสียง · คลังรหัสผ่าน)
+// (กฎเดียวกับ src/data.ts: isCeoUser / canPmsUser — หน้าเว็บอ่านธง isExec จาก /me)
+const CEO_POSITIONS = ['CEO', 'ซีอีโอ']
+function isCeo(u) { return !!u && (u.role === 'admin' || CEO_POSITIONS.includes(String(u.position || '').trim()) || u.username === 'thawat' || u.name === 'ธวัช วรรณสุข') }
+function isPmsUser(u) { return isCeo(u) }
 function pmsOnly(req, res, next) {
   if (isPmsUser(req.user)) return next()
-  res.status(403).json({ error: 'หน้าประเมินผล KPI เข้าได้เฉพาะผู้ดูแลระบบหรือผู้ที่ได้รับสิทธิ์เท่านั้น' })
+  res.status(403).json({ error: 'หน้าประเมินผล KPI เข้าได้เฉพาะ CEO / ผู้ดูแลระบบเท่านั้น' })
 }
 function ceoOnly(req, res, next) {
   if (isCeo(req.user)) return next()
-  res.status(403).json({ error: 'หน้านี้เข้าได้เฉพาะผู้บริหารที่ได้รับสิทธิ์เท่านั้น' })
+  res.status(403).json({ error: 'หน้านี้เข้าได้เฉพาะ CEO / ผู้ดูแลระบบเท่านั้น' })
 }
 
 // ===== คลังรหัสผ่านบริษัท =====
@@ -2230,7 +2232,7 @@ const vaultUserIds = () => { try { const a = JSON.parse(getSetting('vault_users'
 const isVaultUser = (u) => !!u && (isCeo(u) || vaultUserIds().includes(Number(u.id)))
 function vaultOnly(req, res, next) {
   if (isVaultUser(req.user)) return next()
-  res.status(403).json({ error: 'คลังรหัสผ่านเข้าได้เฉพาะ CEO และผู้ที่ CEO กำหนดสิทธิ์เท่านั้น' })
+  res.status(403).json({ error: 'คลังรหัสผ่านเข้าได้เฉพาะ CEO / ผู้ดูแลระบบ และผู้ที่ได้รับสิทธิ์เท่านั้น' })
 }
 const VAULT_COLS = 'id,title,category,url,enc,created,by,updated,updated_by'
 const vaultInitialized = () => !!getSetting('vault_salt', '')

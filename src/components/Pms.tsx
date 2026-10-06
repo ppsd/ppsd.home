@@ -64,7 +64,7 @@ export default function Pms() {
     try { await api.post('/verify-pin', { pin }); setUnlocked(true) } catch (e) { setPinErr((e as Error).message) } finally { setChecking(false) }
   }
 
-  if (!allowed) return <div style={{ maxWidth: 1320, margin: '0 auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, padding: 40, textAlign: 'center' }}>หน้าประเมินผล KPI เข้าได้เฉพาะ <b>ธวัช วรรณสุข</b> เท่านั้น</div>
+  if (!allowed) return <div style={{ maxWidth: 1320, margin: '0 auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, padding: 40, textAlign: 'center' }}>หน้าประเมินผล KPI เข้าได้เฉพาะ <b>CEO / ผู้ดูแลระบบ</b> เท่านั้น</div>
 
   if (!unlocked) return (
     <div style={{ maxWidth: 420, margin: '48px auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, padding: 34, textAlign: 'center' }}>

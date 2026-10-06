@@ -168,7 +168,7 @@ export default function Vault() {
   }
 
   // ======================= UI =======================
-  if (!allowed) return <div style={{ maxWidth: 900, margin: '0 auto', ...card, textAlign: 'center', padding: 40 }}>คลังรหัสผ่านบริษัทเข้าได้เฉพาะ <b>CEO</b> และผู้ที่ CEO กำหนดสิทธิ์เท่านั้น</div>
+  if (!allowed) return <div style={{ maxWidth: 900, margin: '0 auto', ...card, textAlign: 'center', padding: 40 }}>คลังรหัสผ่านบริษัทเข้าได้เฉพาะ <b>CEO / ผู้ดูแลระบบ</b> และผู้ที่ได้รับสิทธิ์เท่านั้น</div>
   if (!cryptoAvailable()) return <div style={{ maxWidth: 900, margin: '0 auto', ...card, textAlign: 'center', padding: 40 }}>เบราว์เซอร์ไม่อนุญาตให้เข้ารหัสบนหน้านี้ — ต้องเปิดผ่าน <b>http://localhost:3001</b> ที่เครื่องเซิร์ฟเวอร์ หรือผ่านลิงก์ <b>https://</b> (tunnel) เท่านั้น ลิงก์ http:// ผ่าน IP ในวงแลนใช้ไม่ได้</div>
 
   if (!pinOk) return (
@@ -188,7 +188,7 @@ export default function Vault() {
   if (!meta) return <div style={{ maxWidth: 420, margin: '48px auto', ...card, textAlign: 'center', color: '#5C6770' }}>{passErr || 'กำลังโหลด…'}</div>
 
   if (!key && !meta.initialized) {
-    if (!meta.is_ceo) return <div style={{ maxWidth: 520, margin: '48px auto', ...card, textAlign: 'center', padding: 34 }}>คลังรหัสผ่านยังไม่ได้ตั้งค่า — ต้องให้ <b>CEO</b> ตั้งรหัสผ่านหลักก่อน</div>
+    if (!meta.is_ceo) return <div style={{ maxWidth: 520, margin: '48px auto', ...card, textAlign: 'center', padding: 34 }}>คลังรหัสผ่านยังไม่ได้ตั้งค่า — ต้องให้ <b>CEO / ผู้ดูแลระบบ</b> ตั้งรหัสผ่านหลักก่อน</div>
     const st = passphraseStrength(pass)
     return (
       <div style={{ maxWidth: 520, margin: '48px auto', ...card, padding: 30 }}>
@@ -239,12 +239,12 @@ export default function Vault() {
       {panel === 'users' && meta.users && (
         <div style={{ ...card, marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>ผู้มีสิทธิ์เข้าคลังรหัสผ่าน</div>
-          <div style={{ fontSize: 12.5, color: '#5C6770', marginBottom: 12 }}>คนที่ติ๊กจะเห็นเมนูและเปิดคลังได้ แต่ต้องรู้รหัสผ่านหลักด้วย (คุณต้องบอกเอง ระบบไม่ส่งให้) · CEO เข้าได้เสมอ</div>
+          <div style={{ fontSize: 12.5, color: '#5C6770', marginBottom: 12 }}>คนที่ติ๊กจะเห็นเมนูและเปิดคลังได้ แต่ต้องรู้รหัสผ่านหลักด้วย (คุณต้องบอกเอง ระบบไม่ส่งให้) · CEO และผู้ดูแลระบบเข้าได้เสมอ</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
             {meta.users.map((u) => (
               <label key={u.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '7px 10px', border: '1px solid #EEF1F4', borderRadius: 9, opacity: u.ceo ? 0.6 : 1 }}>
                 <input type="checkbox" disabled={u.ceo} checked={u.ceo || userIds.includes(u.id)} onChange={(e) => setUserIds((ids) => (e.target.checked ? [...ids, u.id] : ids.filter((x) => x !== u.id)))} />
-                <span style={{ fontWeight: 500 }}>{u.name}</span><span style={{ color: '#94A0A8', fontSize: 11.5 }}>{u.ceo ? 'CEO' : u.position || u.role}</span>
+                <span style={{ fontWeight: 500 }}>{u.name}</span><span style={{ color: '#94A0A8', fontSize: 11.5 }}>{u.ceo ? 'CEO / ผู้ดูแลระบบ' : u.position || u.role}</span>
               </label>
             ))}
           </div>

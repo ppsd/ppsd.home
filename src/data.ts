@@ -114,13 +114,14 @@ export interface NavDef {
   label: string
   icon: string
   badge?: string
-  gate?: 'finance' | 'manager' | 'hr' | 'pms' | 'ceo' | 'vault' // finance=admin/บัญชี/ผจก · manager=ผจก · hr=ผจก/บัญชี/บุคคล · pms=ผู้ดูแลระบบ/CEO · ceo=เฉพาะ CEO · vault=CEO+รายชื่อที่ CEO กำหนด
+  gate?: 'finance' | 'manager' | 'hr' | 'pms' | 'ceo' | 'vault' // finance=admin/บัญชี/ผจก · manager=ผจก · hr=ผจก/บัญชี/บุคคล · pms/ceo=CEO+ผู้ดูแลระบบ · vault=CEO/ผู้ดูแลระบบ+รายชื่อที่กำหนด
 }
 
 // ---- สิทธิ์หน้าประเมินผล KPI และหน้าผู้บริหาร (กฎเดียวกับ server: isCeo / isPmsUser ใน server/index.js) ----
-type GateUser = { role?: string; username?: string; name?: string } | null | undefined
-export const isCeoUser = (u: GateUser) => !!u && (u.username === 'thawat' || u.name === 'ธวัช วรรณสุข')
-export const canPmsUser = (u: GateUser) => !!u && (u.role === 'admin' || isCeoUser(u)) // ประเมินผล KPI: ผู้ดูแลระบบทุกคน + CEO
+// "ผู้บริหารระบบ" = ตำแหน่ง CEO หรือ role ผู้ดูแลระบบ (admin) → เห็นทุกฟีเจอร์ · server ส่งธง isExec มากับ /me (กฎเดียวกับ isCeo ใน server/index.js)
+type GateUser = { role?: string; username?: string; name?: string; position?: string; isExec?: boolean } | null | undefined
+export const isCeoUser = (u: GateUser) => !!u && (!!u.isExec || u.role === 'admin' || ['CEO', 'ซีอีโอ'].includes(String(u.position || '').trim()) || u.username === 'thawat' || u.name === 'ธวัช วรรณสุข')
+export const canPmsUser = (u: GateUser) => isCeoUser(u)
 
 export const nav: NavDef[] = [
   { id: 'dashboard', label: 'หน้าสรุป', icon: 'M3 10.5L12 3l9 7.5M5.5 9.5V21h13V9.5' },

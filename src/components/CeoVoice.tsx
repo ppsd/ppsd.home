@@ -124,7 +124,7 @@ export default function CeoVoice() {
   useEffect(() => { if (unlocked) api.get<typeof cfg>('/settings/urgent').then(setCfg).catch(() => {}) }, [unlocked])
   const saveCfg = async () => { try { await api.put('/settings/urgent', cfg); setShowCfg(false) } catch (e) { alert((e as Error).message) } }
 
-  if (!allowed) return <div style={{ maxWidth: 900, margin: '0 auto', ...card, textAlign: 'center' }}>หน้าสั่งงานด้วยเสียง เข้าได้เฉพาะ <b>ธวัช วรรณสุข (CEO)</b> เท่านั้น</div>
+  if (!allowed) return <div style={{ maxWidth: 900, margin: '0 auto', ...card, textAlign: 'center' }}>หน้าสั่งงานด้วยเสียง เข้าได้เฉพาะ <b>CEO / ผู้ดูแลระบบ</b> เท่านั้น</div>
   if (!unlocked) return (
     <div style={{ maxWidth: 420, margin: '48px auto', ...card, padding: 34, textAlign: 'center' }}>
       <div style={{ fontSize: 32, marginBottom: 8 }}>🎤</div>
