@@ -2,10 +2,14 @@ import { db } from './db.js'
 import { verifyPin, signToken, verifyToken } from './security.js'
 
 // ตำแหน่งของบัญชี: ใช้ที่ตั้งในผู้ใช้ ถ้าว่างใช้ "ตำแหน่ง" ของพนักงาน HR ที่ผูกอยู่ (ตั้งที่เดียวพอ)
+// ตำแหน่งของบัญชี: ถ้าผูกกับพนักงาน HR ให้ยึดตำแหน่งใน HR (แหล่งเดียว) · บัญชีที่ไม่ได้ผูก ใช้ users.position
 export function effectivePosition(user) {
   if (!user) return ''
-  if (user.position) return user.position
-  try { return db.prepare('SELECT role FROM employees WHERE user_id=? ORDER BY id LIMIT 1').get(user.id)?.role || '' } catch { return '' }
+  try {
+    const emp = db.prepare('SELECT role FROM employees WHERE user_id=? ORDER BY id LIMIT 1').get(user.id)
+    if (emp) return emp.role || user.position || ''
+  } catch { /* ignore */ }
+  return user.position || ''
 }
 export function login(username, pin) {
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username)

@@ -594,6 +594,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                           {data.positions.map((p) => <option key={p} value={p}>{p}</option>)}
                           {editU.position && !data.positions.includes(editU.position) && <option value={editU.position}>{editU.position}</option>}
                         </select>
+                        {editU.employee_code && <div style={{ fontSize: 11, color: '#94A0A8', marginTop: -2 }}>ตำแหน่งเก็บที่ทะเบียนพนักงาน HR ที่เดียว — แก้ตรงนี้จะเปลี่ยนใน HR ด้วย และสิทธิ์ของคนนั้นเปลี่ยนทันที</div>}
                         <select value={editU.employee_code} onChange={(e) => setEditU({ ...editU, employee_code: e.target.value })} title="ผูกบัญชีนี้กับพนักงานในทะเบียน HR (ชื่อ/ลายเซ็น/ลงเวลา ใช้ร่วมกัน)" style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }}>
                           <option value="">— ไม่ผูกกับพนักงาน HR —</option>
                           {data.employees.filter((e) => !e.user_id || e.user_id === u.id || e.code === editU.employee_code).map((e) => <option key={e.code} value={e.code}>{e.code} · {e.name}{e.nickname ? ` (${e.nickname})` : ''}{e.user_id && e.user_id !== u.id ? ' · ผูกคนอื่น' : ''}</option>)}

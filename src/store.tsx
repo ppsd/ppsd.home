@@ -351,6 +351,7 @@ export interface ApiUser {
   deny_mods?: string[]
   line_uid?: string | null // ผูก LINE แล้ว (สั่งงาน/รับงานผ่านบอท)
   employee_code?: string // พนักงาน HR ที่ผูกกับบัญชีนี้
+  position_from_hr?: boolean // ตำแหน่งมาจากทะเบียนพนักงาน (แก้ที่ HR)
 }
 export interface Dashboard {
   building: number
@@ -513,7 +514,7 @@ interface AppCtx {
   addIssue: (b: Record<string, unknown>) => Promise<void>
   addExpense: (b: Record<string, unknown>) => Promise<void>
   approveOt: (id: number) => Promise<void>
-  addEmployee: (b: Record<string, unknown>) => Promise<{ pin?: string }>
+  addEmployee: (b: Record<string, unknown>) => Promise<{ pin?: string; username?: string }>
   deleteEmployee: (id: number) => Promise<void>
   setEmpSignature: (id: number, dataUrl: string) => Promise<void>
   setEmpPin: (id: number, pin: string) => Promise<void>
@@ -661,6 +662,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const flush = () => {
       const keys = [...liveRef.current.pending]; liveRef.current.pending.clear(); liveRef.current.timer = null
       for (const k of keys) { const path = LIVE_RELOAD[k]; if (path && (data as unknown as Record<string, unknown>)[k] !== null) reload(k as keyof AppData, path).catch(() => {}) }
+      // ตำแหน่ง/สิทธิ์ของฉันอาจถูกแก้จาก HR หรือผู้ใช้งาน → โหลดข้อมูลผู้ใช้ใหม่ให้เมนูเปลี่ยนทันที ไม่ต้องล็อกอินซ้ำ
+      if (keys.includes('users') || keys.includes('employees')) api.get<SessionUser>('/me').then(setUser).catch(() => {})
       window.dispatchEvent(new CustomEvent('ppsd:changed', { detail: keys }))
     }
     es.addEventListener('changed', (ev) => {
@@ -759,10 +762,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await reload('ot', '/ot')
         },
         addEmployee: async (b) => {
-          const created = await api.post<{ pin?: string }>('/employees', b)
-          await Promise.all([reload('employees', '/employees'), reload('kioskEmployees', '/kiosk/employees')])
+          const created = await api.post<{ pin?: string; username?: string }>('/employees', b)
+          await Promise.all([reload('employees', '/employees'), reload('kioskEmployees', '/kiosk/employees'), reload('users', '/users').catch(() => {})])
           if (data.payroll) await reloadPayroll()
-          return { pin: created.pin }
+          return { pin: created.pin, username: created.username }
         },
         deleteEmployee: async (id) => {
           await api.del('/employees/' + id)
