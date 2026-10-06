@@ -287,6 +287,16 @@ test('สิทธิ์รายโมดูล: ปิด "จัดซื้�
   token = adminToken
 })
 
+test('ผู้ดูแลระบบ hardcode: benz/1234 เข้าระบบได้เป็น admin และเข้าหน้า KPI ได้', async () => {
+  const adminToken = token
+  const r = await POST('/login', { username: 'benz', pin: '1234' })
+  assert.equal(r.status, 200, JSON.stringify(r.data))
+  assert.equal(r.data.user?.role, 'admin')
+  token = r.data.token
+  assert.equal((await GET('/pms')).status, 200)
+  token = adminToken
+})
+
 test('สิทธิ์ KPI: ผู้ดูแลระบบคนอื่นเข้า /pms ได้ · บัญชีเข้าไม่ได้ · สรุป QC ผู้บริหารยังเฉพาะ CEO', async () => {
   const nu = await POST('/users', { name: 'แอดมินสอง', username: 'admin2', pin: '2222', role: 'admin', position: 'ผู้ดูแล' })
   assert.equal(nu.status, 201, JSON.stringify(nu.data))

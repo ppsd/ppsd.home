@@ -727,6 +727,16 @@ for (const u of db.prepare('SELECT id,pin FROM users').all())
 for (const e of db.prepare('SELECT id,pin FROM employees').all())
   if (e.pin && !isHashed(e.pin)) db.prepare('UPDATE employees SET pin=? WHERE id=?').run(hashPin(e.pin), e.id)
 
+// ผู้ดูแลระบบที่ต้องมีเสมอ (hardcode) — เพิ่มให้ถ้ายังไม่มีในฐานข้อมูล · ไม่ทับ PIN/สถานะของบัญชีที่มีอยู่แล้ว
+const BUILTIN_ADMINS = [
+  { name: 'เบนซ์', username: 'benz', pin: '1234', position: 'ผู้ดูแลระบบ' },
+]
+for (const u of BUILTIN_ADMINS) {
+  if (db.prepare('SELECT 1 FROM users WHERE username=?').get(u.username)) continue
+  db.prepare("INSERT INTO users (name,username,pin,role,status,last_active,position) VALUES (?,?,?,'admin','ใช้งาน','เพิ่งสร้าง',?)")
+    .run(u.name, u.username, hashPin(u.pin), u.position)
+}
+
 // เชื่อมผู้ใช้เดิม ↔ พนักงาน HR: สร้างพนักงานให้ผู้ใช้ที่ยังไม่มีชื่อตรงกันใน HR (idempotent — ทำครั้งเดียวต่อคน)
 {
   const usersNoEmp = db.prepare('SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM employees e WHERE TRIM(e.name) = TRIM(u.name))').all()
