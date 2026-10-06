@@ -2241,7 +2241,7 @@ api.get('/vault/meta', vaultOnly, (req, res) => {
   const ids = vaultUserIds()
   res.json({
     initialized: vaultInitialized(), salt: getSetting('vault_salt', ''), check: getSetting('vault_check', ''), is_ceo: ceo,
-    users: ceo ? db.prepare("SELECT id,name,username,role,position FROM users WHERE status='ใช้งาน' ORDER BY name").all().map((u) => ({ ...u, allowed: ids.includes(u.id), ceo: isCeo(u) })) : undefined,
+    users: ceo ? db.prepare("SELECT id,name,username,role,position FROM users WHERE status='ใช้งาน' ORDER BY name").all().map((u) => { const pos = effectivePosition(u); return { ...u, position: pos, allowed: ids.includes(u.id), ceo: isCeo({ ...u, position: pos }) } }) : undefined,
   })
 })
 // ตั้ง master passphrase ครั้งแรก: เบราว์เซอร์ส่ง salt + ค่าตรวจสอบที่เข้ารหัสแล้ว (ใช้เช็คว่า passphrase ถูกตอนปลดล็อก)
@@ -2269,7 +2269,7 @@ api.post('/vault/rekey', ceoOnly, (req, res) => {
   res.json({ ok: true })
 })
 api.put('/vault/users', ceoOnly, (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0) : []
+  const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))] : []
   setSetting('vault_users', JSON.stringify(ids))
   const names = ids.map((id) => db.prepare('SELECT name FROM users WHERE id=?').get(id)?.name).filter(Boolean)
   audit(req, 'กำหนดผู้มีสิทธิ์คลังรหัสผ่าน', names.join(', ') || '(ไม่มี)')

@@ -236,21 +236,47 @@ export default function Vault() {
         </div>
       </div>
 
-      {panel === 'users' && meta.users && (
-        <div style={{ ...card, marginBottom: 12 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>ผู้มีสิทธิ์เข้าคลังรหัสผ่าน</div>
-          <div style={{ fontSize: 12.5, color: '#5C6770', marginBottom: 12 }}>คนที่ติ๊กจะเห็นเมนูและเปิดคลังได้ แต่ต้องรู้รหัสผ่านหลักด้วย (คุณต้องบอกเอง ระบบไม่ส่งให้) · CEO และผู้ดูแลระบบเข้าได้เสมอ</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
-            {meta.users.map((u) => (
-              <label key={u.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '7px 10px', border: '1px solid #EEF1F4', borderRadius: 9, opacity: u.ceo ? 0.6 : 1 }}>
-                <input type="checkbox" disabled={u.ceo} checked={u.ceo || userIds.includes(u.id)} onChange={(e) => setUserIds((ids) => (e.target.checked ? [...ids, u.id] : ids.filter((x) => x !== u.id)))} />
-                <span style={{ fontWeight: 500 }}>{u.name}</span><span style={{ color: '#94A0A8', fontSize: 11.5 }}>{u.ceo ? 'CEO / ผู้ดูแลระบบ' : u.position || u.role}</span>
-              </label>
-            ))}
+      {panel === 'users' && meta.users && (() => {
+        const execs = meta.users.filter((u) => u.ceo)
+        const others = meta.users.filter((u) => !u.ceo)
+        const granted = others.filter((u) => userIds.includes(u.id))
+        const toggle = (id: number, on: boolean) => setUserIds((ids) => (on ? (ids.includes(id) ? ids : [...ids, id]) : ids.filter((x) => x !== id)))
+        return (
+          <div style={{ ...card, marginBottom: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>ผู้มีสิทธิ์เข้าคลังรหัสผ่าน</div>
+            <div style={{ fontSize: 12.5, color: '#5C6770', marginBottom: 12 }}>CEO และผู้ดูแลระบบเข้าได้เสมอ (ถอดสิทธิ์ได้โดยเปลี่ยน role/ตำแหน่งที่หน้าผู้ใช้งาน) · คนอื่นติ๊กให้/เอาออกได้ที่นี่ แล้วกดบันทึก · ทุกคนต้องรู้รหัสผ่านหลักด้วย (คุณต้องบอกเอง ระบบไม่ส่งให้)</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#30506A', marginBottom: 6 }}>เข้าได้เสมอ ({execs.length})</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+              {execs.map((u) => <span key={u.id} style={{ fontSize: 12.5, padding: '5px 10px', background: '#EAF0F5', borderRadius: 20, color: '#30506A' }}>{u.name} <span style={{ color: '#94A0A8', fontSize: 11 }}>{u.role === 'admin' ? 'ผู้ดูแลระบบ' : 'CEO'}</span></span>)}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#30506A', marginBottom: 6 }}>ให้สิทธิ์เพิ่มเติม ({granted.length} คน)</div>
+            {granted.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                {granted.map((u) => (
+                  <span key={u.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, padding: '5px 6px 5px 10px', background: '#E2F1EA', borderRadius: 20, color: '#2E7D55' }}>
+                    {u.name}
+                    <button onClick={() => toggle(u.id, false)} title="เอาออกจากรายชื่อ" style={{ border: 'none', background: '#fff', color: '#C24036', borderRadius: 20, width: 20, height: 20, cursor: 'pointer', fontSize: 12, lineHeight: '20px', padding: 0 }}>✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
+              {others.map((u) => (
+                <label key={u.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '7px 10px', border: '1px solid #EEF1F4', borderRadius: 9, cursor: 'pointer', background: userIds.includes(u.id) ? '#F3FAF6' : '#fff' }}>
+                  <input type="checkbox" checked={userIds.includes(u.id)} onChange={(e) => toggle(u.id, e.target.checked)} />
+                  <span style={{ fontWeight: 500 }}>{u.name}</span><span style={{ color: '#94A0A8', fontSize: 11.5 }}>{u.position || u.role}</span>
+                </label>
+              ))}
+              {others.length === 0 && <div style={{ fontSize: 12.5, color: '#94A0A8' }}>ไม่มีผู้ใช้อื่นที่ยังไม่ได้เป็น CEO/ผู้ดูแลระบบ</div>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+              <button style={btnP} onClick={saveUsers}>บันทึกผู้มีสิทธิ์</button>
+              {granted.length > 0 && <button style={{ ...btnS, color: '#C24036', borderColor: '#F0C9C5' }} onClick={() => setUserIds([])}>เอาออกทั้งหมด</button>}
+              <span style={{ fontSize: 11.5, color: '#94A0A8' }}>การเปลี่ยนแปลงมีผลเมื่อกดบันทึก</span>
+            </div>
           </div>
-          <button style={{ ...btnP, marginTop: 12 }} onClick={saveUsers}>บันทึกผู้มีสิทธิ์</button>
-        </div>
-      )}
+        )
+      })()}
 
       {panel === 'rekey' && (
         <div style={{ ...card, marginBottom: 12, maxWidth: 560 }}>

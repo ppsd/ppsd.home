@@ -356,6 +356,16 @@ test('คลังรหัสผ่าน: CEO ตั้งค่า/เพิ�
   assert.equal((await GET('/vault/entries')).status, 200)
   assert.equal((await PUT('/vault/users', { ids: [] })).status, 403)
   assert.equal((await GET('/vault/export')).status, 403)
+  // CEO เอาออกจากรายชื่อ → เข้าไม่ได้ทันที
+  token = adminToken
+  assert.equal((await PUT('/vault/users', { ids: [] })).status, 200)
+  assert.equal((await GET('/vault/meta')).data.users.find((x) => x.id === a2.id).allowed, false)
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.equal((await GET('/vault/meta')).status, 403, 'เอาออกแล้วต้องเข้าไม่ได้')
+  assert.equal((await GET('/me')).data.vaultAllowed, false)
+  token = adminToken
+  assert.equal((await PUT('/vault/users', { ids: [a2.id] })).status, 200)
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
   assert.equal((await POST('/vault/rekey', { salt: 's', check: 'c', entries: [] })).status, 403)
   // แก้ไข + log การดู
   assert.equal((await PUT(`/vault/entries/${e1.data.id}`, { enc: 'aXYy.Y2lwaGVyMg==' })).status, 200)
