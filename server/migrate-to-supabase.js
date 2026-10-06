@@ -169,6 +169,12 @@ async function migrateFiles() {
   const totalRows = descs.reduce((s, d) => s + d.rowCount, 0)
   log(`ฐานข้อมูลต้นทาง: ${DB_PATH}`)
   log(`ตาราง ${descs.length} · แถวรวม ${totalRows.toLocaleString()} · ไฟล์แนบ ${existsSync(FILES_DIR) ? readdirSync(FILES_DIR).length : 0}`)
+  // บอกว่า "สด" แค่ไหน: รายการล่าสุดในตารางหลัก (ถ้าเก่ากว่าที่คาด = เปิดผิดไฟล์/ผิดโฟลเดอร์)
+  try {
+    const last = (t, col) => { try { return sq.prepare(`SELECT MAX(${q(col)}) m FROM ${q(t)}`).get().m || '-' } catch { return '-' } }
+    log(`รายการล่าสุดในต้นทาง: audit ${String(last('audit', 'ts')).slice(0, 19)} · PR ${last('purchase_requests', 'date')} · PO ${last('purchase_orders', 'date')} · ลงเวลา ${last('attendance', 'date')} · รายจ่าย ${last('expenses', 'date')}`)
+    const st = statSync(DB_PATH); log(`ไฟล์ต้นทางแก้ไขล่าสุด: ${st.mtime.toLocaleString('th-TH')} · ขนาด ${(st.size / 1048576).toFixed(1)} MB${existsSync(DB_PATH + '-wal') ? ` · WAL ${(statSync(DB_PATH + '-wal').size / 1024).toFixed(0)} KB (รวมอยู่ในการอ่านแล้ว)` : ''}`)
+  } catch { /* ignore */ }
   if (DRY) {
     log('\n[dry-run] แผนโครงตาราง Postgres:')
     for (const d of descs) log(`\n-- ${d.table} (${d.rowCount} แถว)\n${createSql(d)}`)
