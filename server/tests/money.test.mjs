@@ -320,7 +320,7 @@ test('สิทธิ์ KPI: ผู้ดูแลระบบคนอื่�
   assert.equal((await GET('/me')).data.isExec, false)
   token = adminToken
   assert.equal((await GET('/pms')).status, 200)
-  assert.equal((await GET('/qc/summary')).status, 200, 'CEO (thawat) เข้าสรุป QC ได้')
+  assert.equal((await GET('/qc/summary')).status, 200, 'ผู้ดูแลระบบ (บัญชี seed) เข้าสรุป QC ได้')
 })
 
 test('คลังรหัสผ่าน: CEO ตั้งค่า/เพิ่มรายการ · เซิร์ฟเวอร์เก็บแค่ ciphertext · ผู้ที่ไม่ได้รับสิทธิ์โดน 403 · กำหนดสิทธิ์แล้วเข้าได้ · rekey ต้องครบทุกรายการ', async () => {

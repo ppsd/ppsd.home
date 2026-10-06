@@ -119,8 +119,8 @@ export interface NavDef {
 
 // ---- สิทธิ์หน้าประเมินผล KPI และหน้าผู้บริหาร (กฎเดียวกับ server: isCeo / isPmsUser ใน server/index.js) ----
 // "ผู้บริหารระบบ" = ตำแหน่ง CEO หรือ role ผู้ดูแลระบบ (admin) → เห็นทุกฟีเจอร์ · server ส่งธง isExec มากับ /me (กฎเดียวกับ isCeo ใน server/index.js)
-type GateUser = { role?: string; username?: string; name?: string; position?: string; isExec?: boolean } | null | undefined
-export const isCeoUser = (u: GateUser) => !!u && (!!u.isExec || u.role === 'admin' || ['CEO', 'ซีอีโอ'].includes(String(u.position || '').trim()) || u.username === 'thawat' || u.name === 'ธวัช วรรณสุข')
+type GateUser = { role?: string; position?: string; isExec?: boolean } | null | undefined
+export const isCeoUser = (u: GateUser) => !!u && (!!u.isExec || u.role === 'admin' || ['CEO', 'ซีอีโอ'].includes(String(u.position || '').trim()))
 export const canPmsUser = (u: GateUser) => isCeoUser(u)
 
 export const nav: NavDef[] = [

@@ -2210,11 +2210,11 @@ function auditView(req, res, next) {
   if (u && (u.role === 'admin' || u.role === 'accounting' || isManager(u))) return next()
   res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงศูนย์ตรวจสอบ' })
 }
-// ประเมินผล KPI (PMS): เข้าได้เฉพาะ ธวัช วรรณสุข เท่านั้น
+// ประเมินผล KPI (PMS) และหน้าผู้บริหาร: เข้าได้เฉพาะผู้บริหารระบบ (role admin หรือตำแหน่ง CEO)
 // สิทธิ์ "ผู้บริหารระบบ" = ตำแหน่ง CEO หรือ role ผู้ดูแลระบบ (admin) → เข้าได้ทุกฟีเจอร์ (KPI · สรุป QC ผู้บริหาร · สั่งงานด้วยเสียง · คลังรหัสผ่าน)
 // (กฎเดียวกับ src/data.ts: isCeoUser / canPmsUser — หน้าเว็บอ่านธง isExec จาก /me)
 const CEO_POSITIONS = ['CEO', 'ซีอีโอ']
-function isCeo(u) { return !!u && (u.role === 'admin' || CEO_POSITIONS.includes(String(u.position || '').trim()) || u.username === 'thawat' || u.name === 'ธวัช วรรณสุข') }
+function isCeo(u) { return !!u && (u.role === 'admin' || CEO_POSITIONS.includes(String(u.position || '').trim())) }
 function isPmsUser(u) { return isCeo(u) }
 function pmsOnly(req, res, next) {
   if (isPmsUser(req.user)) return next()
