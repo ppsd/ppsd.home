@@ -4,7 +4,7 @@
 //   node server/migrate-to-supabase.js            ย้ายทุกตาราง + ไฟล์แนบ (ลบตารางปลายทางชื่อเดียวกันแล้วสร้างใหม่ — รันซ้ำได้)
 //   node server/migrate-to-supabase.js --dry-run  ดูแผน/จำนวนแถว ไม่เชื่อมต่อปลายทาง
 //   node server/migrate-to-supabase.js --verify   เทียบจำนวนแถว SQLite ↔ Postgres อย่างเดียว
-//   ตัวเลือก: --schema-only · --no-files · --files-only · --tables=houses,users · --db=<path.sqlite> · --bucket=<ชื่อ bucket>
+//   ตัวเลือก: --schema-only · --no-files · --files-only · --skip-existing (ข้ามไฟล์ที่อยู่บน Storage แล้ว) · --tables=houses,users · --db=<path.sqlite> · --bucket=<ชื่อ bucket>
 // ตัวแปรระบบ: DATABASE_URL (Session pooler ของ Supabase) · SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (สำหรับไฟล์แนบ)
 // หมายเหตุ: เฟสนี้ "ก๊อปโครง 1:1" (ชนิดข้อมูลเดาจากข้อมูลจริง) ระบบยังใช้ SQLite ต่อจนกว่าจะสลับชั้น DB — รันกี่ครั้งก็ได้
 import Database from 'better-sqlite3'
@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const args = process.argv.slice(2)
 const flag = (n) => args.includes('--' + n)
 const opt = (n, d = '') => { const a = args.find((x) => x.startsWith('--' + n + '=')); return a ? a.slice(n.length + 3) : d }
-const DRY = flag('dry-run'), VERIFY = flag('verify'), SCHEMA_ONLY = flag('schema-only'), NO_FILES = flag('no-files'), FILES_ONLY = flag('files-only')
+const DRY = flag('dry-run'), VERIFY = flag('verify'), SCHEMA_ONLY = flag('schema-only'), NO_FILES = flag('no-files'), FILES_ONLY = flag('files-only'), SKIP_EXISTING = flag('skip-existing')
 const ONLY = opt('tables') ? opt('tables').split(',').map((s) => s.trim()).filter(Boolean) : null
 const DB_PATH = opt('db') || process.env.PPSD_DB || join(__dirname, 'data', 'ppsd.sqlite')
 const FILES_DIR = join(__dirname, 'data', 'files')
@@ -157,17 +157,26 @@ async function migrateFiles() {
   const meta = new Map(sq.prepare('SELECT id, name, mime, size FROM files').all().map((r) => [String(r.id), r]))
   const names = readdirSync(FILES_DIR).filter((f) => statSync(join(FILES_DIR, f)).isFile())
   let uploaded = 0, skipped = 0, failed = 0
+  const tooBig = []
+  const fmtMB = (n) => (n / 1048576).toFixed(1) + ' MB'
   for (const f of names) {
     const m = meta.get(f)
     const path = `files/${f}`
     const buf = readFileSync(join(FILES_DIR, f))
+    if (SKIP_EXISTING && !DRY) { // ข้ามไฟล์ที่อยู่บน Storage แล้วและขนาดเท่ากัน (รันซ้ำเร็วขึ้น)
+      try {
+        const h = await fetch(`${base}/storage/v1/object/${BUCKET}/${path}`, { method: 'HEAD', headers: H })
+        if (h.ok && Number(h.headers.get('content-length') || -1) === buf.length) { skipped++; continue }
+      } catch { /* ลองอัปโหลดต่อ */ }
+    }
     if (!DRY) {
       const r = await fetch(`${base}/storage/v1/object/${BUCKET}/${path}`, { method: 'POST', headers: { ...H, 'Content-Type': m?.mime || 'application/octet-stream', 'x-upsert': 'true' }, body: buf })
       if (r.ok) uploaded++
       else {
         failed++
         const body = (await r.text()).slice(0, 160)
-        log(`  ✗ ${f}: HTTP ${r.status} ${body}`)
+        log(`  ✗ ${f} (${m?.name || '?'} · ${fmtMB(buf.length)}): HTTP ${r.status} ${body}`)
+        if (/EntityTooLarge|Payload too large|413/.test(body)) tooBig.push({ f, name: m?.name || '', size: buf.length })
         if (/signature verification failed|Unauthorized|AccessDenied|invalid.*jwt/i.test(body) && uploaded === 0) {
           log('  ✗ หยุดอัปโหลด: key ไม่ผ่านการตรวจสอบ — ก๊อป service_role key ใหม่จาก Project Settings → API ของโปรเจกต์นี้ แล้วรัน migrate-supabase.bat --files-only')
           failed += names.length - (uploaded + failed + skipped)
@@ -177,7 +186,12 @@ async function migrateFiles() {
     } else skipped++
     if ((uploaded + failed + skipped) % 50 === 0) log(`  … ไฟล์ ${uploaded + failed + skipped}/${names.length}`)
   }
-  log(`  ✓ ไฟล์แนบ: อัปโหลด ${uploaded} · ล้มเหลว ${failed} · ทั้งหมด ${names.length} (bucket ${BUCKET})`)
+  log(`  ✓ ไฟล์แนบ: อัปโหลด ${uploaded} · ข้าม(มีแล้ว) ${skipped} · ล้มเหลว ${failed} · ทั้งหมด ${names.length} (bucket ${BUCKET})`)
+  if (tooBig.length) {
+    log(`  ! ${tooBig.length} ไฟล์ใหญ่เกินเพดานต่อไฟล์ของ Supabase Storage (ค่าเริ่มต้น 50 MB):`)
+    tooBig.forEach((t) => log(`      - ไฟล์ #${t.f} ${t.name} ${fmtMB(t.size)}`))
+    log('    แก้: Supabase → Project Settings → Storage → "Upload file size limit" ตั้งให้สูงกว่าไฟล์ที่ใหญ่สุด (แพ็กเกจ Pro ตั้งได้ถึง 50 GB · Free สูงสุด 50 MB) แล้วรัน migrate-supabase.bat --files-only --skip-existing')
+  }
   return { uploaded, skipped, failed }
 }
 
@@ -195,6 +209,10 @@ async function migrateFiles() {
     const st = statSync(DB_PATH); log(`ไฟล์ต้นทางแก้ไขล่าสุด: ${st.mtime.toLocaleString('th-TH')} · ขนาด ${(st.size / 1048576).toFixed(1)} MB${existsSync(DB_PATH + '-wal') ? ` · WAL ${(statSync(DB_PATH + '-wal').size / 1024).toFixed(0)} KB (รวมอยู่ในการอ่านแล้ว)` : ''}`)
   } catch { /* ignore */ }
   if (DRY) {
+    if (existsSync(FILES_DIR)) {
+      const big = readdirSync(FILES_DIR).map((f) => ({ f, size: statSync(join(FILES_DIR, f)).size })).filter((x) => x.size > 50 * 1048576)
+      if (big.length) log(`\n[dry-run] ไฟล์แนบที่ใหญ่เกิน 50 MB (ต้องเพิ่มเพดานใน Supabase → Settings → Storage ก่อน): ${big.map((x) => `#${x.f} ${(x.size / 1048576).toFixed(1)} MB`).join(', ')}`)
+    }
     log('\n[dry-run] แผนโครงตาราง Postgres:')
     for (const d of descs) log(`\n-- ${d.table} (${d.rowCount} แถว)\n${createSql(d)}`)
     log('\n[dry-run] ไม่ได้เชื่อมต่อปลายทาง ไม่มีอะไรถูกเขียน')
