@@ -5821,6 +5821,110 @@ function pmsCompute(b) {
   return { kpi, comp, beh, kpi_score, comp_score, beh_score, raw, absent, leave, late, wo_overdue, penalty, total, grade: g.grade, bonus: g.bonus }
 }
 const pmsRow = (r) => r ? { ...r, kpi: jparse(r.kpi) || [], competency: jparse(r.competency) || [], behavior: jparse(r.behavior) || [], att: { absent: r.att_absent || 0, leave: r.att_leave || 0, late: r.att_late || 0, wo_overdue: r.att_wo_overdue || 0 } } : r
+// ----- ชุด KPI ตามตำแหน่ง: ตารางแบบฟอร์มประเมิน + ผูกกับตำแหน่ง/รายคน -----
+// (ต้องลงทะเบียนก่อน /pms/:id เพื่อไม่ให้ PUT /pms/position-sets ไปชน)
+const PMS_PART_MAX = { kpi: 70, competency: 20, behavior: 10 }
+const kpiSetRow = (r) => r ? { id: r.id, name: r.name, note: r.note || '', updated: r.updated || '', by: r.by || '', kpi: jparse(r.kpi) || [], competency: jparse(r.competency) || [], behavior: jparse(r.behavior) || [] } : null
+const kpiSetById = (id) => (id ? kpiSetRow(db.prepare('SELECT * FROM pms_kpi_sets WHERE id=?').get(id)) : null)
+// ชุด KPI ที่ใช้กับพนักงานคนนี้: ตั้งเฉพาะคน > ตามตำแหน่ง (employees.role) > ไม่มี
+function resolveKpiSet(emp) {
+  const own = kpiSetById(emp.kpi_set_id)
+  if (own) return { set: own, source: 'employee' }
+  const m = db.prepare('SELECT set_id FROM pms_position_sets WHERE position=?').get(String(emp.role || '').trim())
+  const bypos = kpiSetById(m?.set_id)
+  return bypos ? { set: bypos, source: 'position' } : { set: null, source: '' }
+}
+// ทำความสะอาด + ตรวจน้ำหนักรวม (KPI 70 · Competency 20 · Behavior 10)
+function cleanKpiSet(b) {
+  const num = (v) => Math.round((Number(v) || 0) * 100) / 100
+  const name = String(b.name || '').trim()
+  const kpi = (Array.isArray(b.kpi) ? b.kpi : []).filter((k) => String(k?.name || '').trim()).map((k) => ({ name: String(k.name).trim(), weight: num(k.weight), target: num(k.target) || 100 }))
+  const rate = (a) => (Array.isArray(a) ? a : []).filter((k) => String(k?.name || '').trim()).map((k) => ({ name: String(k.name).trim(), weight: num(k.weight) }))
+  const competency = rate(b.competency), behavior = rate(b.behavior)
+  if (!name) return { error: 'กรอกชื่อชุด KPI' }
+  if (!kpi.length) return { error: 'ต้องมี KPI อย่างน้อย 1 ข้อ' }
+  const sum = (a) => Math.round(a.reduce((s, x) => s + x.weight, 0) * 100) / 100
+  for (const [part, arr, label] of [['kpi', kpi, 'KPI'], ['competency', competency, 'Competency'], ['behavior', behavior, 'Behavior']])
+    if (sum(arr) !== PMS_PART_MAX[part]) return { error: `น้ำหนัก ${label} รวมต้องเท่ากับ ${PMS_PART_MAX[part]} (ตอนนี้ ${sum(arr)})` }
+  return { name, kpi, competency, behavior, note: String(b.note || '').trim() }
+}
+function kpiSetsPayload() {
+  const sets = db.prepare('SELECT * FROM pms_kpi_sets ORDER BY id').all().map(kpiSetRow)
+  const mapping = Object.fromEntries(db.prepare('SELECT position, set_id FROM pms_position_sets').all().map((r) => [r.position, r.set_id]))
+  const positions = db.prepare('SELECT name FROM positions ORDER BY id').all().map((r) => r.name)
+  // ตำแหน่งที่พนักงานใช้อยู่จริงแต่ไม่อยู่ในรายการตำแหน่ง → แสดงให้ผูกได้ด้วย
+  for (const { role } of db.prepare("SELECT DISTINCT TRIM(role) role FROM employees WHERE COALESCE(TRIM(role),'')!=''").all()) if (!positions.includes(role)) positions.push(role)
+  const empCount = Object.fromEntries(db.prepare("SELECT TRIM(role) role, COUNT(*) n FROM employees WHERE COALESCE(status,'')!='ลาออก' GROUP BY TRIM(role)").all().map((r) => [r.role, r.n]))
+  const overrides = db.prepare('SELECT code, name, kpi_set_id FROM employees WHERE kpi_set_id IS NOT NULL').all()
+  return { sets, mapping, positions, empCount, overrides }
+}
+api.get('/pms/kpi-sets', pmsOnly, (_req, res) => res.json(kpiSetsPayload()))
+api.post('/pms/kpi-sets', pmsOnly, (req, res) => {
+  const s = cleanKpiSet(req.body || {})
+  if (s.error) return res.status(400).json({ error: s.error })
+  if (db.prepare('SELECT id FROM pms_kpi_sets WHERE name=?').get(s.name)) return res.status(409).json({ error: `มีชุด KPI ชื่อ "${s.name}" อยู่แล้ว` })
+  db.prepare('INSERT INTO pms_kpi_sets (name,kpi,competency,behavior,note,updated,by) VALUES (?,?,?,?,?,?,?)')
+    .run(s.name, JSON.stringify(s.kpi), JSON.stringify(s.competency), JSON.stringify(s.behavior), s.note, nowTS(), req.user.name)
+  audit(req, 'เพิ่มชุด KPI', s.name)
+  res.status(201).json(kpiSetsPayload())
+})
+api.put('/pms/kpi-sets/:id', pmsOnly, (req, res) => {
+  const d = db.prepare('SELECT id FROM pms_kpi_sets WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบชุด KPI' })
+  const s = cleanKpiSet(req.body || {})
+  if (s.error) return res.status(400).json({ error: s.error })
+  if (db.prepare('SELECT id FROM pms_kpi_sets WHERE name=? AND id!=?').get(s.name, d.id)) return res.status(409).json({ error: `มีชุด KPI ชื่อ "${s.name}" อยู่แล้ว` })
+  db.prepare('UPDATE pms_kpi_sets SET name=?,kpi=?,competency=?,behavior=?,note=?,updated=?,by=? WHERE id=?')
+    .run(s.name, JSON.stringify(s.kpi), JSON.stringify(s.competency), JSON.stringify(s.behavior), s.note, nowTS(), req.user.name, d.id)
+  audit(req, 'แก้ไขชุด KPI', s.name)
+  res.json(kpiSetsPayload())
+})
+api.delete('/pms/kpi-sets/:id', pmsOnly, (req, res) => {
+  const d = db.prepare('SELECT * FROM pms_kpi_sets WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบชุด KPI' })
+  // ใบประเมินเก่าเก็บสำเนาหัวข้อไว้แล้ว ลบชุดได้ — แค่ถอดการผูกตำแหน่ง/รายคนออก
+  db.transaction(() => {
+    db.prepare('DELETE FROM pms_position_sets WHERE set_id=?').run(d.id)
+    db.prepare('UPDATE employees SET kpi_set_id=NULL WHERE kpi_set_id=?').run(d.id)
+    db.prepare('DELETE FROM pms_kpi_sets WHERE id=?').run(d.id)
+  })()
+  audit(req, 'ลบชุด KPI', d.name)
+  res.json(kpiSetsPayload())
+})
+// ผูกตำแหน่ง → ชุด KPI (set_id ว่าง = ถอด)
+api.put('/pms/position-sets', pmsOnly, (req, res) => {
+  const position = String(req.body?.position || '').trim()
+  const setId = Number(req.body?.set_id) || null
+  if (!position) return res.status(400).json({ error: 'ระบุตำแหน่ง' })
+  if (setId && !kpiSetById(setId)) return res.status(404).json({ error: 'ไม่พบชุด KPI' })
+  if (setId) db.prepare('INSERT INTO pms_position_sets (position, set_id) VALUES (?,?) ON CONFLICT(position) DO UPDATE SET set_id=excluded.set_id').run(position, setId)
+  else db.prepare('DELETE FROM pms_position_sets WHERE position=?').run(position)
+  audit(req, 'ผูกชุด KPI กับตำแหน่ง', `${position} → ${setId ? kpiSetById(setId).name : '(ไม่ผูก)'}`)
+  res.json(kpiSetsPayload())
+})
+// ข้อมูลหลักของพนักงานสำหรับหน้าประเมิน: ตำแหน่ง/แผนก/อายุงาน + ชุด KPI ที่ใช้ + ผลประเมินย้อนหลัง
+function pmsEmployeeInfo(code) {
+  const e = db.prepare('SELECT id,code,name,prefix,nickname,role,dept,start,status,pay_type,kpi_set_id FROM employees WHERE code=?').get(code)
+  if (!e) return null
+  const { set, source } = resolveKpiSet(e)
+  const history = db.prepare('SELECT id,no,month,total,grade,template FROM pms_reviews WHERE emp_code=? ORDER BY id DESC LIMIT 6').all(code)
+  return { code: e.code, name: e.name, prefix: e.prefix || '', nickname: e.nickname || '', position: e.role || '', dept: e.dept || '', start: e.start || '', status: e.status || '', pay_type: e.pay_type || '', kpi_set_id: e.kpi_set_id || null, kpi_set: set, kpi_source: source, history }
+}
+api.get('/pms/employee/:code', pmsOnly, (req, res) => {
+  const info = pmsEmployeeInfo(req.params.code)
+  if (!info) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  res.json(info)
+})
+// ตั้งชุด KPI เฉพาะคน (set_id ว่าง = กลับไปใช้ตามตำแหน่ง)
+api.put('/pms/employee/:code/kpi-set', pmsOnly, (req, res) => {
+  const e = db.prepare('SELECT id,name FROM employees WHERE code=?').get(req.params.code)
+  if (!e) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  const setId = Number(req.body?.set_id) || null
+  if (setId && !kpiSetById(setId)) return res.status(404).json({ error: 'ไม่พบชุด KPI' })
+  db.prepare('UPDATE employees SET kpi_set_id=? WHERE id=?').run(setId, e.id)
+  audit(req, 'ตั้งชุด KPI รายคน', `${e.name} → ${setId ? kpiSetById(setId).name : 'ตามตำแหน่ง'}`)
+  res.json(pmsEmployeeInfo(req.params.code))
+})
 api.get('/pms', pmsOnly, (req, res) => {
   const ec = req.query.emp_code
   const rows = ec ? db.prepare('SELECT * FROM pms_reviews WHERE emp_code=? ORDER BY id DESC').all(ec) : db.prepare('SELECT * FROM pms_reviews ORDER BY id DESC').all()
@@ -5829,15 +5933,15 @@ api.get('/pms', pmsOnly, (req, res) => {
 function savePms(id, b, req) {
   const c = pmsCompute(b)
   if (id) {
-    db.prepare(`UPDATE pms_reviews SET emp_code=?,emp_name=?,position=?,template=?,month=?,evaluator=?,kpi=?,competency=?,behavior=?,kpi_score=?,comp_score=?,beh_score=?,att_absent=?,att_leave=?,att_late=?,att_wo_overdue=?,penalty=?,raw_total=?,total=?,grade=?,bonus_pct=?,strengths=?,improve=?,plan=? WHERE id=?`)
-      .run(b.emp_code || '', b.emp_name || '', b.position || '', b.template || '', b.month || '', b.evaluator || req.user.name, JSON.stringify(c.kpi), JSON.stringify(c.comp), JSON.stringify(c.beh), c.kpi_score, c.comp_score, c.beh_score, c.absent, c.leave, c.late, c.wo_overdue, c.penalty, c.raw, c.total, c.grade, c.bonus, b.strengths || '', b.improve || '', b.plan || '', id)
+    db.prepare(`UPDATE pms_reviews SET emp_code=?,emp_name=?,position=?,template=?,month=?,evaluator=?,kpi=?,competency=?,behavior=?,kpi_score=?,comp_score=?,beh_score=?,att_absent=?,att_leave=?,att_late=?,att_wo_overdue=?,penalty=?,raw_total=?,total=?,grade=?,bonus_pct=?,strengths=?,improve=?,plan=?,kpi_set_id=? WHERE id=?`)
+      .run(b.emp_code || '', b.emp_name || '', b.position || '', b.template || '', b.month || '', b.evaluator || req.user.name, JSON.stringify(c.kpi), JSON.stringify(c.comp), JSON.stringify(c.beh), c.kpi_score, c.comp_score, c.beh_score, c.absent, c.leave, c.late, c.wo_overdue, c.penalty, c.raw, c.total, c.grade, c.bonus, b.strengths || '', b.improve || '', b.plan || '', Number(b.kpi_set_id) || null, id)
     return db.prepare('SELECT * FROM pms_reviews WHERE id=?').get(id)
   }
   const seq = db.prepare('SELECT COUNT(*) c FROM pms_reviews').get().c + 1
   const no = `PMS-${docYear()}-${String(seq).padStart(3, '0')}`
-  const info = db.prepare(`INSERT INTO pms_reviews (no,emp_code,emp_name,position,template,month,evaluator,kpi,competency,behavior,kpi_score,comp_score,beh_score,att_absent,att_leave,att_late,att_wo_overdue,penalty,raw_total,total,grade,bonus_pct,strengths,improve,plan,by,created)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(no, b.emp_code || '', b.emp_name || '', b.position || '', b.template || '', b.month || '', b.evaluator || req.user.name, JSON.stringify(c.kpi), JSON.stringify(c.comp), JSON.stringify(c.beh), c.kpi_score, c.comp_score, c.beh_score, c.absent, c.leave, c.late, c.wo_overdue, c.penalty, c.raw, c.total, c.grade, c.bonus, b.strengths || '', b.improve || '', b.plan || '', req.user.name, todayTH())
+  const info = db.prepare(`INSERT INTO pms_reviews (no,emp_code,emp_name,position,template,month,evaluator,kpi,competency,behavior,kpi_score,comp_score,beh_score,att_absent,att_leave,att_late,att_wo_overdue,penalty,raw_total,total,grade,bonus_pct,strengths,improve,plan,by,created,kpi_set_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(no, b.emp_code || '', b.emp_name || '', b.position || '', b.template || '', b.month || '', b.evaluator || req.user.name, JSON.stringify(c.kpi), JSON.stringify(c.comp), JSON.stringify(c.beh), c.kpi_score, c.comp_score, c.beh_score, c.absent, c.leave, c.late, c.wo_overdue, c.penalty, c.raw, c.total, c.grade, c.bonus, b.strengths || '', b.improve || '', b.plan || '', req.user.name, todayTH(), Number(b.kpi_set_id) || null)
   return db.prepare('SELECT * FROM pms_reviews WHERE id=?').get(info.lastInsertRowid)
 }
 api.post('/pms', pmsOnly, (req, res) => {
@@ -6296,7 +6400,7 @@ api.get('/notifications', (req, res) => {
   const out = []
   try { out.push(...crmNotifications(req.user), ...serviceNotifications(req.user)) } catch (e) { console.error('crmNotifications:', e.message) } // Lead เงียบ / นัดติดตามลูกค้า / เคสเกิน SLA / คะแนนต่ำ
   const todayISO = new Date().toISOString().slice(0, 10)
-  const woDone = (s) => s === 'เสร็จ' || s === 'ตรวจผ่าน'
+  const woDone = (s) => s === 'ส่งงาน' || s === 'เสร็จ' || s === 'ตรวจผ่าน' // ส่งงานแล้ว = ไม่นับเลยกำหนด (รอผู้สั่งตรวจรับ)
   // ใบสั่งงานที่สั่งให้ฉัน (หรือถูกไล่ระดับมาถึงฉัน) แต่ยังไม่กดรับทราบ → เด้งเตือนให้รับทราบ
   for (const r of db.prepare("SELECT * FROM work_orders WHERE ack=0 AND status NOT IN ('ยกเลิก') AND (executor=? OR esc_name=?)").all(req.user.name, req.user.name)) {
     if (r.urgent) {
@@ -6320,7 +6424,8 @@ api.get('/notifications', (req, res) => {
     if (r.ack && r.status === 'รับทราบ')
       out.push({ kind: 'wo-ack', icon: 'info', title: `${r.ack_by || r.executor || 'ผู้รับงาน'} รับทราบใบสั่งงาน ${r.no} แล้ว`, sub: `${r.project || r.scope || ''}${r.ack_date ? ' · ' + r.ack_date : ''}`, page: 'workorders' })
     // ผู้รับงานทำเสร็จ ส่งงานแล้ว → ผู้สั่งต้องตรวจรับ
-    if (r.status === 'เสร็จ')
+    // (สถานะ "ส่งงาน" = รอผู้สั่งกดรับงาน · กดรับแล้วจะเป็น "เสร็จ" → แจ้งเตือนหายเอง)
+    if (r.status === 'ส่งงาน')
       out.push({ kind: 'wo-submit', icon: 'warn', title: `ใบสั่งงาน ${r.no} ส่งงานแล้ว — รอตรวจรับ`, sub: `${r.executor || ''} · ${r.project || r.scope || ''}`, page: 'workorders' })
   }
   // เลยกำหนดส่งงาน (ยังไม่เสร็จ/ยังไม่ตรวจผ่าน) → เตือนทั้งผู้รับงานและผู้สั่งงาน
@@ -6329,7 +6434,11 @@ api.get('/notifications', (req, res) => {
       out.push({ kind: 'wo-overdue', icon: 'danger', title: `ใบสั่งงาน ${r.no} เลยกำหนดส่งงาน`, sub: `${r.project || r.scope || ''} · ครบ ${r.due_date} · ${r.executor || '-'}`, page: 'workorders' })
   }
   // งวดลูกค้า: "เลยกำหนด" คิดสดจาก due_iso (รวมของเก่าที่มาร์กสถานะไว้ด้วย)
+  // เห็นเฉพาะการเงิน/ผู้บริหาร (ทุกบ้าน) หรือผู้จัดการบ้านหลังนั้น — ไม่ส่งให้ทุกคน
+  const seeAllInst = canSeeSalary(req.user) || mgr
+  const myHouses = seeAllInst ? null : new Set(db.prepare("SELECT code FROM houses WHERE manager=?").all(req.user.name).map((h) => h.code))
   for (const r of db.prepare("SELECT * FROM installments WHERE side != 'contractor' AND status != 'เก็บแล้ว'").all()) {
+    if (myHouses && !myHouses.has(r.house_code)) continue
     const over = r.status === 'เลยกำหนด' || (r.due_iso && r.due_iso < todayISO && (r.paid || 0) < (r.amount || 0))
     if (over) out.push({ kind: 'overdue', icon: 'danger', title: `งวด ${r.no} เลยกำหนด`, sub: `${r.house_code} · ฿${r.amount.toLocaleString('en-US')}${r.due ? ' · ครบ ' + r.due : ''}`, page: 'installments' })
     else if (r.status === 'รอเก็บเงิน') out.push({ kind: 'collect', icon: 'warn', title: `รอเก็บงวด ${r.no}`, sub: `${r.house_code} · ครบ ${r.due}`, page: 'installments' })
