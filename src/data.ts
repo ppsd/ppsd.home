@@ -114,7 +114,7 @@ export interface NavDef {
   label: string
   icon: string
   badge?: string
-  gate?: 'finance' | 'manager' | 'hr' | 'pms' | 'ceo' // finance=admin/บัญชี/ผจก · manager=ผจก · hr=ผจก/บัญชี/บุคคล · pms=ผู้ดูแลระบบ/CEO · ceo=เฉพาะ CEO
+  gate?: 'finance' | 'manager' | 'hr' | 'pms' | 'ceo' | 'vault' // finance=admin/บัญชี/ผจก · manager=ผจก · hr=ผจก/บัญชี/บุคคล · pms=ผู้ดูแลระบบ/CEO · ceo=เฉพาะ CEO · vault=CEO+รายชื่อที่ CEO กำหนด
 }
 
 // ---- สิทธิ์หน้าประเมินผล KPI และหน้าผู้บริหาร (กฎเดียวกับ server: isCeo / isPmsUser ใน server/index.js) ----
@@ -152,6 +152,7 @@ export const nav: NavDef[] = [
   { id: 'accounting', label: 'บัญชีแยกประเภท (GL)', icon: 'M4 4h16v16H4z M4 9h16 M9 9v11 M14 13h3 M14 16h3', gate: 'finance' },
   { id: 'audit', label: 'ตรวจสอบ', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z M9 12l2 2 4-4', gate: 'manager' },
   { id: 'users', label: 'ผู้ใช้งาน', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z' },
+  { id: 'vault', label: 'คลังรหัสผ่านบริษัท', icon: 'M5 11h14v10H5z M8 11V7a4 4 0 018 0v4 M12 15v3', gate: 'vault' },
 ]
 
 // ---- สิทธิ์รายโมดูล: แอดมินปิดบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (สอดคล้อง MODULE_PATHS ฝั่ง server) ----
@@ -174,7 +175,7 @@ export const navGroups: NavGroup[] = [
   { id: 'procure', label: 'จัดซื้อ', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01', items: ['procurement', 'matprices', 'stock'] },
   { id: 'finance', label: 'บัญชี / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', items: ['installments', 'sales', 'expenses', 'costing', 'accounting', 'express', 'docreg', 'audit'] },
   { id: 'central', label: 'ส่วนกลางบริษัท', icon: 'M16 19c0-2.8-2.2-5-5-5s-5 2.2-5 5 M11 11a3 3 0 100-6 3 3 0 000 6 M18 13.2a3 3 0 10-2.4-5.4', items: ['hr', 'time', 'pms', 'customers', 'users'] },
-  { id: 'other', label: 'อื่นๆ', icon: 'M12 15a3 3 0 100-6 3 3 0 000 6z M4 12h1 M19 12h1 M12 4v1 M12 19v1', items: ['reports'] },
+  { id: 'other', label: 'อื่นๆ', icon: 'M12 15a3 3 0 100-6 3 3 0 000 6z M4 12h1 M19 12h1 M12 4v1 M12 19v1', items: ['reports', 'vault'] },
 ]
 
 export const titles: Record<string, [string, string]> = {
@@ -203,6 +204,7 @@ export const titles: Record<string, [string, string]> = {
   hr: ['บุคลากร', 'บุคลากร / HR'],
   pms: ['บุคลากร', 'ประเมินผลรายเดือน (KPI / PMS)'],
   reports: ['วิเคราะห์', 'รายงาน + กราฟ'],
+  vault: ['อื่นๆ', 'คลังรหัสผ่านบริษัท (เข้ารหัสที่เบราว์เซอร์)'],
   costing: ['การเงิน', 'ต้นทุน / ประเมินราคา'],
   accounting: ['การเงิน', 'บัญชีแยกประเภท (ระบบบัญชีคู่)'],
   audit: ['ควบคุมภายใน', 'ตรวจสอบ'],

@@ -33,6 +33,7 @@ import QcSummary from './components/QcSummary'
 import CostFinance from './components/CostFinance'
 import Accounting from './components/Accounting'
 import Pms from './components/Pms'
+import Vault from './components/Vault'
 import CeoVoice from './components/CeoVoice'
 import Login from './Login'
 import { useApp } from './store'
@@ -44,7 +45,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users' | 'stock'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -54,7 +55,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
-  ceovoice: 'ceovoice', accounting: 'accounting',
+  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault',
 }
 
 export default function App() {
@@ -312,6 +313,7 @@ export default function App() {
           {page === 'gantt' && <Gantt />}
           {page === 'sales' && <Sales />}
           {page === 'reports' && <Reports />}
+          {page === 'vault' && <Vault />}
           {page === 'audit' && <AuditCenter />}
           {page === 'workorders' && <WorkOrders />}
           {page === 'sitedocs' && <SiteDocs />}

@@ -661,6 +661,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS doc_register (
 )`)
 ensureColumn('doc_register', 'expiry', 'TEXT') // วันหมดอายุ (ใบอนุญาต/เอกสารมีอายุ) — ISO YYYY-MM-DD
 ensureColumn('users', 'must_change_pin', 'INTEGER') // 1 = ถูกรีเซ็ต PIN ต้องตั้งใหม่ตอนเข้าครั้งแรก
+// คลังรหัสผ่านบริษัท — เซิร์ฟเวอร์เก็บเฉพาะข้อความที่เข้ารหัสแล้ว (enc) · เข้ารหัส/ถอดรหัสที่เบราว์เซอร์ด้วย master passphrase ที่ระบบไม่รู้
+db.exec(`CREATE TABLE IF NOT EXISTS vault_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT, category TEXT, url TEXT, enc TEXT,
+  created TEXT, by TEXT, updated TEXT, updated_by TEXT
+)`)
 // คำขอรีเซ็ต PIN (ลืม PIN) — ผู้ใช้ส่งคำขอ แอดมินอนุมัติ/รีเซ็ตให้
 db.exec(`CREATE TABLE IF NOT EXISTS pin_reset_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

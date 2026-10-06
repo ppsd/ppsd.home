@@ -311,6 +311,56 @@ test('สิทธิ์ KPI: ผู้ดูแลระบบคนอื่�
   assert.equal((await GET('/qc/summary')).status, 200, 'CEO (thawat) เข้าสรุป QC ได้')
 })
 
+test('คลังรหัสผ่าน: CEO ตั้งค่า/เพิ่มรายการ · เซิร์ฟเวอร์เก็บแค่ ciphertext · ผู้ที่ไม่ได้รับสิทธิ์โดน 403 · กำหนดสิทธิ์แล้วเข้าได้ · rekey ต้องครบทุกรายการ', async () => {
+  const adminToken = token
+  const meta0 = await GET('/vault/meta')
+  assert.equal(meta0.status, 200); assert.equal(meta0.data.initialized, false); assert.equal(meta0.data.is_ceo, true)
+  assert.ok(Array.isArray(meta0.data.users), 'CEO ต้องเห็นรายชื่อผู้ใช้')
+  // ยังไม่ตั้ง passphrase → เพิ่มรายการไม่ได้
+  assert.equal((await POST('/vault/entries', { title: 'x', enc: 'a.b' })).status, 400)
+  assert.equal((await POST('/vault/setup', { salt: 'c2FsdA==', check: 'aXY=.Y2hlY2s=' })).status, 200)
+  assert.equal((await POST('/vault/setup', { salt: 'x', check: 'y' })).status, 400, 'ตั้งซ้ำไม่ได้')
+  const e1 = await POST('/vault/entries', { title: 'ธนาคารทดสอบ', category: 'ธนาคาร / แอปธนาคาร', url: 'https://bank.example', enc: 'aXYx.Y2lwaGVyMQ==' })
+  assert.equal(e1.status, 201, JSON.stringify(e1.data))
+  assert.ok(!('password' in e1.data) && e1.data.enc === 'aXYx.Y2lwaGVyMQ==', 'ต้องเก็บแค่ ciphertext')
+  const list = await GET('/vault/entries')
+  assert.equal(list.status, 200); assert.ok(list.data.some((r) => r.id === e1.data.id))
+  // ผู้ใช้ที่ไม่อยู่ในรายชื่อ (แม้เป็น admin) เข้าไม่ได้
+  token = (await POST('/login', { username: 'admin2', pin: '2222' })).data.token
+  assert.equal((await GET('/vault/meta')).status, 403)
+  assert.equal((await GET('/vault/entries')).status, 403)
+  assert.equal((await GET('/me')).data.vaultAllowed, false)
+  // CEO ให้สิทธิ์ → เข้าได้ แต่ตั้งค่า/ส่งออกไม่ได้
+  token = adminToken
+  const a2 = (await GET('/users')).data.find((u) => u.username === 'admin2')
+  assert.equal((await PUT('/vault/users', { ids: [a2.id] })).status, 200)
+  token = (await POST('/login', { username: 'admin2', pin: '2222' })).data.token
+  assert.equal((await GET('/me')).data.vaultAllowed, true)
+  const m2 = await GET('/vault/meta')
+  assert.equal(m2.status, 200); assert.equal(m2.data.is_ceo, false); assert.equal(m2.data.users, undefined, 'คนอื่นไม่เห็นรายชื่อผู้ใช้')
+  assert.equal((await GET('/vault/entries')).status, 200)
+  assert.equal((await PUT('/vault/users', { ids: [] })).status, 403)
+  assert.equal((await GET('/vault/export')).status, 403)
+  assert.equal((await POST('/vault/rekey', { salt: 's', check: 'c', entries: [] })).status, 403)
+  // แก้ไข + log การดู
+  assert.equal((await PUT(`/vault/entries/${e1.data.id}`, { enc: 'aXYy.Y2lwaGVyMg==' })).status, 200)
+  assert.equal((await POST(`/vault/entries/${e1.data.id}/log`, { action: 'copy' })).status, 200)
+  token = adminToken
+  // rekey ต้องส่งครบทุกรายการ
+  assert.equal((await POST('/vault/rekey', { salt: 'bmV3', check: 'aXY=.bmV3', entries: [] })).status, 400)
+  const rk = await POST('/vault/rekey', { salt: 'bmV3', check: 'aXY=.bmV3', entries: [{ id: e1.data.id, enc: 'aXYz.Y2lwaGVyMw==' }] })
+  assert.equal(rk.status, 200, JSON.stringify(rk.data))
+  const after = (await GET('/vault/entries')).data.find((r) => r.id === e1.data.id)
+  assert.equal(after.enc, 'aXYz.Y2lwaGVyMw==')
+  assert.equal((await GET('/vault/meta')).data.salt, 'bmV3')
+  const ex = await GET('/vault/export')
+  assert.equal(ex.status, 200); assert.equal(ex.data.kind, 'ppsd-vault'); assert.equal(ex.data.entries.length, 1)
+  assert.equal((await DEL(`/vault/entries/${e1.data.id}`)).status, 200)
+  const au = await GET('/audit')
+  const acts = (Array.isArray(au.data) ? au.data : au.data.rows || []).map((a) => a.action)
+  assert.ok(acts.includes('คัดลอกรหัสผ่าน') && acts.includes('เพิ่มรายการคลังรหัสผ่าน'), 'ต้องลง audit')
+})
+
 test('เอกสารราชการ: ไฟล์ สปส. และ ภงด.1ก ดาวน์โหลดได้', async () => {
   const sso = await fetch(`${BASE}/payroll/sso-file?period=${period}`, { headers: { Authorization: 'Bearer ' + token } })
   assert.equal(sso.status, 200)

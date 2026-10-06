@@ -336,7 +336,7 @@ function backfillSignatures() {
 }
 api.get('/me', requireAuth, (req, res) => {
   const row = db.prepare('SELECT must_change_pin FROM users WHERE id = ?').get(req.user.id)
-  res.json({ ...req.user, signature: sigOfUser(req.user.id), isManager: isManager(req.user), mustChangePin: !!row?.must_change_pin, lineLinked: !!db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid })
+  res.json({ ...req.user, signature: sigOfUser(req.user.id), isManager: isManager(req.user), vaultAllowed: isVaultUser(req.user), mustChangePin: !!row?.must_change_pin, lineLinked: !!db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid })
 })
 // ลืม PIN — ผู้ใช้ที่ล็อกอินไม่ได้ส่งคำขอรีเซ็ต (สาธารณะ) แอดมินยืนยันตัวตนแล้วรีเซ็ตให้
 // คืนข้อความกลาง ๆ เสมอ (ไม่บอกว่ามี username นี้จริงไหม เพื่อกันการเดาชื่อผู้ใช้)
@@ -2222,6 +2222,100 @@ function ceoOnly(req, res, next) {
   if (isCeo(req.user)) return next()
   res.status(403).json({ error: 'หน้านี้เข้าได้เฉพาะผู้บริหารที่ได้รับสิทธิ์เท่านั้น' })
 }
+
+// ===== คลังรหัสผ่านบริษัท =====
+// เซิร์ฟเวอร์เก็บเฉพาะ ciphertext (AES-GCM เข้ารหัสที่เบราว์เซอร์ด้วย master passphrase ที่ CEO ตั้ง — ระบบไม่เคยเห็น passphrase/รหัสจริง)
+// สิทธิ์: CEO + รายชื่อผู้ใช้ที่ CEO กำหนด (settings.vault_users) · ทุกการเปิด/ดู/คัดลอก/แก้ ลง audit (เฉพาะชื่อรายการ)
+const vaultUserIds = () => { try { const a = JSON.parse(getSetting('vault_users', '[]')); return Array.isArray(a) ? a.map(Number) : [] } catch { return [] } }
+const isVaultUser = (u) => !!u && (isCeo(u) || vaultUserIds().includes(Number(u.id)))
+function vaultOnly(req, res, next) {
+  if (isVaultUser(req.user)) return next()
+  res.status(403).json({ error: 'คลังรหัสผ่านเข้าได้เฉพาะ CEO และผู้ที่ CEO กำหนดสิทธิ์เท่านั้น' })
+}
+const VAULT_COLS = 'id,title,category,url,enc,created,by,updated,updated_by'
+const vaultInitialized = () => !!getSetting('vault_salt', '')
+api.get('/vault/meta', vaultOnly, (req, res) => {
+  const ceo = isCeo(req.user)
+  const ids = vaultUserIds()
+  res.json({
+    initialized: vaultInitialized(), salt: getSetting('vault_salt', ''), check: getSetting('vault_check', ''), is_ceo: ceo,
+    users: ceo ? db.prepare("SELECT id,name,username,role,position FROM users WHERE status='ใช้งาน' ORDER BY name").all().map((u) => ({ ...u, allowed: ids.includes(u.id), ceo: isCeo(u) })) : undefined,
+  })
+})
+// ตั้ง master passphrase ครั้งแรก: เบราว์เซอร์ส่ง salt + ค่าตรวจสอบที่เข้ารหัสแล้ว (ใช้เช็คว่า passphrase ถูกตอนปลดล็อก)
+api.post('/vault/setup', ceoOnly, (req, res) => {
+  if (vaultInitialized()) return res.status(400).json({ error: 'คลังถูกตั้งค่าไว้แล้ว — ใช้ "เปลี่ยนรหัสผ่านหลัก" แทน' })
+  const { salt, check } = req.body || {}
+  if (!salt || !check) return res.status(400).json({ error: 'ข้อมูลตั้งค่าไม่ครบ' })
+  setSetting('vault_salt', String(salt)); setSetting('vault_check', String(check))
+  audit(req, 'ตั้งค่าคลังรหัสผ่าน', 'ตั้งรหัสผ่านหลักครั้งแรก')
+  res.json({ ok: true })
+})
+// เปลี่ยน master passphrase: เบราว์เซอร์ถอดรหัสทุกรายการด้วยรหัสเดิม แล้วเข้ารหัสใหม่ส่งมาครบทุกรายการในครั้งเดียว (atomic)
+api.post('/vault/rekey', ceoOnly, (req, res) => {
+  const { salt, check, entries } = req.body || {}
+  if (!salt || !check || !Array.isArray(entries)) return res.status(400).json({ error: 'ข้อมูลไม่ครบ' })
+  const ids = db.prepare('SELECT id FROM vault_entries').all().map((r) => r.id)
+  const got = new Set(entries.map((e) => Number(e.id)))
+  const missing = ids.filter((id) => !got.has(id))
+  if (missing.length) return res.status(400).json({ error: `รายการไม่ครบ (ขาด ${missing.length} รายการ) — โหลดหน้าใหม่แล้วลองอีกครั้ง` })
+  db.transaction(() => {
+    for (const e of entries) db.prepare('UPDATE vault_entries SET enc=? WHERE id=?').run(String(e.enc || ''), Number(e.id))
+    setSetting('vault_salt', String(salt)); setSetting('vault_check', String(check))
+  })()
+  audit(req, 'เปลี่ยนรหัสผ่านหลักคลังรหัสผ่าน', `${entries.length} รายการ`)
+  res.json({ ok: true })
+})
+api.put('/vault/users', ceoOnly, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0) : []
+  setSetting('vault_users', JSON.stringify(ids))
+  const names = ids.map((id) => db.prepare('SELECT name FROM users WHERE id=?').get(id)?.name).filter(Boolean)
+  audit(req, 'กำหนดผู้มีสิทธิ์คลังรหัสผ่าน', names.join(', ') || '(ไม่มี)')
+  res.json({ ok: true, ids })
+})
+api.get('/vault/entries', vaultOnly, (req, res) => {
+  audit(req, 'เปิดคลังรหัสผ่าน', '')
+  res.json(db.prepare(`SELECT ${VAULT_COLS} FROM vault_entries ORDER BY category, title`).all())
+})
+const vaultBody = (b) => ({ title: String(b.title || '').trim(), category: String(b.category || 'อื่นๆ').trim(), url: String(b.url || '').trim(), enc: String(b.enc || '') })
+api.post('/vault/entries', vaultOnly, (req, res) => {
+  if (!vaultInitialized()) return res.status(400).json({ error: 'ยังไม่ได้ตั้งรหัสผ่านหลักของคลัง' })
+  const v = vaultBody(req.body || {})
+  if (!v.title) return res.status(400).json({ error: 'กรุณากรอกชื่อระบบ/บริการ' })
+  if (!v.enc) return res.status(400).json({ error: 'ไม่มีข้อมูลที่เข้ารหัส' })
+  const info = db.prepare('INSERT INTO vault_entries (title,category,url,enc,created,by,updated,updated_by) VALUES (?,?,?,?,?,?,?,?)')
+    .run(v.title, v.category, v.url, v.enc, todayTH(), req.user.name, todayTH(), req.user.name)
+  audit(req, 'เพิ่มรายการคลังรหัสผ่าน', v.title)
+  res.status(201).json(db.prepare(`SELECT ${VAULT_COLS} FROM vault_entries WHERE id=?`).get(info.lastInsertRowid))
+})
+api.put('/vault/entries/:id', vaultOnly, (req, res) => {
+  const row = db.prepare('SELECT * FROM vault_entries WHERE id=?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  const v = vaultBody({ ...row, ...(req.body || {}) })
+  if (!v.title) return res.status(400).json({ error: 'กรุณากรอกชื่อระบบ/บริการ' })
+  db.prepare('UPDATE vault_entries SET title=?,category=?,url=?,enc=?,updated=?,updated_by=? WHERE id=?').run(v.title, v.category, v.url, v.enc, todayTH(), req.user.name, row.id)
+  audit(req, 'แก้ไขรายการคลังรหัสผ่าน', v.title)
+  res.json(db.prepare(`SELECT ${VAULT_COLS} FROM vault_entries WHERE id=?`).get(row.id))
+})
+api.delete('/vault/entries/:id', vaultOnly, (req, res) => {
+  const row = db.prepare('SELECT * FROM vault_entries WHERE id=?').get(req.params.id)
+  if (row) { db.prepare('DELETE FROM vault_entries WHERE id=?').run(row.id); audit(req, 'ลบรายการคลังรหัสผ่าน', row.title) }
+  res.json({ ok: true })
+})
+// บันทึกการดู/คัดลอก (เบราว์เซอร์แจ้งมา — เซิร์ฟเวอร์ไม่รู้ค่าที่ถอดได้)
+api.post('/vault/entries/:id/log', vaultOnly, (req, res) => {
+  const row = db.prepare('SELECT title FROM vault_entries WHERE id=?').get(req.params.id)
+  const kind = req.body?.action === 'copy' ? 'คัดลอกรหัสผ่าน' : 'ดูรหัสผ่าน'
+  if (row) audit(req, kind, row.title)
+  res.json({ ok: true })
+})
+// ส่งออกสำรองคลัง (ยังเข้ารหัสอยู่ — เปิดได้ด้วย passphrase เท่านั้น)
+api.get('/vault/export', ceoOnly, (req, res) => {
+  const out = { kind: 'ppsd-vault', version: 1, exported: nowTS(), salt: getSetting('vault_salt', ''), check: getSetting('vault_check', ''), entries: db.prepare(`SELECT ${VAULT_COLS} FROM vault_entries ORDER BY id`).all() }
+  audit(req, 'ส่งออกสำรองคลังรหัสผ่าน', `${out.entries.length} รายการ`)
+  res.setHeader('Content-Disposition', `attachment; filename="ppsd-vault-${todayISO()}.json"`)
+  res.json(out)
+})
 
 // ---------- houses + installments ----------
 // per-category value breakdown (ตัวบ้าน / โรงจอดรถ / ถนน-รั้ว) for each side
