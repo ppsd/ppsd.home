@@ -252,7 +252,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
         setEmpPinShown('แก้ไขข้อมูลพนักงานเรียบร้อย (ภาษี/ประกันสังคมคำนวณใหม่ให้แล้ว)')
       } else {
         const r = await app.addEmployee(body)
-        setEmpPinShown(`เพิ่มพนักงานสำเร็จ · PIN ลงเวลาของพนักงานคนนี้คือ ${r.pin} (โปรดแจ้งพนักงาน)`)
+        setEmpPinShown(`เพิ่มพนักงานสำเร็จ · สร้างบัญชีเข้าระบบให้แล้ว ชื่อผู้ใช้ ${r.username || '-'} · PIN (ใช้ทั้งลงเวลาและเข้าเว็บ) คือ ${r.pin} (โปรดแจ้งพนักงาน · สิทธิ์เริ่มต้น หน้างาน ปรับได้ที่เมนูผู้ใช้งาน)`)
       }
       setAddingEmp(false); setEditId(null); setEmp(blankEmp); setEmpSig('')
     } catch (e) { setEmpErr((e as Error).message) }

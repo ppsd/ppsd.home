@@ -3010,6 +3010,50 @@ function leaveQuota(startDate) {
   return { personal: 3, vacation: years >= 1 ? 6 : 3, tenureYears: years }
 }
 
+// ===== พนักงาน 1 คน = บัญชีเข้าระบบ 1 บัญชี =====
+// username = รหัสพนักงาน (EMP-012 → emp012) · สิทธิ์เริ่มต้น site · PIN เดียวกับตอกบัตร · ตำแหน่งยึด HR เป็นแหล่งเดียว (users.position เว้นว่างเมื่อผูกแล้ว)
+const usernameOfCode = (code) => String(code || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+// บัญชีที่ระบบสร้างให้อัตโนมัติ (username = รหัสพนักงาน) — แอดมิน "เพิ่มผู้ใช้" ให้พนักงานคนนั้นได้ โดยระบบจะเอาบัญชีอัตโนมัตินี้มาใช้แทนการสร้างซ้ำ
+const isAutoAccount = (u, emp) => !!u && !!emp && (u.username === usernameOfCode(emp.code) || u.username === usernameOfCode(emp.code) + '-' + emp.id)
+// ข้อมูลผู้ใช้สำหรับส่งกลับ: ตำแหน่งยึด HR เมื่อผูกพนักงาน
+function userOut(id) {
+  const u = db.prepare('SELECT id,name,username,role,status,last_active,deny_mods,position,line_uid FROM users WHERE id=?').get(id)
+  if (!u) return null
+  const emp = db.prepare('SELECT code, role FROM employees WHERE user_id=? ORDER BY id LIMIT 1').get(u.id)
+  return { ...u, position: emp ? (emp.role || '') : (u.position || ''), position_from_hr: !!emp, employee_code: emp?.code || '' }
+}
+function ensureUserForEmployee(emp, { status = 'ใช้งาน', by = 'ระบบ' } = {}) {
+  if (!emp) return null
+  let u = emp.user_id ? db.prepare('SELECT * FROM users WHERE id=?').get(emp.user_id) : null
+  let username = usernameOfCode(emp.code) || ('emp' + emp.id)
+  if (!u) u = db.prepare('SELECT * FROM users WHERE username=?').get(username)
+  if (u && db.prepare('SELECT id FROM employees WHERE user_id=? AND id<>?').get(u.id, emp.id)) { username = username + '-' + emp.id; u = null } // ชื่อผู้ใช้นี้ถูกคนอื่นใช้ → ต่อท้ายให้ไม่ซ้ำ
+  if (!u) {
+    const info = db.prepare("INSERT INTO users (name,username,pin,role,status,last_active,position) VALUES (?,?,?,?,?,?,'')")
+      .run(emp.name, username, emp.pin || hashPin(String(Math.floor(1000 + Math.random() * 9000))), 'site', status, 'เพิ่งสร้าง')
+    u = db.prepare('SELECT * FROM users WHERE id=?').get(info.lastInsertRowid)
+    try { db.prepare('INSERT INTO audit (ts,user,action,detail) VALUES (?,?,?,?)').run(new Date().toISOString(), by, 'สร้างบัญชีให้พนักงานอัตโนมัติ', `${emp.code} ${emp.name} → ${username} (${status})`) } catch { /* ignore */ }
+  }
+  db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(u.id, emp.id)
+  if (u.position) { // ตำแหน่งย้ายไปอยู่ที่ HR ที่เดียว
+    if (!emp.role) db.prepare('UPDATE employees SET role=? WHERE id=?').run(u.position, emp.id)
+    db.prepare("UPDATE users SET position='' WHERE id=?").run(u.id)
+  }
+  return u
+}
+// รันตอนเริ่มระบบ: พนักงานที่ยังไม่มีบัญชี → สร้างแบบ "ปิดใช้งาน" (แอดมินเปิดเฉพาะคนที่ต้องเข้าเว็บ) · บัญชีที่ผูกแล้วให้ตำแหน่งยึด HR
+function syncEmployeeAccounts() {
+  let created = 0
+  const tx = db.transaction(() => {
+    for (const e of db.prepare('SELECT * FROM employees ORDER BY id').all()) {
+      const had = e.user_id && db.prepare('SELECT 1 FROM users WHERE id=?').get(e.user_id)
+      ensureUserForEmployee(e, { status: 'ปิดใช้งาน' })
+      if (!had) created++
+    }
+  })
+  tx()
+  return created
+}
 api.post('/employees', requireSalary, (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อพนักงาน' })
@@ -3043,8 +3087,10 @@ api.post('/employees', requireSalary, (req, res) => {
       b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : 0,
       Number(b.work_days) || 0, b.backup_code || '', b.prefix || '', b.nickname || '', noSso)
   audit(req, 'เพิ่มพนักงาน', b.name)
+  const created = db.prepare('SELECT * FROM employees WHERE id=?').get(info.lastInsertRowid)
+  const acct = ensureUserForEmployee(created, { status: 'ใช้งาน', by: req.user.name }) // บัญชีเข้าระบบให้ทันที (PIN เดียวกับตอกบัตร)
   const out = db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(info.lastInsertRowid)
-  res.status(201).json({ ...out, pin: pinPlain }) // return the PIN once so it can be shown to the user
+  res.status(201).json({ ...out, pin: pinPlain, username: acct?.username || '' }) // return the PIN once so it can be shown to the user
 })
 // edit an employee (recomputes sso/tax from the new base)
 api.put('/employees/:id', requireSalary, (req, res) => {
@@ -3064,7 +3110,16 @@ api.put('/employees/:id', requireSalary, (req, res) => {
   const retentionOpening = b.retention_opening != null && b.retention_opening !== '' ? Number(b.retention_opening) : e.retention_opening
   const workDays = b.work_days != null && b.work_days !== '' ? Number(b.work_days) : e.work_days
   const backupCode = b.backup_code != null ? b.backup_code : e.backup_code
-  if (e.user_id && b.role !== undefined && String(b.role || '') !== String(e.role || '')) db.prepare('UPDATE users SET position=? WHERE id=?').run(String(b.role || ''), e.user_id) // ตำแหน่งในบัญชีตาม HR
+  if (e.user_id) {
+    // บัญชีที่ผูก: ชื่อตาม HR · ตำแหน่งยึด HR (เว้น users.position ให้ว่าง) · ลาออก = ปิดบัญชี / กลับมา = เปิด
+    db.prepare("UPDATE users SET position='' WHERE id=?").run(e.user_id)
+    if (b.name !== undefined && String(b.name).trim() && String(b.name).trim() !== e.name) db.prepare('UPDATE users SET name=? WHERE id=?').run(String(b.name).trim(), e.user_id)
+    const nStatus = b.status ?? e.status
+    if (nStatus !== e.status) {
+      if (nStatus === 'ลาออก') db.prepare("UPDATE users SET status='ปิดใช้งาน' WHERE id=?").run(e.user_id)
+      else if (e.status === 'ลาออก') db.prepare("UPDATE users SET status='ใช้งาน' WHERE id=?").run(e.user_id)
+    }
+  }
   db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=?, prefix=?, nickname=?, no_sso=? WHERE id=?')
     .run(b.name ?? e.name, b.role ?? e.role, b.dept ?? e.dept, b.status ?? e.status, payType, base, sso, tax, spouse, children,
       b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, b.prefix ?? e.prefix, b.nickname ?? e.nickname, noSso, e.id)
@@ -3083,13 +3138,29 @@ api.put('/employees/:id/signature', requireSalary, (req, res) => {
 api.put('/employees/:id/pin', requireSalary, (req, res) => {
   const pin = String(req.body?.pin || '').trim()
   if (!/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'PIN ต้องเป็นตัวเลข 4 หลัก' })
-  db.prepare('UPDATE employees SET pin=? WHERE id=?').run(hashPin(pin), req.params.id)
+  const h = hashPin(pin)
+  db.prepare('UPDATE employees SET pin=? WHERE id=?').run(h, req.params.id)
+  const uid = db.prepare('SELECT user_id FROM employees WHERE id=?').get(req.params.id)?.user_id
+  if (uid) db.prepare('UPDATE users SET pin=?, must_change_pin=0 WHERE id=?').run(h, uid) // PIN เข้าเว็บ = PIN ตอกบัตร
   res.json({ ok: true })
 })
 // remove an employee (e.g. resigned) — they drop out of payroll automatically
 api.delete('/employees/:id', requireSalary, (req, res) => {
+  const e = db.prepare('SELECT * FROM employees WHERE id=?').get(req.params.id)
+  if (e?.user_id) {
+    const u = db.prepare('SELECT * FROM users WHERE id=?').get(e.user_id)
+    if (u && u.id !== req.user.id && !(u.role === 'admin' && db.prepare("SELECT COUNT(*) c FROM users WHERE role='admin' AND status='ใช้งาน' AND id<>?").get(u.id).c === 0))
+      db.prepare("UPDATE users SET status='ปิดใช้งาน' WHERE id=?").run(u.id) // บัญชีปิดตาม (ไม่ลบ เพื่อคง audit/ประวัติ)
+  }
   db.prepare('DELETE FROM employees WHERE id=?').run(req.params.id)
+  if (e) audit(req, 'ลบพนักงาน', `${e.code} ${e.name}`)
   res.json({ ok: true })
+})
+// ซิงก์บัญชีให้พนักงานทุกคน (admin) — สร้างบัญชี "ปิดใช้งาน" ให้คนที่ยังไม่มี
+api.post('/employees/sync-accounts', adminOnly, (req, res) => {
+  const created = syncEmployeeAccounts()
+  audit(req, 'ซิงก์บัญชีพนักงาน', `สร้างใหม่ ${created} บัญชี`)
+  res.json({ ok: true, created })
 })
 // ล้างพนักงานซ้ำ: รวมรายการที่ชื่อซ้ำกัน (จับคู่โดยไม่สน "คำนำหน้า" ที่ติดในชื่อ) ให้เหลือชื่อละ 1
 // เก็บรายการที่ข้อมูลครบสุด + ย้ายรายการอ้างอิงมาให้ + แยกคำนำหน้าออกจากชื่อไปใส่ช่อง "คำนำหน้า"
@@ -4607,7 +4678,10 @@ api.get('/payables', financeOnly, (_req, res) => {
 
 // ---------- users (admin only) ----------
 api.get('/users', adminOnly, (_req, res) =>
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods,line_uid FROM users ORDER BY id').all().map((u) => ({ ...u, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })(), employee_code: db.prepare('SELECT code FROM employees WHERE user_id=?').get(u.id)?.code || '' })))
+  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods,line_uid FROM users ORDER BY id').all().map((u) => {
+    const emp = db.prepare('SELECT code, role FROM employees WHERE user_id=? ORDER BY id LIMIT 1').get(u.id)
+    return { ...u, position: emp ? (emp.role || '') : (u.position || ''), position_from_hr: !!emp, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })(), employee_code: emp?.code || '' }
+  }))
 )
 // upload/replace a signature image (admin can set anyone's; users can set their own)
 api.put('/users/:id/signature', (req, res) => {
@@ -4628,8 +4702,20 @@ api.post('/users', adminOnly, (req, res) => {
   if (!name || !username) return res.status(400).json({ error: 'กรุณากรอกชื่อและชื่อผู้ใช้' })
   const linkEmp = employee_code ? db.prepare('SELECT * FROM employees WHERE code=?').get(String(employee_code)) : null
   if (employee_code && !linkEmp) return res.status(404).json({ error: 'ไม่พบพนักงานรหัส ' + employee_code })
-  if (linkEmp?.user_id && db.prepare('SELECT id FROM users WHERE id=?').get(linkEmp.user_id)) return res.status(409).json({ error: `พนักงาน ${linkEmp.name} ผูกกับบัญชีอื่นอยู่แล้ว` })
   const hashed = hashPin(String(pin || '0000'))
+  // พนักงานเป้าหมาย (ระบุรหัส หรือจับจากชื่อ) ถ้ามีบัญชีอัตโนมัติอยู่แล้ว → เอาบัญชีนั้นมาใช้ (ตั้งชื่อผู้ใช้/PIN/สิทธิ์ตามที่กรอก) แทนการสร้างซ้ำ
+  const targetEmp = linkEmp || findEmployeeByName(name)
+  const linkedUser = targetEmp?.user_id ? db.prepare('SELECT * FROM users WHERE id=?').get(targetEmp.user_id) : null
+  if (linkedUser && !isAutoAccount(linkedUser, targetEmp)) {
+    if (linkEmp) return res.status(409).json({ error: `พนักงาน ${linkEmp.name} ผูกกับบัญชีอื่นอยู่แล้ว` })
+  } else if (linkedUser) {
+    if (db.prepare('SELECT id FROM users WHERE username=? AND id<>?').get(username, linkedUser.id)) return res.status(400).json({ error: 'ชื่อผู้ใช้นี้มีอยู่แล้ว' })
+    db.prepare("UPDATE users SET name=?, username=?, pin=?, role=?, status='ใช้งาน', position='', must_change_pin=0 WHERE id=?").run(targetEmp.name, username, hashed, role || 'viewer', linkedUser.id)
+    if (position && !targetEmp.role) db.prepare('UPDATE employees SET role=? WHERE id=?').run(position, targetEmp.id)
+    db.prepare('UPDATE employees SET pin=? WHERE id=?').run(hashed, targetEmp.id)
+    audit(req, 'เพิ่มผู้ใช้', `${targetEmp.name} (ใช้บัญชีอัตโนมัติของพนักงาน ${targetEmp.code} → ${username})`)
+    return res.status(201).json({ ...userOut(linkedUser.id), employeeCreated: false })
+  }
   let userId
   try {
     const info = db
@@ -4641,12 +4727,13 @@ api.post('/users', adminOnly, (req, res) => {
   }
   // เชื่อมกับ HR: สร้างพนักงานให้อัตโนมัติ (ถ้ายังไม่มีชื่อนี้) เพื่อไม่ต้องกรอกซ้ำ — วันลา/เงินเดือนไปเติมทีหลัง
   let employeeCreated = false
-  const existingEmp = linkEmp || findEmployeeByName(name) // จับชื่อแบบไม่สนคำนำหน้า/ช่องว่าง (นาย สมพล = สมพล)
+  const existingEmp = targetEmp && !linkedUser ? targetEmp : null // พนักงานที่ยังไม่มีบัญชี → ผูกบัญชีใหม่นี้
   if (existingEmp) {
-    // มีพนักงานชื่อนี้อยู่แล้ว → ผูกบัญชี (PIN จะถูก sync ให้ตรงกับผู้ใช้ด้านล่าง) · ชื่อบัญชีใช้ตามทะเบียนพนักงาน
+    // มีพนักงานชื่อนี้อยู่แล้ว → ผูกบัญชี (PIN จะถูก sync ให้ตรงกับผู้ใช้ด้านล่าง) · ชื่อบัญชีใช้ตามทะเบียนพนักงาน · ตำแหน่งเก็บที่ HR
     db.prepare('UPDATE employees SET user_id=? WHERE id=?').run(userId, existingEmp.id)
     if (existingEmp.name !== name) db.prepare('UPDATE users SET name=? WHERE id=?').run(existingEmp.name, userId)
-    if (!position && existingEmp.role) db.prepare('UPDATE users SET position=? WHERE id=?').run(existingEmp.role, userId) // ตำแหน่งตาม HR
+    if (position && !existingEmp.role) db.prepare('UPDATE employees SET role=? WHERE id=?').run(position, existingEmp.id)
+    db.prepare("UPDATE users SET position='' WHERE id=?").run(userId)
   } else {
     const maxNum = db.prepare("SELECT code FROM employees WHERE code LIKE 'EMP-%'").all()
       .reduce((m, r) => Math.max(m, parseInt(String(r.code).slice(4), 10) || 0), 0)
@@ -4660,8 +4747,7 @@ api.post('/users', adminOnly, (req, res) => {
   }
   syncEmployeePin({ id: userId, name }, hashed) // PIN ลงเวลา = PIN ผู้ใช้
   audit(req, 'เพิ่มผู้ใช้', name + (employeeCreated ? ' (สร้างพนักงาน HR ให้อัตโนมัติ)' : existingEmp ? ` (ผูกกับพนักงาน ${existingEmp.code})` : ''))
-  const out = db.prepare('SELECT id,name,username,role,status,last_active,position FROM users WHERE id=?').get(userId)
-  res.status(201).json({ ...out, employeeCreated, employee_code: existingEmp?.code || db.prepare('SELECT code FROM employees WHERE user_id=?').get(userId)?.code || '' })
+  res.status(201).json({ ...userOut(userId), employeeCreated })
 })
 api.put('/users/:id', adminOnly, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
@@ -4672,9 +4758,13 @@ api.put('/users/:id', adminOnly, (req, res) => {
     const code = String(employee_code || '')
     const emp = code ? db.prepare('SELECT * FROM employees WHERE code=?').get(code) : null
     if (code && !emp) return res.status(404).json({ error: 'ไม่พบพนักงานรหัส ' + code })
-    if (emp?.user_id && emp.user_id !== u.id && db.prepare('SELECT id FROM users WHERE id=?').get(emp.user_id)) return res.status(409).json({ error: `พนักงาน ${emp.name} ผูกกับบัญชีอื่นอยู่แล้ว` })
+    if (emp?.user_id && emp.user_id !== u.id) {
+      const other = db.prepare('SELECT * FROM users WHERE id=?').get(emp.user_id)
+      if (other && !isAutoAccount(other, emp)) return res.status(409).json({ error: `พนักงาน ${emp.name} ผูกกับบัญชีอื่นอยู่แล้ว` })
+      if (other) db.prepare("UPDATE users SET status='ปิดใช้งาน' WHERE id=?").run(other.id) // บัญชีอัตโนมัติเดิมของพนักงานคนนั้น → ปิดไว้ (ย้ายมาใช้บัญชีนี้แทน)
+    }
     db.prepare('UPDATE employees SET user_id=NULL WHERE user_id=?').run(u.id)
-    if (emp) { db.prepare('UPDATE employees SET user_id=?, pin=? WHERE id=?').run(u.id, u.pin, emp.id); if (name === undefined) db.prepare('UPDATE users SET name=? WHERE id=?').run(emp.name, u.id); if (!u.position && emp.role && position === undefined) db.prepare('UPDATE users SET position=? WHERE id=?').run(emp.role, u.id) }
+    if (emp) { db.prepare('UPDATE employees SET user_id=?, pin=? WHERE id=?').run(u.id, u.pin, emp.id); if (name === undefined) db.prepare('UPDATE users SET name=? WHERE id=?').run(emp.name, u.id); if (!emp.role && u.position) db.prepare('UPDATE employees SET role=? WHERE id=?').run(u.position, emp.id); db.prepare("UPDATE users SET position='' WHERE id=?").run(u.id) }
     audit(req, 'ผูกผู้ใช้กับพนักงาน', `${u.name} → ${emp ? emp.code + ' ' + emp.name : 'ปลดผูก'}`)
   }
   const newRole = ['admin', 'accounting', 'site', 'viewer'].includes(role) ? role : u.role
@@ -4686,7 +4776,11 @@ api.put('/users/:id', adminOnly, (req, res) => {
     if (!nName) return res.status(400).json({ error: 'กรุณากรอกชื่อ' })
     if (!nUser) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ใช้' })
     if (nUser !== u.username && db.prepare('SELECT id FROM users WHERE username=? AND id<>?').get(nUser, u.id)) return res.status(409).json({ error: `ชื่อผู้ใช้ "${nUser}" มีคนใช้แล้ว` })
-    db.prepare('UPDATE users SET name=?, username=?, position=? WHERE id=?').run(nName, nUser, position !== undefined ? String(position || '').trim() : (u.position || ''), u.id)
+    const linkedEmp = db.prepare('SELECT id, role FROM employees WHERE user_id=?').get(u.id)
+    // บัญชีที่ผูกพนักงาน: ตำแหน่งเก็บที่ HR ที่เดียว (users.position ว่าง) · บัญชีลอย: เก็บที่ users.position
+    const nPos = position !== undefined ? String(position || '').trim() : (u.position || '')
+    db.prepare('UPDATE users SET name=?, username=?, position=? WHERE id=?').run(nName, nUser, linkedEmp ? '' : nPos, u.id)
+    if (linkedEmp && position !== undefined && nPos !== String(linkedEmp.role || '')) db.prepare('UPDATE employees SET role=? WHERE id=?').run(nPos, linkedEmp.id)
     // พนักงานที่ผูกบัญชีนี้ → เปลี่ยนชื่อตาม (ให้ชื่อในใบสั่งงาน/ลงเวลาตรงกัน)
     if (nName !== u.name) db.prepare('UPDATE employees SET name=? WHERE user_id=?').run(nName, u.id)
     audit(req, 'แก้ไขข้อมูลผู้ใช้', `${u.name} → ${nName} (${nUser}${position !== undefined ? ' · ' + position : ''})`)
@@ -4703,7 +4797,7 @@ api.put('/users/:id', adminOnly, (req, res) => {
     db.prepare('UPDATE users SET deny_mods=? WHERE id=?').run(JSON.stringify(clean), u.id)
     audit(req, 'ตั้งสิทธิ์รายโมดูล', `${u.name}: ปิด [${clean.join(', ') || 'ไม่มี'}]`)
   }
-  res.json({ ...db.prepare('SELECT id,name,username,role,status,last_active,deny_mods,position FROM users WHERE id=?').get(u.id), employee_code: db.prepare('SELECT code FROM employees WHERE user_id=?').get(u.id)?.code || '' })
+  res.json(userOut(u.id))
 })
 // ลบผู้ใช้ (แอดมิน) — ห้ามลบตัวเอง / ห้ามลบผู้ดูแลคนสุดท้าย · เอกสารเก่ายังเก็บชื่อไว้เป็นข้อความ ไม่หาย
 api.delete('/users/:id', adminOnly, (req, res) => {
@@ -6905,6 +6999,7 @@ api.post('/tunnel/register-webhook', adminOnly, async (req, res) => {
   res.status(ok ? 200 : 400).json(tunnelInfo())
 })
 if (getSetting('tunnel_auto', '0') === '1' && !process.env.PPSD_NO_TUNNEL) tunnel.start().catch((e) => console.error('tunnel start:', e.message))
+try { const n = syncEmployeeAccounts(); if (n) console.log(`[accounts] สร้างบัญชี (ปิดใช้งาน) ให้พนักงานที่ยังไม่มี ${n} คน`) } catch (e) { console.error('sync accounts:', e.message) }
 
 api.post('/backup-mirror/run', adminOnly, async (req, res) => {
   if (!getSetting('backup_mirror_dir', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้งโฟลเดอร์สำรองนอกเครื่อง' })

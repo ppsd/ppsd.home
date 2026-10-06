@@ -31,6 +31,7 @@ async function api(method, path, body) {
   return { status: res.status, data }
 }
 const GET = (p) => api('GET', p)
+const usernameOf = (code) => String(code || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const POST = (p, b = {}) => api('POST', p, b)
 const PUT = (p, b = {}) => api('PUT', p, b)
 const DEL = (p) => api('DELETE', p)
@@ -373,6 +374,47 @@ test('คลังรหัสผ่าน: CEO ตั้งค่า/เพิ�
   const au = await GET('/audit')
   const acts = (Array.isArray(au.data) ? au.data : au.data.rows || []).map((a) => a.action)
   assert.ok(acts.includes('คัดลอกรหัสผ่าน') && acts.includes('เพิ่มรายการคลังรหัสผ่าน'), 'ต้องลง audit')
+})
+
+test('พนักงาน = บัญชี: เพิ่มพนักงานได้บัญชี site อัตโนมัติ (username=รหัส, PIN เดียวกัน) · ตำแหน่งยึด HR · ลาออกปิดบัญชี · รีเซ็ต PIN ซิงก์ · sync สร้างบัญชีปิดใช้งาน', async () => {
+  const adminToken = token
+  const e = await POST('/employees', { name: 'ช่างอัตโนมัติ ทดสอบ', role: 'ช่าง', base: 15000, pin: '4321' })
+  assert.equal(e.status, 201, JSON.stringify(e.data))
+  assert.equal(e.data.username, usernameOf(e.data.code), 'username ต้องมาจากรหัสพนักงาน')
+  const u = (await GET('/users')).data.find((x) => x.username === e.data.username)
+  assert.ok(u, 'ต้องมีบัญชีถูกสร้าง'); assert.equal(u.role, 'site'); assert.equal(u.status, 'ใช้งาน'); assert.equal(u.employee_code, e.data.code); assert.equal(u.position, 'ช่าง'); assert.equal(u.position_from_hr, true)
+  // ล็อกอินด้วย PIN เดียวกับตอกบัตร
+  const lg = await POST('/login', { username: e.data.username, pin: '4321' })
+  assert.equal(lg.status, 200, JSON.stringify(lg.data))
+  token = lg.data.token
+  assert.equal((await GET('/me')).data.position, 'ช่าง')
+  token = adminToken
+  // แก้ตำแหน่งใน HR → สิทธิ์เปลี่ยนทันที (CEO = ผู้บริหาร)
+  assert.equal((await PUT(`/employees/${e.data.id}`, { role: 'CEO' })).status, 200)
+  token = lg.data.token
+  const me2 = (await GET('/me')).data
+  assert.equal(me2.position, 'CEO'); assert.equal(me2.isExec, true, 'ตำแหน่ง CEO จาก HR ต้องให้สิทธิ์ผู้บริหารทันที')
+  token = adminToken
+  // แก้ตำแหน่งจากหน้าผู้ใช้งาน → ไปเก็บที่ HR
+  assert.equal((await PUT(`/users/${u.id}`, { name: u.name, username: u.username, position: 'โฟร์แมน' })).status, 200)
+  assert.equal((await GET('/employees')).data.find((x) => x.id === e.data.id).role, 'โฟร์แมน')
+  assert.equal((await GET('/users')).data.find((x) => x.id === u.id).position, 'โฟร์แมน')
+  // รีเซ็ต PIN ใน HR → เข้าเว็บด้วย PIN ใหม่
+  assert.equal((await PUT(`/employees/${e.data.id}/pin`, { pin: '8765' })).status, 200)
+  assert.equal((await POST('/login', { username: e.data.username, pin: '4321' })).status, 401)
+  assert.equal((await POST('/login', { username: e.data.username, pin: '8765' })).status, 200)
+  // ลาออก → บัญชีปิด · กลับมา → เปิด
+  assert.equal((await PUT(`/employees/${e.data.id}`, { status: 'ลาออก' })).status, 200)
+  assert.equal((await GET('/users')).data.find((x) => x.id === u.id).status, 'ปิดใช้งาน')
+  assert.equal((await POST('/login', { username: e.data.username, pin: '8765' })).status, 403)
+  assert.equal((await PUT(`/employees/${e.data.id}`, { status: 'ประจำ' })).status, 200)
+  assert.equal((await GET('/users')).data.find((x) => x.id === u.id).status, 'ใช้งาน')
+  // ลบบัญชีทิ้งแล้ว sync → สร้างใหม่แบบปิดใช้งาน
+  assert.equal((await DEL(`/users/${u.id}`)).status, 200)
+  const sy = await POST('/employees/sync-accounts')
+  assert.equal(sy.status, 200); assert.ok(sy.data.created >= 1)
+  const u2 = (await GET('/users')).data.find((x) => x.employee_code === e.data.code)
+  assert.ok(u2, 'sync ต้องสร้างบัญชีให้'); assert.equal(u2.status, 'ปิดใช้งาน'); assert.equal(u2.role, 'site')
 })
 
 test('เอกสารราชการ: ไฟล์ สปส. และ ภงด.1ก ดาวน์โหลดได้', async () => {
