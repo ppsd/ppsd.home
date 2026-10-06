@@ -10,7 +10,7 @@ REM  ตัวเลือก (พิมพ์ต่อท้ายชื่อ�
 REM    migrate-supabase.bat --dry-run     ดูแผน/จำนวนแถว ไม่เขียนอะไร
 REM    migrate-supabase.bat --verify      เทียบจำนวนแถว SQLite กับ Supabase
 REM    migrate-supabase.bat               ย้ายทุกตาราง + ไฟล์แนบ (ลบตารางชื่อเดียวกันใน Supabase แล้วสร้างใหม่ — รันซ้ำได้)
-REM    migrate-supabase.bat --no-files    เฉพาะตาราง   |   --files-only   เฉพาะไฟล์แนบ
+REM    migrate-supabase.bat --no-files    เฉพาะตาราง   |   --files-only   เฉพาะไฟล์แนบ   |   --files-only --skip-existing   อัปโหลดเฉพาะไฟล์ที่ยังไม่ขึ้น
 REM  ระบบยังใช้ SQLite ตามปกติ การย้ายนี้ไม่แตะข้อมูลในเครื่อง
 REM ============================================================
 
