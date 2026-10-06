@@ -6296,7 +6296,7 @@ api.get('/notifications', (req, res) => {
   const out = []
   try { out.push(...crmNotifications(req.user), ...serviceNotifications(req.user)) } catch (e) { console.error('crmNotifications:', e.message) } // Lead เงียบ / นัดติดตามลูกค้า / เคสเกิน SLA / คะแนนต่ำ
   const todayISO = new Date().toISOString().slice(0, 10)
-  const woDone = (s) => s === 'เสร็จ' || s === 'ตรวจผ่าน'
+  const woDone = (s) => s === 'ส่งงาน' || s === 'เสร็จ' || s === 'ตรวจผ่าน' // ส่งงานแล้ว = ไม่นับเลยกำหนด (รอผู้สั่งตรวจรับ)
   // ใบสั่งงานที่สั่งให้ฉัน (หรือถูกไล่ระดับมาถึงฉัน) แต่ยังไม่กดรับทราบ → เด้งเตือนให้รับทราบ
   for (const r of db.prepare("SELECT * FROM work_orders WHERE ack=0 AND status NOT IN ('ยกเลิก') AND (executor=? OR esc_name=?)").all(req.user.name, req.user.name)) {
     if (r.urgent) {
@@ -6320,7 +6320,8 @@ api.get('/notifications', (req, res) => {
     if (r.ack && r.status === 'รับทราบ')
       out.push({ kind: 'wo-ack', icon: 'info', title: `${r.ack_by || r.executor || 'ผู้รับงาน'} รับทราบใบสั่งงาน ${r.no} แล้ว`, sub: `${r.project || r.scope || ''}${r.ack_date ? ' · ' + r.ack_date : ''}`, page: 'workorders' })
     // ผู้รับงานทำเสร็จ ส่งงานแล้ว → ผู้สั่งต้องตรวจรับ
-    if (r.status === 'เสร็จ')
+    // (สถานะ "ส่งงาน" = รอผู้สั่งกดรับงาน · กดรับแล้วจะเป็น "เสร็จ" → แจ้งเตือนหายเอง)
+    if (r.status === 'ส่งงาน')
       out.push({ kind: 'wo-submit', icon: 'warn', title: `ใบสั่งงาน ${r.no} ส่งงานแล้ว — รอตรวจรับ`, sub: `${r.executor || ''} · ${r.project || r.scope || ''}`, page: 'workorders' })
   }
   // เลยกำหนดส่งงาน (ยังไม่เสร็จ/ยังไม่ตรวจผ่าน) → เตือนทั้งผู้รับงานและผู้สั่งงาน
@@ -6329,7 +6330,11 @@ api.get('/notifications', (req, res) => {
       out.push({ kind: 'wo-overdue', icon: 'danger', title: `ใบสั่งงาน ${r.no} เลยกำหนดส่งงาน`, sub: `${r.project || r.scope || ''} · ครบ ${r.due_date} · ${r.executor || '-'}`, page: 'workorders' })
   }
   // งวดลูกค้า: "เลยกำหนด" คิดสดจาก due_iso (รวมของเก่าที่มาร์กสถานะไว้ด้วย)
+  // เห็นเฉพาะการเงิน/ผู้บริหาร (ทุกบ้าน) หรือผู้จัดการบ้านหลังนั้น — ไม่ส่งให้ทุกคน
+  const seeAllInst = canSeeSalary(req.user) || mgr
+  const myHouses = seeAllInst ? null : new Set(db.prepare("SELECT code FROM houses WHERE manager=?").all(req.user.name).map((h) => h.code))
   for (const r of db.prepare("SELECT * FROM installments WHERE side != 'contractor' AND status != 'เก็บแล้ว'").all()) {
+    if (myHouses && !myHouses.has(r.house_code)) continue
     const over = r.status === 'เลยกำหนด' || (r.due_iso && r.due_iso < todayISO && (r.paid || 0) < (r.amount || 0))
     if (over) out.push({ kind: 'overdue', icon: 'danger', title: `งวด ${r.no} เลยกำหนด`, sub: `${r.house_code} · ฿${r.amount.toLocaleString('en-US')}${r.due ? ' · ครบ ' + r.due : ''}`, page: 'installments' })
     else if (r.status === 'รอเก็บเงิน') out.push({ kind: 'collect', icon: 'warn', title: `รอเก็บงวด ${r.no}`, sub: `${r.house_code} · ครบ ${r.due}`, page: 'installments' })
