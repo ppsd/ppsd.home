@@ -4,6 +4,7 @@ import { baht } from '../../data'
 import { exportXlsx, ExportButton } from '../../exportCsv'
 import { company } from '../../erpData'
 import PettyCash from './PettyCash'
+import { KeepAlive } from '../shared/ModalShell'
 
 // ระบบบัญชีคู่ (Double-entry / General Ledger) — เฟส 1
 // งบการเงิน · งบทดลอง · สมุดรายวัน · แยกประเภท · ผังบัญชี
@@ -41,6 +42,9 @@ interface JournalIssue { id: number; source: string; source_id: string; ref: str
 
 export default function Accounting() {
   const [tab, setTab] = useState('statements')
+  // แท็บเงินสดย่อย/ค่าน้ำมัน: เปิดแล้วเก็บไว้เบื้องหลัง — ฟอร์มที่ย่อค้างไว้ไม่หายตอนสลับแท็บ
+  const [seenFunds, setSeenFunds] = useState<string[]>([])
+  useEffect(() => { if ((tab === 'petty' || tab === 'fuel') && !seenFunds.includes(tab)) setSeenFunds((s) => [...s, tab]) }, [tab, seenFunds])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [msg, setMsg] = useState('')
   const [rebuilding, setRebuilding] = useState(false)
@@ -96,8 +100,9 @@ export default function Accounting() {
       {tab === 'projects' && <ProjectPnl />}
       {tab === 'aging' && <AgingReport />}
       {tab === 'reconcile' && <Reconcile />}
-      {tab === 'petty' && <PettyCash key="petty" fund="petty" />}
-      {tab === 'fuel' && <PettyCash key="fuel" fund="fuel" />}
+      {(['petty', 'fuel'] as const).map((f) => (tab === f || seenFunds.includes(f)) && (
+        <KeepAlive key={f} active={tab === f} onShow={() => setTab(f)}><PettyCash fund={f} /></KeepAlive>
+      ))}
       {tab === 'trial' && <TrialBalance />}
       {tab === 'journal' && <Journal accounts={accounts} />}
       {tab === 'gl' && <GeneralLedger accounts={accounts} />}

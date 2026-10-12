@@ -3,7 +3,7 @@ import { useApp } from '../../store'
 import type { ApiMaterialPrice } from '../../store'
 import { api } from '../../api'
 import LaborRates from './LaborRates'
-import ModalShell from '../shared/ModalShell'
+import ModalShell, { KeepAlive } from '../shared/ModalShell'
 
 // ราคากลางวัสดุ — อ้างอิงจากประวัติสั่งซื้อจริง ใช้เตือนราคาแพงตอนทำ PR/PO
 const money = (n: number) => (n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
@@ -38,6 +38,9 @@ export default function MaterialPrices() {
   const list = app.data.materialPrices || []
   const canEdit = app.user?.role === 'admin' || app.user?.role === 'accounting'
   const [tab, setTab] = useState<'material' | 'labor'>('material')
+  // แท็บค่าแรง: เปิดแล้วเก็บไว้เบื้องหลัง — ฟอร์มค่าแรงที่ย่อค้างไว้ไม่หายตอนสลับไปแท็บวัสดุ
+  const [laborSeen, setLaborSeen] = useState(false)
+  if (tab === 'labor' && !laborSeen) setLaborSeen(true)
   const [q, setQ] = useState('')
   const [conf, setConf] = useState<'all' | 'สูง' | 'กลาง' | 'ต่ำ'>('all')
   const [busy, setBusy] = useState(false)
@@ -124,6 +127,8 @@ export default function MaterialPrices() {
     <MaterialPriceFormModal editing={editing} form={form} setForm={setForm} err={err} busy={busy} save={save} closeForm={closeForm} />
   )
 
+  const laborKeep = laborSeen && (<div style={{ maxWidth: 1180 }}><KeepAlive active={tab === 'labor'} onShow={() => setTab('labor')}><LaborRates /></KeepAlive></div>)
+
   if (tab === 'labor') {
     return (
       <>
@@ -135,9 +140,9 @@ export default function MaterialPrices() {
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{tabBtn('material', 'วัสดุ')}{tabBtn('labor', 'ค่าแรงช่าง')}</div>
         </div>
-        <LaborRates />
       </div>
       {formModal}
+      {laborKeep}
       </>
     )
   }
@@ -232,6 +237,7 @@ export default function MaterialPrices() {
       <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 8 }}>แสดง {rows.length} จาก {list.length} รายการ · ราคากลาง = ราคาเฉลี่ยถ่วงน้ำหนักตามปริมาณที่ซื้อจริง</div>
     </div>
     {formModal}
+    {laborKeep}
     </>
   )
 }

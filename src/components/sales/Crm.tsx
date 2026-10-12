@@ -3,7 +3,7 @@ import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp, useLiveRefresh } from '../../store'
 import Pager from '../shared/Pager'
-import ModalShell from '../shared/ModalShell'
+import ModalShell, { KeepAlive } from '../shared/ModalShell'
 
 // ===== CRM: ลูกค้า 360 · Lead/Pipeline · รายงาน CRM =====
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12, textAlign: 'left' }
@@ -34,20 +34,30 @@ const CHANNELS = ['โทรศัพท์', 'LINE', 'นัดพบ', 'ไซ
 export default function Crm() {
   const { user } = useApp()
   const [tab, setTab] = useState<'customers' | 'leads' | 'cases' | 'nps' | 'auto' | 'report'>('customers')
-  const isMgr = !!user && (user.role === 'admin' || user.role === 'accounting' || (user as { isManager?: boolean }).isManager)
+  const [seen, setSeen] = useState<string[]>([])
+  if (!seen.includes(tab)) setSeen([...seen, tab])
+  const isMgr = !!user &&(user.role === 'admin' || user.role === 'accounting' || (user as { isManager?: boolean }).isManager)
   const tabs = [{ id: 'customers', label: '👤 ลูกค้า (360°)' }, { id: 'leads', label: '🎯 Lead / Pipeline' }, { id: 'cases', label: '🛠 เคสบริการ / แจ้งซ่อม' }, ...(isMgr ? [{ id: 'nps', label: '⭐ NPS / บอกต่อ' }, { id: 'auto', label: '💬 LINE ลูกค้า & อัตโนมัติ' }, { id: 'report', label: '📊 รายงาน CRM' }] : [])] as { id: typeof tab; label: string }[]
   return (
     <div style={{ maxWidth: 1360, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} style={{ ...btn(tab === t.id ? '#30506A' : '#fff', tab === t.id ? '#fff' : '#30506A', '1px solid #D2DAE1') }}>{t.label}</button>)}
       </div>
-      {tab === 'customers' && <CustomersTab />}
-      {tab === 'leads' && <LeadsTab />}
-      {tab === 'cases' && <CasesTab />}
-      {tab === 'nps' && <NpsTab />}
-      {tab === 'auto' && <AutoTab />}
-      {tab === 'report' && <ReportTab />}
+      {/* แท็บที่เปิดแล้วเก็บไว้เบื้องหลัง — ฟอร์ม/modal ที่กรอกค้างไว้ไม่หายตอนสลับแท็บ */}
+      {([['customers', <CustomersTab />], ['leads', <LeadsTab />], ['cases', <CasesTab />], ['nps', <NpsTab />], ['auto', <AutoTab />], ['report', <ReportTab />]] as const)
+        .filter(([id]) => id === tab || seen.includes(id))
+        .map(([id, el]) => <KeepAlive key={id} active={id === tab} onShow={() => setTab(id)}>{el}</KeepAlive>)}
     </div>
+  )
+}
+
+// ช่องกรอกใน modal: ชื่อกำกับด้านบน (* = ต้องกรอก) · full = กว้างเต็มแถว
+function Fld({ label, req, full, children }: { label: string; req?: boolean; full?: boolean; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#3C4750', gridColumn: full ? '1 / -1' : undefined }}>
+      <span>{label}{req && <span style={{ color: '#C24036' }}> *</span>}</span>
+      {children}
+    </label>
   )
 }
 
@@ -309,24 +319,24 @@ function LeadsTab() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, color: '#5C6770' }}>Lead ทั้งหมด <b className="num" style={{ color: '#1C2730' }}>{leads.length}</b>{stale.length ? <span style={{ color: '#C24036', marginLeft: 8 }}>⚠ เงียบเกิน {meta.stale_days} วัน {stale.length} ราย</span> : null}</span>
         <button onClick={() => setView(view === 'kanban' ? 'list' : 'kanban')} style={ghost}>{view === 'kanban' ? '☰ ตาราง' : '▦ Kanban'}</button>
-        <button onClick={() => setAdding((v) => !v)} style={{ ...btn(), marginLeft: 'auto' }}>+ เพิ่ม Lead</button>
+        <button onClick={() => { setErr(''); setAdding(true) }} style={{ ...btn(), marginLeft: 'auto' }}>+ เพิ่ม Lead</button>
       </div>
       {adding && (
-        <div style={{ ...card, padding: 14 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
-            <input style={field} placeholder="ชื่อ *" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-            <input style={field} placeholder="เบอร์โทร" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
-            <input style={field} placeholder="LINE ID" value={f.line} onChange={(e) => setF({ ...f, line: e.target.value })} />
-            <select style={field} value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })}>{meta.sources.map((s) => <option key={s}>{s}</option>)}</select>
-            <input style={field} placeholder="แบบบ้าน/ที่สนใจ" value={f.house_type} onChange={(e) => setF({ ...f, house_type: e.target.value })} />
-            <input style={field} placeholder="มูลค่าโดยประมาณ (บาท)" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} />
-            <input type="date" style={field} title="นัดติดตามครั้งถัดไป" value={f.next_date} onChange={(e) => setF({ ...f, next_date: e.target.value })} />
-            <input style={field} placeholder="รหัสบอกต่อ REF-… (ถ้ามี)" value={f.referral_code} onChange={(e) => setF({ ...f, referral_code: e.target.value })} />
-            <input style={{ ...field, gridColumn: '1 / -1' }} placeholder="โน้ต (ลูกค้าต้องการอะไร งบเท่าไร ที่ดินอยู่ไหน)" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
+        <ModalShell title="เพิ่ม Lead" sub="ผู้สนใจรายใหม่ — เข้าคอลัมน์ “สนใจ” ใน Pipeline" width={640} onClose={() => setAdding(false)}
+          footer={<><button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button><button onClick={add} style={btn()}>บันทึก</button></>}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+            <Fld label="ชื่อ" req><input style={field} placeholder="เช่น คุณสมชาย ใจดี" autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Fld>
+            <Fld label="เบอร์โทร"><input style={field} placeholder="08x-xxx-xxxx" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Fld>
+            <Fld label="LINE ID"><input style={field} placeholder="LINE ID" value={f.line} onChange={(e) => setF({ ...f, line: e.target.value })} /></Fld>
+            <Fld label="มาจากช่องทาง"><select style={field} value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })}>{[...new Set([f.source, ...meta.sources])].map((s) => <option key={s}>{s}</option>)}</select></Fld>
+            <Fld label="แบบบ้าน / ที่สนใจ"><input style={field} placeholder="เช่น บ้าน 2 ชั้น PD-2" value={f.house_type} onChange={(e) => setF({ ...f, house_type: e.target.value })} /></Fld>
+            <Fld label="มูลค่าโดยประมาณ (บาท)"><input style={field} inputMode="decimal" placeholder="เช่น 3,500,000" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} /></Fld>
+            <Fld label="นัดติดตามครั้งถัดไป"><input type="date" style={field} value={f.next_date} onChange={(e) => setF({ ...f, next_date: e.target.value })} /></Fld>
+            <Fld label="รหัสบอกต่อ (ถ้ามี)"><input style={field} placeholder="REF-…" value={f.referral_code} onChange={(e) => setF({ ...f, referral_code: e.target.value })} /></Fld>
+            <Fld label="โน้ต" full><textarea style={{ ...field, minHeight: 72, resize: 'vertical' }} placeholder="ลูกค้าต้องการอะไร งบเท่าไร ที่ดินอยู่ไหน" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Fld>
+            {err && <div style={{ gridColumn: '1 / -1', fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px' }}>{err}</div>}
           </div>
-          {err && <div style={{ fontSize: 12, color: '#C24036', marginTop: 8 }}>{err}</div>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}><button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button><button onClick={add} style={btn()}>บันทึก</button></div>
-        </div>
+        </ModalShell>
       )}
       {view === 'kanban' ? (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${meta.stages.length || 6}, minmax(170px, 1fr))`, gap: 8, overflowX: 'auto' }}>
@@ -446,18 +456,21 @@ function CasesTab() {
           <span style={{ fontSize: 13, color: '#5C6770' }}>เคสค้าง <b className="num" style={{ color: rows.some((r) => r.sla_overdue) ? '#C24036' : '#1C2730' }}>{rows.filter((r) => r.open).length}</b> · เกิน SLA <b className="num" style={{ color: '#C24036' }}>{rows.filter((r) => r.sla_overdue).length}</b></span>
           <button onClick={() => setFilter(filter === 'open' ? 'all' : 'open')} style={ghost}>{filter === 'open' ? 'ดูทั้งหมด' : 'เฉพาะค้าง'}</button>
           <span style={{ fontSize: 11.5, color: '#94A0A8' }}>ลูกค้าแจ้งเองทาง LINE: "แจ้งซ่อม ห้องน้ำรั่ว" (+รูป) → เคสขึ้นที่นี่ + แจ้งโฟร์แมน/ผู้บริหารทันที</span>
-          <button onClick={() => setAdding((v) => !v)} style={{ ...btn(), marginLeft: 'auto' }}>+ เปิดเคสให้ลูกค้า</button>
+          <button onClick={() => { setMsg(''); setAdding(true) }} style={{ ...btn(), marginLeft: 'auto' }}>+ เปิดเคสให้ลูกค้า</button>
         </div>
-        {msg && <div style={{ fontSize: 12.5, color: '#C24036' }}>{msg}</div>}
+        {msg && !adding && <div style={{ fontSize: 12.5, color: '#C24036' }}>{msg}</div>}
         {adding && (
-          <div style={{ ...card, padding: 12, display: 'grid', gridTemplateColumns: '160px 1fr 110px 130px auto', gap: 8 }}>
-            <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— บ้าน —</option>{(data.houses || []).filter((h) => h.kind !== 'office').map((h) => <option key={h.code} value={h.code}>{h.code} {h.name}</option>)}</select>
-            <input style={field} placeholder="เรื่องที่แจ้ง *" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
-            <select style={field} value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })}>{['ทั่วไป', 'ด่วน', 'ด่วนมาก'].map((x) => <option key={x}>{x}</option>)}</select>
-            <select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['แจ้งซ่อม', 'สอบถาม', 'ร้องเรียน', 'ตรวจบ้านหลังส่งมอบ', 'อื่นๆ'].map((x) => <option key={x}>{x}</option>)}</select>
-            <button onClick={add} style={btn()}>เปิดเคส</button>
-            <input style={{ ...field, gridColumn: '1 / -1' }} placeholder="รายละเอียด" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
-          </div>
+          <ModalShell title="เปิดเคสให้ลูกค้า" sub="แจ้งซ่อม / สอบถาม / ร้องเรียน — แจ้งโฟร์แมน/ผู้บริหารทันที" width={560} onClose={() => setAdding(false)}
+            footer={<><button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button><button onClick={add} style={btn()}>เปิดเคส</button></>}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+              <Fld label="บ้าน" full><select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— เลือกบ้าน —</option>{(data.houses || []).filter((h) => h.kind !== 'office').map((h) => <option key={h.code} value={h.code}>{h.code} {h.name}</option>)}</select></Fld>
+              <Fld label="เรื่องที่แจ้ง" req full><input style={field} placeholder="เช่น ห้องน้ำชั้น 2 รั่วซึม" autoFocus value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Fld>
+              <Fld label="ความเร่งด่วน"><select style={field} value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })}>{['ทั่วไป', 'ด่วน', 'ด่วนมาก'].map((x) => <option key={x}>{x}</option>)}</select></Fld>
+              <Fld label="ประเภท"><select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['แจ้งซ่อม', 'สอบถาม', 'ร้องเรียน', 'ตรวจบ้านหลังส่งมอบ', 'อื่นๆ'].map((x) => <option key={x}>{x}</option>)}</select></Fld>
+              <Fld label="รายละเอียด" full><textarea style={{ ...field, minHeight: 72, resize: 'vertical' }} placeholder="อาการ / ตำแหน่ง / ช่วงเวลาที่สะดวกให้ช่างเข้า" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Fld>
+              {msg && <div style={{ gridColumn: '1 / -1', fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px' }}>{msg}</div>}
+            </div>
+          </ModalShell>
         )}
         <div style={card}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>

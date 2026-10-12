@@ -6,7 +6,7 @@ import Dashboard from './components/dashboard/Dashboard'
 import HouseList from './components/houses/HouseList'
 import HouseDetail from './components/houses/HouseDetail'
 import Modal from './components/shared/Modal'
-import { ModalHostContext, ModalOwnerContext, useModalOwnerPages } from './components/shared/ModalShell'
+import { KeepAlive, ModalHostContext, ModalOwnerContext, useModalOwnerPages } from './components/shared/ModalShell'
 import Installments from './components/houses/Installments'
 import Procurement from './components/procurement/Procurement'
 import MaterialPrices from './components/materials/MaterialPrices'
@@ -350,7 +350,7 @@ export default function App() {
           <ModalHostContext.Provider value={modalHost}>
             {alivePages.map((key) => (
               <ModalOwnerContext.Provider key={key} value={key}>
-                <div style={{ display: key === pageKey ? 'contents' : 'none' }}>{renderPage(key)}</div>
+                <KeepAlive active={key === pageKey} onShow={() => modalHost.goTo(key)}>{renderPage(key)}</KeepAlive>
               </ModalOwnerContext.Provider>
             ))}
           </ModalHostContext.Provider>
