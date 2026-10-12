@@ -70,6 +70,7 @@ export default function App() {
   const [modal, setModal] = useState<ModalDef | null>(null)
   const [printDoc, setPrintDoc] = useState<{ kind: DocKind; slip?: ApiPayroll } | null>(null)
   const [forcePin, setForcePin] = useState(false) // ถูกรีเซ็ต PIN → บังคับตั้งใหม่ก่อนใช้งาน
+  const [navOpen, setNavOpen] = useState(false) // จอแคบ (< 1024px): เมนูซ้ายซ่อนไว้ กด ☰ แล้วเลื่อนออกมา
   useEffect(() => { setForcePin(!!user?.mustChangePin) }, [user?.mustChangePin])
   const openPrint = (kind: DocKind, data?: unknown) =>
     setPrintDoc({ kind, slip: kind === 'slip' ? (data as ApiPayroll) : undefined })
@@ -283,11 +284,12 @@ export default function App() {
     })
 
   return (
-    <>{moreBar}<div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#F3F5F7', fontFamily: "'Kanit',sans-serif" }}>
-      <Sidebar activePage={activePage} onNavigate={onNavigate} />
+    <>{moreBar}<div className={'app-shell' + (navOpen ? ' nav-open' : '')} style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#F3F5F7', fontFamily: "'Kanit',sans-serif" }}>
+      <Sidebar activePage={activePage} onNavigate={(id) => { setNavOpen(false); onNavigate(id) }} onClose={() => setNavOpen(false)} />
+      <div className="nav-backdrop" onClick={() => setNavOpen(false)} />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
-        <Topbar crumb={crumb} pageTitle={pageTitle} onNavigate={onNavigate} onOpenHouse={openHouse} onChangePin={openChangePin} />
+        <Topbar crumb={crumb} pageTitle={pageTitle} onNavigate={onNavigate} onOpenHouse={openHouse} onChangePin={openChangePin} onMenu={() => setNavOpen(true)} />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
           {page === 'dashboard' && <Dashboard onOpenHouse={openHouse} onOpenHouseByName={openHouseByName} onGoHouses={() => go('houses')} />}

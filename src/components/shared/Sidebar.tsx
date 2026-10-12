@@ -9,9 +9,10 @@ import { api } from '../../api'
 interface SidebarProps {
   activePage: string
   onNavigate: (id: string) => void
+  onClose?: () => void // ปิดเมนูแบบเลื่อนออก (จอแคบ)
 }
 
-export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
+export default function Sidebar({ activePage, onNavigate, onClose }: SidebarProps) {
   const { user } = useApp()
   // เช็คว่าเซิร์ฟเวอร์ที่รันอยู่เก่ากว่าไฟล์บนดิสก์ไหม (อัปเดตแล้วแต่ยังไม่รีสตาร์ท) — เตือน + ปุ่มรีสตาร์ท (แอดมิน)
   const [srv, setSrv] = useState<{ started: number; stale: boolean; pm2: boolean } | null>(null)
@@ -70,13 +71,16 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   }
 
   return (
-    <aside style={{ width: 236, flexShrink: 0, background: '#1E2E3B', display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <aside className="sb" style={{ width: 236, flexShrink: 0, background: '#1E2E3B', display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '18px 18px 16px' }}>
         <img src={PPSD_MARK} alt="PPSD" style={{ width: 40, height: 40, borderRadius: 9, objectFit: 'cover', flexShrink: 0, boxShadow: '0 0 0 1px rgba(255,255,255,.08)' }} />
         <div className="sb-brand-text" style={{ lineHeight: 1.05 }}>
           <div style={{ fontSize: 16, fontWeight: 600, color: '#fff', letterSpacing: '.3px' }}>PPSD</div>
           <div style={{ fontSize: 10.5, color: '#7C8B97', letterSpacing: '.05em' }}>CONSTRUCTION ERP</div>
         </div>
+        <button className="sb-close" onClick={onClose} title="ปิดเมนู" style={{ marginLeft: 'auto', width: 34, height: 34, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.06)', color: '#AEBAC4', cursor: 'pointer', alignItems: 'center', justifyContent: 'center' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
       </div>
 
       <div style={{ height: 1, background: '#2C3F4F', margin: '0 14px 8px' }} />

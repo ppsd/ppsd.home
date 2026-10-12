@@ -9,11 +9,12 @@ interface TopbarProps {
   onNavigate: (id: string) => void
   onOpenHouse: (id: number) => void
   onChangePin: () => void
+  onMenu?: () => void // ปุ่ม ☰ เปิดเมนูซ้าย (แสดงเฉพาะจอแคบ)
 }
 
 const notifColor = (icon: string) => (icon === 'danger' ? '#C24036' : icon === 'warn' ? '#B7791F' : '#30506A')
 
-export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onChangePin }: TopbarProps) {
+export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onChangePin, onMenu }: TopbarProps) {
   // ผูก LINE ของฉัน (ทุกคนกดได้ ไม่ต้องเข้าหน้าผู้ใช้งาน)
   const [lineCode, setLineCode] = useState<{ code: string; expires_min: number } | null>(null)
   const requestLineCode = async () => {
@@ -48,7 +49,10 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
         zIndex: 5,
       }}
     >
-      <div style={{ minWidth: 0 }}>
+      <button className="tb-menu hov-f3f5f7" onClick={onMenu} title="เมนู" style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 9, border: '1px solid #E1E5EA', background: '#fff', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3C4750" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+      </button>
+      <div className="tb-title" style={{ minWidth: 0 }}>
         <div style={{ fontSize: 12, color: '#94A0A8', lineHeight: 1.1 }}>{crumb}</div>
         <div
           style={{
@@ -65,7 +69,7 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
         </div>
       </div>
 
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
+      <div className="tb-right" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
         <div className="tb-search" style={{ position: 'relative', width: 250 }}>
           <div
             style={{
@@ -103,7 +107,7 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
           {term && (
             <>
               <div onClick={() => setQ('')} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
-              <div style={{ position: 'absolute', left: 0, top: 44, width: 320, maxHeight: 420, overflowY: 'auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, boxShadow: '0 16px 50px rgba(20,30,40,.18)', zIndex: 31 }}>
+              <div className="tb-pop" style={{ position: 'absolute', left: 0, top: 44, width: 320, maxHeight: 420, overflowY: 'auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, boxShadow: '0 16px 50px rgba(20,30,40,.18)', zIndex: 31 }}>
                 {!hasHits && <div style={{ padding: '22px 16px', textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ไม่พบผลลัพธ์</div>}
                 {houseHits.length > 0 && <div style={{ padding: '8px 14px 4px', fontSize: 11, fontWeight: 600, color: '#94A0A8' }}>บ้าน</div>}
                 {houseHits.map((h) => (
@@ -141,7 +145,7 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
           {open && (
             <>
               <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
-              <div style={{ position: 'absolute', right: 0, top: 46, width: 320, maxHeight: 420, overflowY: 'auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, boxShadow: '0 16px 50px rgba(20,30,40,.18)', zIndex: 31 }}>
+              <div className="tb-pop" style={{ position: 'absolute', right: 0, top: 46, width: 320, maxHeight: 420, overflowY: 'auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, boxShadow: '0 16px 50px rgba(20,30,40,.18)', zIndex: 31 }}>
                 <div style={{ padding: '12px 16px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>การแจ้งเตือน {notifs.length > 0 && <span className="num" style={{ color: '#C24036' }}>({notifs.length})</span>}</div>
                 {notifs.length === 0 && <div style={{ padding: '28px 16px', textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ไม่มีการแจ้งเตือน</div>}
                 {notifs.map((n, i) => (
@@ -158,10 +162,11 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
           )}
         </div>
 
-        <div style={{ height: 26, width: 1, background: '#E1E5EA' }} />
+        <div className="tb-sep" style={{ height: 26, width: 1, background: '#E1E5EA' }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="tb-user" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div
+            className="tb-avatar"
             style={{
               width: 36,
               height: 36,
@@ -186,7 +191,7 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={user?.lineLinked ? '#2E7D55' : '#5C6770'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.4 8.4 0 01-9 8.3 9 9 0 01-2.6-.4L5 21l.9-3.4A8.2 8.2 0 013 11.5C3 6.8 7 3 12 3s9 3.8 9 8.5z" /></svg>
             </button>
             {lineCode && (
-              <div style={{ position: 'absolute', right: 0, top: 42, width: 320, background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, boxShadow: '0 16px 40px rgba(20,30,40,.2)', padding: '14px 16px', zIndex: 60 }}>
+              <div className="tb-pop" style={{ position: 'absolute', right: 0, top: 42, width: 320, background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, boxShadow: '0 16px 40px rgba(20,30,40,.2)', padding: '14px 16px', zIndex: 60 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2E7D55' }}>📱 ผูก LINE ของฉัน</div>
                 <div style={{ fontSize: 12, color: '#5C6770', marginTop: 4, lineHeight: 1.6 }}>1) เพิ่มบอท <b>PPSD Assistant</b> เป็นเพื่อนใน LINE<br />2) พิมพ์รหัสนี้ส่งในแชทบอท (ใช้ได้ {lineCode.expires_min} นาที)</div>
                 <div className="num" style={{ fontSize: 30, fontWeight: 800, letterSpacing: 6, color: '#1C2730', textAlign: 'center', margin: '10px 0', background: '#F2F8F4', borderRadius: 9, padding: '8px 0' }}>{lineCode.code}</div>
