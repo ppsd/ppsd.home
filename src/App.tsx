@@ -38,7 +38,7 @@ import Vault from './components/admin/Vault'
 import CeoVoice from './components/dashboard/CeoVoice'
 import Login from './Login'
 import { useApp } from './store'
-import { titles, type ModalDef } from './data'
+import { titles, OFFICE_CATS, type ModalDef } from './data'
 import type { DocKind } from './erpData'
 import type { ApiPayroll } from './store'
 
@@ -196,15 +196,18 @@ export default function App() {
       },
     })
 
+  // ตัวเลือกบ้านจากรายชื่อจริง (ค่าที่บันทึก = รหัสบ้าน) — กันพิมพ์รหัสผิดแล้วรายการไม่เข้าบ้าน
+  const houseOptions = () => [{ value: '', label: '— ไม่ระบุบ้าน —' }, ...data.houses.map((h) => ({ value: h.code, label: `${h.name} (${h.code})` }))]
+
   const openAddIssue = () =>
     setModal({
       title: 'แจ้งปัญหาหน้างาน',
       sub: 'บันทึกปัญหาใหม่เข้าระบบ',
       fields: [
-        { label: 'รหัสบ้าน (เช่น RK-014)', value: '', ph: 'RK-014' },
+        { label: 'บ้าน', value: '', ph: '', options: houseOptions() },
         { label: 'หัวข้อปัญหา', value: '', ph: 'เช่น น้ำรั่วซึม', required: true },
         { label: 'รายละเอียด', value: '', ph: '' },
-        { label: 'ความเร่งด่วน (ด่วนมาก/ปานกลาง/ทั่วไป)', value: 'ทั่วไป', ph: '' },
+        { label: 'ความเร่งด่วน', value: 'ทั่วไป', ph: '', options: ['ทั่วไป', 'ปานกลาง', 'ด่วนมาก'].map((p) => ({ value: p, label: p })) },
       ],
       onSubmit: ([house_code, title, note, priority]) => app.addIssue({ house_code, title, note, priority }),
     })
@@ -215,9 +218,16 @@ export default function App() {
       sub: 'บันทึกรายจ่ายใหม่',
       fields: [
         { label: 'วันที่จ่าย (ย้อนหลัง/ล่วงหน้าได้)', value: new Date().toISOString().slice(0, 10), ph: '', type: 'date', required: true, hint: 'เลือกวันที่จ่ายจริง — เลือกวันย้อนหลังได้ (บันทึกรายจ่ายเก่า) หรือวันในอนาคต (จะขึ้นป้าย “กำหนดจ่าย”)' },
-        { label: 'รหัสบ้าน (เช่น RK-014)', value: '', ph: 'RK-014' },
+        { label: 'บ้าน', value: '', ph: '', options: houseOptions() },
         { label: 'รายการ', value: '', ph: 'เช่น ปูนซีเมนต์', required: true },
-        { label: 'หมวด (วัสดุ/ค่าแรง/ขนส่ง/อื่นๆ · ออฟฟิศ: เบิกค่าน้ำมัน/ซ่อมแซมออฟฟิศ/ของใช้สำนักงาน)', value: 'วัสดุ', ph: '' },
+        {
+          label: 'หมวด', value: 'วัสดุ', ph: '',
+          // ค่าที่บันทึก = ชื่อหมวดตรงตัว (หมวดออฟฟิศต้องตรงกับ OFFICE_CATS ที่หน้ารายละเอียดบ้านใช้สรุป)
+          options: [
+            ...['วัสดุ', 'ค่าแรง', 'ขนส่ง', 'อื่นๆ'].map((c) => ({ value: c, label: c })),
+            ...OFFICE_CATS.filter((c) => c.label !== 'อื่นๆ').map((c) => ({ value: c.label, label: `ออฟฟิศ · ${c.label}` })),
+          ],
+        },
         { label: 'ผู้ขาย/ผู้รับ', value: '', ph: '' },
         { label: 'จำนวนเงิน (บาท)', value: '', ph: '0', money: true },
         { label: 'เลขที่ใบกำกับภาษี (ถ้ามี VAT)', value: '', ph: 'เว้นว่าง = ไม่มี VAT', hint: 'กรอกเมื่อร้านออกใบกำกับภาษี — ยอด VAT จะถูกคิด 7/107 จากยอดรวม (ใช้ทำ ภ.พ.30)' },
