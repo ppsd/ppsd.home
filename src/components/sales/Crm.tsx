@@ -3,6 +3,7 @@ import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp, useLiveRefresh } from '../../store'
 import Pager from '../shared/Pager'
+import ModalShell from '../shared/ModalShell'
 
 // ===== CRM: ลูกค้า 360 · Lead/Pipeline · รายงาน CRM =====
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12, textAlign: 'left' }
@@ -77,18 +78,9 @@ function CustomersTab() {
           <button onClick={() => { setErr(''); setAdding(true) }} style={{ ...btn(), marginLeft: 'auto' }}>+ เพิ่มลูกค้า</button>
         </div>
         {adding && (
-          <div onClick={() => setAdding(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, animation: 'fadeIn .15s ease', padding: 24 }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 15, width: 600, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 24px 70px rgba(20,30,40,.3)', animation: 'modalIn .2s ease' }}>
-              <div style={{ display: 'flex', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid #EEF1F4' }}>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 600 }}>เพิ่มลูกค้า</div>
-                  <div style={{ fontSize: 12.5, color: '#94A0A8' }}>บันทึกข้อมูลลูกค้าใหม่เข้า CRM</div>
-                </div>
-                <button onClick={() => setAdding(false)} className="hov-e7ebef" style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F3F5F7', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                </button>
-              </div>
-              <div style={{ padding: '20px 22px', display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+          <ModalShell title="เพิ่มลูกค้า" sub="บันทึกข้อมูลลูกค้าใหม่เข้า CRM" width={600} onClose={() => setAdding(false)}
+            footer={<><button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button><button onClick={add} style={btn()}>บันทึก</button></>}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
                 {([
                   ['ชื่อลูกค้า', 'name', 'เช่น คุณสมชาย ใจดี', true],
                   ['เบอร์โทร', 'phone', '08x-xxx-xxxx', false],
@@ -110,12 +102,7 @@ function CustomersTab() {
                 </label>
                 {err && <div style={{ gridColumn: '1 / -1', fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px' }}>{err}</div>}
               </div>
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '16px 22px', borderTop: '1px solid #EEF1F4', background: '#FAFBFC' }}>
-                <button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button>
-                <button onClick={add} style={btn()}>บันทึก</button>
-              </div>
-            </div>
-          </div>
+          </ModalShell>
         )}
         <div style={card}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
