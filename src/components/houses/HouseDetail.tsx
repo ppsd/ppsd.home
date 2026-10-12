@@ -22,6 +22,7 @@ import Safety from '../site/Safety'
 import Handover from './Handover'
 import BoqTab from '../cost/BoqTab'
 import ImportInstallments from './ImportInstallments'
+import { KeepAlive } from '../shared/ModalShell'
 
 function Cell({ label, value, color, sub, br, bb }: { label: string; value: string; color: string; sub?: string; br?: boolean; bb?: boolean }) {
   return (
@@ -51,6 +52,11 @@ const INST_CATS = [
 export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHouse }: HouseDetailProps) {
   const { data, user, reloadData } = useApp()
   const [importing, setImporting] = useState(false)
+  // แท็บที่มีฟอร์ม/modal (ใบสั่งงาน · จัดซื้อ · BOQ): เปิดแล้วเก็บไว้เบื้องหลัง — modal ที่ย่อค้างไว้ไม่หายตอนสลับแท็บ
+  const [seenTabs, setSeenTabs] = useState<string[]>([])
+  if (!seenTabs.includes(tab)) setSeenTabs([...seenTabs, tab])
+  const keepTab = (id: string, node: React.ReactNode) =>
+    (tab === id || seenTabs.includes(id)) && <KeepAlive active={tab === id} onShow={() => onSetTab(id)}>{node}</KeepAlive>
   // กำไรของบ้าน เห็นได้เฉพาะผู้จัดการ (และผู้ดูแล) เท่านั้น คนอื่นขึ้น "-"
   const canSeeProfit = !!user?.isManager
   const profitText = (v: number) => (canSeeProfit ? baht(v) : '-')
@@ -284,13 +290,13 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
           )}
 
           {/* TAB: ใบสั่งงาน (เฉพาะบ้านนี้) */}
-            {tab === 'workorders' && <div style={{ padding: 16 }}><WorkOrders houseCode={house.code} /></div>}
+            {keepTab('workorders', <div style={{ padding: 16 }}><WorkOrders houseCode={house.code} /></div>)}
 
           {/* TAB: จัดซื้อ (เฉพาะบ้านนี้) */}
-            {tab === 'procurement' && <div style={{ padding: 16 }}><Procurement houseCode={house.code} /></div>}
+            {keepTab('procurement', <div style={{ padding: 16 }}><Procurement houseCode={house.code} /></div>)}
 
           {/* TAB: BOQ (เฉพาะบ้านนี้) */}
-            {tab === 'boq' && <div style={{ padding: 16 }}><BoqTab houseCode={house.code} /></div>}
+            {keepTab('boq', <div style={{ padding: 16 }}><BoqTab houseCode={house.code} /></div>)}
 
           {/* TAB: QC ตรวจงาน (เฉพาะบ้านนี้) */}
             {tab === 'qc' && <div style={{ padding: 16 }}><QcInspect houseCode={house.code} /></div>}

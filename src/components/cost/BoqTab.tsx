@@ -4,6 +4,7 @@ import { baht } from '../../data'
 import { useApp } from '../../store'
 import { exportXlsx, ExportButton } from '../../exportCsv'
 import BoqPrint from './BoqPrint'
+import ModalShell from '../shared/ModalShell'
 
 export interface BoqItem { cat: string; desc: string; qty: number; unit: string; mat: number; lab: number }
 export interface Boq { id: number; no: string; house_code: string; title: string; markup_pct: number; vat_pct: number; items: BoqItem[]; date: string }
@@ -58,10 +59,16 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
   const doExport = (b: Boq) => exportXlsx('BOQ-' + b.no, ['หมวด', 'รายการ', 'จำนวน', 'หน่วย', 'ค่าวัสดุ/หน่วย', 'ค่าวัสดุรวม', 'ค่าแรง/หน่วย', 'ค่าแรงรวม', 'รวม'],
     b.items.map((it) => [it.cat, it.desc, it.qty, it.unit, it.mat, it.qty * it.mat, it.lab, it.qty * it.lab, it.qty * (it.mat + it.lab)]), 'BOQ')
 
-  if (edit) {
+  // ฟอร์มสร้าง/แก้ BOQ เป็น modal (ย่อพับได้ · ไม่ปิดเมื่อคลิกพื้นหลัง — รายการเยอะ กันข้อมูลหาย)
+  const editorModal = edit && (() => {
     const t = boqTotals(edit)
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <ModalShell title={edit.id ? `แก้ไข BOQ ${edit.no}` : 'สร้าง BOQ / ประมาณราคา'} sub="ค่าวัสดุ + ค่าแรง ต่อรายการ → บวกค่าดำเนินการ/กำไร และ VAT" width={1100} closeOnBackdrop={false} onClose={() => setEdit(null)}
+        bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#F7F9FB' }}
+        footer={<>
+          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+          <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก BOQ</button>
+        </>}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 2fr 1fr 1fr', gap: 10 }}>
           {houseCode
             ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
@@ -107,13 +114,9 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-          <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก BOQ</button>
-        </div>
-      </div>
+      </ModalShell>
     )
-  }
+  })()
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -145,6 +148,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
           </tbody>
         </table>
       </div>
+      {editorModal}
       {printing && <BoqPrint boq={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} onClose={() => setPrinting(null)} />}
     </div>
   )

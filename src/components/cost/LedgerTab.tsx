@@ -4,6 +4,7 @@ import { baht, unMoney } from '../../data'
 import { useApp } from '../../store'
 import { exportXlsx, ExportButton } from '../../exportCsv'
 import MoneyInput from '../shared/MoneyInput'
+import ModalShell from '../shared/ModalShell'
 
 interface Entry { id: number; date: string; date_iso?: string; house_code: string; kind: string; category: string; item: string; amount: number; budget: number; method: string; party: string; note: string; auto?: boolean; src?: string }
 
@@ -12,6 +13,7 @@ const METHODS = ['เงินสด', 'โอนธนาคาร', 'เคร
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px', outline: 'none' }
 const th: React.CSSProperties = { padding: '9px 12px', fontWeight: 600, color: '#5C6770', fontSize: 12, textAlign: 'left' }
 const td: React.CSSProperties = { padding: '9px 12px', fontSize: 12.5 }
+const lbl: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#3C4750' }
 
 export default function LedgerTab() {
   const { data } = useApp()
@@ -27,10 +29,13 @@ export default function LedgerTab() {
   const load = () => api.get<Entry[]>('/ledger').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
 
+  const [err, setErr] = useState('')
   const submit = async () => {
-    if (!f.item.trim()) return
-    await api.post('/ledger', { ...f, amount: unMoney(f.amount), budget: unMoney(f.budget) })
-    setF(blank); setAdding(false); load()
+    if (!f.item.trim()) { setErr('กรอกรายการ'); return }
+    try {
+      await api.post('/ledger', { ...f, amount: unMoney(f.amount), budget: unMoney(f.budget) })
+      setF(blank); setErr(''); setAdding(false); load()
+    } catch (e) { setErr((e as Error).message || 'บันทึกไม่สำเร็จ') }
   }
   const remove = async (id: number) => { await api.del('/ledger/' + id); load() }
 
@@ -75,30 +80,29 @@ export default function LedgerTab() {
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <ExportButton onClick={doExport} />
-          <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ บันทึกรายการ</button>
+          <button onClick={() => { setErr(''); setAdding(true) }} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ บันทึกรายการ</button>
         </div>
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10 }}>
-            <input style={field} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />
-            <select style={field} value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}><option value="out">รายจ่าย</option><option value="in">รายรับ</option></select>
-            <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— บ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select>
-            <select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select>
-            <select style={field} value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1.4fr', gap: 10, marginTop: 10 }}>
-            <input style={field} placeholder="รายการ *" value={f.item} onChange={(e) => setF({ ...f, item: e.target.value })} />
-            <MoneyInput style={field} placeholder="จำนวนเงิน" value={f.amount} onChange={(v) => setF({ ...f, amount: v })} />
-            <MoneyInput style={field} placeholder="งบที่ตั้งไว้" value={f.budget} onChange={(v) => setF({ ...f, budget: v })} />
-            <input style={field} placeholder="ผู้รับ/ผู้จ่าย" value={f.party} onChange={(e) => setF({ ...f, party: e.target.value })} />
-          </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+        <ModalShell title="บันทึกรายการรับ-จ่าย" sub="ลงบัญชีรับ-จ่ายของบ้าน/โครงการ · ใส่งบที่ตั้งไว้เพื่อเทียบงบกับที่ใช้จริง" width={640} onClose={() => setAdding(false)}
+          footer={<>
             <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
             <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
+          </>}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+            <label style={lbl}>ประเภท<select style={field} value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}><option value="out">รายจ่าย</option><option value="in">รายรับ</option></select></label>
+            <label style={lbl}>วันที่<input style={field} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></label>
+            <label style={{ ...lbl, gridColumn: '1 / -1' }}><span>รายการ <span style={{ color: '#C24036' }}>*</span></span><input style={field} placeholder="เช่น ค่าปูนซีเมนต์ 50 ถุง" autoFocus value={f.item} onChange={(e) => setF({ ...f, item: e.target.value })} /></label>
+            <label style={lbl}>บ้าน / โครงการ<select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— ไม่ระบุบ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select></label>
+            <label style={lbl}>หมวด<select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></label>
+            <label style={lbl}>จำนวนเงิน (บาท)<MoneyInput style={field} placeholder="0" value={f.amount} onChange={(v) => setF({ ...f, amount: v })} /></label>
+            <label style={lbl}>งบที่ตั้งไว้ (บาท)<MoneyInput style={field} placeholder="ไม่บังคับ" value={f.budget} onChange={(v) => setF({ ...f, budget: v })} /></label>
+            <label style={lbl}>วิธีจ่าย<select style={field} value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select></label>
+            <label style={lbl}>{f.kind === 'in' ? 'ผู้จ่าย (รับจากใคร)' : 'ผู้รับเงิน'}<input style={field} placeholder="ชื่อร้าน / บุคคล" value={f.party} onChange={(e) => setF({ ...f, party: e.target.value })} /></label>
+            {err && <div style={{ gridColumn: '1 / -1', fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px' }}>{err}</div>}
           </div>
-        </div>
+        </ModalShell>
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14, alignItems: 'start' }}>

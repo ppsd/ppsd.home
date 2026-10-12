@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 
 interface CfRow { section: 'in' | 'out'; label: string; values: number[] }
 interface Cashflow { id: number; no: string; house_code: string; title: string; opening: number; months: string[]; rows: CfRow[]; date: string }
@@ -71,11 +72,18 @@ export default function CashflowTab() {
     return { sumIn, sumOut, net, running }
   }
 
-  if (edit) {
+  // ฟอร์มสร้าง/แก้ตารางเป็น modal (ย่อพับได้ · ไม่ปิดเมื่อคลิกพื้นหลัง — ตัวเลขเยอะ กันข้อมูลหาย)
+  const editorModal = edit && (() => {
     const t = totalsOf(edit)
     const numCell: React.CSSProperties = { padding: '3px 4px', textAlign: 'right', borderLeft: '1px solid #F1F4F6' }
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <ModalShell title={edit.id ? `แก้ไขตารางกระแสเงินสด ${edit.no}` : 'สร้างตารางกระแสเงินสด'} sub={`${edit.months.length} เดือน (${edit.months[0] || ''}–${edit.months[edit.months.length - 1] || ''}) · กรอกยอดรับ/จ่ายรายเดือน`} width={1200} closeOnBackdrop={false} onClose={() => setEdit(null)}
+        bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#F7F9FB' }}
+        footer={<>
+          <button onClick={pullActuals} disabled={pulling} title="ดึงยอดรับ/จ่ายจริงจากงวดงานและรายจ่ายมากรอกให้" className="hov-f3f5f7" style={{ marginRight: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>{pulling ? 'กำลังดึง…' : '↻ ดึงยอดจริง'}</button>
+          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+          <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
+        </>}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 2fr 1fr', gap: 10 }}>
           <select style={field} value={edit.house_code} onChange={(e) => setEdit({ ...edit, house_code: e.target.value })}><option value="">— เลือกบ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select>
           <input style={field} value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} />
@@ -102,14 +110,9 @@ export default function CashflowTab() {
             </tbody>
           </table>
         </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button onClick={pullActuals} disabled={pulling} title="ดึงยอดรับ/จ่ายจริงจากงวดงานและรายจ่ายมากรอกให้" className="hov-f3f5f7" style={{ marginRight: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>{pulling ? 'กำลังดึง…' : '↻ ดึงยอดจริง'}</button>
-          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-          <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
-        </div>
-      </div>
+      </ModalShell>
     )
-  }
+  })()
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -141,6 +144,7 @@ export default function CashflowTab() {
           </tbody>
         </table>
       </div>
+      {editorModal}
     </div>
   )
 }
