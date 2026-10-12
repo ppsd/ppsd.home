@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 
 // นำเข้างวดงานเป็นชุด — อัปโหลดสัญญา (AI อ่านให้) หรือวางจาก Excel/ข้อความ
 interface Row { no: number; detail: string; amount: number; side: 'customer' | 'contractor'; due_iso?: string }
@@ -123,17 +124,19 @@ export default function ImportInstallments({ houseCode, houseName, onClose, onDo
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 70, overflow: 'auto', padding: '24px 16px', display: 'flex' }}>
-      <div style={{ maxWidth: 860, width: '100%', margin: 'auto', background: '#fff', borderRadius: 14, boxShadow: '0 24px 70px rgba(20,30,40,.3)', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid #EEF1F4' }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>นำเข้างวดงาน — {houseName}</div>
-            <div style={{ fontSize: 12, color: '#94A0A8' }}>อัปโหลดสัญญาให้ AI อ่าน หรือวางจาก Excel แล้วสร้างทั้งชุด</div>
-          </div>
-          <button onClick={onClose} style={{ marginLeft: 'auto', border: 'none', background: 'none', fontSize: 20, color: '#94A0A8', cursor: 'pointer' }}>✕</button>
-        </div>
-
-        <div style={{ padding: 20 }}>
+    <ModalShell
+      title={<>นำเข้างวดงาน — {houseName}</>}
+      sub="อัปโหลดสัญญาให้ AI อ่าน หรือวางจาก Excel แล้วสร้างทั้งชุด"
+      onClose={onClose}
+      width={860}
+      zIndex={70}
+      closeOnBackdrop={false}
+      bodyStyle={{ padding: 20 }}
+      footer={<>
+        <button onClick={onClose} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+        <button onClick={confirm} disabled={!rows.length || !!busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: rows.length && !busy ? '#2E7D55' : '#C4CCD3', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: rows.length && !busy ? 'pointer' : 'not-allowed' }}>✓ สร้างงวดงานทั้งหมด ({rows.length})</button>
+      </>}
+    >
           {/* เลือกฝั่ง */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12.5, color: '#5C6770' }}>งวดงานนี้เป็นของ:</span>
@@ -209,13 +212,6 @@ export default function ImportInstallments({ houseCode, houseName, onClose, onDo
               </div>
             </>
           )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid #EEF1F4' }}>
-          <button onClick={onClose} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-          <button onClick={confirm} disabled={!rows.length || !!busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: rows.length && !busy ? '#2E7D55' : '#C4CCD3', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: rows.length && !busy ? 'pointer' : 'not-allowed' }}>✓ สร้างงวดงานทั้งหมด ({rows.length})</button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 
 interface Rev { rev: string; date: string; note: string; by: string }
 interface DocRow { id: number; no: string; category: string; title: string; doc_no: string; revision: string; rev_date: string; status: string; owner: string; house_code: string; note: string; revisions: Rev[]; expiry?: string; date?: string }
@@ -159,21 +160,24 @@ function ReviseModal({ doc, onClose, onSaved }: { doc: DocRow; onClose: () => vo
     catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: '#fff', borderRadius: 12, padding: 20, width: 440, maxWidth: '100%' }}>
-        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>ออกเวอร์ชันใหม่ — {doc.title}</div>
-        <div style={{ fontSize: 12, color: '#94A0A8', marginBottom: 14 }}>ปัจจุบัน Rev.{doc.revision} · {doc.no}</div>
+    <ModalShell
+      title={<>ออกเวอร์ชันใหม่ — {doc.title}</>}
+      sub={<>ปัจจุบัน Rev.{doc.revision} · {doc.no}</>}
+      onClose={onClose}
+      width={440}
+      zIndex={60}
+      closeOnBackdrop={false}
+      footer={<>
+        <button onClick={onClose} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+        <button onClick={save} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึกเวอร์ชัน'}</button>
+      </>}
+    >
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
           <div><div style={lbl}>เวอร์ชันใหม่ *</div><input style={field} value={rev} onChange={(e) => setRev(e.target.value)} placeholder="เช่น B / 2 / 1.1" /></div>
           <div><div style={lbl}>วันที่</div><input style={field} value={date} onChange={(e) => setDate(e.target.value)} placeholder="วันที่แก้ไข" /></div>
         </div>
         <div style={{ marginTop: 10 }}><div style={lbl}>รายละเอียดการแก้ไข</div><textarea style={{ ...field, minHeight: 56, resize: 'vertical' }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="แก้ไขอะไรบ้าง" /></div>
         {err && <div style={{ fontSize: 12, color: '#C24036', marginTop: 8 }}>{err}</div>}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
-          <button onClick={onClose} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-          <button onClick={save} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึกเวอร์ชัน'}</button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

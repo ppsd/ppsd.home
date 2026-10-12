@@ -3,6 +3,7 @@ import { useApp } from '../../store'
 import type { ApiMaterialPrice } from '../../store'
 import { api } from '../../api'
 import LaborRates from './LaborRates'
+import ModalShell from '../shared/ModalShell'
 
 // ราคากลางวัสดุ — อ้างอิงจากประวัติสั่งซื้อจริง ใช้เตือนราคาแพงตอนทำ PR/PO
 const money = (n: number) => (n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
@@ -118,8 +119,14 @@ export default function MaterialPrices() {
     <button onClick={() => setTab(id)} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer', color: tab === id ? '#fff' : '#30506A', background: tab === id ? '#30506A' : '#E2E9EF' }}>{label}</button>
   )
 
+  // ฟอร์มเพิ่ม/แก้ — วางนอกส่วนที่สลับแท็บ (ตำแหน่งเดียวกันทั้ง 2 แท็บ) เพื่อให้ย่อพับค้างไว้แล้วสลับแท็บได้โดยข้อมูลไม่หาย
+  const formModal = (adding || editing) && (
+    <MaterialPriceFormModal editing={editing} form={form} setForm={setForm} err={err} busy={busy} save={save} closeForm={closeForm} />
+  )
+
   if (tab === 'labor') {
     return (
+      <>
       <div style={{ maxWidth: 1180 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
           <div>
@@ -130,10 +137,13 @@ export default function MaterialPrices() {
         </div>
         <LaborRates />
       </div>
+      {formModal}
+      </>
     )
   }
 
   return (
+    <>
     <div style={{ maxWidth: 1180 }}>
       {/* หัว + ปุ่ม */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -220,13 +230,29 @@ export default function MaterialPrices() {
         </div>
       </div>
       <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 8 }}>แสดง {rows.length} จาก {list.length} รายการ · ราคากลาง = ราคาเฉลี่ยถ่วงน้ำหนักตามปริมาณที่ซื้อจริง</div>
+    </div>
+    {formModal}
+    </>
+  )
+}
 
-      {/* ฟอร์มเพิ่ม/แก้ */}
-      {(adding || editing) && (
-        <div onClick={closeForm} style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.45)', zIndex: 70, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflow: 'auto', padding: '48px 16px' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 460, maxWidth: '100%', padding: '22px 24px', boxShadow: '0 24px 70px rgba(20,30,40,.3)' }}>
-            <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 4 }}>{editing ? 'แก้ราคากลาง' : 'เพิ่มราคากลางวัสดุ'}</div>
-            <div style={{ fontSize: 12, color: '#94A0A8', marginBottom: 16 }}>{editing ? 'แก้แล้วจะถูกทำเครื่องหมายว่า “ตั้งราคาเอง” และจะไม่ถูกทับตอนอัปเดตจากประวัติ' : 'ราคากลางที่กรอกเองจะไม่ถูกทับตอนอัปเดตจากประวัติจริง'}</div>
+function MaterialPriceFormModal({ editing, form, setForm, err, busy, save, closeForm }: {
+  editing: ApiMaterialPrice | null
+  form: Form
+  setForm: (f: Form) => void
+  err: string
+  busy: boolean
+  save: () => void
+  closeForm: () => void
+}) {
+  return (
+        <ModalShell
+          title={editing ? 'แก้ราคากลาง' : 'เพิ่มราคากลางวัสดุ'}
+          sub={editing ? 'แก้แล้วจะถูกทำเครื่องหมายว่า “ตั้งราคาเอง” และจะไม่ถูกทับตอนอัปเดตจากประวัติ' : 'ราคากลางที่กรอกเองจะไม่ถูกทับตอนอัปเดตจากประวัติจริง'}
+          onClose={closeForm}
+          width={460}
+          zIndex={70}
+        >
             <div style={{ display: 'grid', gap: 11 }}>
               <div>
                 <label style={{ fontSize: 12, color: '#5C6770' }}>ชื่อวัสดุ *</label>
@@ -260,9 +286,6 @@ export default function MaterialPrices() {
               <button onClick={closeForm} style={{ fontFamily: 'inherit', fontSize: 13.5, color: '#1C2730', background: '#EDF1F4', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ยกเลิก</button>
               <button onClick={save} disabled={busy} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '9px 20px', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
+        </ModalShell>
   )
 }

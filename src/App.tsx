@@ -6,6 +6,7 @@ import Dashboard from './components/dashboard/Dashboard'
 import HouseList from './components/houses/HouseList'
 import HouseDetail from './components/houses/HouseDetail'
 import Modal from './components/shared/Modal'
+import { ModalHostContext, ModalOwnerContext, useModalOwnerPages } from './components/shared/ModalShell'
 import Installments from './components/houses/Installments'
 import Procurement from './components/procurement/Procurement'
 import MaterialPrices from './components/materials/MaterialPrices'
@@ -67,7 +68,10 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [detailTab, setDetailTab] = useState('installments')
-  const [modal, setModal] = useState<ModalDef | null>(null)
+  // modal ของ App เปิดซ้อน/ย่อค้างไว้ได้หลายอัน (เปิดอันใหม่ ไม่ทับอันที่ย่อไว้)
+  const [modals, setModals] = useState<{ key: number; def: ModalDef }[]>([])
+  const setModal = (def: ModalDef) => setModals((ms) => [...ms, { key: Date.now() + Math.random(), def }])
+  const ownerPages = useModalOwnerPages()
   const [printDoc, setPrintDoc] = useState<{ kind: DocKind; slip?: ApiPayroll } | null>(null)
   const [forcePin, setForcePin] = useState(false) // ถูกรีเซ็ต PIN → บังคับตั้งใหม่ก่อนใช้งาน
   const [navOpen, setNavOpen] = useState(false) // จอแคบ (< 1024px): เมนูซ้ายซ่อนไว้ กด ☰ แล้วเลื่อนออกมา
@@ -283,6 +287,57 @@ export default function App() {
       },
     })
 
+  // ---- หน้าที่แสดง + หน้าที่เก็บไว้เบื้องหลังเพราะมี modal ค้าง (เปลี่ยนหน้าแล้ว modal ไม่หาย) ----
+  // รายละเอียดบ้านแยกตามหลัง (houseDetail:<id>) — modal ของบ้านหลังหนึ่งไม่ไปโผล่ในอีกหลัง
+  const pageKey = page === 'houseDetail' ? `houseDetail:${selHouse?.id ?? ''}` : page
+  const alivePages = [pageKey, ...ownerPages.filter((k) => k !== pageKey)]
+  const modalHost = {
+    active: pageKey,
+    goTo: (key: string) => {
+      if (key.startsWith('houseDetail:')) { setSelId(Number(key.slice(12))); setPage('houseDetail') }
+      else setPage(key as Page)
+    },
+  }
+  const renderPage = (key: string) => {
+    if (key.startsWith('houseDetail:')) {
+      const h = data.houses.find((x) => x.id === Number(key.slice(12)))
+      return h ? <HouseDetail house={h} tab={detailTab} onSetTab={setDetailTab} onGoHouses={() => go('houses')} onEditHouse={openEditHouse} /> : null
+    }
+    switch (key as Page) {
+      case 'dashboard': return <Dashboard onOpenHouse={openHouse} onOpenHouseByName={openHouseByName} onGoHouses={() => go('houses')} />
+      case 'houses': return <HouseList search={search} statusFilter={statusFilter} onSearch={setSearch} onSetFilter={setStatusFilter} onOpenHouse={openHouse} onAddHouse={openAddHouse} />
+      case 'installments': return <Installments />
+      case 'procurement': return <Procurement />
+      case 'matprices': return <MaterialPrices />
+      case 'stock': return <Stock />
+      case 'hr': return <HR onPrint={openPrint} />
+      case 'time': return <TimeKiosk />
+      case 'issues': return <Issues onAddIssue={openAddIssue} />
+      case 'expenses': return <Expenses onAddExpense={openAddExpense} />
+      case 'users': return <Users onAddUser={openAddUser} />
+      case 'customers': return <Crm />
+      case 'gantt': return <Gantt />
+      case 'sales': return <Sales />
+      case 'reports': return <Reports />
+      case 'vault': return <Vault />
+      case 'audit': return <AuditCenter />
+      case 'workorders': return <WorkOrders />
+      case 'sitedocs': return <SiteDocs />
+      case 'qc': return <QcInspect />
+      case 'sitereport': return <SiteReports />
+      case 'safety': return <Safety />
+      case 'handover': return <Handover />
+      case 'docreg': return <DocRegister />
+      case 'express': return <ExpressExport />
+      case 'qcsummary': return <QcSummary onOpenKpi={() => go('pms')} />
+      case 'costing': return <CostFinance />
+      case 'accounting': return <Accounting />
+      case 'pms': return <Pms />
+      case 'ceovoice': return <CeoVoice />
+      default: return null
+    }
+  }
+
   return (
     <>{moreBar}<div className={'app-shell' + (navOpen ? ' nav-open' : '')} style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#F3F5F7', fontFamily: "'Kanit',sans-serif" }}>
       <Sidebar activePage={activePage} onNavigate={(id) => { setNavOpen(false); onNavigate(id) }} onClose={() => setNavOpen(false)} />
@@ -292,48 +347,19 @@ export default function App() {
         <Topbar crumb={crumb} pageTitle={pageTitle} onNavigate={onNavigate} onOpenHouse={openHouse} onChangePin={openChangePin} onMenu={() => setNavOpen(true)} />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-          {page === 'dashboard' && <Dashboard onOpenHouse={openHouse} onOpenHouseByName={openHouseByName} onGoHouses={() => go('houses')} />}
-
-          {page === 'houses' && (
-            <HouseList search={search} statusFilter={statusFilter} onSearch={setSearch} onSetFilter={setStatusFilter} onOpenHouse={openHouse} onAddHouse={openAddHouse} />
-          )}
-
-          {page === 'houseDetail' && selHouse && (
-            <HouseDetail house={selHouse} tab={detailTab} onSetTab={setDetailTab} onGoHouses={() => go('houses')} onEditHouse={openEditHouse} />
-          )}
-
-          {page === 'installments' && <Installments />}
-          {page === 'procurement' && <Procurement />}
-          {page === 'matprices' && <MaterialPrices />}
-          {page === 'stock' && <Stock />}
-          {page === 'hr' && <HR onPrint={openPrint} />}
-          {page === 'time' && <TimeKiosk />}
-          {page === 'issues' && <Issues onAddIssue={openAddIssue} />}
-          {page === 'expenses' && <Expenses onAddExpense={openAddExpense} />}
-          {page === 'users' && <Users onAddUser={openAddUser} />}
-          {page === 'customers' && <Crm />}
-          {page === 'gantt' && <Gantt />}
-          {page === 'sales' && <Sales />}
-          {page === 'reports' && <Reports />}
-          {page === 'vault' && <Vault />}
-          {page === 'audit' && <AuditCenter />}
-          {page === 'workorders' && <WorkOrders />}
-          {page === 'sitedocs' && <SiteDocs />}
-          {page === 'qc' && <QcInspect />}
-          {page === 'sitereport' && <SiteReports />}
-          {page === 'safety' && <Safety />}
-          {page === 'handover' && <Handover />}
-          {page === 'docreg' && <DocRegister />}
-          {page === 'express' && <ExpressExport />}
-          {page === 'qcsummary' && <QcSummary onOpenKpi={() => go('pms')} />}
-          {page === 'costing' && <CostFinance />}
-          {page === 'accounting' && <Accounting />}
-          {page === 'pms' && <Pms />}
-          {page === 'ceovoice' && <CeoVoice />}
+          <ModalHostContext.Provider value={modalHost}>
+            {alivePages.map((key) => (
+              <ModalOwnerContext.Provider key={key} value={key}>
+                <div style={{ display: key === pageKey ? 'contents' : 'none' }}>{renderPage(key)}</div>
+              </ModalOwnerContext.Provider>
+            ))}
+          </ModalHostContext.Provider>
         </main>
       </div>
 
-      {modal && <Modal modal={modal} onClose={() => setModal(null)} />}
+      <ModalHostContext.Provider value={modalHost}>
+        {modals.map((m) => <Modal key={m.key} modal={m.def} onClose={() => setModals((ms) => ms.filter((x) => x.key !== m.key))} />)}
+      </ModalHostContext.Provider>
       {printDoc && <PrintDoc kind={printDoc.kind} slip={printDoc.slip} onClose={() => setPrintDoc(null)} />}
     </div></>
   )

@@ -3,6 +3,7 @@ import { useApp } from '../../store'
 import type { ApiLaborRate } from '../../store'
 import { laborLabel, laborPriceText } from '../../store'
 import { api } from '../../api'
+import ModalShell from '../shared/ModalShell'
 
 // ราคากลางค่าแรงช่าง — ใบเทียบราคากลางของฝ่ายประเมินราคาและจัดซื้อ
 // ใช้เป็น "ราคาแนะนำ" ตอนจ้างช่างในบ้าน (แท็บ ช่าง/ผู้รับเหมา): ต้องหาถูกกว่าหรือเท่ากับราคานี้
@@ -129,10 +130,13 @@ export default function LaborRates() {
       <div style={{ fontSize: 11.5, color: '#94A0A8' }}>อ้างอิง: ฝ่ายประเมินราคาและจัดซื้อ · ตัวเลขทั้งหมดรวมค่าแรง + วัสดุสิ้นเปลือง · “เสนอราคา” = ไม่มีราคากลางตายตัว ต้องขอใบเสนอราคาเทียบ</div>
 
       {(adding || editing) && (
-        <div onClick={closeForm} style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.45)', zIndex: 70, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflow: 'auto', padding: '48px 16px' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 480, maxWidth: '100%', padding: '22px 24px', boxShadow: '0 24px 70px rgba(20,30,40,.3)' }}>
-            <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 4 }}>{editing ? 'แก้ราคากลางค่าแรง' : 'เพิ่มหมวดงาน / ราคากลางค่าแรง'}</div>
-            <div style={{ fontSize: 12, color: '#94A0A8', marginBottom: 16 }}>ราคาที่ใส่ = ค่าแรง + วัสดุสิ้นเปลือง ต่อ 1 หน่วย · ถ้าเป็นช่วง ใส่ต่ำสุด–สูงสุด</div>
+        <ModalShell
+          title={editing ? 'แก้ราคากลางค่าแรง' : 'เพิ่มหมวดงาน / ราคากลางค่าแรง'}
+          sub="ราคาที่ใส่ = ค่าแรง + วัสดุสิ้นเปลือง ต่อ 1 หน่วย · ถ้าเป็นช่วง ใส่ต่ำสุด–สูงสุด"
+          onClose={closeForm}
+          width={480}
+          zIndex={70}
+        >
             <div style={{ display: 'grid', gap: 11 }}>
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ flex: 1 }}>
@@ -192,8 +196,7 @@ export default function LaborRates() {
               <button onClick={closeForm} style={{ fontFamily: 'inherit', fontSize: 13.5, color: '#1C2730', background: '#EDF1F4', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ยกเลิก</button>
               <button onClick={save} disabled={busy} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '9px 20px', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
             </div>
-          </div>
-        </div>
+        </ModalShell>
       )}
     </div>
   )

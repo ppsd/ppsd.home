@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { useApp, useLiveRefresh } from '../../store'
 import WorkOrderPrint from './WorkOrderPrint'
+import ModalShell from '../shared/ModalShell'
 
 export interface QcRow { name: string; pass: string; note: string }
 export interface WorkOrder {
@@ -98,12 +99,18 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
     catch (e) { alert((e as Error).message) }
   }
 
+  // modal ส่งงาน — วางนอกส่วนที่สลับหน้า รายการ/ฟอร์มแก้ (ตำแหน่งเดียวกันทั้ง 2 แบบ) ย่อพับไว้แล้วเปิดฟอร์มแก้ได้โดยข้อมูลไม่หาย
+  const submitModal = submitFor && (
+    <SubmitWorkModal submitFor={submitFor} sf={sf} setSf={setSf} sbusy={sbusy} serr={serr} pickSubmitFile={pickSubmitFile} doSubmit={doSubmit} onClose={() => setSubmitFor(null)} />
+  )
+
   if (edit) {
     const e = edit
     const set = (patch: Partial<Draft>) => setEdit({ ...e, ...patch })
     const setDod = (k: string, v: string) => setEdit({ ...e, dod: { ...(e.dod || {}), [k]: v } })
     const setQc = (i: number, patch: Partial<QcRow>) => setEdit({ ...e, qc: (e.qc || []).map((x, j) => j === i ? { ...x, ...patch } : x) })
     return (
+      <>
       <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>{e.id ? `แก้ไขใบสั่งงาน ${e.no}` : 'ออกใบสั่งงานใหม่'}</div>
 
@@ -187,10 +194,13 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
           <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{e.id ? 'บันทึก' : 'สั่งงาน + แจ้งเตือน'}</button>
         </div>
       </div>
+      {submitModal}
+      </>
     )
   }
 
   return (
+    <>
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>ใบสั่งงาน <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ใบ</div>
@@ -237,15 +247,36 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
         </table>
       </div>
       {printing && <WorkOrderPrint wo={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name} onClose={() => setPrinting(null)} />}
+    </div>
+    {submitModal}
+    </>
+  )
+}
 
-      {submitFor && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 70, display: 'flex', padding: '24px 16px', overflow: 'auto' }}>
-          <div style={{ maxWidth: 480, width: '100%', margin: 'auto', background: '#fff', borderRadius: 14, boxShadow: '0 24px 70px rgba(20,30,40,.3)', overflow: 'hidden' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #EEF1F4' }}>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>ส่งงาน — {submitFor.project || submitFor.scope}</div>
-              <div style={{ fontSize: 12, color: '#94A0A8' }}>แนบไฟล์งานหรือลิงก์ เพื่อยืนยันว่าส่งงานแล้วจริง แล้วรอผู้สั่งกดรับ</div>
-            </div>
-            <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+function SubmitWorkModal({ submitFor, sf, setSf, sbusy, serr, pickSubmitFile, doSubmit, onClose }: {
+  submitFor: WorkOrder
+  sf: { link: string; note: string; files: { id: number; name: string }[] }
+  setSf: React.Dispatch<React.SetStateAction<{ link: string; note: string; files: { id: number; name: string }[] }>>
+  sbusy: string
+  serr: string
+  pickSubmitFile: (ev: React.ChangeEvent<HTMLInputElement>) => void
+  doSubmit: () => void
+  onClose: () => void
+}) {
+  return (
+        <ModalShell
+          title={<>ส่งงาน — {submitFor.project || submitFor.scope}</>}
+          sub="แนบไฟล์งานหรือลิงก์ เพื่อยืนยันว่าส่งงานแล้วจริง แล้วรอผู้สั่งกดรับ"
+          onClose={onClose}
+          width={480}
+          zIndex={70}
+          closeOnBackdrop={false}
+          bodyStyle={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}
+          footer={<>
+              <button onClick={onClose} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={doSubmit} disabled={!!sbusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ส่งงาน ✓</button>
+          </>}
+        >
               <div>
                 <div style={lbl}>แนบไฟล์งาน (รูป/PDF/ไฟล์อื่น)</div>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 13px', cursor: 'pointer' }}>
@@ -259,14 +290,6 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
               <div><div style={lbl}>หมายเหตุ (ถ้ามี)</div><input style={field} value={sf.note} onChange={(e) => setSf({ ...sf, note: e.target.value })} placeholder="เช่น งานเสร็จครบตามสั่ง" /></div>
               {sbusy && <div style={{ fontSize: 12.5, color: '#30506A' }}>{sbusy}</div>}
               {serr && <div style={{ fontSize: 12.5, color: '#C24036' }}>{serr}</div>}
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid #EEF1F4' }}>
-              <button onClick={() => setSubmitFor(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-              <button onClick={doSubmit} disabled={!!sbusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ส่งงาน ✓</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+        </ModalShell>
   )
 }

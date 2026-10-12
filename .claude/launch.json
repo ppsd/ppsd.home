@@ -1,0 +1,6 @@
+﻿{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "responsive-test", "runtimeExecutable": "node", "runtimeArgs": ["C:/Users/Lenovo/AppData/Local/Temp/claude/C--ppsd-erp/b591b3fc-33a0-4a2a-8270-553add15ed30/scratchpad/run-test.mjs"], "port": 5199 }
+  ]
+}

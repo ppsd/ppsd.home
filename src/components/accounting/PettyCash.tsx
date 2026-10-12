@@ -4,6 +4,7 @@ import { baht } from '../../data'
 import { company } from '../../erpData'
 import { useAppOptional, useLiveRefresh } from '../../store'
 import MoneyInput from '../shared/MoneyInput'
+import ModalShell from '../shared/ModalShell'
 import { moneySummary, VAT_MODE_LABEL } from '../../money'
 
 // ===== เงินสดย่อย 2 กอง (เงินสดย่อยทั่วไป / ค่าน้ำมันรถ) =====
@@ -284,18 +285,20 @@ export default function PettyCash({ fund }: { fund: PettyFundKey }) {
       </div>
 
       {topupEdit && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.45)', zIndex: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setTopupEdit(null)}>
-          <div style={{ ...card, padding: 18, width: 520, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>✎ แก้ไขรายการเติมเงินเข้ากอง</div>
+        <ModalShell
+          title="✎ แก้ไขรายการเติมเงินเข้ากอง"
+          onClose={() => setTopupEdit(null)}
+          width={520}
+          zIndex={70}
+          footer={<><button onClick={() => setTopupEdit(null)} style={ghost}>ยกเลิก</button><button onClick={saveTopupEdit} style={btn('#C0852C')}>บันทึกการแก้ไข</button></>}
+        >
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <label style={{ fontSize: 11.5, color: '#5C6770' }}>วันที่<input type="date" style={{ ...field, width: '100%', marginTop: 3 }} value={topupEdit.date_iso} onChange={(e) => setTopupEdit({ ...topupEdit, date_iso: e.target.value })} /></label>
               <label style={{ fontSize: 11.5, color: '#5C6770' }}>จำนวนเงิน<MoneyInput style={{ ...field, width: '100%', marginTop: 3 }} decimal value={topupEdit.amount} onChange={(v) => setTopupEdit({ ...topupEdit, amount: v })} /></label>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}><span style={{ fontSize: 12, color: '#5C6770' }}>อ้างอิงเงินเข้า</span><RefPicker kind={topupEdit.ref_kind} refNo={topupEdit.ref_no} allowed={['OE', 'PS']} onKind={(k) => setTopupEdit((cur) => cur && ({ ...cur, ref_kind: k, ref_no: '' }))} onPick={(o) => setTopupEdit((cur) => cur && ({ ...cur, ref_no: o?.no || '' }))} /></div>
             <input style={{ ...field, width: '100%', marginTop: 8 }} placeholder="หมายเหตุ/รายละเอียด" value={topupEdit.note} onChange={(e) => setTopupEdit({ ...topupEdit, note: e.target.value })} />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}><button onClick={() => setTopupEdit(null)} style={ghost}>ยกเลิก</button><button onClick={saveTopupEdit} style={btn('#C0852C')}>บันทึกการแก้ไข</button></div>
-          </div>
-        </div>
+        </ModalShell>
       )}
       {stmt && <PettyStatementDoc s={stmt} onClose={() => setStmt(null)} />}
       {voucher && <PettyVoucherDoc e={voucher} fundLabel={FUND.label} onClose={() => setVoucher(null)} />}

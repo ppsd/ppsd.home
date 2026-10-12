@@ -3,6 +3,7 @@ import { useApp } from '../../store'
 import type { ApiPO } from '../../store'
 import { api } from '../../api'
 import { baht } from '../../data'
+import ModalShell from '../shared/ModalShell'
 
 // ตรวจรับของ: เทียบ PO กับใบส่งของ (อัปโหลดรูป → AI อ่าน → เทียบชื่อ/จำนวน/ราคา → ผ่าน/ไม่ผ่าน)
 type DLine = { name: string; qty: string; unit: string; price: string }
@@ -75,18 +76,14 @@ export default function GoodsReceipt({ po, onClose, onDone }: { po: ApiPO; onClo
   const passed = detail?.result === 'ผ่าน'
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 70, overflow: 'auto', padding: '32px 16px', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 720, maxWidth: '100%', boxShadow: '0 24px 70px rgba(20,30,40,.3)' }}>
-        {/* หัว */}
-        <div style={{ padding: '16px 22px', borderBottom: '1px solid #EEF1F4', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div>
-            <div style={{ fontSize: 15.5, fontWeight: 700 }}>ตรวจรับของ · {po.no}</div>
-            <div style={{ fontSize: 12, color: '#94A0A8' }}>อัปโหลดรูปใบส่งของ ระบบจะเทียบชื่อ/จำนวน/ราคากับใบสั่งซื้อ (PO) ให้อัตโนมัติ</div>
-          </div>
-          <button onClick={onClose} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#EDF1F4', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>ปิด</button>
-        </div>
-
-        <div style={{ padding: '16px 22px' }}>
+    <ModalShell
+      title={<>ตรวจรับของ · {po.no}</>}
+      sub="อัปโหลดรูปใบส่งของ ระบบจะเทียบชื่อ/จำนวน/ราคากับใบสั่งซื้อ (PO) ให้อัตโนมัติ"
+      onClose={onClose}
+      width={720}
+      zIndex={70}
+      bodyStyle={{ padding: '16px 22px' }}
+    >
           {/* รายการที่สั่งใน PO */}
           <div style={{ fontSize: 12.5, fontWeight: 700, color: '#30506A', marginBottom: 5 }}>รายการที่สั่งใน PO</div>
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
@@ -184,8 +181,6 @@ export default function GoodsReceipt({ po, onClose, onDone }: { po: ApiPO; onClo
             </div>
           )}
           {passed && <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}><button onClick={onClose} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '10px 22px', cursor: 'pointer' }}>เสร็จสิ้น</button></div>}
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 import { cryptoAvailable, decryptJson, deriveKey, encryptJson, passphraseStrength, randomSalt, verifyKey, VAULT_CHECK_TEXT } from '../../vaultCrypto'
 
 // ===== คลังรหัสผ่านบริษัท =====
@@ -340,9 +341,18 @@ export default function Vault() {
       ))}
 
       {edit && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.45)', zIndex: 60, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 12px', overflow: 'auto' }} onClick={(ev) => { if (ev.target === ev.currentTarget) setEdit(null) }}>
-          <div style={{ ...card, width: '100%', maxWidth: 560, padding: 24 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>{edit.id ? 'แก้ไขรายการ' : 'เพิ่มรายการใหม่'}</div>
+        // minimizable={false}: ฟอร์มนี้มีรหัสผ่านที่ถอดรหัสแล้ว — ไม่ให้ย่อพับค้างไว้ (Esc / เปลี่ยนหน้า = ปิดเลย)
+        <ModalShell
+          title={edit.id ? 'แก้ไขรายการ' : 'เพิ่มรายการใหม่'}
+          onClose={() => setEdit(null)}
+          width={560}
+          zIndex={60}
+          minimizable={false}
+          footer={<>
+            <button style={btnS} onClick={() => setEdit(null)}>ยกเลิก</button>
+            <button style={btnP} disabled={busy} onClick={save}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
+          </>}
+        >
             <div style={{ display: 'grid', gap: 10 }}>
               <div><span style={lbl}>ชื่อระบบ / บริการ *</span><input style={field} value={edit.title} autoFocus onChange={(ev) => setEdit({ ...edit, title: ev.target.value })} placeholder="เช่น ธนาคารกสิกร บัญชีบริษัท" /></div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -362,12 +372,7 @@ export default function Vault() {
               <div><span style={lbl}>หมายเหตุ</span><textarea style={{ ...field, minHeight: 60 }} value={edit.note} onChange={(ev) => setEdit({ ...edit, note: ev.target.value })} placeholder="เช่น เบอร์ที่ผูก OTP, ใครถือบัตร, วันหมดอายุ" /></div>
             </div>
             <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 10 }}>ชื่อผู้ใช้ รหัสผ่าน 2FA และหมายเหตุ ถูกเข้ารหัสก่อนส่ง · ชื่อระบบ หมวด URL เก็บแบบอ่านได้เพื่อค้นหา</div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-              <button style={btnS} onClick={() => setEdit(null)}>ยกเลิก</button>
-              <button style={btnP} disabled={busy} onClick={save}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
-            </div>
-          </div>
-        </div>
+        </ModalShell>
       )}
     </div>
   )

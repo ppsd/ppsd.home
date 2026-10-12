@@ -13,6 +13,7 @@ import { baht, unMoney } from '../../data'
 import { useApp } from '../../store'
 import MoneyInput from '../shared/MoneyInput'
 import Pager from '../shared/Pager'
+import ModalShell from '../shared/ModalShell'
 import WhtCertDoc, { type AnnualEmpRow } from './WhtCertDoc'
 import AllSlipsDoc from './AllSlipsDoc'
 import PayrollSummaryDoc from './PayrollSummaryDoc'
@@ -349,91 +350,6 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                 <button onClick={() => setEmpPinShown('')} style={{ marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer', color: '#5C6770' }}>✕</button>
               </div>
             )}
-            {/* ฟอร์มเพิ่ม/แก้ไขพนักงาน = modal (ไม่ต้องเลื่อนขึ้นไปแก้บนตาราง) · ขนาดตามจอ + ปุ่มขยายเต็มจอ */}
-            {addingEmp && (
-              <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, animation: 'fadeIn .15s ease', padding: empMax ? 0 : 'clamp(8px, 3vw, 28px)' }}>
-              <div role="dialog" aria-modal="true" style={{ background: '#fff', borderRadius: empMax ? 0 : 14, width: empMax ? '100%' : 'min(1080px, 100%)', height: empMax ? '100%' : 'auto', maxHeight: empMax ? '100%' : '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 70px rgba(20,30,40,.3)', animation: 'modalIn .2s ease', overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 18px', borderBottom: '1px solid #EEF1F4', flexShrink: 0 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 15.5, fontWeight: 600 }}>{editId ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงาน'}</div>
-                    {editId && <div style={{ fontSize: 12, color: '#94A0A8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employees.find((x) => x.id === editId)?.code} · {emp.name}</div>}
-                  </div>
-                  <button onClick={() => setEmpMax((v) => !v)} title={empMax ? 'ย่อหน้าต่าง' : 'ขยายเต็มจอ'} className="hov-e7ebef" style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F3F5F7', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{empMax ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}</svg>
-                  </button>
-                  <button onClick={() => setAddingEmp(false)} title="ปิด" className="hov-e7ebef" style={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F3F5F7', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                  </button>
-                </div>
-              <div style={{ padding: '16px 18px', overflowY: 'auto', flex: 1 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(210px, 100%), 1fr))', gap: 10 }}>
-                  <select style={field} value={emp.prefix} onChange={(e) => setEmp({ ...emp, prefix: e.target.value })} title="คำนำหน้า (ใช้ในใบสรุปการจ่ายค่าจ้าง)"><option value="">คำนำหน้า</option><option>นาย</option><option>นาง</option><option>น.ส.</option></select>
-                  <input style={field} placeholder="ชื่อ-สกุล *" value={emp.name} onChange={(e) => setEmp({ ...emp, name: e.target.value })} />
-                  <input style={field} placeholder="ชื่อเล่น (เช่น พี่แมน)" value={emp.nickname} onChange={(e) => setEmp({ ...emp, nickname: e.target.value })} />
-                  <select style={field} value={emp.role} onChange={(e) => setEmp({ ...emp, role: e.target.value })}>{posList.map((p) => <option key={p}>{p}</option>)}</select>
-                  <select style={field} value={emp.pay_type} onChange={(e) => setEmp({ ...emp, pay_type: e.target.value })}><option>รายเดือน</option><option>รายวัน</option></select>
-                  <MoneyInput decimal style={field} placeholder={emp.pay_type === 'รายวัน' ? 'ค่าแรง/วัน (บาท) เช่น 1,166.67' : 'เงินเดือน (บาท)'} value={emp.base} onChange={(v) => setEmp({ ...emp, base: v })} />
-                  {emp.pay_type === 'รายวัน' && (
-                    <input style={field} type="number" min={0} step={0.5} placeholder="วันทำงาน/เดือน (เช่น แม่บ้าน) — ใส่ครึ่งวันได้ เช่น 17.5" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="รายวัน: เงิน = ค่าแรง/วัน × วันทำงาน (ใส่ครึ่งวันได้ เช่น 17.5)" />
-                  )}
-                  <input style={field} type="date" value={emp.start} onChange={(e) => setEmp({ ...emp, start: e.target.value })} />
-                  <select style={field} value={emp.status} onChange={(e) => setEmp({ ...emp, status: e.target.value })}>{['ทดลองงาน', 'ทำงาน', 'ลาออก'].map((s) => <option key={s}>{s}</option>)}</select>
-                  <input style={field} placeholder="PIN ลงเวลา 4 หลัก (เว้นว่าง=สุ่ม)" maxLength={4} value={emp.pin} onChange={(e) => setEmp({ ...emp, pin: e.target.value.replace(/\D/g, '') })} />
-                  <select style={field} value={emp.backup_code} onChange={(e) => setEmp({ ...emp, backup_code: e.target.value })} title="งานด่วน: ถ้าคนนี้ไม่รับใน 5 นาที ระบบไล่ไปหาคนสำรอง">
-                    <option value="">คนสำรอง (งานด่วน) — ไม่ระบุ</option>
-                    {employees.filter((x) => x.status !== 'ลาออก' && x.name !== emp.name).map((x) => <option key={x.code} value={x.code}>สำรอง: {x.name}</option>)}
-                  </select>
-                  <label className="hov-f3f5f7" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', cursor: 'pointer' }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M5 21h14" /></svg>
-                    {empSig ? 'เปลี่ยนลายเซ็น' : 'อัปโหลดลายเซ็น'}
-                    <input type="file" accept="image/*" onChange={pickEmpSig} style={{ display: 'none' }} />
-                  </label>
-                  {empSig && <img src={empSig} alt="ลายเซ็น" style={{ height: 36, maxWidth: '100%', objectFit: 'contain', border: '1px solid #E1E5EA', borderRadius: 6, background: '#fff' }} />}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 12, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>ลดหย่อนภาษี:</span>
-                  <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}><input type="checkbox" checked={emp.spouse} onChange={(e) => setEmp({ ...emp, spouse: e.target.checked })} /> มีคู่สมรส (60,000)</label>
-                  <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>บุตร <input type="number" min={0} value={emp.children} onChange={(e) => setEmp({ ...emp, children: e.target.value })} style={{ ...field, width: 56, padding: '6px 8px' }} /> คน (คนละ 30,000)</label>
-                  <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: '#C0852C' }} title="ติ๊กถ้าคนนี้ไม่อยู่ในระบบประกันสังคม (จะไม่หัก ปกส.)"><input type="checkbox" checked={emp.no_sso} onChange={(e) => setEmp({ ...emp, no_sso: e.target.checked })} /> ไม่หักประกันสังคม</label>
-                </div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, margin: '14px 0 3px' }}>ข้อมูลจ่ายเงินเดือน / ภาษี</div>
-                <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>ใช้สร้างไฟล์จ่ายเงินเดือนผ่านธนาคาร และแบบ ภ.ง.ด.1</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12 }}>
-                  <input style={field} placeholder="ธนาคาร (เช่น กสิกรไทย)" value={emp.bank_name} onChange={(e) => setEmp({ ...emp, bank_name: e.target.value })} />
-                  <input style={field} placeholder="เลขบัญชีธนาคาร" value={emp.bank_acct} onChange={(e) => setEmp({ ...emp, bank_acct: e.target.value.replace(/[^\d-]/g, '') })} />
-                  <input style={field} placeholder="เลขผู้เสียภาษี 13 หลัก" maxLength={13} value={emp.tax_id} onChange={(e) => setEmp({ ...emp, tax_id: e.target.value.replace(/\D/g, '') })} />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12, marginTop: 10 }}>
-                  <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หัก Retention /เดือน <span style={{ color: '#94A0A8' }}>(ปกติ 500 · หยุดหักเองเมื่อครบ 5,000)</span></div><MoneyInput style={field} placeholder="500" value={emp.retention} onChange={(v) => setEmp({ ...emp, retention: v })} /></div>
-                  <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>Retention หักสะสมมาแล้ว <span style={{ color: '#94A0A8' }}>(พนักงานเก่า · ครบแล้วใส่ 5000)</span></div><MoneyInput style={field} placeholder="0" value={emp.retention_opening} onChange={(v) => setEmp({ ...emp, retention_opening: v })} /></div>
-                  <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หัก กยศ /เดือน <span style={{ color: '#94A0A8' }}>(เฉพาะคนที่มี · 0 = ไม่มี)</span></div><MoneyInput style={field} placeholder="0" value={emp.student_loan} onChange={(v) => setEmp({ ...emp, student_loan: v })} /></div>
-                </div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, margin: '14px 0 3px' }}>วันลา — กรอกจำนวนที่ “ใช้ไปแล้ว” (เริ่มใช้กลางปี)</div>
-                <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>
-                  โควต้าต่อปี: ลาป่วย 30 วัน · ลากิจ 3 วัน · พักร้อน {vacQuota} วัน
-                  {emp.start ? (tenureYears >= 1 ? ' (อายุงานครบ 1 ปี → 6 วัน)' : ' (อายุงานยังไม่ถึง 1 ปี → 3 วัน)') : ' (พักร้อนคำนวณจากวันเริ่มงาน)'}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12 }}>
-                  {[
-                    { key: 'sick_used', label: 'ลาป่วย — ใช้ไปแล้ว (วัน)', q: 30 },
-                    { key: 'personal_used', label: 'ลากิจ — ใช้ไปแล้ว (วัน)', q: 3 },
-                    { key: 'vacation_used', label: 'พักร้อน — ใช้ไปแล้ว (วัน)', q: vacQuota },
-                  ].map((f) => (
-                    <div key={f.key}>
-                      <div style={{ fontSize: 11.5, color: '#3C4750', marginBottom: 4 }}>{f.label} <span style={{ color: '#94A0A8' }}>· โควต้า {f.q}</span></div>
-                      <input style={{ ...field, width: '100%' }} type="number" min={0} value={(emp as unknown as Record<string, string>)[f.key]} onChange={(e) => setEmp({ ...emp, [f.key]: e.target.value })} />
-                    </div>
-                  ))}
-                </div>
-                {empErr && <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px', marginTop: 12 }}>{empErr}</div>}
-              </div>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '12px 18px', borderTop: '1px solid #EEF1F4', background: '#FAFBFC', flexShrink: 0 }}>
-                  <button onClick={() => setAddingEmp(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-                  <button onClick={submitEmp} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '9px 20px', cursor: 'pointer' }}>{editId ? 'บันทึกการแก้ไข' : 'บันทึก'}</button>
-                </div>
-              </div>
-              </div>
-            )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
                 <th style={{ ...th, padding: '9px 18px' }}>รหัส</th><th style={th}>ชื่อ-สกุล</th><th style={th}>ตำแหน่ง</th>
@@ -485,24 +401,6 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           <>
           {showSummary && payroll && payrollMeta && <PayrollSummaryDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowSummary(false)} />}
           {showAllSlips && payroll && payrollMeta && <AllSlipsDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowAllSlips(false)} />}
-          {whtPick && <WhtCertDoc row={whtPick} year={whtYear} onClose={() => setWhtPick(null)} />}
-          {whtRows && !whtPick && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 55, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setWhtRows(null)}>
-              <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 520, maxHeight: '80vh', overflow: 'auto', padding: '18px 20px' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>หนังสือรับรอง 50 ทวิ — ปี {Number(whtYear) + 543}</div>
-                <div style={{ fontSize: 12, color: '#94A0A8', marginBottom: 10 }}>เลือกพนักงานเพื่อพิมพ์ (ยอดจากงวดที่ปิดแล้วทั้งปี)</div>
-                {whtRows.map((r) => (
-                  <div key={r.code || r.name} onClick={() => setWhtPick(r)} className="hov-fafbfc" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderTop: '1px solid #F1F4F6', cursor: 'pointer', fontSize: 13 }}>
-                    <span style={{ fontWeight: 600, flex: 1 }}>{r.prefix ? r.prefix + ' ' : ''}{r.name}</span>
-                    <span style={{ fontSize: 11.5, color: '#94A0A8' }}>{r.months} งวด</span>
-                    <span className="num" style={{ fontWeight: 600, color: '#30506A' }}>{baht(r.income)}</span>
-                    <span className="num" style={{ fontSize: 12, color: '#C24036' }}>ภาษี {baht(r.tax)}</span>
-                  </div>
-                ))}
-                <button onClick={() => setWhtRows(null)} style={{ marginTop: 12, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#5C6770', background: '#F1F4F6', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>ปิด</button>
-              </div>
-            </div>
-          )}
           {annual && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
               <div><div style={{ fontSize: 12, color: '#5C6770' }}>รวมจ่ายเงินเดือนทั้งปี {new Date().getFullYear() + 543}</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#1C2730', marginTop: 3 }}>{baht(annual.net)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>จากงวดที่ปิดแล้ว {annual.months} เดือน</div></div>
@@ -935,50 +833,6 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               </tbody>
             </table>
             <div style={{ fontSize: 11.5, color: '#94A0A8', padding: '10px 18px' }}>“มาทำงาน” รวมวันที่มาสายด้วย · “ขาด” = วันทำงาน (จ.–ส.) ที่ไม่มาและไม่มีใบลา/ปรับปรุงเวลา · อาทิตย์เป็นวันหยุด · <b>คลิกชื่อคนเพื่อดูรายวัน</b></div>
-            {/* ----- รายละเอียดรายวันต่อคน ----- */}
-            {(detail || detailLoading) && (
-              <div onClick={() => setDetail(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(20,28,36,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}>
-                <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 620, maxWidth: '100%', maxHeight: '86vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}>
-                  {detailLoading && !detail ? <div style={{ padding: 40, textAlign: 'center', color: '#94A0A8' }}>กำลังโหลด…</div> : detail && (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid #EEF1F4', position: 'sticky', top: 0, background: '#fff' }}>
-                        <div><div style={{ fontSize: 16, fontWeight: 700 }}>{detail.name}</div><div style={{ fontSize: 12, color: '#94A0A8' }}>{detail.role} · {attSum?.periodLabel}</div></div>
-                        <button onClick={() => setDetail(null)} style={{ marginLeft: 'auto', border: 'none', background: '#F1F4F6', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 16, color: '#5C6770' }}>✕</button>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px 20px', fontSize: 12 }}>
-                        <span style={{ color: '#2E7D55', fontWeight: 600 }}>มา {detail.counts.came}</span>
-                        {detail.counts.adj > 0 && <span style={{ color: '#5C6770' }}>· ปรับปรุง {detail.counts.adj}</span>}
-                        {detail.counts.late > 0 && <span style={{ color: '#B7791F' }}>· สาย {detail.counts.late}</span>}
-                        {detail.counts.leave > 0 && <span style={{ color: '#30506A' }}>· ลา {detail.counts.leave}</span>}
-                        {!detail.no_attendance && <span style={{ color: '#C24036', fontWeight: 600 }}>· ขาด {detail.counts.absent}</span>}
-                      </div>
-                      {!detail.no_attendance && detail.counts.absent > 0 && (
-                        <div style={{ margin: '0 20px 10px', padding: '8px 12px', background: '#FBF6EC', border: '1px solid #ECDCB8', borderRadius: 9, fontSize: 12, color: '#8A6D3B' }}>
-                          วันที่ขึ้น “ขาด” = ไม่มีบัตรตอกและไม่มีปรับปรุงเวลา — ถ้าจริงๆ มาทำงาน กดปุ่ม “เติมมา” ในวันนั้นได้เลย
-                        </div>
-                      )}
-                      <div style={{ padding: '0 20px 20px' }}>
-                        {detail.days.map((d) => {
-                          const wd = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'][d.dow]
-                          const st = d.status
-                          const col = st === 'มา' ? { c: '#2E7D55', bg: '#E7F3EC' } : st === 'สาย' ? { c: '#B7791F', bg: '#F6ECD6' } : st === 'ปรับปรุง' ? { c: '#30506A', bg: '#E2E9EF' } : st === 'ลา' ? { c: '#30506A', bg: '#E2E9EF' } : st === 'หยุด' ? { c: '#94A0A8', bg: '#F1F4F6' } : st === 'ยกเว้น' ? { c: '#2E7D55', bg: '#E7F3EC' } : { c: '#C24036', bg: '#FBEEEC' }
-                          const dnum = Number(d.date.slice(8, 10))
-                          return (
-                            <div key={d.date} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 4px', borderTop: '1px solid #F4F6F8' }}>
-                              <span className="num" style={{ width: 30, textAlign: 'right', fontWeight: 600, color: d.dow === 0 ? '#C0852C' : '#3C4750' }}>{dnum}</span>
-                              <span style={{ width: 26, fontSize: 11.5, color: '#94A0A8' }}>{wd}</span>
-                              <span style={{ fontSize: 11.5, fontWeight: 600, color: col.c, background: col.bg, padding: '2px 10px', borderRadius: 20, minWidth: 62, textAlign: 'center' }}>{st === 'ยกเว้น' ? 'ไม่ต้องลงเวลา' : st}</span>
-                              {d.check_in && <span className="num" style={{ fontSize: 12, color: '#5C6770' }}>{d.check_in}{d.check_out ? ' – ' + d.check_out : ''}</span>}
-                              {st === 'ขาด' && <button onClick={() => fillDay(detail.code, d.date)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 11px', cursor: 'pointer' }}>+ เติมมา</button>}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
           </>
         )}
 
@@ -1180,6 +1034,143 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           )
         })()}
       </div>
+      {/* ===== modal — วางนอกส่วนที่สลับแท็บ (สลับแท็บแล้วไม่หาย) ===== */}
+      {/* ฟอร์มเพิ่ม/แก้ไขพนักงาน = modal (ไม่ต้องเลื่อนขึ้นไปแก้บนตาราง) · ขนาดตามจอ + ปุ่มขยายเต็มจอ */}
+      {addingEmp && (
+        <ModalShell
+          title={editId ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงาน'}
+          sub={editId ? <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employees.find((x) => x.id === editId)?.code} · {emp.name}</div> : undefined}
+          onClose={() => setAddingEmp(false)}
+          width={1080}
+          fullscreen={empMax}
+          closeOnBackdrop={false}
+          bodyStyle={{ padding: '16px 18px' }}
+          headerActions={
+            <button onClick={() => setEmpMax((v) => !v)} title={empMax ? 'ย่อหน้าต่าง' : 'ขยายเต็มจอ'} className="hov-e7ebef" style={{ width: 32, height: 32, flexShrink: 0, borderRadius: 8, border: 'none', background: '#F3F5F7', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{empMax ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}</svg>
+            </button>
+          }
+          footer={<>
+            <button onClick={() => setAddingEmp(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={submitEmp} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '9px 20px', cursor: 'pointer' }}>{editId ? 'บันทึกการแก้ไข' : 'บันทึก'}</button>
+          </>}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(210px, 100%), 1fr))', gap: 10 }}>
+            <select style={field} value={emp.prefix} onChange={(e) => setEmp({ ...emp, prefix: e.target.value })} title="คำนำหน้า (ใช้ในใบสรุปการจ่ายค่าจ้าง)"><option value="">คำนำหน้า</option><option>นาย</option><option>นาง</option><option>น.ส.</option></select>
+            <input style={field} placeholder="ชื่อ-สกุล *" value={emp.name} onChange={(e) => setEmp({ ...emp, name: e.target.value })} />
+            <input style={field} placeholder="ชื่อเล่น (เช่น พี่แมน)" value={emp.nickname} onChange={(e) => setEmp({ ...emp, nickname: e.target.value })} />
+            <select style={field} value={emp.role} onChange={(e) => setEmp({ ...emp, role: e.target.value })}>{posList.map((p) => <option key={p}>{p}</option>)}</select>
+            <select style={field} value={emp.pay_type} onChange={(e) => setEmp({ ...emp, pay_type: e.target.value })}><option>รายเดือน</option><option>รายวัน</option></select>
+            <MoneyInput decimal style={field} placeholder={emp.pay_type === 'รายวัน' ? 'ค่าแรง/วัน (บาท) เช่น 1,166.67' : 'เงินเดือน (บาท)'} value={emp.base} onChange={(v) => setEmp({ ...emp, base: v })} />
+            {emp.pay_type === 'รายวัน' && (
+              <input style={field} type="number" min={0} step={0.5} placeholder="วันทำงาน/เดือน (เช่น แม่บ้าน) — ใส่ครึ่งวันได้ เช่น 17.5" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="รายวัน: เงิน = ค่าแรง/วัน × วันทำงาน (ใส่ครึ่งวันได้ เช่น 17.5)" />
+            )}
+            <input style={field} type="date" value={emp.start} onChange={(e) => setEmp({ ...emp, start: e.target.value })} />
+            <select style={field} value={emp.status} onChange={(e) => setEmp({ ...emp, status: e.target.value })}>{['ทดลองงาน', 'ทำงาน', 'ลาออก'].map((s) => <option key={s}>{s}</option>)}</select>
+            <input style={field} placeholder="PIN ลงเวลา 4 หลัก (เว้นว่าง=สุ่ม)" maxLength={4} value={emp.pin} onChange={(e) => setEmp({ ...emp, pin: e.target.value.replace(/\D/g, '') })} />
+            <select style={field} value={emp.backup_code} onChange={(e) => setEmp({ ...emp, backup_code: e.target.value })} title="งานด่วน: ถ้าคนนี้ไม่รับใน 5 นาที ระบบไล่ไปหาคนสำรอง">
+              <option value="">คนสำรอง (งานด่วน) — ไม่ระบุ</option>
+              {employees.filter((x) => x.status !== 'ลาออก' && x.name !== emp.name).map((x) => <option key={x.code} value={x.code}>สำรอง: {x.name}</option>)}
+            </select>
+            <label className="hov-f3f5f7" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', cursor: 'pointer' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M5 21h14" /></svg>
+              {empSig ? 'เปลี่ยนลายเซ็น' : 'อัปโหลดลายเซ็น'}
+              <input type="file" accept="image/*" onChange={pickEmpSig} style={{ display: 'none' }} />
+            </label>
+            {empSig && <img src={empSig} alt="ลายเซ็น" style={{ height: 36, maxWidth: '100%', objectFit: 'contain', border: '1px solid #E1E5EA', borderRadius: 6, background: '#fff' }} />}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>ลดหย่อนภาษี:</span>
+            <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}><input type="checkbox" checked={emp.spouse} onChange={(e) => setEmp({ ...emp, spouse: e.target.checked })} /> มีคู่สมรส (60,000)</label>
+            <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>บุตร <input type="number" min={0} value={emp.children} onChange={(e) => setEmp({ ...emp, children: e.target.value })} style={{ ...field, width: 56, padding: '6px 8px' }} /> คน (คนละ 30,000)</label>
+            <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: '#C0852C' }} title="ติ๊กถ้าคนนี้ไม่อยู่ในระบบประกันสังคม (จะไม่หัก ปกส.)"><input type="checkbox" checked={emp.no_sso} onChange={(e) => setEmp({ ...emp, no_sso: e.target.checked })} /> ไม่หักประกันสังคม</label>
+          </div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, margin: '14px 0 3px' }}>ข้อมูลจ่ายเงินเดือน / ภาษี</div>
+          <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>ใช้สร้างไฟล์จ่ายเงินเดือนผ่านธนาคาร และแบบ ภ.ง.ด.1</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12 }}>
+            <input style={field} placeholder="ธนาคาร (เช่น กสิกรไทย)" value={emp.bank_name} onChange={(e) => setEmp({ ...emp, bank_name: e.target.value })} />
+            <input style={field} placeholder="เลขบัญชีธนาคาร" value={emp.bank_acct} onChange={(e) => setEmp({ ...emp, bank_acct: e.target.value.replace(/[^\d-]/g, '') })} />
+            <input style={field} placeholder="เลขผู้เสียภาษี 13 หลัก" maxLength={13} value={emp.tax_id} onChange={(e) => setEmp({ ...emp, tax_id: e.target.value.replace(/\D/g, '') })} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12, marginTop: 10 }}>
+            <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หัก Retention /เดือน <span style={{ color: '#94A0A8' }}>(ปกติ 500 · หยุดหักเองเมื่อครบ 5,000)</span></div><MoneyInput style={field} placeholder="500" value={emp.retention} onChange={(v) => setEmp({ ...emp, retention: v })} /></div>
+            <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>Retention หักสะสมมาแล้ว <span style={{ color: '#94A0A8' }}>(พนักงานเก่า · ครบแล้วใส่ 5000)</span></div><MoneyInput style={field} placeholder="0" value={emp.retention_opening} onChange={(v) => setEmp({ ...emp, retention_opening: v })} /></div>
+            <div><div style={{ fontSize: 11.5, color: '#5C6770', marginBottom: 4 }}>หัก กยศ /เดือน <span style={{ color: '#94A0A8' }}>(เฉพาะคนที่มี · 0 = ไม่มี)</span></div><MoneyInput style={field} placeholder="0" value={emp.student_loan} onChange={(v) => setEmp({ ...emp, student_loan: v })} /></div>
+          </div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, margin: '14px 0 3px' }}>วันลา — กรอกจำนวนที่ “ใช้ไปแล้ว” (เริ่มใช้กลางปี)</div>
+          <div style={{ fontSize: 11.5, color: '#94A0A8', marginBottom: 8 }}>
+            โควต้าต่อปี: ลาป่วย 30 วัน · ลากิจ 3 วัน · พักร้อน {vacQuota} วัน
+            {emp.start ? (tenureYears >= 1 ? ' (อายุงานครบ 1 ปี → 6 วัน)' : ' (อายุงานยังไม่ถึง 1 ปี → 3 วัน)') : ' (พักร้อนคำนวณจากวันเริ่มงาน)'}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 12 }}>
+            {[
+              { key: 'sick_used', label: 'ลาป่วย — ใช้ไปแล้ว (วัน)', q: 30 },
+              { key: 'personal_used', label: 'ลากิจ — ใช้ไปแล้ว (วัน)', q: 3 },
+              { key: 'vacation_used', label: 'พักร้อน — ใช้ไปแล้ว (วัน)', q: vacQuota },
+            ].map((f) => (
+              <div key={f.key}>
+                <div style={{ fontSize: 11.5, color: '#3C4750', marginBottom: 4 }}>{f.label} <span style={{ color: '#94A0A8' }}>· โควต้า {f.q}</span></div>
+                <input style={{ ...field, width: '100%' }} type="number" min={0} value={(emp as unknown as Record<string, string>)[f.key]} onChange={(e) => setEmp({ ...emp, [f.key]: e.target.value })} />
+              </div>
+            ))}
+          </div>
+          {empErr && <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px', marginTop: 12 }}>{empErr}</div>}
+        </ModalShell>
+      )}
+
+      {whtPick && <WhtCertDoc row={whtPick} year={whtYear} onClose={() => setWhtPick(null)} />}
+      {whtRows && !whtPick && (
+        <ModalShell title={<>หนังสือรับรอง 50 ทวิ — ปี {Number(whtYear) + 543}</>} sub="เลือกพนักงานเพื่อพิมพ์ (ยอดจากงวดที่ปิดแล้วทั้งปี)" onClose={() => setWhtRows(null)} width={520} zIndex={55} bodyStyle={{ padding: '18px 20px' }}>
+          {whtRows.map((r) => (
+            <div key={r.code || r.name} onClick={() => setWhtPick(r)} className="hov-fafbfc" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderTop: '1px solid #F1F4F6', cursor: 'pointer', fontSize: 13 }}>
+              <span style={{ fontWeight: 600, flex: 1 }}>{r.prefix ? r.prefix + ' ' : ''}{r.name}</span>
+              <span style={{ fontSize: 11.5, color: '#94A0A8' }}>{r.months} งวด</span>
+              <span className="num" style={{ fontWeight: 600, color: '#30506A' }}>{baht(r.income)}</span>
+              <span className="num" style={{ fontSize: 12, color: '#C24036' }}>ภาษี {baht(r.tax)}</span>
+            </div>
+          ))}
+          <button onClick={() => setWhtRows(null)} style={{ marginTop: 12, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#5C6770', background: '#F1F4F6', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>ปิด</button>
+        </ModalShell>
+      )}
+
+      {/* ----- รายละเอียดรายวันต่อคน ----- */}
+      {(detail || detailLoading) && (
+        <ModalShell title={detail ? detail.name : 'กำลังโหลด…'} sub={detail ? <>{detail.role} · {attSum?.periodLabel}</> : undefined} onClose={() => setDetail(null)} width={620} bodyStyle={{ padding: 0 }}>
+          {detailLoading && !detail ? <div style={{ padding: 40, textAlign: 'center', color: '#94A0A8' }}>กำลังโหลด…</div> : detail && (
+            <>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px 20px', fontSize: 12 }}>
+                <span style={{ color: '#2E7D55', fontWeight: 600 }}>มา {detail.counts.came}</span>
+                {detail.counts.adj > 0 && <span style={{ color: '#5C6770' }}>· ปรับปรุง {detail.counts.adj}</span>}
+                {detail.counts.late > 0 && <span style={{ color: '#B7791F' }}>· สาย {detail.counts.late}</span>}
+                {detail.counts.leave > 0 && <span style={{ color: '#30506A' }}>· ลา {detail.counts.leave}</span>}
+                {!detail.no_attendance && <span style={{ color: '#C24036', fontWeight: 600 }}>· ขาด {detail.counts.absent}</span>}
+              </div>
+              {!detail.no_attendance && detail.counts.absent > 0 && (
+                <div style={{ margin: '0 20px 10px', padding: '8px 12px', background: '#FBF6EC', border: '1px solid #ECDCB8', borderRadius: 9, fontSize: 12, color: '#8A6D3B' }}>
+                  วันที่ขึ้น “ขาด” = ไม่มีบัตรตอกและไม่มีปรับปรุงเวลา — ถ้าจริงๆ มาทำงาน กดปุ่ม “เติมมา” ในวันนั้นได้เลย
+                </div>
+              )}
+              <div style={{ padding: '0 20px 20px' }}>
+                {detail.days.map((d) => {
+                  const wd = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'][d.dow]
+                  const st = d.status
+                  const col = st === 'มา' ? { c: '#2E7D55', bg: '#E7F3EC' } : st === 'สาย' ? { c: '#B7791F', bg: '#F6ECD6' } : st === 'ปรับปรุง' ? { c: '#30506A', bg: '#E2E9EF' } : st === 'ลา' ? { c: '#30506A', bg: '#E2E9EF' } : st === 'หยุด' ? { c: '#94A0A8', bg: '#F1F4F6' } : st === 'ยกเว้น' ? { c: '#2E7D55', bg: '#E7F3EC' } : { c: '#C24036', bg: '#FBEEEC' }
+                  const dnum = Number(d.date.slice(8, 10))
+                  return (
+                    <div key={d.date} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 4px', borderTop: '1px solid #F4F6F8' }}>
+                      <span className="num" style={{ width: 30, textAlign: 'right', fontWeight: 600, color: d.dow === 0 ? '#C0852C' : '#3C4750' }}>{dnum}</span>
+                      <span style={{ width: 26, fontSize: 11.5, color: '#94A0A8' }}>{wd}</span>
+                      <span style={{ fontSize: 11.5, fontWeight: 600, color: col.c, background: col.bg, padding: '2px 10px', borderRadius: 20, minWidth: 62, textAlign: 'center' }}>{st === 'ยกเว้น' ? 'ไม่ต้องลงเวลา' : st}</span>
+                      {d.check_in && <span className="num" style={{ fontSize: 12, color: '#5C6770' }}>{d.check_in}{d.check_out ? ' – ' + d.check_out : ''}</span>}
+                      {st === 'ขาด' && <button onClick={() => fillDay(detail.code, d.date)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 11px', cursor: 'pointer' }}>+ เติมมา</button>}
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </ModalShell>
+      )}
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { useApp } from '../../store'
 import type { ApiPayroll } from '../../store'
 import { api } from '../../api'
 import PrintDoc from '../shared/PrintDoc'
+import ModalShell from '../shared/ModalShell'
 
 const TH_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์']
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
@@ -238,23 +239,26 @@ export default function TimeKiosk() {
       </div>
 
       {mySlip && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 55, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setMySlip(null)}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 420, maxWidth: '96vw', padding: '16px 18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span style={{ fontSize: 14.5, fontWeight: 700 }}>สลิปเงินเดือน — {mySlip.slip?.name || ''}</span>
-              <select value={mySlip.period || ''} onChange={(e) => loadMySlip(e.target.value)} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '5px 8px' }}>
-                {mySlip.periods.map((p) => <option key={p.period} value={p.period}>{p.label}</option>)}
-              </select>
+        <ModalShell
+          title={<>สลิปเงินเดือน — {mySlip.slip?.name || ''}</>}
+          onClose={() => setMySlip(null)}
+          width={420}
+          zIndex={55}
+          bodyStyle={{ padding: '16px 18px' }}
+          headerActions={
+            <select value={mySlip.period || ''} onChange={(e) => loadMySlip(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '5px 8px' }}>
+              {mySlip.periods.map((p) => <option key={p.period} value={p.period}>{p.label}</option>)}
+            </select>
+          }
+        >
+          {!mySlip.slip && <div style={{ fontSize: 13, color: '#94A0A8', padding: 18, textAlign: 'center' }}>ไม่พบข้อมูลของคุณในงวดนี้</div>}
+          {mySlip.slip && (
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => { setSlipDoc(mySlip.slip!); }} className="btn-primary" style={{ flex: 1, fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '11px 0', cursor: 'pointer' }}>🖨 เปิดสลิป / พิมพ์</button>
+              <button onClick={() => setMySlip(null)} style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#F1F4F6', border: 'none', borderRadius: 9, padding: '11px 16px', cursor: 'pointer' }}>ปิด</button>
             </div>
-            {!mySlip.slip && <div style={{ fontSize: 13, color: '#94A0A8', padding: 18, textAlign: 'center' }}>ไม่พบข้อมูลของคุณในงวดนี้</div>}
-            {mySlip.slip && (
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button onClick={() => { setSlipDoc(mySlip.slip!); }} className="btn-primary" style={{ flex: 1, fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '11px 0', cursor: 'pointer' }}>🖨 เปิดสลิป / พิมพ์</button>
-                <button onClick={() => setMySlip(null)} style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#F1F4F6', border: 'none', borderRadius: 9, padding: '11px 16px', cursor: 'pointer' }}>ปิด</button>
-              </div>
-            )}
-          </div>
-        </div>
+          )}
+        </ModalShell>
       )}
       {slipDoc && <PrintDoc kind="slip" slip={slipDoc} onClose={() => setSlipDoc(null)} />}
     </div>
