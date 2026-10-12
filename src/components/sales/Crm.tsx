@@ -74,20 +74,47 @@ function CustomersTab() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13, color: '#5C6770' }}>ลูกค้า <b className="num" style={{ color: '#1C2730' }}>{filtered.length}/{list.length}</b> ราย · ผูก LINE แล้ว <b className="num">{list.filter((c) => c.line_linked).length}</b></span>
           <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="ค้นหาชื่อ/เบอร์/รหัส/โครงการ" style={{ ...field, width: 220 }} />
-          <button onClick={() => setAdding((v) => !v)} style={{ ...btn(), marginLeft: 'auto' }}>+ เพิ่มลูกค้า</button>
+          <button onClick={() => { setErr(''); setAdding(true) }} style={{ ...btn(), marginLeft: 'auto' }}>+ เพิ่มลูกค้า</button>
         </div>
         {adding && (
-          <div style={{ ...card, padding: 14 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8 }}>
-              <input style={field} placeholder="ชื่อลูกค้า *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-              <input style={field} placeholder="เบอร์โทร" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-              <input style={field} placeholder="อีเมล" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-              <input style={field} placeholder="โครงการ/แบบบ้านที่สนใจ" value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })} />
-              <select style={field} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{['สนใจ', 'กำลังคุย', 'ปิดการขาย', 'ยกเลิก'].map((s) => <option key={s}>{s}</option>)}</select>
-              <input style={field} placeholder="ที่อยู่" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+          <div onClick={() => setAdding(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, animation: 'fadeIn .15s ease', padding: 24 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 15, width: 600, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 24px 70px rgba(20,30,40,.3)', animation: 'modalIn .2s ease' }}>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid #EEF1F4' }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>เพิ่มลูกค้า</div>
+                  <div style={{ fontSize: 12.5, color: '#94A0A8' }}>บันทึกข้อมูลลูกค้าใหม่เข้า CRM</div>
+                </div>
+                <button onClick={() => setAdding(false)} className="hov-e7ebef" style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F3F5F7', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5C6770" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                </button>
+              </div>
+              <div style={{ padding: '20px 22px', display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+                {([
+                  ['ชื่อลูกค้า', 'name', 'เช่น คุณสมชาย ใจดี', true],
+                  ['เบอร์โทร', 'phone', '08x-xxx-xxxx', false],
+                  ['อีเมล', 'email', 'name@example.com', false],
+                  ['โครงการ / แบบบ้านที่สนใจ', 'project', 'เช่น บ้าน 2 ชั้น PD-2', false],
+                ] as const).map(([label, key, ph, req]) => (
+                  <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#3C4750' }}>
+                    <span>{label}{req && <span style={{ color: '#C24036' }}> *</span>}</span>
+                    <input style={field} placeholder={ph} value={form[key]} autoFocus={key === 'name'} onChange={(e) => setForm({ ...form, [key]: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') add() }} />
+                  </label>
+                ))}
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#3C4750' }}>
+                  <span>สถานะ</span>
+                  <select style={field} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{['สนใจ', 'กำลังคุย', 'ปิดการขาย', 'ยกเลิก'].map((s) => <option key={s}>{s}</option>)}</select>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#3C4750' }}>
+                  <span>ที่อยู่</span>
+                  <input style={field} placeholder="บ้านเลขที่ ถนน ตำบล อำเภอ จังหวัด" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+                </label>
+                {err && <div style={{ gridColumn: '1 / -1', fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px' }}>{err}</div>}
+              </div>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '16px 22px', borderTop: '1px solid #EEF1F4', background: '#FAFBFC' }}>
+                <button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button>
+                <button onClick={add} style={btn()}>บันทึก</button>
+              </div>
             </div>
-            {err && <div style={{ fontSize: 12, color: '#C24036', marginTop: 8 }}>{err}</div>}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}><button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button><button onClick={add} style={btn()}>บันทึก</button></div>
           </div>
         )}
         <div style={card}>

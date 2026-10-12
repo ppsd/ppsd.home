@@ -990,6 +990,14 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               {isAdmin && (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
                   <input style={{ ...field, width: 'auto' }} type="date" value={hForm.date} onChange={(e) => setHForm({ ...hForm, date: e.target.value })} />
+                  {/* ช่องวันที่แสดงตามภาษาเบราว์เซอร์ (อังกฤษ = เดือน/วัน/ปี) — กำกับเป็นวันที่ไทยให้ไม่สับสนวันกับเดือน */}
+                  {hForm.date && (() => {
+                    const d = new Date(hForm.date + 'T00:00:00')
+                    const sun = d.getDay() === 0
+                    return <span style={{ fontSize: 12.5, fontWeight: 600, color: sun ? '#B7791F' : '#30506A', background: sun ? '#FDF6E7' : '#EDF2F6', borderRadius: 7, padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                      วัน{['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'][d.getDay()]}ที่ {thMonth(hForm.date).replace(/ \d+$/, '')} {d.getFullYear() + 543}{sun ? ' · เป็นวันหยุดอยู่แล้ว' : ''}
+                    </span>
+                  })()}
                   <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="ชื่อวันหยุด (เช่น สงกรานต์)" value={hForm.name} onChange={(e) => setHForm({ ...hForm, name: e.target.value })} />
                   <button onClick={addHoliday} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>+ เพิ่มวันหยุด</button>
                 </div>
