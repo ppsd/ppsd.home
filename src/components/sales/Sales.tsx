@@ -6,10 +6,12 @@ import { api } from '../../api'
 import type { ApiSalesDoc, SalesItem } from '../../store'
 import { baht } from '../../data'
 import SalesDocPrint from './SalesDocPrint'
+import ModalShell from '../shared/ModalShell'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '11px 14px' }
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', outline: 'none' }
+const lbl: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 500, color: '#3C4750' }
 
 const TYPE_LABEL: Record<string, string> = { quote: 'ใบเสนอราคา', invoice: 'ใบแจ้งหนี้', receipt: 'ใบเสร็จ' }
 function typeStyle(t: string) {
@@ -109,18 +111,28 @@ export default function Sales() {
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
-          <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-            <select style={{ ...field, width: 160 }} value={type} onChange={(e) => setType(e.target.value as typeof type)}>
-              <option value="quote">ใบเสนอราคา</option>
-              <option value="invoice">ใบแจ้งหนี้</option>
-              <option value="receipt">ใบเสร็จรับเงิน</option>
-            </select>
-            <select style={{ ...field, width: 230 }} value={houseCode} onChange={(e) => pickHouse(e.target.value)}>
-              <option value="">— ผูกกับบ้าน (ถ้ามี) —</option>
-              {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
-            </select>
-            <input style={{ ...field, flex: 1 }} placeholder="ชื่อลูกค้า *" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+        <ModalShell title="สร้างเอกสารขาย" sub="ใบเสนอราคา / ใบแจ้งหนี้ / ใบเสร็จรับเงิน — บันทึกแล้วเปิดหน้าพิมพ์ให้ทันที" width={880} closeOnBackdrop={false} onClose={() => setAdding(false)}
+          footer={<>
+            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={submit} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึก + พิมพ์'}</button>
+          </>}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1.6fr', gap: 12, marginBottom: 14 }}>
+            <label style={lbl}>ประเภทเอกสาร
+              <select style={field} value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+                <option value="quote">ใบเสนอราคา</option>
+                <option value="invoice">ใบแจ้งหนี้</option>
+                <option value="receipt">ใบเสร็จรับเงิน</option>
+              </select>
+            </label>
+            <label style={lbl}>ผูกกับบ้าน (ถ้ามี)
+              <select style={field} value={houseCode} onChange={(e) => pickHouse(e.target.value)}>
+                <option value="">— ไม่ผูก —</option>
+                {houses.map((h) => <option key={h.id} value={h.code}>{h.name} ({h.code})</option>)}
+              </select>
+            </label>
+            <label style={lbl}><span>ชื่อลูกค้า <span style={{ color: '#C24036' }}>*</span></span>
+              <input style={field} placeholder="เช่น คุณสมชาย ใจดี" autoFocus value={customer} onChange={(e) => setCustomer(e.target.value)} />
+            </label>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap', background: '#F6F3FB', border: '1px solid #D9D2EA', borderRadius: 9, padding: '8px 12px', fontSize: 12.5 }}>
             <span style={{ fontWeight: 600, color: '#6B4E9E' }}>📄 มีใบเก่า (PDF/รูป)?</span>
@@ -147,7 +159,8 @@ export default function Sales() {
             {attach && !reading && <button onClick={() => { setAttach(null); setReadNote('') }} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer' }}>✕ เอาไฟล์ออก</button>}
             <span style={{ fontSize: 11, color: '#94A0A8', width: '100%' }}>ใบเสนอราคาเก่าของบ้านอื่นเอามาใช้เป็นต้นแบบได้ — เลือกประเภทเอกสาร/ภาษี/บ้านก่อน แล้ว AI ดึงรายการ/จำนวน/ราคา (และชื่อลูกค้าถ้ายังว่าง) มาให้ · ไฟล์จะแนบไว้กับเอกสารใหม่ (กด 📎 ในตารางเพื่อเปิดดู)</span>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 10 }}>
+          <div style={{ overflowX: 'auto', marginBottom: 10 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ textAlign: 'left', color: '#5C6770', fontSize: 12 }}>
                 <th style={{ padding: '4px 6px' }}>รายการ</th>
@@ -169,6 +182,7 @@ export default function Sales() {
               ))}
             </tbody>
           </table>
+          </div>
           <button onClick={() => setItems([...items, { desc: '', qty: 1, price: 0 }])} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>+ เพิ่มแถว</button>
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 24, marginTop: 12, fontSize: 13, flexWrap: 'wrap' }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: '#5C6770', marginRight: 'auto' }}>
@@ -184,12 +198,8 @@ export default function Sales() {
             {vatMode !== 'none' && <span style={{ color: '#5C6770' }}>VAT 7% <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{baht(vat)}</span></span>}
             <span style={{ color: '#5C6770' }}>สุทธิ <span className="num" style={{ fontWeight: 700, color: '#2E7D55' }}>{baht(sm.total)}</span></span>
           </div>
-          {err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{err}</div>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-            <button onClick={submit} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึก + พิมพ์'}</button>
-          </div>
-        </div>
+          {err && <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px', marginTop: 12 }}>{err}</div>}
+        </ModalShell>
       )}
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
