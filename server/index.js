@@ -6017,10 +6017,22 @@ api.post('/work-orders', canWrite, (req, res) => {
   audit(req, wo.urgent ? 'สั่งงานด่วน' : 'สร้างใบสั่งงาน', `${wo.no} → ${b.executor || '-'}`)
   res.status(201).json(woRow(wo))
 })
+// สิทธิ์ต่อใบสั่งงาน: full = ผู้สั่งงาน / ผู้บริหาร-แอดมิน (แก้ได้ทุกช่อง) · exec = ผู้รับงาน/คนสำรองที่งานไล่มาถึง (กรอกส่วนดำเนินงานเท่านั้น)
+// คนอื่นดูได้อย่างเดียว · ใบที่ตรวจรับแล้ว (มีคะแนน KPI) ห้ามลบ
+const WO_EXEC_FIELDS = ['exec_start', 'exec_end', 'exec_total', 'obstacle', 'fix_note']
+function woAccess(u, d) {
+  const full = !!u && (isManager(u) || u.role === 'admin' || (!!d.reviewer && d.reviewer === u.name) || (!!d.by && d.by === u.name))
+  const exec = !!u && (d.executor === u.name || d.esc_name === u.name)
+  return { full, exec }
+}
+const woAccepted = (d) => !!d.accept_ts || d.status === 'เสร็จ' || d.status === 'ตรวจผ่าน'
 api.put('/work-orders/:id', canWrite, (req, res) => {
   const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
   if (!d) return res.status(404).json({ error: 'ไม่พบใบสั่งงาน' })
-  const b = req.body || {}
+  const acc = woAccess(req.user, d)
+  if (!acc.full && !acc.exec) return res.status(403).json({ error: 'แก้ไขใบสั่งงานนี้ไม่ได้ — เฉพาะผู้สั่งงาน ผู้รับผิดชอบ หรือผู้บริหาร (คนอื่นดูได้อย่างเดียว)' })
+  // ผู้รับงาน: รับเฉพาะช่องส่วนดำเนินงาน ช่องอื่นที่ส่งมาไม่นับ
+  const b = acc.full ? (req.body || {}) : Object.fromEntries(WO_EXEC_FIELDS.filter((k) => req.body && k in req.body).map((k) => [k, req.body[k]]))
   const f = (k) => (b[k] != null ? b[k] : d[k])
   db.prepare(`UPDATE work_orders SET priority=?,due_date=?,due_time=?,line_group=?,executor=?,executor_code=?,project=?,house_code=?,scope=?,dod=?,budget=?,
     exec_start=?,exec_end=?,exec_total=?,obstacle=?,fix_note=?,qc=?,acceptance=?,acceptance_note=?,score=?,commendation=?,lessons=?,status=? WHERE id=?`)
@@ -6179,7 +6191,15 @@ api.put('/settings/urgent', adminOnly, (req, res) => {
   if (b.fallback_code != null) setSetting('urgent_fallback_code', String(b.fallback_code))
   res.json({ ok: true })
 })
-api.delete('/work-orders/:id', canWrite, (req, res) => { db.prepare('DELETE FROM work_orders WHERE id=?').run(req.params.id); res.json({ ok: true }) })
+api.delete('/work-orders/:id', canWrite, (req, res) => {
+  const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบใบสั่งงาน' })
+  if (!woAccess(req.user, d).full) return res.status(403).json({ error: 'ลบใบสั่งงานได้เฉพาะผู้สั่งงานหรือผู้บริหาร' })
+  if (woAccepted(d)) return res.status(400).json({ error: `ใบสั่งงาน ${d.no} ตรวจรับแล้ว (มีคะแนน KPI) — ลบไม่ได้ เก็บไว้เป็นประวัติ` })
+  db.prepare('DELETE FROM work_orders WHERE id=?').run(d.id)
+  audit(req, 'ลบใบสั่งงาน', d.no)
+  res.json({ ok: true })
+})
 // สถิติใบสั่งงานของผู้รับงาน (สำหรับผูก KPI / หักคะแนนเมื่อเกินกำหนด)
 api.get('/work-orders/executor-stats', auditView, (req, res) => {
   const name = req.query.executor || ''

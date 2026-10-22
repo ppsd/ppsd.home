@@ -2197,3 +2197,30 @@ test('โหลดเร็ว: รายการ PR/PO ไม่แนบร�
   const r = await fetch(BASE + '/purchase-requests', { headers: { Authorization: 'Bearer ' + token, 'Accept-Encoding': 'gzip' } })
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-encoding'), 'gzip'); assert.ok(Array.isArray(await r.json()))
 })
+
+test('ใบสั่งงาน: คนอื่นดูได้แต่แก้ไม่ได้ · ผู้รับงานแก้ได้เฉพาะส่วนดำเนินงาน · ใบที่ตรวจรับแล้วลบไม่ได้', async () => {
+  const adminToken = token
+  assert.equal((await POST('/users', { name: 'ช่างใบสั่งงาน', username: 'wotech', pin: '4646', role: 'site', position: 'โฟร์แมน' })).status, 201)
+  const wo = await POST('/work-orders', { executor: 'ช่างใบสั่งงาน', project: 'ทดสอบสิทธิ์ใบสั่งงาน', scope: 'ทาสี' })
+  assert.equal(wo.status, 201, JSON.stringify(wo.data))
+  const id = wo.data.id
+  // คนอื่น (บัญชี ไม่ใช่ผู้สั่ง/ผู้รับ/ผู้บริหาร): เห็นในรายการ แต่แก้/ลบไม่ได้
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.ok((await GET('/work-orders')).data.some((w) => w.id === id), 'คนอื่นต้องยังเห็นใบสั่งงาน')
+  assert.equal((await PUT(`/work-orders/${id}`, { project: 'แอบแก้' })).status, 403)
+  assert.equal((await DEL(`/work-orders/${id}`)).status, 403)
+  // ผู้รับงาน: กรอกส่วนดำเนินงานได้ · ช่องอื่นที่ส่งมาไม่ถูกบันทึก
+  token = (await POST('/login', { username: 'wotech', pin: '4646' })).data.token
+  const up = await PUT(`/work-orders/${id}`, { obstacle: 'ฝนตก', project: 'ผู้รับแอบแก้ชื่องาน', score: 10 })
+  assert.equal(up.status, 200, JSON.stringify(up.data))
+  assert.equal(up.data.obstacle, 'ฝนตก'); assert.equal(up.data.project, 'ทดสอบสิทธิ์ใบสั่งงาน')
+  assert.equal((await DEL(`/work-orders/${id}`)).status, 403, 'ผู้รับงานลบไม่ได้')
+  // ผู้สั่งงาน (admin) ตรวจรับแล้ว → ห้ามลบ
+  token = adminToken
+  await POST(`/work-orders/${id}/accept`, { force: true })
+  const del = await DEL(`/work-orders/${id}`)
+  assert.equal(del.status, 400); assert.match(del.data.error, /ตรวจรับแล้ว/)
+  // ใบที่ยังไม่ตรวจรับ ผู้สั่งลบได้
+  const wo2 = await POST('/work-orders', { executor: 'ช่างใบสั่งงาน', project: 'ใบที่จะลบ' })
+  assert.equal((await DEL(`/work-orders/${wo2.data.id}`)).status, 200)
+})

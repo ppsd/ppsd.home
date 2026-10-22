@@ -63,13 +63,20 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
   const save = async () => {
     if (!edit) return
     if (!edit.project && !edit.scope) { alert('กรอกชื่องานหรือขอบเขตงาน'); return }
-    if (edit.id) await api.put('/work-orders/' + edit.id, edit); else await api.post('/work-orders', edit)
+    try { if (edit.id) await api.put('/work-orders/' + edit.id, edit); else await api.post('/work-orders', edit) } catch (err) { alert((err as Error).message); return }
     setEdit(null); load(); refreshNotifications?.()
   }
   const ack = async (r: WorkOrder) => { await api.post('/work-orders/' + r.id + '/ack', {}); load(); refreshNotifications?.() }
-  const remove = async (id: number) => { if (confirm('ลบใบสั่งงานนี้?')) { await api.del('/work-orders/' + id); load() } }
+  const remove = async (id: number) => { if (confirm('ลบใบสั่งงานนี้?')) { try { await api.del('/work-orders/' + id); load() } catch (e) { alert((e as Error).message) } } }
   const isMine = (r: WorkOrder) => r.executor === user?.name
   const canAccept = (r: WorkOrder) => !r.reviewer || r.reviewer === user?.name || r.by === (user?.name) || !!user?.isManager
+  // สิทธิ์ต่อใบ: full = ผู้สั่งงาน/ผู้บริหาร (แก้ได้ทุกช่อง) · exec = ผู้รับงาน/คนสำรอง (กรอกส่วนดำเนินงาน) · คนอื่นดูอย่างเดียว
+  const accessOf = (r: Partial<WorkOrder>) => ({
+    full: !r.id || !!user?.isManager || user?.role === 'admin' || (!!r.reviewer && r.reviewer === user?.name) || (!!r.by && r.by === user?.name),
+    exec: !!r.id && (r.executor === user?.name || r.esc_name === user?.name),
+  })
+  // ตรวจรับแล้ว (มีคะแนน KPI) = ห้ามลบ เก็บเป็นประวัติ
+  const accepted = (r: WorkOrder) => !!r.accept_ts || r.status === 'เสร็จ' || r.status === 'ตรวจผ่าน'
   // ---- ส่งงาน (แนบไฟล์/ลิงก์) ----
   const [submitFor, setSubmitFor] = useState<WorkOrder | null>(null)
   const [sf, setSf] = useState<{ link: string; note: string; files: { id: number; name: string }[] }>({ link: '', note: '', files: [] })
@@ -111,14 +118,19 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
     const set = (patch: Partial<Draft>) => setEdit({ ...e, ...patch })
     const setDod = (k: string, v: string) => setEdit({ ...e, dod: { ...(e.dod || {}), [k]: v } })
     const setQc = (i: number, patch: Partial<QcRow>) => setEdit({ ...e, qc: (e.qc || []).map((x, j) => j === i ? { ...x, ...patch } : x) })
+    const acc = accessOf(e)
+    const canSave = acc.full || acc.exec
+    const fsStyle: React.CSSProperties = { border: 'none', padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }
     editModal = (
-      <ModalShell title={e.id ? `แก้ไขใบสั่งงาน ${e.no}` : 'ออกใบสั่งงานใหม่'} width={900} closeOnBackdrop={false} onClose={() => setEdit(null)}
+      <ModalShell title={!e.id ? 'ออกใบสั่งงานใหม่' : canSave ? `แก้ไขใบสั่งงาน ${e.no}` : `ใบสั่งงาน ${e.no} (ดูอย่างเดียว)`}
+        sub={e.id && !acc.full ? (acc.exec ? 'ผู้รับผิดชอบกรอกได้เฉพาะส่วน "บันทึกการดำเนินงาน" — ส่วนอื่นแก้ได้เฉพาะผู้สั่งงาน/ผู้บริหาร' : 'แก้ไขได้เฉพาะผู้สั่งงาน ผู้รับผิดชอบ หรือผู้บริหาร') : undefined} width={900} closeOnBackdrop={false} onClose={() => setEdit(null)}
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#F7F9FB' }}
         footer={<>
-          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-          <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{e.id ? 'บันทึก' : 'สั่งงาน + แจ้งเตือน'}</button>
+          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>{canSave ? 'ยกเลิก' : 'ปิด'}</button>
+          {canSave && <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{e.id ? 'บันทึก' : 'สั่งงาน + แจ้งเตือน'}</button>}
         </>}>
 
+        <fieldset disabled={!acc.full} style={fsStyle}>
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: '#30506A' }}>ข้อมูลการสั่งงาน</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
@@ -151,7 +163,9 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
           <div style={{ marginTop: 12 }}><div style={lbl}>งบประมาณ/ทรัพยากร (Budget/Resources)</div><input style={field} value={e.budget} onChange={(ev) => set({ budget: ev.target.value })} /></div>
         </div>
 
+        </fieldset>
         {e.id ? (<>
+          <fieldset disabled={!acc.full && !acc.exec} style={fsStyle}>
           <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: '#30506A' }}>2) บันทึกการดำเนินงาน</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
@@ -163,6 +177,8 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
             <div style={{ marginTop: 12 }}><div style={lbl}>การแก้ไข / หมายเหตุ</div><textarea style={{ ...field, minHeight: 50, resize: 'vertical' }} value={e.fix_note} onChange={(ev) => set({ fix_note: ev.target.value })} /></div>
           </div>
 
+          </fieldset>
+          <fieldset disabled={!acc.full} style={fsStyle}>
           <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: '#30506A' }}>3) ตรวจสอบคุณภาพ (QC)</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -192,6 +208,7 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
             <div style={{ marginTop: 12 }}><div style={lbl}>สิ่งที่ทำได้ดีเยี่ยม (Commendation)</div><input style={field} value={e.commendation} onChange={(ev) => set({ commendation: ev.target.value })} /></div>
             <div style={{ marginTop: 12 }}><div style={lbl}>สิ่งที่ต้องปรับปรุง (Lessons Learned)</div><input style={field} value={e.lessons} onChange={(ev) => set({ lessons: ev.target.value })} /></div>
           </div>
+          </fieldset>
         </>) : <div style={{ fontSize: 12, color: '#94A0A8', textAlign: 'center' }}>บันทึกใบสั่งงานก่อน แล้วจึงกรอกส่วนดำเนินงาน/ตรวจคุณภาพ/ประเมินภายหลัง</div>}
       </ModalShell>
     )
@@ -234,9 +251,11 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
                     {isMine(r) && !r.ack && <button onClick={() => ack(r)} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>รับทราบ</button>}
                     {isMine(r) && r.ack && r.status !== 'ส่งงาน' && r.status !== 'เสร็จ' && r.status !== 'ตรวจผ่าน' && <button onClick={() => openSubmit(r)} className="btn-primary" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>ส่งงาน</button>}
                     {r.status === 'ส่งงาน' && canAccept(r) && <button onClick={() => accept(r)} className="btn-primary" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>✓ รับงาน</button>}
-                    <button onClick={() => openEdit(r)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>เปิด/บันทึกผล</button>
+                    <button onClick={() => openEdit(r)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>{accessOf(r).full || accessOf(r).exec ? 'เปิด/บันทึกผล' : 'ดูรายละเอียด'}</button>
                     <button onClick={() => setPrinting(r)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨</button>
-                    <button onClick={() => remove(r.id)} style={{ marginLeft: 6, border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
+                    {accessOf(r).full && !accepted(r)
+                      ? <button onClick={() => remove(r.id)} title="ลบใบสั่งงาน" style={{ marginLeft: 6, border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
+                      : <span style={{ display: 'inline-block', width: 23 }} />}
                   </td>
                 </tr>
               )
