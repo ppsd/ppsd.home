@@ -311,7 +311,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
             {keepTab('safety', <div style={{ padding: 16 }}><Safety houseCode={house.code} /></div>)}
 
           {/* TAB: ส่งมอบงาน (เฉพาะบ้านนี้) */}
-            {tab === 'handover' && <div style={{ padding: 16 }}><Handover houseCode={house.code} /></div>}
+            {keepTab('handover', <div style={{ padding: 16 }}><Handover houseCode={house.code} /></div>)}
 
           {/* TAB: ช่าง/ผู้รับเหมา */}
             {tab === 'contractors' && <ContractorsPanel houseCode={house.code} />}
