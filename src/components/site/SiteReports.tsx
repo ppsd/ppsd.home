@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
-import ModalShell from '../shared/ModalShell'
+import ModalShell, { KeepAlive } from '../shared/ModalShell'
 import SiteReportPrint from './SiteReportPrint'
 
 export interface SiteReport { id: number; kind: string; no: string; house_code: string; date: string; data: Record<string, string>; by: string }
@@ -34,10 +34,10 @@ const WEEKLY_FIELDS: { k: string; label: string; area?: boolean }[] = [
   { k: 'note', label: 'หมายเหตุ', area: true },
 ]
 
-export default function SiteReports({ houseCode }: { houseCode?: string }) {
+// ประเภทเดียว (ฟอร์ม/รายการของประเภทนี้) — ตัวแม่ SiteReports เก็บทุกประเภทที่เคยเปิดไว้ด้วย KeepAlive
+function SiteReportsKind({ houseCode, kind, setKind }: { houseCode?: string; kind: 'daily' | 'weekly'; setKind: (k: 'daily' | 'weekly') => void }) {
   const { data } = useApp()
   const houses = data.houses
-  const [kind, setKind] = useState<'daily' | 'weekly'>('daily')
   const [allRows, setRows] = useState<SiteReport[]>([])
   const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [adding, setAdding] = useState(false)
@@ -47,7 +47,7 @@ export default function SiteReports({ houseCode }: { houseCode?: string }) {
 
   const fields = kind === 'daily' ? DAILY_FIELDS : WEEKLY_FIELDS
   const load = () => api.get<SiteReport[]>('/site-reports?kind=' + kind).then(setRows).catch(() => setRows([]))
-  useEffect(() => { load(); setAdding(false) /* eslint-disable-next-line */ }, [kind])
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [kind])
 
   const submit = async () => {
     await api.post('/site-reports', { kind, house_code: house, data: form })
@@ -139,4 +139,12 @@ export default function SiteReports({ houseCode }: { houseCode?: string }) {
       {printing && <SiteReportPrint report={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} fields={printing.kind === 'daily' ? DAILY_FIELDS : WEEKLY_FIELDS} onClose={() => setPrinting(null)} />}
     </div>
   )
+}
+
+// สลับประเภทแล้วฟอร์มของประเภทเดิมไม่หาย — เปิด/ย่อพับ modal หลายประเภทพร้อมกันได้ (กดแถบ modal = กลับไปประเภทนั้น)
+export default function SiteReports({ houseCode }: { houseCode?: string }) {
+  const [kind, setKind] = useState<'daily' | 'weekly'>('daily')
+  const [seen, setSeen] = useState<('daily' | 'weekly')[]>(['daily'])
+  if (!seen.includes(kind)) setSeen([...seen, kind])
+  return <>{seen.map((k) => <KeepAlive key={k} active={kind === k} onShow={() => setKind(k)}><SiteReportsKind houseCode={houseCode} kind={k} setKind={setKind} /></KeepAlive>)}</>
 }

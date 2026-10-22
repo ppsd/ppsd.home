@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
-import ModalShell from '../shared/ModalShell'
+import ModalShell, { KeepAlive } from '../shared/ModalShell'
 import SafetyPrint from './SafetyPrint'
 
 export interface SafetyRecord { id: number; kind: string; no: string; house_code: string; date: string; title: string; data: Record<string, unknown>; by: string }
@@ -20,10 +20,10 @@ const lbl: React.CSSProperties = { fontSize: 12, color: '#5C6770', marginBottom:
 interface JhaStep { step: string; hazard: string; control: string; risk: string }
 const emptyJha: JhaStep = { step: '', hazard: '', control: '', risk: 'ปานกลาง' }
 
-export default function Safety({ houseCode }: { houseCode?: string }) {
+// ประเภทเดียว (ฟอร์ม/รายการของประเภทนี้) — ตัวแม่ Safety เก็บทุกประเภทที่เคยเปิดไว้ด้วย KeepAlive
+function SafetyKind({ houseCode, kind, setKind }: { houseCode?: string; kind: Kind; setKind: (k: Kind) => void }) {
   const { data } = useApp()
   const houses = data.houses
-  const [kind, setKind] = useState<Kind>('ppe')
   const [allRows, setRows] = useState<SafetyRecord[]>([])
   const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [adding, setAdding] = useState(false)
@@ -36,7 +36,7 @@ export default function Safety({ houseCode }: { houseCode?: string }) {
   const [jha, setJha] = useState<{ analyst: string; reviewer: string; steps: JhaStep[] }>({ analyst: '', reviewer: '', steps: [{ ...emptyJha }] })
 
   const load = () => api.get<SafetyRecord[]>('/safety-records?kind=' + kind).then(setRows).catch(() => setRows([]))
-  useEffect(() => { load(); setAdding(false) /* eslint-disable-next-line */ }, [kind])
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [kind])
 
   const resetForm = () => { setHouse(houseCode || ''); setTitle(''); setPpe({ supervisor: '', workers: '', checks: {}, note: '' }); setTbt({ time: '', speaker: '', attendees: '', hazards: '', controls: '', note: '' }); setJha({ analyst: '', reviewer: '', steps: [{ ...emptyJha }] }) }
   const submit = async () => {
@@ -159,4 +159,12 @@ export default function Safety({ houseCode }: { houseCode?: string }) {
       {printing && <SafetyPrint record={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} onClose={() => setPrinting(null)} />}
     </div>
   )
+}
+
+// สลับประเภทแล้วฟอร์มของประเภทเดิมไม่หาย — เปิด/ย่อพับ modal หลายประเภทพร้อมกันได้ (กดแถบ modal = กลับไปประเภทนั้น)
+export default function Safety({ houseCode }: { houseCode?: string }) {
+  const [kind, setKind] = useState<Kind>('ppe')
+  const [seen, setSeen] = useState<Kind[]>(['ppe'])
+  if (!seen.includes(kind)) setSeen([...seen, kind])
+  return <>{seen.map((k) => <KeepAlive key={k} active={kind === k} onShow={() => setKind(k)}><SafetyKind houseCode={houseCode} kind={k} setKind={setKind} /></KeepAlive>)}</>
 }

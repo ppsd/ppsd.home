@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { baht, unMoney } from '../../data'
 import { useApp } from '../../store'
-import ModalShell from '../shared/ModalShell'
+import ModalShell, { KeepAlive } from '../shared/ModalShell'
 import MoneyInput from '../shared/MoneyInput'
 import HandoverPrint from './HandoverPrint'
 
@@ -19,10 +19,10 @@ const lbl: React.CSSProperties = { fontSize: 12, color: '#5C6770', marginBottom:
 
 interface CheckItem { name: string; pass: boolean }
 
-export default function Handover({ houseCode }: { houseCode?: string }) {
+// ประเภทเดียว (ฟอร์ม/รายการของประเภทนี้) — ตัวแม่ Handover เก็บทุกประเภทที่เคยเปิดไว้ด้วย KeepAlive
+function HandoverKind({ houseCode, kind, setKind }: { houseCode?: string; kind: Kind; setKind: (k: Kind) => void }) {
   const { data } = useApp()
   const houses = data.houses
-  const [kind, setKind] = useState<Kind>('handover')
   const [allRows, setRows] = useState<HandoverDoc[]>([])
   const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [adding, setAdding] = useState(false)
@@ -33,7 +33,7 @@ export default function Handover({ houseCode }: { houseCode?: string }) {
   const [cert, setCert] = useState({ contractor: '', project: '', value: '', period: '', scope: '', rating: 'ดีมาก', statement: '', issuer: '', issuer_role: '' })
 
   const load = () => api.get<HandoverDoc[]>('/handovers?kind=' + kind).then(setRows).catch(() => setRows([]))
-  useEffect(() => { load(); setAdding(false) /* eslint-disable-next-line */ }, [kind])
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [kind])
 
   const reset = () => { setHouse(houseCode || ''); setTitle(''); setHd({ scope: '', deliver_to: '', deliver_by: '', items: [{ name: '', pass: true }], defects: '', warranty: '' }); setCert({ contractor: '', project: '', value: '', period: '', scope: '', rating: 'ดีมาก', statement: '', issuer: '', issuer_role: '' }) }
   const submit = async () => {
@@ -159,4 +159,12 @@ export default function Handover({ houseCode }: { houseCode?: string }) {
       {printing && <HandoverPrint doc={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} onClose={() => setPrinting(null)} />}
     </div>
   )
+}
+
+// สลับประเภทแล้วฟอร์มของประเภทเดิมไม่หาย — เปิด/ย่อพับ modal หลายประเภทพร้อมกันได้ (กดแถบ modal = กลับไปประเภทนั้น)
+export default function Handover({ houseCode }: { houseCode?: string }) {
+  const [kind, setKind] = useState<Kind>('handover')
+  const [seen, setSeen] = useState<Kind[]>(['handover'])
+  if (!seen.includes(kind)) setSeen([...seen, kind])
+  return <>{seen.map((k) => <KeepAlive key={k} active={kind === k} onShow={() => setKind(k)}><HandoverKind houseCode={houseCode} kind={k} setKind={setKind} /></KeepAlive>)}</>
 }

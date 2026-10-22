@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
-import ModalShell from '../shared/ModalShell'
+import ModalShell, { KeepAlive } from '../shared/ModalShell'
 import SiteDocPrint from './SiteDocPrint'
 
 export interface SiteDoc {
@@ -32,10 +32,10 @@ const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color:
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12, textAlign: 'left' }
 const td: React.CSSProperties = { padding: '10px 14px', fontSize: 13 }
 
-export default function SiteDocs({ houseCode }: { houseCode?: string }) {
+// ประเภทเดียว (ฟอร์ม/รายการของประเภทนี้) — ตัวแม่ SiteDocs เก็บทุกประเภทที่เคยเปิดไว้ด้วย KeepAlive
+function SiteDocsKind({ houseCode, kind, setKind }: { houseCode?: string; kind: string; setKind: (k: string) => void }) {
   const { data } = useApp()
   const houses = data.houses
-  const [kind, setKind] = useState('rfi')
   const [rows, setRows] = useState<SiteDoc[]>([])
   const [adding, setAdding] = useState(false)
   const [printing, setPrinting] = useState<SiteDoc | null>(null)
@@ -45,7 +45,7 @@ export default function SiteDocs({ houseCode }: { houseCode?: string }) {
   const [err, setErr] = useState('')
 
   const load = () => api.get<SiteDoc[]>('/site-docs?kind=' + kind).then(setRows).catch(() => setRows([]))
-  useEffect(() => { load(); setAdding(false) /* eslint-disable-next-line */ }, [kind])
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [kind])
 
   const cfg = KINDS[kind]
   const submit = async () => {
@@ -80,7 +80,7 @@ export default function SiteDocs({ houseCode }: { houseCode?: string }) {
       </div>
 
       {adding && (
-        <ModalShell title={`ออก${cfg.label}`} width={820} closeOnBackdrop={false} onClose={() => setAdding(false)}
+        <ModalShell title={`ออก ${cfg.label}`} width={820} closeOnBackdrop={false} onClose={() => setAdding(false)}
           footer={<>
             <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
             <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก + ออกเลขที่</button>
@@ -162,4 +162,12 @@ export default function SiteDocs({ houseCode }: { houseCode?: string }) {
       {printing && <SiteDocPrint doc={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} kindFull={KINDS[printing.kind]?.full || ''} onClose={() => setPrinting(null)} />}
     </div>
   )
+}
+
+// สลับประเภทแล้วฟอร์มของประเภทเดิมไม่หาย — เปิด/ย่อพับ modal หลายประเภทพร้อมกันได้ (กดแถบ modal = กลับไปประเภทนั้น)
+export default function SiteDocs({ houseCode }: { houseCode?: string }) {
+  const [kind, setKind] = useState<string>('rfi')
+  const [seen, setSeen] = useState<string[]>(['rfi'])
+  if (!seen.includes(kind)) setSeen([...seen, kind])
+  return <>{seen.map((k) => <KeepAlive key={k} active={kind === k} onShow={() => setKind(k)}><SiteDocsKind houseCode={houseCode} kind={k} setKind={setKind} /></KeepAlive>)}</>
 }
