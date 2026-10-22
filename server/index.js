@@ -17,6 +17,7 @@ import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
 import { renderElementPng } from './render.js'
+import * as takeoff from './takeoff.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -5934,6 +5935,62 @@ api.post('/boqs/:id/push-to-house', auditView, (req, res) => {
   recomputeHouse(d.house_code)
   audit(req, 'ดัน BOQ เข้าราคาขาย', `${d.no} → ${h.name} (${grand.toLocaleString()})`)
   res.json({ ok: true, grand, house: withProfit(db.prepare('SELECT * FROM houses WHERE code=?').get(d.house_code)) })
+})
+// ถอดแบบ → BOQ ร่าง: รับไฟล์แบบ (DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ (query) → รายการวัสดุ + ราคากลางที่จับคู่ได้ และค่าแรงตามปริมาณงาน ให้คนตรวจก่อนสร้าง BOQ
+//  DXF อ่านเองในเครื่อง (นับ Block/วัดเส้น/พื้นที่) แล้วให้ AI ตั้งชื่อเป็นรายการวัสดุ · ไม่มีกุญแจ AI = คืนรายการดิบตาม Block/Layer
+//  PDF/รูป ให้ AI อ่านแบบโดยตรง (ความยาว/พื้นที่เป็นค่าประมาณจากมาตราส่วน)
+api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
+  const buf = req.body
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
+  const fname = String(req.query.name || '').toLowerCase()
+  const mime = String(req.query.mime || '')
+  let house = {}
+  try { house = JSON.parse(String(req.query.house || '{}')) || {} } catch { house = {} }
+  const head = buf.subarray(0, 32).toString('latin1')
+  if (fname.endsWith('.dwg') || head.startsWith('AC10')) return res.status(400).json({ error: 'ไฟล์ DWG อ่านตรงไม่ได้ — เปิดในโปรแกรม CAD แล้ว Save As เป็น DXF (หรือ PDF) แล้วอัปโหลดใหม่' })
+  const isDxf = fname.endsWith('.dxf')
+  if (isDxf && head.startsWith('AutoCAD Binary DXF')) return res.status(400).json({ error: 'เป็น DXF แบบ Binary — Save As ใหม่เลือก DXF แบบ ASCII (ข้อความ)' })
+  const isPdf = !isDxf && (mime.includes('pdf') || fname.endsWith('.pdf'))
+  const isImage = !isDxf && !isPdf && mime.startsWith('image/')
+  if (!isDxf && !isPdf && !isImage) return res.status(400).json({ error: 'รองรับไฟล์ DXF, PDF หรือรูปภาพ (JPG/PNG) เท่านั้น' })
+
+  let dxf = null
+  if (isDxf) {
+    // DXF รุ่นใหม่เป็น UTF-8 · รุ่นเก่าภาษาไทยเป็น ANSI_874 (TIS-620)
+    let text = buf.toString('utf8')
+    if (text.includes('�')) { try { text = new TextDecoder('windows-874').decode(buf) } catch { /* ใช้ utf8 ต่อ */ } }
+    try { dxf = takeoff.summarizeDxf(text, String(req.query.units || 'auto')) } catch (e) { return res.status(400).json({ error: e.message }) }
+  }
+  const rates = db.prepare('SELECT * FROM labor_rates WHERE active=1').all()
+
+  let parsed = null, usedAi = false, model = ''
+  const notes = []
+  if (process.env.PPSD_AI_MOCK_TAKEOFF) { parsed = JSON.parse(process.env.PPSD_AI_MOCK_TAKEOFF); usedAi = true } // ทดสอบ: ผลจำลอง
+  else if (aiKey()) {
+    const prompt = takeoff.takeoffPrompt({ house, rates, dxfSummary: dxf })
+    const b64 = isDxf ? '' : buf.toString('base64')
+    const media = isDxf ? null : isPdf
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+      : { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } }
+    const ai = await aiAsk({ media, prompt, maxTokens: 24000 })
+    if (!ai.ok) {
+      if (!isDxf) return res.status(ai.code || 502).json({ error: ai.error })
+      notes.push('AI ตั้งชื่อรายการไม่สำเร็จ (' + ai.error + ') — แสดงรายการดิบตาม Block/Layer แทน')
+    } else { parsed = extractJsonBlock(ai.text); usedAi = !!parsed; model = ai.model }
+  } else if (!isDxf) return res.status(400).json({ error: AI_NO_KEY + ' — หรือใช้ไฟล์ DXF (ระบบนับ/วัดให้เองได้โดยไม่ใช้ AI)' })
+  else notes.push('ยังไม่ได้ตั้งค่า AI — แสดงรายการดิบตาม Block/Layer ให้ตั้งชื่อเอง')
+
+  const items = parsed ? takeoff.cleanItems(parsed.items) : dxf ? takeoff.rawItemsFromDxf(dxf) : []
+  if (parsed && Array.isArray(parsed.notes)) notes.push(...parsed.notes.map(String))
+  const materials = db.prepare('SELECT id,name,unit,central,confidence FROM material_prices WHERE active=1').all()
+  const out = items.map((it) => {
+    const m = takeoff.matchMaterial(it, materials)
+    return { ...it, mat_match: m.match, mat_alts: m.alts }
+  })
+  // ค่าแรงแยกจากวัสดุ: คิดตามปริมาณงาน (ตร.ม. ผนัง/พื้นที่บ้าน · เมตร · ชุด · เหมา) ตามหน่วยของราคากลางค่าแรง
+  const labor = parsed ? takeoff.cleanLabor(parsed.labor, rates) : []
+  audit(req, 'ถอดแบบเป็น BOQ ร่าง', `${req.query.name || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
+  res.json({ source: isDxf ? 'dxf' : isPdf ? 'pdf' : 'image', ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, notes, dxf })
 })
 
 // Cash Flow Forecast

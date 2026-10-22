@@ -4,9 +4,11 @@ import { baht } from '../../data'
 import { useApp } from '../../store'
 import { exportXlsx, ExportButton } from '../../exportCsv'
 import BoqPrint from './BoqPrint'
+import BoqTakeoff from './BoqTakeoff'
 import ModalShell from '../shared/ModalShell'
 
-export interface BoqItem { cat: string; desc: string; qty: number; unit: string; mat: number; lab: number }
+// ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ (จากหน้าถอดแบบ)
+export interface BoqItem { cat: string; desc: string; qty: number; unit: string; mat: number; lab: number; ref?: number; basis?: string }
 export interface Boq { id: number; no: string; house_code: string; title: string; markup_pct: number; vat_pct: number; items: BoqItem[]; date: string }
 
 export const BOQ_CATS = ['โครงสร้าง', 'สถาปัตยกรรม', 'ระบบไฟฟ้า', 'ระบบประปา-สุขาภิบาล', 'อื่นๆ']
@@ -32,6 +34,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
   const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [edit, setEdit] = useState<Boq | null>(null) // BOQ ที่กำลังแก้/สร้าง
   const [printing, setPrinting] = useState<Boq | null>(null)
+  const [takeoff, setTakeoff] = useState(false) // หน้าถอดแบบ → BOQ ร่าง
 
   const load = () => api.get<Boq[]>('/boqs').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
@@ -122,7 +125,8 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>BOQ / ประมาณราคา <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ชุด</div>
-        <button onClick={newBoq} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ สร้าง BOQ</button>
+        <button onClick={() => setTakeoff(true)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>📐 ถอดจากแบบ</button>
+        <button onClick={newBoq} className="btn-primary" style={{ marginLeft: 8,fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ สร้าง BOQ</button>
       </div>
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -149,6 +153,8 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
         </table>
       </div>
       {editorModal}
+      {takeoff && <BoqTakeoff houseCode={houseCode} onClose={() => setTakeoff(false)}
+        onCreate={(b) => { setTakeoff(false); setEdit({ id: 0, no: '', house_code: b.house_code, title: b.title, markup_pct: 20, vat_pct: 7, items: b.items, date: '' }) }} />}
       {printing && <BoqPrint boq={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} onClose={() => setPrinting(null)} />}
     </div>
   )
