@@ -11,6 +11,7 @@ import {
 import type { DocKind } from '../../erpData'
 import { baht, unMoney } from '../../data'
 import { useApp } from '../../store'
+import type { ApiPayroll, ApiPayrollBatch } from '../../store'
 import MoneyInput from '../shared/MoneyInput'
 import Pager from '../shared/Pager'
 import ModalShell from '../shared/ModalShell'
@@ -23,6 +24,7 @@ import LocationTrack from './LocationTrack'
 
 const th: React.CSSProperties = { padding: '9px 12px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '10px 12px' }
+const miniBtn: React.CSSProperties = { fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer', marginLeft: 5 }
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', outline: 'none' }
 
 function Pill({ s }: { s: string }) {
@@ -113,16 +115,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     catch (e) { alert((e as Error).message) }
     finally { setTaxSaving(null) }
   }
-  // แก้จำนวนวันทำงาน (รายวัน เช่น แม่บ้าน) ตรงตารางเงินเดือน → คิดเงินอัตโนมัติ
+  // แปลงข้อความวันทำงานเป็นตัวเลข (ช่องวันทำงานในตารางเงินเดือน)
   // รองรับครึ่งวัน เช่น 17.5 วัน (parseFloat เก็บจุดทศนิยม)
   const parseDays = (v: string) => { const n = parseFloat(String(v).replace(/[^\d.]/g, '')); return isNaN(n) ? 0 : n }
-  const [wdSaving, setWdSaving] = useState<number | null>(null)
-  const saveWorkDays = async (id: number, raw: string) => {
-    setWdSaving(id)
-    try { await app.updateEmployee(id, { work_days: parseDays(raw) }) }
-    catch (e) { alert((e as Error).message) }
-    finally { setWdSaving(null) }
-  }
   useEffect(() => {
     if (tab === 'payroll' && salaryOk) {
       apiClient.get<typeof annual>('/payroll/annual?year=' + new Date().getFullYear()).then(setAnnual).catch(() => setAnnual(null))
@@ -131,7 +126,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
       loadDeds()
       loadIncs()
     } /* eslint-disable-next-line */
-  }, [tab, salaryOk, payrollMeta?.period, payrollMeta?.locked])
+  }, [tab, salaryOk, payrollMeta?.period, payrollMeta?.locked, payrollMeta?.paidCount])
   useEffect(() => {
     if (advForm.emp_code) apiClient.get<typeof advLimit>('/salary-advances/limit?emp_code=' + advForm.emp_code + (payrollMeta?.period ? '&period=' + payrollMeta.period : '')).then(setAdvLimit).catch(() => setAdvLimit(null))
     else setAdvLimit(null)
@@ -187,6 +182,63 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   // payroll period runs (closed months)
   const [showSummary, setShowSummary] = useState(false)
   const [showAllSlips, setShowAllSlips] = useState(false)
+  // ===== รอบจ่ายเงินเดือน (เดือนหนึ่งจ่ายได้หลายรอบ) =====
+  const batches = payrollMeta?.batches || []
+  const [printBatch, setPrintBatch] = useState<ApiPayrollBatch | null>(null) // พิมพ์สลิป/ใบสรุปเฉพาะรอบ
+  const printRows = (payroll || []).filter((p) => !printBatch || p.batch_id === printBatch.id)
+  const printLabel = (payrollMeta?.periodLabel || '') + (printBatch ? ` · ${printBatch.no}` : '')
+  const unpaidRows = (payroll || []).filter((p) => !p.paid)
+  const netRow = (p: ApiPayroll) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) + (p.retention_refund || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
+  const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+  // วันที่จ่ายเริ่มต้น = วันนี้ถ้าอยู่ในเดือนของงวด ไม่งั้นวันสิ้นเดือนของงวด
+  const defaultPayDate = () => { const p = payrollMeta?.period || ''; const t = todayIso(); return t.startsWith(p) ? t : `${p}-${String(payrollMeta?.daysInMonth || 30).padStart(2, '0')}` }
+  // ข้อมูลกรอกต่อคนต่อเดือน (วันทำงาน / หมายเหตุ / คืนเงินประกัน)
+  const [inSaving, setInSaving] = useState('')
+  const saveInput = async (p: ApiPayroll, patch: { work_days?: number | null; note?: string; retention_refund?: number }) => {
+    if (!payrollMeta) return
+    setInSaving(p.code + ':' + Object.keys(patch)[0])
+    try { await apiClient.put('/payroll/inputs', { period: payrollMeta.period, emp_code: p.code, ...patch }); refreshPayroll() }
+    catch (e) { alert((e as Error).message); refreshPayroll() }
+    finally { setInSaving('') }
+  }
+  const autofillDays = async () => {
+    if (!payrollMeta) return
+    if (!window.confirm(`ดึงวันทำงานจากข้อมูลลงเวลา (${payrollMeta.periodLabel}) ให้ทุกคนที่ยังไม่ได้ทำจ่าย?\n• รายวัน = จำนวนวันที่ลงเวลา\n• รายเดือน = เต็มเดือน ยกเว้นคนที่เริ่มงานกลางเดือน/ลาออก (นับวันตามปฏิทิน)\nค่าที่กรอกไว้เองจะถูกแทนที่ · แก้ต่อได้ทุกช่อง`)) return
+    try { const r = await apiClient.post<{ changed: unknown[] }>('/payroll/inputs/autofill', { period: payrollMeta.period }); refreshPayroll(); alert(`ดึงวันทำงานให้ ${r.changed.length} คนแล้ว — ตรวจ/แก้ในช่อง "วันทำงาน" ได้`) }
+    catch (e) { alert((e as Error).message) }
+  }
+  // หน้าต่าง "ทำจ่าย": เลือกพนักงาน + วันที่จ่าย + หมายเหตุของรอบ
+  const [payDlg, setPayDlg] = useState<{ sel: string[]; date: string; note: string; err: string; busy: boolean } | null>(null)
+  const openPayDlg = (codes?: string[]) => setPayDlg({ sel: codes || unpaidRows.map((p) => p.code), date: defaultPayDate(), note: '', err: '', busy: false })
+  const submitPay = async () => {
+    if (!payDlg || !payrollMeta) return
+    if (!payDlg.sel.length) { setPayDlg({ ...payDlg, err: 'เลือกพนักงานอย่างน้อย 1 คน' }); return }
+    setPayDlg({ ...payDlg, busy: true, err: '' })
+    try {
+      const r = await apiClient.post<{ batch: ApiPayrollBatch; journal?: { posted: boolean } }>('/payroll/batches', { period: payrollMeta.period, emp_codes: payDlg.sel, pay_date: payDlg.date, note: payDlg.note })
+      setPayDlg(null); refreshPayroll()
+      alert(`ทำจ่าย ${r.batch.no} แล้ว · ${r.batch.count} คน · สุทธิ ${baht(r.batch.total)}${r.journal?.posted ? '\nลงบัญชีค่าใช้จ่ายเงินเดือนให้อัตโนมัติแล้ว' : ''}`)
+    } catch (e) { setPayDlg((d) => d && { ...d, busy: false, err: (e as Error).message }) }
+  }
+  // จัดการรอบ: แก้วันที่จ่าย/หมายเหตุ · เปิดแก้ไข · ปิดรอบอีกครั้ง · ยกเลิกรอบ
+  const [batchDlg, setBatchDlg] = useState<{ b: ApiPayrollBatch; date: string; note: string; err: string } | null>(null)
+  const saveBatch = async () => {
+    if (!batchDlg) return
+    try { await apiClient.put('/payroll/batches/' + batchDlg.b.id, { pay_date: batchDlg.date, note: batchDlg.note }); setBatchDlg(null); refreshPayroll() }
+    catch (e) { setBatchDlg((d) => d && { ...d, err: (e as Error).message }) }
+  }
+  const batchAction = async (b: ApiPayrollBatch, act: 'reopen' | 'close' | 'delete') => {
+    const msg = act === 'reopen'
+      ? `เปิดแก้ไขรอบ ${b.no}?\nพนักงาน ${b.count} คนในรอบนี้จะกลับไปคำนวณสด (แก้วันทำงาน/ยอดหักได้) และถอนรายการบัญชีของรอบนี้ออกก่อน — แก้เสร็จกด "ปิดรอบอีกครั้ง"`
+      : act === 'close' ? `ปิดรอบ ${b.no} อีกครั้ง?\nระบบจะคำนวณใหม่จากข้อมูลล่าสุดแล้วลงบัญชีให้`
+        : `ยกเลิกรอบ ${b.no}?\nพนักงานในรอบนี้จะกลับเป็น "ยังไม่ได้ทำจ่าย"`
+    if (!window.confirm(msg)) return
+    try {
+      if (act === 'delete') await apiClient.del('/payroll/batches/' + b.id)
+      else await apiClient.post(`/payroll/batches/${b.id}/${act}`, {})
+      refreshPayroll()
+    } catch (e) { alert((e as Error).message) }
+  }
   // หนังสือรับรอง 50 ทวิ — เลือกพนักงานจากยอดสะสมทั้งปี (งวดที่ปิดแล้ว)
   const [whtRows, setWhtRows] = useState<AnnualEmpRow[] | null>(null)
   const [whtPick, setWhtPick] = useState<AnnualEmpRow | null>(null)
@@ -199,7 +251,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     } catch (e) { alert((e as Error).message) }
   }
   const [runs, setRuns] = useState<{ period: string; periodLabel: string }[]>([])
-  useEffect(() => { if (salaryOk) apiClient.get<{ period: string; periodLabel: string }[]>('/payroll/runs').then(setRuns).catch(() => {}) }, [salaryOk, payrollMeta?.locked])
+  useEffect(() => { if (salaryOk) apiClient.get<{ period: string; periodLabel: string }[]>('/payroll/runs').then(setRuns).catch(() => {}) }, [salaryOk, payrollMeta?.locked, payrollMeta?.paidCount])
   const periodOptions = (() => {
     const TH_MO = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
     const lbl = (p: string) => { const [y, m] = p.split('-').map(Number); return `${TH_MO[m - 1]} ${String((y + 543) % 100).padStart(2, '0')}` }
@@ -391,6 +443,69 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
         )}
 
         {/* ===== payroll ===== */}
+        {/* ทำจ่ายเงินเดือน (เลือกพนักงาน) — วางนอกส่วนสลับแท็บ ย่อพับแล้วข้อมูลไม่หาย */}
+        {payDlg && payrollMeta && (() => {
+          const sel = new Set(payDlg.sel)
+          const chosen = unpaidRows.filter((p) => sel.has(p.code))
+          const total = chosen.reduce((s, p) => s + netRow(p), 0)
+          const negative = chosen.filter((p) => netRow(p) < 0)
+          const toggle = (code: string) => setPayDlg({ ...payDlg, sel: sel.has(code) ? payDlg.sel.filter((c) => c !== code) : [...payDlg.sel, code], err: '' })
+          return (
+            <ModalShell title={`ทำจ่ายเงินเดือน · ${payrollMeta.periodLabel}`} sub="เลือกพนักงานที่จะจ่ายรอบนี้ — คนที่เหลือจ่ายรอบถัดไปได้ (1 คนรับเงินเดือนของเดือนได้รอบเดียว)" width={760} closeOnBackdrop={false} onClose={() => setPayDlg(null)}
+              footer={<>
+                <span style={{ marginRight: 'auto', fontSize: 13, color: '#5C6770' }}>{chosen.length} คน · สุทธิรวม <b className="num" style={{ color: '#1C2730', fontSize: 15 }}>{baht(total)}</b></span>
+                <button onClick={() => setPayDlg(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={submitPay} disabled={payDlg.busy || !chosen.length || negative.length > 0} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer', opacity: payDlg.busy || !chosen.length || negative.length ? 0.6 : 1 }}>{payDlg.busy ? 'กำลังทำจ่าย…' : `ยืนยันทำจ่าย ${chosen.length} คน`}</button>
+              </>}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12, marginBottom: 12 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>วันที่จ่าย
+                  <input type="date" style={field} value={payDlg.date} onChange={(e) => setPayDlg({ ...payDlg, date: e.target.value })} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>หมายเหตุของรอบ
+                  <input style={field} placeholder="เช่น จ่ายคนลาออกก่อนสิ้นเดือน" value={payDlg.note} onChange={(e) => setPayDlg({ ...payDlg, note: e.target.value })} />
+                </label>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 12.5 }}>
+                <b>พนักงานที่ยังไม่ได้ทำจ่าย ({unpaidRows.length})</b>
+                <button onClick={() => setPayDlg({ ...payDlg, sel: unpaidRows.map((p) => p.code), err: '' })} style={{ ...miniBtn, marginLeft: 'auto' }}>เลือกทั้งหมด</button>
+                <button onClick={() => setPayDlg({ ...payDlg, sel: [], err: '' })} style={miniBtn}>ไม่เลือกเลย</button>
+              </div>
+              <div style={{ border: '1px solid #E1E5EA', borderRadius: 9, maxHeight: '45vh', overflowY: 'auto' }}>
+                {unpaidRows.map((p) => (
+                  <label key={p.code} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: '1px solid #F1F4F6', cursor: 'pointer', background: sel.has(p.code) ? '#F4F8FB' : '#fff' }}>
+                    <input type="checkbox" checked={sel.has(p.code)} onChange={() => toggle(p.code)} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontWeight: 500 }}>{p.name}</span>
+                      {p.status === 'ลาออก' && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#C24036', background: '#FBEEEC', padding: '1px 7px', borderRadius: 20 }}>ลาออก</span>}
+                      <span style={{ display: 'block', fontSize: 11, color: '#94A0A8' }}>
+                        {p.pay_type === 'รายวัน' ? `${p.work_days || 0} วัน` : p.prorated ? `ทำงาน ${p.work_days}/${p.days_in_month} วัน` : 'เต็มเดือน'}{p.pay_note ? ' · ' + p.pay_note : ''}
+                      </span>
+                    </span>
+                    <span className="num" style={{ fontWeight: 600, color: netRow(p) < 0 ? '#C24036' : '#1C2730' }}>{baht(netRow(p))}</span>
+                  </label>
+                ))}
+              </div>
+              {negative.length > 0 && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>เงินสุทธิติดลบ: {negative.map((p) => p.name).join(', ')} — ปรับยอดหัก/เบิกก่อน หรือเอาออกจากรอบนี้</div>}
+              {payDlg.err && <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px', marginTop: 10 }}>{payDlg.err}</div>}
+              <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 10 }}>ทำจ่ายแล้วตัวเลขของคนในรอบจะถูกล็อก และลงบัญชีค่าใช้จ่ายเงินเดือนตามวันที่จ่ายให้อัตโนมัติ · ต้องแก้ทีหลังกด “เปิดแก้ไข” ที่รอบจ่าย</div>
+            </ModalShell>
+          )
+        })()}
+        {batchDlg && (
+          <ModalShell title={`แก้ไขรอบ ${batchDlg.b.no}`} sub={batchDlg.b.status === 'closed' ? 'รอบที่ปิดแล้ว: ระบบลงบัญชีใหม่ตามวันที่จ่ายที่แก้' : undefined} width={460} closeOnBackdrop={false} onClose={() => setBatchDlg(null)}
+            footer={<>
+              <button onClick={() => setBatchDlg(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={saveBatch} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
+            </>}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750', marginBottom: 12 }}>วันที่จ่าย
+              <input type="date" style={field} value={batchDlg.date} onChange={(e) => setBatchDlg({ ...batchDlg, date: e.target.value })} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>หมายเหตุของรอบ
+              <input style={field} value={batchDlg.note} onChange={(e) => setBatchDlg({ ...batchDlg, note: e.target.value })} />
+            </label>
+            {batchDlg.err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{batchDlg.err}</div>}
+          </ModalShell>
+        )}
         {tab === 'payroll' && !salaryOk && (
           <div style={{ padding: '54px 40px', textAlign: 'center' }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: '#1C2730' }}>ไม่มีสิทธิ์ดูข้อมูลเงินเดือน</div>
@@ -399,85 +514,157 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
         )}
         {tab === 'payroll' && salaryOk && (
           <>
-          {showSummary && payroll && payrollMeta && <PayrollSummaryDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowSummary(false)} />}
-          {showAllSlips && payroll && payrollMeta && <AllSlipsDoc rows={payroll} periodLabel={payrollMeta.periodLabel} onClose={() => setShowAllSlips(false)} />}
+          {showSummary && payroll && payrollMeta && <PayrollSummaryDoc rows={printRows} periodLabel={printLabel} onClose={() => { setShowSummary(false); setPrintBatch(null) }} />}
+          {showAllSlips && payroll && payrollMeta && <AllSlipsDoc rows={printRows} periodLabel={printLabel} onClose={() => { setShowAllSlips(false); setPrintBatch(null) }} />}
           {annual && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
-              <div><div style={{ fontSize: 12, color: '#5C6770' }}>รวมจ่ายเงินเดือนทั้งปี {new Date().getFullYear() + 543}</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#1C2730', marginTop: 3 }}>{baht(annual.net)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>จากงวดที่ปิดแล้ว {annual.months} เดือน</div></div>
+              <div><div style={{ fontSize: 12, color: '#5C6770' }}>รวมจ่ายเงินเดือนทั้งปี {new Date().getFullYear() + 543}</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#1C2730', marginTop: 3 }}>{baht(annual.net)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>จากงวดที่ทำจ่ายแล้ว {annual.months} เดือน</div></div>
               <div><div style={{ fontSize: 12, color: '#5C6770' }}>ประกันสังคมสะสม (ลูกจ้าง)</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#C0852C', marginTop: 3 }}>{baht(annual.sso)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>นายจ้างสมทบอีก {baht(annual.sso)}</div></div>
               <div><div style={{ fontSize: 12, color: '#5C6770' }}>ประกันสังคมนำส่งรวม (2 ฝ่าย)</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#30506A', marginTop: 3 }}>{baht(annual.sso * 2)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>ทั้งปี {new Date().getFullYear() + 543}</div></div>
             </div>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid #EEF1F4' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid #EEF1F4', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>สรุปเงินเดือน</span>
             <span style={{ fontSize: 12.5, color: '#5C6770' }}>งวด</span>
             <select value={payrollMeta?.period || ''} onChange={(e) => app.viewPayrollPeriod(e.target.value)} style={{ ...field, width: 'auto', padding: '5px 9px', fontSize: 12.5 }}>
               {periodOptions.map(([p, label]) => <option key={p} value={p}>{label}</option>)}
             </select>
             {payrollMeta?.locked
-              ? <span style={{ fontSize: 11, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', padding: '3px 10px', borderRadius: 20 }}>ปิดงวดแล้ว 🔒</span>
-              : <span style={{ fontSize: 11, fontWeight: 600, color: '#B7791F', background: '#F6ECD6', padding: '3px 10px', borderRadius: 20 }}>ยังไม่ปิดงวด (คำนวณสด)</span>}
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              ? <span style={{ fontSize: 11, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', padding: '3px 10px', borderRadius: 20 }}>ทำจ่ายครบทุกคนแล้ว 🔒</span>
+              : (payrollMeta?.paidCount || 0) > 0
+                ? <span style={{ fontSize: 11, fontWeight: 600, color: '#30506A', background: '#E2E9EF', padding: '3px 10px', borderRadius: 20 }}>ทำจ่ายแล้ว {payrollMeta?.paidCount}/{(payroll || []).length} คน</span>
+                : <span style={{ fontSize: 11, fontWeight: 600, color: '#B7791F', background: '#F6ECD6', padding: '3px 10px', borderRadius: 20 }}>ยังไม่ได้ทำจ่าย (คำนวณสด)</span>}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {payrollMeta && payroll && (
-                <button onClick={() => setShowAllSlips(true)} title="พิมพ์สลิปเงินเดือนทุกคนครั้งเดียว (คนละหน้า A4)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 สลิปทุกคน</button>
+                <button onClick={() => { setPrintBatch(null); setShowAllSlips(true) }} title="พิมพ์สลิปเงินเดือนทุกคนของงวดครั้งเดียว (คนละหน้า A4)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 สลิปทุกคน</button>
               )}
               {payrollMeta && payroll && (
-                <button onClick={() => setShowSummary(true)} title="พิมพ์ใบสรุปการจ่ายค่าจ้าง/เงินเดือนทั้งบริษัท (แนวนอน)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 ใบสรุปการจ่ายค่าจ้าง</button>
+                <button onClick={() => { setPrintBatch(null); setShowSummary(true) }} title="พิมพ์ใบสรุปการจ่ายค่าจ้าง/เงินเดือนทั้งบริษัท (แนวนอน)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 ใบสรุปการจ่ายค่าจ้าง</button>
               )}
               {payrollMeta && (
-                <button onClick={() => apiClient.download('/payroll/bank-file?period=' + payrollMeta.period).catch((e) => alert((e as Error).message))} title="ดาวน์โหลดไฟล์จ่ายเงินเดือนผ่านธนาคาร (CSV)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ไฟล์จ่ายผ่านธนาคาร</button>
+                <button onClick={() => apiClient.download('/payroll/bank-file?period=' + payrollMeta.period).catch((e) => alert((e as Error).message))} title="ดาวน์โหลดไฟล์จ่ายเงินเดือนผ่านธนาคาร ทั้งเดือน (CSV) — ไฟล์รายรอบอยู่ที่ตารางรอบจ่าย" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ไฟล์จ่ายผ่านธนาคาร</button>
               )}
               {payrollMeta && (
                 <button onClick={() => apiClient.download('/payroll/sso-file?period=' + payrollMeta.period).catch((e) => alert((e as Error).message))} title="รายชื่อ + ค่าจ้าง + เงินสมทบของงวด (สำหรับยื่น สปส.1-10)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ไฟล์ สปส.</button>
               )}
               <button onClick={() => apiClient.download('/payroll/pnd1k?year=' + new Date().getFullYear()).catch((e) => alert((e as Error).message))} title="สรุปเงินได้ + ภาษีหักนำส่งทั้งปีต่อคน (สำหรับยื่น ภงด.1ก)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#6B4E9E', background: '#fff', border: '1px solid #DDD3EE', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>⬇ ภงด.1ก</button>
               <button onClick={openWhtList} title="พิมพ์หนังสือรับรองหักภาษี ณ ที่จ่าย (50 ทวิ) รายพนักงาน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🧾 50 ทวิ</button>
-              {!payrollMeta?.locked && payrollMeta && (
-                <button onClick={async () => { const lbl = payrollMeta.periodLabel; if (!window.confirm(`ปิดงวดเงินเดือน ${lbl}?\nตัวเลขจะถูกล็อก (แก้ไม่ได้) และระบบจะลงบัญชีค่าใช้จ่ายเงินเดือนเข้าบัญชีแยกประเภท (GL) ให้อัตโนมัติ`)) return; await app.closePayroll(payrollMeta.period); alert(`ปิดงวด ${lbl} แล้ว · ลงบัญชีค่าใช้จ่ายเงินเดือนเข้าบัญชีแยกประเภท (GL) ให้อัตโนมัติแล้ว`) }} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>ปิดงวด / ออกเงินเดือน</button>
+              {payrollMeta && unpaidRows.length > 0 && (
+                <button onClick={autofillDays} title="ดึงวันทำงานจากข้อมูลลงเวลาให้ทุกคนที่ยังไม่ได้ทำจ่าย (แก้ต่อได้)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>↺ ดึงวันจากลงเวลา</button>
+              )}
+              {payrollMeta && unpaidRows.length > 0 && (
+                <button onClick={() => openPayDlg()} title="เลือกพนักงานที่จะทำจ่าย (จ่ายบางคนก่อนสิ้นเดือนได้ เช่น คนลาออก)" className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>💸 ทำจ่าย ({unpaidRows.length} คนที่ยังไม่จ่าย)</button>
               )}
             </div>
           </div>
+
+          {/* รอบจ่ายของเดือนนี้ */}
+          {batches.length > 0 && (
+            <div style={{ borderBottom: '1px solid #EEF1F4', background: '#FAFBFC', padding: '10px 18px' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#3C4750', marginBottom: 6 }}>รอบจ่ายเดือนนี้ ({batches.length} รอบ)</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 8 }}>
+                  <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
+                    <th style={th}>รอบ</th><th style={th}>วันที่จ่าย</th><th style={{ ...th, textAlign: 'center' }}>คน</th><th style={{ ...th, textAlign: 'right' }}>สุทธิ</th><th style={th}>หมายเหตุของรอบ</th><th style={{ ...th, textAlign: 'center' }}>สถานะ</th><th style={{ ...th, textAlign: 'right' }}>จัดการ</th>
+                  </tr></thead>
+                  <tbody>
+                    {batches.map((b) => (
+                      <tr key={b.id} style={{ borderTop: '1px solid #F1F4F6' }}>
+                        <td className="num" style={{ ...td, fontFamily: 'monospace', fontWeight: 600 }}>{b.no}</td>
+                        <td className="num" style={td}>{new Date(b.pay_date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}</td>
+                        <td className="num" style={{ ...td, textAlign: 'center' }}>{b.status === 'closed' ? b.count : b.emp_codes.length}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{b.status === 'closed' ? baht(b.total) : '—'}</td>
+                        <td style={{ ...td, color: b.note ? '#3C4750' : '#94A0A8' }}>{b.note || '—'}</td>
+                        <td style={{ ...td, textAlign: 'center' }}>{b.status === 'closed'
+                          ? <span style={{ fontSize: 11, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', padding: '2px 9px', borderRadius: 20 }}>ปิดแล้ว · ลงบัญชีแล้ว</span>
+                          : <span style={{ fontSize: 11, fontWeight: 600, color: '#B7791F', background: '#F6ECD6', padding: '2px 9px', borderRadius: 20 }}>เปิดแก้ไขอยู่</span>}</td>
+                        <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {b.status === 'closed' && <>
+                            <button onClick={() => { setPrintBatch(b); setShowAllSlips(true) }} title="พิมพ์สลิปเฉพาะคนในรอบนี้" className="hov-f3f5f7" style={miniBtn}>🖨 สลิป</button>
+                            <button onClick={() => { setPrintBatch(b); setShowSummary(true) }} title="ใบสรุปการจ่ายค่าจ้างเฉพาะรอบนี้" className="hov-f3f5f7" style={miniBtn}>🖨 ใบสรุป</button>
+                            <button onClick={() => apiClient.download('/payroll/bank-file?batch=' + b.id).catch((e) => alert((e as Error).message))} title="ไฟล์จ่ายผ่านธนาคารเฉพาะรอบนี้" className="hov-f3f5f7" style={miniBtn}>⬇ ไฟล์ธนาคาร</button>
+                          </>}
+                          <button onClick={() => setBatchDlg({ b, date: b.pay_date, note: b.note, err: '' })} title="แก้วันที่จ่าย / หมายเหตุของรอบ" className="hov-f3f5f7" style={miniBtn}>✎</button>
+                          {b.status === 'closed'
+                            ? <button onClick={() => batchAction(b, 'reopen')} title="เปิดแก้ไข — คนในรอบกลับไปคำนวณสด แก้ข้อมูลได้" className="hov-f3f5f7" style={{ ...miniBtn, color: '#B7791F', borderColor: '#ECDCB8' }}>เปิดแก้ไข</button>
+                            : <>
+                              <button onClick={() => batchAction(b, 'close')} className="btn-primary" style={{ ...miniBtn, color: '#fff', background: '#30506A', borderColor: '#30506A' }}>ปิดรอบอีกครั้ง</button>
+                              <button onClick={() => batchAction(b, 'delete')} title="ยกเลิกรอบนี้ (คนในรอบกลับเป็นยังไม่ได้ทำจ่าย)" style={{ ...miniBtn, color: '#C24036', borderColor: '#EDD3CE' }}>ยกเลิกรอบ</button>
+                            </>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
-              <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={{ ...th, textAlign: 'right' }}>ฐานเงิน</th><th style={{ ...th, textAlign: 'right' }}>OT</th><th style={{ ...th, textAlign: 'right' }}>รายได้อื่น</th>
+              <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th>
+              <th style={{ ...th, textAlign: 'center' }} title={`จำนวนวันทำงานของงวดนี้ (ไม่เกิน ${payrollMeta?.daysInMonth || 30} วัน) · รายเดือนเว้นว่าง = เต็มเดือน`}>วันทำงาน <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th>
+              <th style={{ ...th, textAlign: 'right' }}>ฐานเงิน</th><th style={{ ...th, textAlign: 'right' }}>OT</th><th style={{ ...th, textAlign: 'right' }}>รายได้อื่น</th>
               <th style={{ ...th, textAlign: 'right' }}>ปกส.</th><th style={{ ...th, textAlign: 'right' }}>ภาษี <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th>
               <th style={{ ...th, textAlign: 'right' }}>หักลา/ขาด</th><th style={{ ...th, textAlign: 'right' }}>Retention <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>กยศ <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(แก้ได้)</span></th><th style={{ ...th, textAlign: 'right' }}>เบิกล่วงหน้า</th><th style={{ ...th, textAlign: 'right' }}>หักอื่นๆ</th><th style={{ ...th, textAlign: 'right' }}>สุทธิ</th>
+              <th style={th}>หมายเหตุ <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10 }}>(ขึ้นในสลิป)</span></th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>สลิป</th>
             </tr></thead>
             <tbody>
-              {(payroll || []).length === 0 && <tr><td colSpan={13} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีพนักงาน</td></tr>}
+              {(payroll || []).length === 0 && <tr><td colSpan={15} style={{ padding: 36, textAlign: 'center', color: '#94A0A8' }}>ยังไม่มีพนักงาน</td></tr>}
               {(payroll || []).map((p) => {
                 const deduct = p.leave_deduct || 0
-                const ret = p.retention ?? 0, loan = p.student_loan || 0, adv = p.advance || 0, otherDed = p.other_deduct || 0, otherInc = p.other_income || 0
-                const net = (p.base + p.ot + otherInc) - p.sso - p.tax - deduct - ret - loan - adv - otherDed
+                const ret = p.retention ?? 0, loan = p.student_loan || 0, adv = p.advance || 0, otherDed = p.other_deduct || 0, otherInc = p.other_income || 0, refund = p.retention_refund || 0
+                const net = netRow(p)
+                const locked = !!p.paid
+                const dim = p.days_in_month || payrollMeta?.daysInMonth || 30
+                const daily = p.pay_type === 'รายวัน'
+                const inBox: React.CSSProperties = { width: 52, textAlign: 'right', fontFamily: 'inherit', fontSize: 12.5, padding: '3px 6px', border: '1px solid #D8DFE5', borderRadius: 6, background: '#fff', color: '#1C2730' }
                 return (
-                  <tr key={p.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
-                    <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{p.name} <span style={{ fontSize: 11, color: '#94A0A8' }}>({p.pay_type || 'รายเดือน'})</span>{p.exempt_attendance ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#2E7D55', background: '#E7F3EC', padding: '1px 7px', borderRadius: 20 }}>ไม่ต้องลงเวลา</span> : null}</td>
+                  <tr key={p.code || p.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6', background: locked ? '#FAFCFB' : undefined }}>
+                    <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>
+                      {p.name} <span style={{ fontSize: 11, color: '#94A0A8' }}>({p.pay_type || 'รายเดือน'})</span>
+                      {p.exempt_attendance ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#2E7D55', background: '#E7F3EC', padding: '1px 7px', borderRadius: 20 }}>ไม่ต้องลงเวลา</span> : null}
+                      {p.status === 'ลาออก' ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#C24036', background: '#FBEEEC', padding: '1px 7px', borderRadius: 20 }}>ลาออก</span> : null}
+                      {locked
+                        ? <span style={{ display: 'block', fontSize: 10.5, color: '#2E7D55', marginTop: 2 }}>✓ จ่ายแล้ว · {p.batch_no}{p.pay_date ? ' · ' + new Date(p.pay_date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : ''}</span>
+                        : <button onClick={() => openPayDlg([p.code])} title="ทำจ่ายเฉพาะคนนี้ (เช่น ลาออกก่อนสิ้นเดือน)" style={{ display: 'block', marginTop: 3, fontFamily: 'inherit', fontSize: 10.5, fontWeight: 600, color: '#30506A', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>ทำจ่ายคนนี้ก่อน</button>}
+                    </td>
+                    <td className="num" style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {locked
+                        ? <span style={{ color: '#5C6770' }}>{p.work_days == null ? 'เต็มเดือน' : `${p.work_days}/${dim}`}</span>
+                        : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={daily ? 'จำนวนวันที่ทำงาน (ว่าง = ตามลงเวลา) · ใส่ครึ่งวันได้ เช่น 17.5' : 'เว้นว่าง = เต็มเดือน · กรอกถ้าเริ่มงาน/ลาออกกลางเดือน → เงินเดือน ÷ 30 × วัน'}>
+                            <input key={p.code + '-wd-' + (p.work_days ?? '') + (p.work_days_set ? 's' : '')} type="text" inputMode="decimal"
+                              defaultValue={p.work_days_set || daily ? String(p.work_days ?? '') : ''} placeholder={daily ? '0' : 'เต็ม'}
+                              disabled={inSaving === p.code + ':work_days'}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                              onBlur={(e) => {
+                                const raw = e.target.value.trim()
+                                const v = raw === '' ? null : parseDays(raw)
+                                if (v != null && v > dim) { alert(`วันทำงานเกินจำนวนวันในเดือน — ${payrollMeta?.periodLabel} มี ${dim} วัน`); e.target.value = String(p.work_days ?? ''); return }
+                                const cur = p.work_days_set ? (p.work_days ?? null) : null
+                                if (v !== cur) saveInput(p, { work_days: v })
+                              }}
+                              style={{ ...inBox, borderColor: p.work_days_set ? '#30506A' : '#D8DFE5' }} />
+                            <span style={{ fontSize: 11, color: '#94A0A8' }}>/{dim}</span>
+                          </span>
+                        )}
+                      {!locked && daily && !p.work_days_set && <span style={{ display: 'block', fontSize: 9.5, color: '#94A0A8' }}>ตามลงเวลา</span>}
+                    </td>
                     <td className="num" style={{ ...td, textAlign: 'right' }}>
                       {baht(p.base)}
-                      {p.pay_type === 'รายวัน' ? (
-                        <span style={{ display: 'block', fontSize: 10, color: '#94A0A8', marginTop: 2 }}>
-                          {payrollMeta?.locked
-                            ? `${p.work_days || 0} วัน × ${baht(p.daily_rate || 0)}`
-                            : (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }} title="กรอกจำนวนวันทำงาน → คิดเงินอัตโนมัติ">
-                                <input key={p.id + '-wd-' + (p.work_days || 0)} type="text" inputMode="decimal" defaultValue={String(p.work_days || 0)}
-                                  disabled={wdSaving === p.id}
-                                  onFocus={(e) => e.currentTarget.select()}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                                  onBlur={(e) => { if (parseDays(e.target.value) !== (p.work_days || 0)) saveWorkDays(p.id, e.target.value) }}
-                                  style={{ width: 46, textAlign: 'right', fontFamily: 'inherit', fontSize: 11, padding: '1px 4px', border: '1px solid #D8DFE5', borderRadius: 5, background: '#fff', color: '#1C2730' }} />
-                                <span>วัน × {baht(p.daily_rate || 0)}</span>
-                              </span>
-                            )}
-                        </span>
-                      ) : null}
+                      {daily
+                        ? <span style={{ display: 'block', fontSize: 10, color: '#94A0A8', marginTop: 2 }}>{p.work_days || 0} วัน × {baht(p.daily_rate || 0)}</span>
+                        : p.prorated ? <span style={{ display: 'block', fontSize: 10, color: '#B7791F', marginTop: 2 }}>{baht(p.monthly_base || 0)} ÷ 30 × {p.work_days}</span> : null}
                     </td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: '#5C6770' }}>{baht(p.ot)}</td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: otherInc ? '#2E7D55' : '#94A0A8' }}>{otherInc ? '+' + baht(otherInc) : '฿0'}</td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: '#C0852C' }}>{baht(p.sso)}</td>
                     <td className="num" style={{ ...td, textAlign: 'right' }}>
-                      {payrollMeta?.locked
+                      {locked
                         ? <span style={{ color: '#C0852C' }}>{baht(p.tax)}</span>
                         : (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end' }} title="กรอกภาษีเอง">
@@ -493,7 +680,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     </td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: deduct ? '#C24036' : '#94A0A8' }}>{deduct ? '-' + baht(deduct) : '฿0'}{(p.leave_days || p.absent_days) ? <span style={{ fontSize: 10, color: '#94A0A8' }}> ({p.leave_days ? 'ลา' + p.leave_days : ''}{p.leave_days && p.absent_days ? '+' : ''}{p.absent_days ? 'ขาด' + p.absent_days : ''}ว)</span> : null}</td>
                     <td className="num" style={{ ...td, textAlign: 'right' }}>
-                      {payrollMeta?.locked
+                      {locked
                         ? <span style={{ color: ret ? '#C24036' : '#94A0A8' }}>{ret ? '-' + baht(ret) : '฿0'}</span>
                         : (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end' }} title="แก้ยอดหักต่อเดือนได้ · คนที่หักครบแล้วใส่ 0">
@@ -507,9 +694,23 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                           </span>
                         )}
                       {(p.retention_cap) ? <span style={{ display: 'block', fontSize: 10, color: ((p.retention_paid || 0) >= p.retention_cap) ? '#2E7D55' : '#94A0A8' }}>{((p.retention_paid || 0) >= p.retention_cap) ? 'ครบแล้ว' : `สะสม ${baht(p.retention_paid || 0)}/${baht(p.retention_cap)}`}</span> : null}
+                      {/* คืนเงินประกันผลงาน — แสดงช่องให้คนที่ลาออก หรือคนที่มีกรอกไว้แล้ว */}
+                      {locked
+                        ? (refund > 0 ? <span style={{ display: 'block', fontSize: 10.5, color: '#2E7D55' }}>คืน +{baht(refund)}</span> : null)
+                        : (p.status === 'ลาออก' || refund > 0) && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end', marginTop: 3 }} title="คืนเงินประกันผลงานที่หักสะสมไว้ (บวกเข้าเงินสุทธิ)">
+                            <span style={{ color: '#2E7D55', fontSize: 10.5 }}>คืน +฿</span>
+                            <input key={p.code + '-refund-' + refund} type="text" inputMode="decimal" defaultValue={String(refund || '')} placeholder="0"
+                              disabled={inSaving === p.code + ':retention_refund'}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                              onBlur={(e) => { const v = unMoney(e.target.value); if (v !== refund) saveInput(p, { retention_refund: v }) }}
+                              style={{ ...inBox, width: 58, color: '#2E7D55' }} />
+                          </span>
+                        )}
                     </td>
                     <td className="num" style={{ ...td, textAlign: 'right' }}>
-                      {payrollMeta?.locked
+                      {locked
                         ? <span style={{ color: loan ? '#C24036' : '#94A0A8' }}>{loan ? '-' + baht(loan) : '฿0'}</span>
                         : (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end' }} title="แก้ยอดหัก กยศ ต่อเดือนได้ · ไม่มีให้ใส่ 0">
@@ -526,6 +727,15 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     <td className="num" style={{ ...td, textAlign: 'right', color: adv ? '#C24036' : '#94A0A8' }}>{adv ? '-' + baht(adv) : '฿0'}</td>
                     <td className="num" style={{ ...td, textAlign: 'right', color: otherDed ? '#C24036' : '#94A0A8' }}>{otherDed ? '-' + baht(otherDed) : '฿0'}</td>
                     <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#2E7D55' }}>{baht(net)}</td>
+                    <td style={{ ...td, minWidth: 150 }}>
+                      {locked
+                        ? <span style={{ fontSize: 12, color: p.pay_note ? '#3C4750' : '#94A0A8' }}>{p.pay_note || '—'}</span>
+                        : <input key={p.code + '-note-' + (p.pay_note || '')} type="text" defaultValue={p.pay_note || ''} placeholder="เช่น ลาออก 12 ต.ค."
+                          disabled={inSaving === p.code + ':note'}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                          onBlur={(e) => { const v = e.target.value.trim(); if (v !== (p.pay_note || '')) saveInput(p, { note: v }) }}
+                          style={{ width: '100%', fontFamily: 'inherit', fontSize: 12, padding: '4px 7px', border: '1px solid #D8DFE5', borderRadius: 6, background: '#fff', color: '#1C2730' }} />}
+                    </td>
                     <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                       <button onClick={() => onPrint('slip', { ...p, period: payrollMeta?.periodLabel })} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>พิมพ์</button>
                     </td>
@@ -534,6 +744,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               })}
             </tbody>
           </table>
+          </div>
 
           {/* เบิกเงินเดือนล่วงหน้า */}
           <div style={{ borderTop: '8px solid #F3F5F7' }}>
@@ -1063,7 +1274,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             <select style={field} value={emp.pay_type} onChange={(e) => setEmp({ ...emp, pay_type: e.target.value })}><option>รายเดือน</option><option>รายวัน</option></select>
             <MoneyInput decimal style={field} placeholder={emp.pay_type === 'รายวัน' ? 'ค่าแรง/วัน (บาท) เช่น 1,166.67' : 'เงินเดือน (บาท)'} value={emp.base} onChange={(v) => setEmp({ ...emp, base: v })} />
             {emp.pay_type === 'รายวัน' && (
-              <input style={field} type="number" min={0} step={0.5} placeholder="วันทำงาน/เดือน (เช่น แม่บ้าน) — ใส่ครึ่งวันได้ เช่น 17.5" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="รายวัน: เงิน = ค่าแรง/วัน × วันทำงาน (ใส่ครึ่งวันได้ เช่น 17.5)" />
+              <input style={field} type="number" min={0} step={0.5} placeholder="วันทำงานตั้งต้น/เดือน (เฉพาะคนที่ไม่ลงเวลา เช่น แม่บ้าน)" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="ใช้เมื่อเดือนนั้นไม่มีข้อมูลลงเวลาและยังไม่ได้กรอกวัน — วันทำงานจริงแต่ละเดือนกรอก/แก้ที่ตารางเงินเดือน" />
             )}
             <input style={field} type="date" value={emp.start} onChange={(e) => setEmp({ ...emp, start: e.target.value })} />
             <select style={field} value={emp.status} onChange={(e) => setEmp({ ...emp, status: e.target.value })}>{['ทดลองงาน', 'ทำงาน', 'ลาออก'].map((s) => <option key={s}>{s}</option>)}</select>
