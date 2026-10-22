@@ -23,6 +23,7 @@ import Handover from './Handover'
 import BoqTab from '../cost/BoqTab'
 import ImportInstallments from './ImportInstallments'
 import { KeepAlive } from '../shared/ModalShell'
+import HouseSummaryPrint from './HouseSummaryPrint'
 
 function Cell({ label, value, color, sub, br, bb }: { label: string; value: string; color: string; sub?: string; br?: boolean; bb?: boolean }) {
   return (
@@ -52,6 +53,7 @@ const INST_CATS = [
 export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHouse }: HouseDetailProps) {
   const { data, user, reloadData } = useApp()
   const [importing, setImporting] = useState(false)
+  const [printing, setPrinting] = useState(false) // ใบสรุปบ้าน (ปุ่ม พิมพ์สรุป)
   // แท็บที่มีฟอร์ม/modal (ใบสั่งงาน · จัดซื้อ · BOQ): เปิดแล้วเก็บไว้เบื้องหลัง — modal ที่ย่อค้างไว้ไม่หายตอนสลับแท็บ
   const [seenTabs, setSeenTabs] = useState<string[]>([])
   if (!seenTabs.includes(tab)) setSeenTabs([...seenTabs, tab])
@@ -141,10 +143,12 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         {house.kind === 'cm' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#C0852C', padding: '5px 13px', borderRadius: 20 }}>ควบคุมงาน (CM)</span>}
         {house.kind === 'office' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#30506A', padding: '5px 13px', borderRadius: 20 }}>🏢 ออฟฟิศ / ค่าใช้จ่ายภายใน</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 500, color: '#1C2730', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>พิมพ์สรุป</button>
+          <button onClick={() => setPrinting(true)} title="พิมพ์ใบสรุปข้อมูลบ้าน การเงิน งวดงาน และปัญหาค้าง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 500, color: '#1C2730', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>🖨 พิมพ์สรุป</button>
           <button onClick={onEditHouse} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>แก้ไขข้อมูล</button>
         </div>
       </div>
+
+      {printing && <HouseSummaryPrint house={house} installments={houseInst} expenses={houseExp} issues={houseIssues} otherCost={otherCost} canSeeProfit={canSeeProfit} onClose={() => setPrinting(false)} />}
 
       {/* ข้อมูลสัญญา/ผู้เกี่ยวข้อง (CM) */}
       {house.kind === 'cm' && (house.contract_no || house.owner || house.supervisor || house.engineer || house.site_location || house.scope) && (
