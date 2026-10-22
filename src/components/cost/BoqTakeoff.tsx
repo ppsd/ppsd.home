@@ -21,7 +21,9 @@ interface DxfSummary {
 }
 interface Result { source: 'dxf' | 'pdf' | 'image' | 'multi'; files?: string[]; ai: boolean; model: string; drawing: string; items: TakeoffItem[]; labor: LaborItem[]; notes: string[]; dxf: DxfSummary | null }
 interface LaborRate { id: number; name: string; variant: string; price_min: number; price_max: number; unit: string }
-interface Row { use: boolean; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; alts: MatOpt[]; matId: number; mat: number }
+interface WebPrice { price: number; low: number; high: number; shop: string; url: string; sources: number; note: string }
+// web = ราคาจากอินเทอร์เน็ต (ชั่วคราว) สำหรับวัสดุที่ยังไม่มีในราคากลาง
+interface Row { use: boolean; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; alts: MatOpt[]; matId: number; mat: number; web?: WebPrice }
 interface LRow { use: boolean; cat: string; rateId: number; qty: number; unit: string; price: number; basis: string; confidence: string }
 interface HouseFile { id: number; name: string; mime: string; size: number; category: string | null; uploaded: string }
 
@@ -127,12 +129,32 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   }
   const addLabor = () => setLRows((rs) => [...rs, { use: true, cat: 'สถาปัตยกรรม', rateId: 0, qty: 0, unit: '', price: 0, basis: '', confidence: 'กลาง' }])
   // วัสดุที่ยังไม่มีในราคากลาง → เพิ่มเข้าราคากลางด้วยชื่อ/หน่วย/ราคาที่กรอกในแถวนี้
+  // วัสดุที่ไม่มีในราคากลางและยังไม่ได้กรอกราคา → ให้ AI ค้นราคาตลาดจากเว็บมาใส่ไว้ก่อน (แก้ได้ · ไม่บันทึกเข้าราคากลางเอง)
+  const [webBusy, setWebBusy] = useState(false)
+  const needWeb = rows.flatMap((r, i) => !r.matId && !(r.mat > 0) ? [i] : [])
+  const fetchWebPrices = async () => {
+    if (!needWeb.length) return
+    if (!confirm(`ให้ AI ค้นราคาจากอินเทอร์เน็ต ${needWeb.length} รายการ?\n(ใช้ AI ค้นเว็บ มีค่าใช้จ่ายต่อครั้ง · อาจใช้เวลา 1–3 นาที)`)) return
+    setWebBusy(true); setErr('')
+    try {
+      const r = await api.post<{ items: (WebPrice & { desc: string })[] }>('/boq-takeoff/web-prices', { items: needWeb.map((i) => ({ desc: rows[i].desc, unit: rows[i].unit })) })
+      setRows((rs) => rs.map((row, i) => {
+        const k = needWeb.indexOf(i)
+        const w = k >= 0 ? r.items[k] : null
+        if (!w) return row
+        return { ...row, web: w, mat: w.price > 0 && !(row.mat > 0) ? w.price : row.mat }
+      }))
+      const got = r.items.filter((x) => x.price > 0).length
+      if (got < r.items.length) setErr(`ได้ราคาจากเว็บ ${got} จาก ${r.items.length} รายการ — ที่เหลือหาไม่เจอหรือสเปกไม่ชัด กรอกเองได้`)
+    } catch (e) { setErr((e as Error).message) }
+    setWebBusy(false)
+  }
   const addToMaster = async (i: number) => {
     const r = rows[i]
     if (!(r.mat > 0)) { alert('กรอกค่าวัสดุ/หน่วยก่อน แล้วค่อยเพิ่มเข้าราคากลาง'); return }
     if (!confirm(`เพิ่ม “${r.desc}” (${r.unit}) ราคา ${baht(r.mat)} เข้าราคากลางวัสดุ?`)) return
     try {
-      const m = await api.post<MatOpt>('/material-prices', { name: r.desc, unit: r.unit, central: r.mat, note: 'เพิ่มจากหน้าถอดแบบ' })
+      const m = await api.post<MatOpt>('/material-prices', { name: r.desc, unit: r.unit, central: r.mat, note: r.web && r.web.price === r.mat ? `ราคาจากเว็บ (${r.web.shop || 'ร้านออนไลน์'}) ${r.web.url}`.trim() : 'เพิ่มจากหน้าถอดแบบ' })
       setRow(i, { alts: [m, ...r.alts], matId: m.id })
     } catch (e) { alert((e as Error).message) }
   }
@@ -168,6 +190,14 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
             {r.alts.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.unit} · {baht(a.central)}</option>)}
           </select>
           {m && m.unit && r.unit && m.unit.replace(/\.$/, '') !== r.unit.replace(/\.$/, '') && <div style={{ fontSize: 11, color: '#9A6B12', marginTop: 3 }}>⚠ ราคากลางคิดต่อ “{m.unit}” แต่จำนวนเป็น “{r.unit}”</div>}
+          {!r.matId && r.web && (r.web.price > 0
+            ? <div style={{ fontSize: 11, color: '#1F5F8B', marginTop: 4, lineHeight: 1.4 }}>
+                <span style={{ fontWeight: 600, background: '#E5F0F8', borderRadius: 5, padding: '1px 6px', marginRight: 5 }}>🌐 ราคาจากเว็บ</span>
+                {r.web.url ? <a href={r.web.url} target="_blank" rel="noreferrer" style={{ color: '#1F5F8B' }}>{r.web.shop || 'ร้านออนไลน์'} ↗</a> : (r.web.shop || 'ร้านออนไลน์')}
+                {r.web.sources > 1 && ` · ${r.web.sources} ร้าน`}{r.web.low > 0 && r.web.high > r.web.low && ` · ${baht(r.web.low)}–${baht(r.web.high)}`}
+                {r.web.note && <div style={{ color: '#7A858D' }}>{r.web.note}</div>}
+              </div>
+            : <div style={{ fontSize: 11, color: '#94A0A8', marginTop: 4 }}>🌐 หาราคาจากเว็บไม่เจอ{r.web.note ? ` — ${r.web.note}` : ''}</div>)}
           {!r.matId && <button onClick={() => addToMaster(i)} className="hov-f3f5f7" style={{ marginTop: 4, fontFamily: 'inherit', fontSize: 11, color: '#30506A', background: '#fff', border: '1px dashed #B9C6D0', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>+ เพิ่มเข้าราคากลาง</button>}
         </td>
         <td style={{ padding: '5px 6px' }}><input type="number" style={{ ...cell, width: 86, textAlign: 'right' }} value={r.mat || ''} onChange={(e) => setRow(i, { mat: Number(e.target.value) })} /></td>
@@ -179,7 +209,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   const create = () => {
     const items: BoqItem[] = used.map((r) => {
       const m = r.alts.find((a) => a.id === r.matId)
-      return { cat: r.cat, desc: m ? m.name : r.desc, qty: r.qty, unit: r.unit, mat: r.mat, lab: 0, ref: m?.id, basis: r.basis }
+      return { cat: r.cat, desc: m ? m.name : r.desc, qty: r.qty, unit: r.unit, mat: r.mat, lab: 0, ref: m?.id, basis: !m && r.web && r.web.price === r.mat ? [r.basis, 'ราคาจากเว็บ: ' + (r.web.shop || 'ร้านออนไลน์')].filter(Boolean).join(' · ') : r.basis }
     })
     for (const l of usedL) {
       const rate = rates.find((x) => x.id === l.rateId)
@@ -255,6 +285,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
         <Section title="วัสดุ" open={open.mat} onToggle={() => toggle('mat')}
           meta={<>{rows.length} รายการ · จับคู่ราคากลางได้ {rows.length - unmatchedAll}{unmatchedAll > 0 && <span style={{ color: '#B23B30' }}> · ยังไม่มีราคา {unmatchedAll}</span>} · <b className="num" style={{ color: '#1C2730' }}>{baht(totMat)}</b></>}
           actions={<>
+            {needWeb.length > 0 && <button onClick={fetchWebPrices} disabled={webBusy} className="hov-f3f5f7" style={{ ...chip, color: '#1F5F8B', borderColor: '#B7D3E8', background: webBusy ? '#F1F6FA' : '#fff', cursor: webBusy ? 'default' : 'pointer' }}>{webBusy ? '🌐 กำลังค้นราคา…' : `🌐 หาราคาจากเว็บ (${needWeb.length})`}</button>}
             <button onClick={() => setOnlyUnpriced(!onlyUnpriced)} className="hov-f3f5f7" style={{ ...chip, ...(onlyUnpriced ? { background: '#FBE7E5', borderColor: '#F0C4BF', color: '#B23B30' } : {}) }}>เฉพาะยังไม่มีราคา</button>
             <button onClick={() => setClosedCats(closedCats.length ? [] : groups.map((g) => g.cat))} className="hov-f3f5f7" style={chip}>{closedCats.length ? 'ขยายทุกหมวด' : 'ยุบทุกหมวด'}</button>
           </>}>

@@ -91,10 +91,12 @@ const MOCK = { drawing: 'แปลนสุขาภิบาล', items: [
   { cat: 'ระบบประปา-สุขาภิบาล', desc: 'บ่อพัก', qty: 3, unit: 'บ่อ', basis: 'นับสัญลักษณ์', confidence: 'สูง' },
 ], labor: [{ labor: 'งานติดตั้งสุขภัณฑ์ (เหมาย่อห้อง)', qty: 1, basis: 'ห้องน้ำ 1 ห้อง', confidence: 'สูง' }], notes: ['ความยาวท่อเป็นค่าประมาณ'] }
 
+const WEB = { items: [{ no: 1, price: 4500, unit: 'ชุด', low: 3900, high: 5200, shop: 'HomePro', url: 'https://www.homepro.co.th/p/1', sources: 3, note: 'ชักโครกชิ้นเดียว' }, { no: 2, price: 0, note: 'สเปกไม่ชัด', url: 'javascript:bad' }] }
+
 before(async () => {
   tmp = mkdtempSync(join(tmpdir(), 'ppsd-takeoff-'))
   child = spawn(process.execPath, [join(serverDir, 'index.js')], {
-    env: { ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1', PPSD_AI_MOCK_TAKEOFF: JSON.stringify(MOCK) },
+    env: { ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1', PPSD_AI_MOCK_TAKEOFF: JSON.stringify(MOCK), PPSD_AI_MOCK_WEBPRICE: JSON.stringify(WEB) },
     stdio: process.env.PPSD_TEST_STDIO ? 'inherit' : 'ignore',
   })
   for (let i = 0; i < 60; i++) {
@@ -163,4 +165,15 @@ test('API ถอดแบบจากเอกสารของบ้าน: �
   assert.equal((await pick([skp])).status, 400, '.skp ถอดไม่ได้')
   assert.equal((await pick([999999])).status, 404)
   assert.equal((await pick([])).status, 400)
+})
+
+test('API ราคาจากเว็บ: คืนราคาต่อรายการตามลำดับ · ลิงก์ไม่ใช่ http ถูกตัด · รายการว่างถูกปฏิเสธ', async () => {
+  const call = async (items) => {
+    const r = await fetch(BASE + '/boq-takeoff/web-prices', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) })
+    return { status: r.status, data: await r.json() }
+  }
+  const r = await call([{ desc: 'ชักโครก', unit: 'ชุด' }, { desc: 'บ่อพัก', unit: 'บ่อ' }])
+  assert.equal(r.status, 200, JSON.stringify(r.data))
+  assert.deepEqual(r.data.items.map((x) => [x.desc, x.price, x.shop, x.url]), [['ชักโครก', 4500, 'HomePro', 'https://www.homepro.co.th/p/1'], ['บ่อพัก', 0, '', '']])
+  assert.equal((await call([])).status, 400)
 })

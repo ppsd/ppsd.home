@@ -6023,6 +6023,45 @@ api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-strea
   const source = isDxf ? 'dxf' : inputs.length > 1 ? 'multi' : inputs[0].kind
   res.json({ source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, notes, dxf })
 })
+// ราคาจากอินเทอร์เน็ต (ชั่วคราว) สำหรับวัสดุที่ยังไม่มีในราคากลาง — AI ค้นเว็บร้านวัสดุก่อสร้างไทย แล้วสรุปราคาตลาดต่อหน่วยที่ขอ
+// แบ่งเป็นชุดละ 8 รายการค้นพร้อมกัน · ผลใช้กรอกในหน้าถอดแบบเท่านั้น ไม่บันทึกเข้าราคากลางเอง (คนกด "เพิ่มเข้าราคากลาง" เอง)
+api.post('/boq-takeoff/web-prices', auditView, async (req, res) => {
+  const list = (Array.isArray(req.body?.items) ? req.body.items : [])
+    .map((it) => ({ desc: String(it.desc || '').trim().slice(0, 200), unit: String(it.unit || '').trim().slice(0, 30) }))
+    .filter((it) => it.desc).slice(0, 60)
+  if (!list.length) return res.status(400).json({ error: 'ไม่มีรายการที่ต้องหาราคา' })
+  const num = (v) => Number(String(v ?? '').replace(/,/g, '')) || 0
+  const batches = []
+  for (let i = 0; i < list.length; i += 8) batches.push(list.slice(i, i + 8))
+  const ask = async (batch) => {
+    if (process.env.PPSD_AI_MOCK_WEBPRICE) return JSON.parse(process.env.PPSD_AI_MOCK_WEBPRICE) // ทดสอบ: ผลจำลอง
+    const want = batch.map((it, i) => `${i + 1}. ${it.desc} — ราคาต่อ "${it.unit || 'หน่วย'}"`).join('\n')
+    const prompt = `คุณเป็นผู้ประมาณราคาของบริษัทรับสร้างบ้านในไทย ใช้เครื่องมือค้นเว็บหา "ราคาตลาดปัจจุบัน" ของวัสดุต่อไปนี้จากร้านวัสดุก่อสร้างในไทย (${ONLINE_SHOPS}) เพื่อใช้เป็นราคากลางชั่วคราวในการทำ BOQ
+รายการ:
+${want}
+
+ต่อรายการ ให้ดูราคาจากหลายร้าน (2–3 ร้านถ้าหาได้) แล้วสรุปเป็นราคากลางต่อ "หน่วยที่ขอ" (ถ้าร้านขายคนละหน่วย ให้แปลงเป็นหน่วยที่ขอ เช่น ราคาต่อกล่อง ÷ จำนวนชิ้น และบอกวิธีแปลงใน note) ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น:
+{"items":[{"no":1,"price":0,"unit":"หน่วยที่ขอ","low":0,"high":0,"shop":"ร้านที่ใช้อ้างอิงหลัก","url":"ลิงก์หน้าสินค้าจริงจากผลค้น","sources":2,"note":"สินค้าที่เทียบ/สเปก/วิธีแปลงหน่วย"}]}
+กติกา: price = ราคากลาง (ค่ากลางของราคาที่พบ) บาทต่อหน่วยที่ขอ ตัวเลขไม่มีคอมม่า · low/high = ต่ำสุด/สูงสุดที่พบ · sources = จำนวนร้านที่เห็นราคา · ถ้าหาไม่เจอหรือไม่แน่ใจสเปกให้ price=0 และบอกเหตุผลใน note · ห้ามเดาราคาโดยไม่มีผลค้นรองรับ`
+    const ai = await aiAsk({ prompt, maxTokens: 8000, model: process.env.PPSD_AI_SEARCH_MODEL || 'claude-sonnet-5', tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.min(16, batch.length * 2 + 2) }] })
+    if (!ai.ok) throw { code: ai.code || 502, msg: ai.error }
+    return extractJsonBlock(ai.text) || {}
+  }
+  if (!process.env.PPSD_AI_MOCK_WEBPRICE && !aiKey()) return res.status(400).json({ error: AI_NO_KEY })
+  let results
+  try { results = await Promise.all(batches.map(ask)) } catch (e) { return res.status(e.code || 502).json({ error: e.msg || e.message }) }
+  const out = []
+  batches.forEach((batch, b) => {
+    const got = Array.isArray(results[b]?.items) ? results[b].items : []
+    batch.forEach((it, i) => {
+      const r = got.find((x) => Number(x.no) === i + 1) || got[i] || {}
+      const url = /^https?:\/\//i.test(String(r.url || '')) ? String(r.url).trim() : ''
+      out.push({ desc: it.desc, unit: it.unit, price: Math.round(num(r.price) * 100) / 100, low: num(r.low), high: num(r.high), shop: String(r.shop || '').trim(), url, sources: Math.max(0, Math.round(num(r.sources))), note: String(r.note || '').trim() })
+    })
+  })
+  audit(req, 'AI หาราคาวัสดุจากอินเทอร์เน็ต (ถอดแบบ)', `${out.length} รายการ · ได้ราคา ${out.filter((x) => x.price > 0).length}`)
+  res.json({ items: out })
+})
 
 // Cash Flow Forecast
 const cfRow = (r) => r ? { ...r, months: jparse(r.months) || [], rows: jparse(r.rows) || [] } : r
