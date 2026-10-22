@@ -5,6 +5,7 @@ import { api } from '../../api'
 import { useApp, useLiveRefresh } from '../../store'
 import type { ApiPR, ApiPO, ApiPayment, ApiVendor } from '../../store'
 import MoneyInput from '../shared/MoneyInput'
+import ModalShell, { KeepAlive } from '../shared/ModalShell'
 import EfilingList from '../accounting/EfilingList'
 import PrApprovalDoc from './PrApprovalDoc'
 import PoDoc from './PoDoc'
@@ -480,15 +481,19 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
         {/* PR */}
-        {tab === 'pr' && (
+        {(tab === 'pr' || addingPr) && (<KeepAlive active={tab === 'pr'} onShow={() => setTab('pr')}>
           <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid #EEF1F4' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>ใบขอซื้อทั้งหมด</span>
             {searchBox}
-            <button onClick={() => setAddingPr((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ ขอซื้อ (PR)</button>
+            <button onClick={() => setAddingPr(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ ขอซื้อ (PR)</button>
           </div>
           {addingPr && (
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
+            <ModalShell title="ขอซื้อ (PR)" sub="หลายรายการในใบเดียว · แนบรูปสินค้าได้สูงสุด 3 รูป" width={960} closeOnBackdrop={false} onClose={() => setAddingPr(false)}
+              footer={<>
+                <button onClick={() => setAddingPr(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={submitPr} disabled={prBusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>{prBusy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
+              </>}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10, marginBottom: 10 }}>
                 {houseCode
                   ? <div style={{ ...prField, background: '#F7F9FB', color: '#5C6770', display: 'flex', alignItems: 'center' }}>🏠 {houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
@@ -554,13 +559,9 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                     <button onClick={() => setPrImgs((cur) => cur.filter((_, j) => j !== i))} title="ลบรูปนี้" style={{ position: 'absolute', top: -7, right: -7, width: 18, height: 18, borderRadius: 9, border: 'none', background: '#C24036', color: '#fff', fontSize: 11, lineHeight: '18px', cursor: 'pointer', padding: 0 }}>✕</button>
                   </div>
                 ))}
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                  <button onClick={() => setAddingPr(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
-                  <button onClick={submitPr} disabled={prBusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>{prBusy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
-                </div>
               </div>
               {prErr && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 8 }}>{prErr}</div>}
-            </div>
+            </ModalShell>
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -644,18 +645,22 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             </tbody>
           </table>
           </>
-        )}
+        </KeepAlive>)}
 
         {/* PO */}
-        {tab === 'po' && (
+        {(tab === 'po' || addingPo) && (<KeepAlive active={tab === 'po'} onShow={() => setTab('po')}>
           <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid #EEF1F4' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>ใบสั่งซื้อทั้งหมด</span>
             {searchBox}
-            <button onClick={() => setAddingPo((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่ม PO</button>
+            <button onClick={() => setAddingPo(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่ม PO</button>
           </div>
           {addingPo && (
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
+            <ModalShell title="ออกใบสั่งซื้อ (PO)" width={960} closeOnBackdrop={false} onClose={() => setAddingPo(false)}
+              footer={<>
+                <button onClick={() => setAddingPo(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={submitPo} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึก</button>
+              </>}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 1fr 1fr', gap: 10 }}>
                 <select style={prField} value={poForm.vendor} onChange={(e) => pickVendor(e.target.value)}>
                   <option value="">เลือกผู้ขาย/ผู้รับเหมา *</option>
@@ -712,13 +717,9 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                   <input type="file" accept="image/*" onChange={pickPoImage} style={{ display: 'none' }} />
                 </label>
                 {poImg && <img src={poImg} alt="ตัวอย่าง" style={{ height: 44, borderRadius: 6, border: '1px solid #E1E5EA' }} />}
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                  <button onClick={() => setAddingPo(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
-                  <button onClick={submitPo} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึก</button>
-                </div>
               </div>
               {poErr && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 8 }}>{poErr}</div>}
-            </div>
+            </ModalShell>
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -784,20 +785,24 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             </tbody>
           </table>
           </>
-        )}
+        </KeepAlive>)}
 
         {/* ประวัติการซื้อ / ราคา */}
         {tab === 'history' && <PurchaseHistory purchaseOrders={purchaseOrders} prs={prs} expenses={data.expenses || []} houses={houses} />}
 
         {/* Payments + WHT */}
-        {tab === 'pay' && (
+        {(tab === 'pay' || addingPay) && (<KeepAlive active={tab === 'pay'} onShow={() => setTab('pay')}>
           <>
           <div style={{ display: 'flex', alignItems: 'center', padding: '12px 18px', borderBottom: '1px solid #EEF1F4' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>การจ่ายเงิน / หัก ณ ที่จ่าย</span>
-            <button onClick={() => setAddingPay((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ บันทึกจ่ายเงิน</button>
+            <button onClick={() => setAddingPay(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ บันทึกจ่ายเงิน</button>
           </div>
           {addingPay && (
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
+            <ModalShell title="บันทึกการจ่ายเงิน" sub="หัก ณ ที่จ่ายคำนวณให้อัตโนมัติ" width={820} closeOnBackdrop={false} onClose={() => setAddingPay(false)}
+              footer={<>
+                <button onClick={() => setAddingPay(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={submitPay} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึก</button>
+              </>}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1fr 0.8fr', gap: 10 }}>
                 <input style={prField} list="payee-emps" placeholder="ผู้รับเงิน * (พิมพ์/เลือกพนักงานหรือผู้ขาย)" value={payForm.payee} onChange={(e) => setPayForm({ ...payForm, payee: e.target.value })} />
                 <datalist id="payee-emps">
@@ -824,11 +829,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
               <div style={{ fontSize: 11, color: '#94A0A8', marginTop: 6 }}>เลือกบ้านเพื่อให้ยอดนี้ถูกรวมเข้า “ต้นทุนจริง/กำไรสุทธิ” ของบ้านนั้น</div>
               {(() => { const emp = (data.employees || []).find((e) => e.name === payForm.payee.trim()); if (!emp) return null; return <div style={{ fontSize: 11.5, marginTop: 6, color: emp.signature ? '#2E7D55' : '#B7791F' }}>{emp.signature ? '✓ เป็นพนักงาน — จะดึงลายเซ็นมาในใบ 50 ทวิ ให้อัตโนมัติ' : '⚠ เป็นพนักงาน แต่ยังไม่มีลายเซ็นในระบบ (เพิ่มได้ที่หน้าบุคลากร)'}</div> })()}
               {payErr && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 8 }}>{payErr}</div>}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
-                <button onClick={() => setAddingPay(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
-                <button onClick={submitPay} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึก</button>
-              </div>
-            </div>
+            </ModalShell>
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -874,7 +875,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             </tfoot>
           </table>
           </>
-        )}
+        </KeepAlive>)}
 
         {/* Payables — ยอดค้างจ่ายจริงจาก PO เครดิต */}
         {tab === 'payable' && apCheck && (
@@ -919,7 +920,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
         )}
 
         {/* Vendors */}
-        {tab === 'vendors' && (
+        {(tab === 'vendors' || addingVendor) && (<KeepAlive active={tab === 'vendors'} onShow={() => setTab('vendors')}>
           <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid #EEF1F4', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>ผู้ขาย / ผู้รับเหมา</span>
@@ -935,13 +936,14 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
               ))}
             </div>
             <span style={{ fontSize: 11.5, color: '#94A0A8' }}>กดป้ายหมวดในตารางเพื่อย้ายรายชื่อระหว่าง ผู้ขาย ↔ ผู้รับเหมา</span>
-            <button onClick={() => setAddingVendor((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มผู้ขาย/ผู้รับเหมา</button>
+            <button onClick={() => setAddingVendor(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่มผู้ขาย/ผู้รับเหมา</button>
           </div>
           {addingVendor && (
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC', display: 'flex', flexDirection: 'column', gap: 9 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: editingVendorId != null ? '#B7791F' : '#30506A' }}>
-                {editingVendorId != null ? `✎ แก้ไขข้อมูล: ${vendorForm.name}` : 'เพิ่มร้านค้า / ช่างใหม่ — กรอกครบรอบเดียว'}
-              </div>
+            <ModalShell title={editingVendorId != null ? `แก้ไขผู้ขาย/ผู้รับเหมา: ${vendorForm.name}` : 'เพิ่มร้านค้า / ช่างใหม่'} width={760} closeOnBackdrop={false} onClose={() => { setAddingVendor(false); setEditingVendorId(null); setVendorForm(blankVendorForm) }} bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+              footer={<>
+                <button onClick={() => { setAddingVendor(false); setEditingVendorId(null); setVendorForm(blankVendorForm) }} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#EDF1F4', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
+                <button onClick={submitVendor} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: editingVendorId != null ? '#B7791F' : '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>{editingVendorId != null ? 'บันทึกการแก้ไข' : 'บันทึก'}</button>
+              </>}>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <select style={{ ...prField, width: 'auto' }} value={vendorForm.kind} onChange={(e) => setVendorForm({ ...vendorForm, kind: e.target.value })} title="ผู้ขาย = ร้านวัสดุ/ของ · ผู้รับเหมา = ค่าแรง/รับช่วงงาน">
                   <option value="ผู้ขาย">🏪 ผู้ขาย (วัสดุ/ของ)</option>
@@ -956,10 +958,8 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                 <input style={{ ...prField, width: 170 }} placeholder="เลขผู้เสียภาษี" value={vendorForm.tax_id} onChange={(e) => setVendorForm({ ...vendorForm, tax_id: e.target.value })} />
                 <input style={{ ...prField, flex: 1, minWidth: 260 }} placeholder="ที่อยู่ (ใช้ในเอกสาร/ติดต่อ)" value={vendorForm.address} onChange={(e) => setVendorForm({ ...vendorForm, address: e.target.value })} />
                 <input style={{ ...prField, width: 120 }} type="number" placeholder="เครดิต (วัน)" title="0 = เงินสด" value={vendorForm.credit_days} onChange={(e) => setVendorForm({ ...vendorForm, credit_days: e.target.value })} />
-                <button onClick={submitVendor} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: editingVendorId != null ? '#B7791F' : '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>{editingVendorId != null ? 'บันทึกการแก้ไข' : 'บันทึก'}</button>
-                <button onClick={() => { setAddingVendor(false); setEditingVendorId(null); setVendorForm(blankVendorForm) }} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#EDF1F4', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
               </div>
-            </div>
+            </ModalShell>
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -1016,7 +1016,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
             </tbody>
           </table>
           </>
-        )}
+        </KeepAlive>)}
 
         {/* Tax report + e-Filing */}
         {tab === 'tax' && (
