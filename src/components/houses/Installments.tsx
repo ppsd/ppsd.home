@@ -18,16 +18,18 @@ function StatCard({ label, value, color, sub }: { label: string; value: string; 
 
 export default function Installments() {
   const [filter, setFilter] = useState('all')
-  const [search, setSearch] = useState('')
+  const [houseCode, setHouseCode] = useState('') // '' = ทุกบ้าน
   const { data, collectInstallment } = useApp()
   const { installments } = data
 
-  const q = search.trim().toLowerCase()
-  const rows = installments.filter((r) => {
+  const scoped = houseCode ? installments.filter((r) => r.house_code === houseCode) : installments // การ์ดสรุป + ตาราง คิดตามบ้านที่เลือก
+  const rows = scoped.filter((r) => {
     const okF = filter === 'all' || (filter === 'เลยกำหนด' ? (r.overdue || r.status === 'เลยกำหนด') : r.status === filter)
-    const okQ = !q || (r.house || '').toLowerCase().includes(q)
-    return okF && okQ
+    return okF
   })
+  // ตัวเลือกบ้าน = บ้านทั้งหมดในระบบ (ยกเว้นแบบออฟฟิศ/ค่าใช้จ่ายภายในที่ไม่มีงวด) + จำนวนงวดของแต่ละหลัง
+  const instCount = installments.reduce<Record<string, number>>((m, r) => { m[r.house_code] = (m[r.house_code] || 0) + 1; return m }, {})
+  const houseOptions = (data.houses || []).filter((h) => h.kind !== 'office' || instCount[h.code]).slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
 
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -39,7 +41,7 @@ export default function Installments() {
           ['เก็บแล้ว', 'เก็บแล้ว', '#2E7D55'],
           ['ยังไม่ถึงกำหนด', 'ยังไม่ถึง', '#1C2730'],
         ] as const).map(([label, status, color]) => {
-          const grp = installments.filter((r) => (status === 'เลยกำหนด' ? (r.overdue || r.status === status) : r.status === status))
+          const grp = scoped.filter((r) => (status === 'เลยกำหนด' ? (r.overdue || r.status === status) : r.status === status))
           const total = grp.reduce((s, r) => s + r.amount, 0)
           return <StatCard key={label} label={label} value={baht(total)} color={color} sub={`${grp.length} งวด`} />
         })}
@@ -47,13 +49,10 @@ export default function Installments() {
 
       {/* filter bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 13px', width: 280 }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94A0A8" strokeWidth="2" strokeLinecap="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M21 21l-4-4" />
-          </svg>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อบ้าน" style={{ border: 'none', background: 'transparent', outline: 'none', fontFamily: 'inherit', fontSize: 13.5, color: '#1C2730', width: '100%' }} />
-        </div>
+        <select value={houseCode} onChange={(e) => setHouseCode(e.target.value)} title="เลือกบ้าน" style={{ fontFamily: 'inherit', fontSize: 13.5, color: houseCode ? '#1C2730' : '#5C6770', background: '#fff', border: '1px solid ' + (houseCode ? '#30506A' : '#E1E5EA'), borderRadius: 9, padding: '9px 12px', minWidth: 260, maxWidth: '100%', outline: 'none', cursor: 'pointer' }}>
+          <option value="">🏠 ทุกบ้าน ({(data.houses || []).filter((h) => instCount[h.code]).length} หลังที่มีงวด)</option>
+          {houseOptions.map((h) => <option key={h.code} value={h.code}>{h.name} ({h.code}){instCount[h.code] ? ' · ' + instCount[h.code] + ' งวด' : ' · ยังไม่มีงวด'}</option>)}
+        </select>
         <div style={{ display: 'flex', gap: 6, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: 4 }}>
           {installmentFilters.map((f) => {
             const active = filter === f.id
