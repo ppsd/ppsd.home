@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', outline: 'none' }
 
@@ -65,7 +66,7 @@ export default function Gantt() {
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>งานทั้งหมด <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{tasks.length}</span> รายการ</div>
-        <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '10px 16px', cursor: 'pointer' }}>+ เพิ่มงาน</button>
+        <button onClick={() => setAdding(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '10px 16px', cursor: 'pointer' }}>+ เพิ่มงาน</button>
       </div>
 
       {/* ความคืบหน้าบ้าน (คิดอัตโนมัติจากงวดงานที่เก็บเงินแล้ว) */}
@@ -123,7 +124,11 @@ export default function Gantt() {
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
+        <ModalShell title="เพิ่มงานในแผน" width={760} closeOnBackdrop={false} onClose={() => setAdding(false)}
+          footer={<>
+            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={submit} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
+          </>}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 0.7fr 1fr', gap: 12, alignItems: 'center' }}>
             <input style={field} placeholder="ชื่องาน *" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
             <input style={field} placeholder="รหัสบ้าน" value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })} />
@@ -135,11 +140,7 @@ export default function Gantt() {
             </select>
           </div>
           {err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{err}</div>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-            <button onClick={submit} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>

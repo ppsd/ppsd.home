@@ -506,6 +506,36 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             {batchDlg.err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{batchDlg.err}</div>}
           </ModalShell>
         )}
+        {/* เพิ่ม OT — วางนอกส่วนสลับแท็บ ย่อพับแล้วข้อมูลไม่หาย */}
+        {addingOt && (
+          <ModalShell title="เพิ่มรายการ OT" width={720} closeOnBackdrop={false} onClose={() => setAddingOt(false)}
+            footer={<>
+              <button onClick={() => setAddingOt(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={submitOt} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
+            </>}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(200px, 100%), 1fr))', gap: 12 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}><span>พนักงาน <span style={{ color: '#C24036' }}>*</span></span>
+                <select style={field} value={otForm.emp_code} onChange={(e) => setOtForm({ ...otForm, emp_code: e.target.value })}>
+                  <option value="">— เลือกพนักงาน —</option>
+                  {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
+                </select>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>วันที่
+                <input style={field} type="date" value={otForm.date} onChange={(e) => setOtForm({ ...otForm, date: e.target.value })} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>ชั่วโมง
+                <input style={field} placeholder="เช่น 3" value={otForm.hours} onChange={(e) => setOtForm({ ...otForm, hours: e.target.value })} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>อัตรา
+                <input style={field} placeholder="เช่น 1.5x" value={otForm.rate} onChange={(e) => setOtForm({ ...otForm, rate: e.target.value })} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}><span>จำนวนเงิน <span style={{ color: '#C24036' }}>*</span></span>
+                <MoneyInput style={field} placeholder="0" value={otForm.amount} onChange={(v) => setOtForm({ ...otForm, amount: v })} />
+              </label>
+            </div>
+            {otErr && <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px', marginTop: 12 }}>{otErr}</div>}
+          </ModalShell>
+        )}
         {tab === 'payroll' && !salaryOk && (
           <div style={{ padding: '54px 40px', textAlign: 'center' }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: '#1C2730' }}>ไม่มีสิทธิ์ดูข้อมูลเงินเดือน</div>
@@ -918,27 +948,8 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           <>
           <div style={{ display: 'flex', alignItems: 'center', padding: '12px 18px', borderBottom: '1px solid #EEF1F4' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>รายการ OT</span>
-            <button onClick={() => setAddingOt((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่ม OT</button>
+            <button onClick={() => setAddingOt(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>+ เพิ่ม OT</button>
           </div>
-          {addingOt && (
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 0.8fr 0.8fr 1fr', gap: 10 }}>
-                <select style={field} value={otForm.emp_code} onChange={(e) => setOtForm({ ...otForm, emp_code: e.target.value })}>
-                  <option value="">เลือกพนักงาน *</option>
-                  {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
-                </select>
-                <input style={field} type="date" value={otForm.date} onChange={(e) => setOtForm({ ...otForm, date: e.target.value })} />
-                <input style={field} placeholder="ชั่วโมง" value={otForm.hours} onChange={(e) => setOtForm({ ...otForm, hours: e.target.value })} />
-                <input style={field} placeholder="อัตรา" value={otForm.rate} onChange={(e) => setOtForm({ ...otForm, rate: e.target.value })} />
-                <MoneyInput style={field} placeholder="จำนวนเงิน *" value={otForm.amount} onChange={(v) => setOtForm({ ...otForm, amount: v })} />
-              </div>
-              {otErr && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 8 }}>{otErr}</div>}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
-                <button onClick={() => setAddingOt(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>ยกเลิก</button>
-                <button onClick={submitOt} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึก</button>
-              </div>
-            </div>
-          )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
               <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={th}>วันที่</th><th style={{ ...th, textAlign: 'center' }}>ชั่วโมง</th>

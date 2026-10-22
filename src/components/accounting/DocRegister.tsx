@@ -62,11 +62,15 @@ export default function DocRegister() {
         <select style={{ ...field, width: 'auto', padding: '6px 8px' }} value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="">ทุกหมวด</option>{CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select>
         <input style={{ ...field, width: 220, padding: '6px 10px' }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเลขที่/ชื่อ/เจ้าของ" />
         <button onClick={importContracts} disabled={importing} title="สร้างทะเบียนสัญญาจากบ้านที่มีเลขที่สัญญาแล้วโดยอัตโนมัติ" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>{importing ? 'กำลังนำเข้า…' : '↻ ดึงสัญญาจากบ้าน'}</button>
-        <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ ขึ้นทะเบียนเอกสาร</button>
+        <button onClick={() => setAdding(true)} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ ขึ้นทะเบียนเอกสาร</button>
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
+        <ModalShell title="ขึ้นทะเบียนเอกสาร" width={820} closeOnBackdrop={false} onClose={() => setAdding(false)}
+          footer={<>
+            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
+          </>}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 0.8fr', gap: 12 }}>
             <div><div style={lbl}>หมวด</div><select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select></div>
             <div><div style={lbl}>ชื่อเอกสาร *</div><input style={field} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="เช่น สัญญาก่อสร้างบ้าน / แบบสถาปัตย์ ชั้น 1" /></div>
@@ -83,11 +87,7 @@ export default function DocRegister() {
             <div><div style={lbl}>วันหมดอายุ <span style={{ color: '#94A0A8' }}>(ใบอนุญาต — เว้นว่างถ้าไม่มี)</span></div><input style={field} type="date" value={f.expiry} onChange={(e) => setF({ ...f, expiry: e.target.value })} /></div>
             <div><div style={lbl}>หมายเหตุ</div><input style={field} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
           </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
