@@ -117,7 +117,7 @@ const upload = async (q, body) => {
   return { status: r.status, data: await r.json() }
 }
 
-test('API ถอดแบบ: PDF → รายการจาก AI + จับคู่ค่าแรง · DXF แนบสรุปดิบ · DWG/ไฟล์อื่นถูกปฏิเสธ', async () => {
+test('API ถอดแบบ: PDF → รายการจาก AI + จับคู่ค่าแรง · DXF แนบสรุปดิบ · DWG เสีย/ไฟล์อื่นถูกปฏิเสธ', async () => {
   const pdf = await upload({ name: 'plan.pdf', mime: 'application/pdf', house: JSON.stringify({ area_m2: 85 }) }, Buffer.from('%PDF-1.4 test'))
   assert.equal(pdf.status, 200, JSON.stringify(pdf.data))
   assert.equal(pdf.data.source, 'pdf')
@@ -136,4 +136,31 @@ test('API ถอดแบบ: PDF → รายการจาก AI + จับ
   assert.match(dwg.data.error, /DXF/)
   const txt = await upload({ name: 'note.txt', mime: 'text/plain' }, Buffer.from('x'))
   assert.equal(txt.status, 400)
+})
+
+test('API ถอดแบบจากเอกสารของบ้าน: เลือกหลาย PDF/รูปพร้อมกัน · DWG/DXF ปนไฟล์อื่นไม่ได้ · ไฟล์ที่ถอดไม่ได้/ไม่มีอยู่ถูกปฏิเสธ', async () => {
+  const put = async (name, mime, body) => {
+    const r = await fetch(BASE + '/files?' + new URLSearchParams({ name, mime, house: 'H-TAKEOFF', category: 'แบบก่อสร้าง' }), { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body })
+    return (await r.json()).id
+  }
+  const pdf = await put('แปลนชั้น1.pdf', 'application/pdf', Buffer.from('%PDF-1.4 a'))
+  const png = await put('แปลนชั้น2.png', 'image/png', Buffer.from('\x89PNG test'))
+  const dxf = await put('แปลน.dxf', 'application/octet-stream', Buffer.from(sampleDxf(), 'utf8'))
+  const skp = await put('โมเดล.skp', 'application/octet-stream', Buffer.from('skp'))
+  const pick = async (ids) => {
+    const r = await fetch(BASE + '/boq-takeoff?' + new URLSearchParams({ house: '{}' }), { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ file_ids: ids }) })
+    return { status: r.status, data: await r.json() }
+  }
+  const multi = await pick([pdf, png])
+  assert.equal(multi.status, 200, JSON.stringify(multi.data))
+  assert.equal(multi.data.source, 'multi')
+  assert.deepEqual(multi.data.files, ['แปลนชั้น1.pdf', 'แปลนชั้น2.png'])
+  const one = await pick([dxf])
+  assert.equal(one.status, 200, JSON.stringify(one.data))
+  assert.equal(one.data.source, 'dxf')
+  assert.equal(one.data.dxf.blocks[0].count, 3)
+  assert.equal((await pick([dxf, pdf])).status, 400, 'DWG/DXF ต้องถอดทีละไฟล์')
+  assert.equal((await pick([skp])).status, 400, '.skp ถอดไม่ได้')
+  assert.equal((await pick([999999])).status, 404)
+  assert.equal((await pick([])).status, 400)
 })

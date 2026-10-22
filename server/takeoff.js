@@ -3,6 +3,47 @@
 //  - PDF/รูป: ให้ AI อ่าน (เรียกจาก index.js)
 //  - จับคู่รายการที่ถอดได้กับราคากลางวัสดุ/ค่าแรง (เทียบชื่อแบบหยาบ — ให้คนเลือกแก้ในหน้าจอ)
 
+import { existsSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+
+// ---------- DWG → DXF (ODA File Converter) ----------
+// DWG เป็นไฟล์ปิด อ่านเองไม่ได้ → ใช้ ODA File Converter (ฟรี) ที่ติดตั้งบนเครื่อง server แปลงเป็น DXF ก่อน
+// หาโปรแกรมจาก PPSD_ODA หรือโฟลเดอร์ติดตั้งปกติ (C:\Program Files\ODA\ODAFileConverter x.y.z) — เลือกรุ่นใหม่สุด
+export function odaPath() {
+  if (process.env.PPSD_ODA && existsSync(process.env.PPSD_ODA)) return process.env.PPSD_ODA
+  const base = 'C:\\Program Files\\ODA'
+  try {
+    const dirs = readdirSync(base).filter((n) => /^ODAFileConverter/i.test(n)).sort().reverse()
+    for (const d of dirs) { const p = join(base, d, 'ODAFileConverter.exe'); if (existsSync(p)) return p }
+  } catch { /* ไม่ได้ติดตั้ง */ }
+  return ''
+}
+/** แปลง DWG (หรือ DXF แบบ binary) เป็น DXF ข้อความ — คืน Buffer ของ DXF */
+export async function cadToDxf(buf, ext = 'dwg') {
+  const exe = odaPath()
+  if (!exe) throw new Error('เครื่อง server ยังไม่มีโปรแกรมแปลง DWG (ODA File Converter) — เปิดไฟล์ในโปรแกรม CAD แล้ว Save As เป็น DXF แทน')
+  const dir = mkdtempSync(join(tmpdir(), 'ppsd-cad-'))
+  const inDir = join(dir, 'in'), outDir = join(dir, 'out')
+  try {
+    mkdirSync(inDir); mkdirSync(outDir)
+    writeFileSync(join(inDir, 'plan.' + ext), buf)
+    // อาร์กิวเมนต์: โฟลเดอร์ต้นทาง ปลายทาง รุ่นไฟล์ ชนิด (DXF = ข้อความ) ไม่ทำโฟลเดอร์ย่อย ตรวจซ่อมไฟล์ ตัวกรอง
+    await new Promise((ok, fail) => execFile(exe, [inDir, outDir, 'ACAD2018', 'DXF', '0', '1', '*.' + ext.toUpperCase()],
+      { timeout: 180000, windowsHide: true }, (e) => e ? fail(e) : ok()))
+    const out = join(outDir, 'plan.dxf')
+    if (!existsSync(out)) {
+      const errFile = readdirSync(outDir).find((n) => n.endsWith('.err'))
+      const why = errFile ? readFileSync(join(outDir, errFile), 'utf8').split(/\r?\n/).filter(Boolean).slice(-1)[0] : ''
+      throw new Error('แปลงไฟล์ DWG ไม่สำเร็จ' + (why ? ` (${why.trim()})` : '') + ' — ลอง Save As เป็น DXF จากโปรแกรม CAD')
+    }
+    return readFileSync(out)
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
+  }
+}
+
 // ---------- DXF ----------
 const UNIT_TO_M = { 1: 0.0254, 2: 0.3048, 4: 0.001, 5: 0.01, 6: 1 } // $INSUNITS → เมตร
 const UNIT_NAME = { 1: 'นิ้ว', 2: 'ฟุต', 4: 'มม.', 5: 'ซม.', 6: 'ม.' }
@@ -259,7 +300,7 @@ export function matchLabor(item, rates) {
 }
 
 // ---------- คำสั่งให้ AI ----------
-export function takeoffPrompt({ house, rates, dxfSummary }) {
+export function takeoffPrompt({ house, rates, dxfSummary, files = [] }) {
   const laborList = rates.map((r) => `${laborLabel(r)} [ต่อ ${r.unit}]`)
   const h = house || {}
   const info = [
@@ -269,9 +310,13 @@ export function takeoffPrompt({ house, rates, dxfSummary }) {
     h.raised_h ? `ยกพื้นจากดิน ${h.raised_h} ม.` : '',
     h.spec ? `สเปก/หมายเหตุ: ${h.spec}` : '',
   ].filter(Boolean).join(' · ')
-  const src = dxfSummary
-    ? `ข้อมูลนี้สรุปมาจากไฟล์ DXF (หน่วยเป็นเมตรแล้ว) — blocks = จำนวนสัญลักษณ์, lengths = ความยาวเส้นรวมต่อ Layer, areas = พื้นที่รูปปิด/Hatch ต่อ Layer, texts = ตัวหนังสือในแบบ:\n${JSON.stringify(dxfSummary)}`
-    : 'อ่านจากไฟล์แบบที่แนบมา (ใช้มาตราส่วนและเส้นบอกระยะในแบบคำนวณความยาว/พื้นที่)'
+  // แบบจริง (เช่น DWG ทั้งชุด) มี Block/ตัวหนังสือเป็นพันๆ — ตัดให้พอดีกับคำสั่ง AI (เรียงจากมากไปน้อยอยู่แล้ว)
+  const s = dxfSummary && { ...dxfSummary, blocks: dxfSummary.blocks.slice(0, 300), lengths: dxfSummary.lengths.slice(0, 150), areas: dxfSummary.areas.slice(0, 150), circles: dxfSummary.circles.slice(0, 50), texts: dxfSummary.texts.slice(0, 300), layers: dxfSummary.layers.slice(0, 300) }
+  const src = s
+    ? `ข้อมูลนี้สรุปมาจากไฟล์ DXF (หน่วยเป็นเมตรแล้ว) — blocks = จำนวนสัญลักษณ์, lengths = ความยาวเส้นรวมต่อ Layer, areas = พื้นที่รูปปิด/Hatch ต่อ Layer, texts = ตัวหนังสือในแบบ:\n${JSON.stringify(s)}`
+    : files.length > 1
+      ? `อ่านจากไฟล์แบบที่แนบมา ${files.length} ไฟล์ (${files.join(', ')}) — เป็นแผ่นต่างๆ ของอาคารเดียวกัน ให้ใช้ทุกแผ่นประกอบกัน (เช่น ขนาดจากแบบโครงสร้าง วัสดุจากแปลน/รูปตัด) และห้ามนับสิ่งเดียวกันซ้ำเมื่อปรากฏในหลายแผ่น · ใช้มาตราส่วนและเส้นบอกระยะในแบบคำนวณความยาว/พื้นที่`
+      : 'อ่านจากไฟล์แบบที่แนบมา (ใช้มาตราส่วนและเส้นบอกระยะในแบบคำนวณความยาว/พื้นที่)'
   return `คุณเป็นผู้ประมาณราคา (QS) ของบริษัทรับสร้างบ้านในประเทศไทย ถอดปริมาณวัสดุ/งานจากแบบก่อสร้างนี้เพื่อทำ BOQ ร่าง ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
 ${src}
 ${info ? 'ข้อมูลบ้านจากผู้ใช้ (ใช้ประกอบและตรวจสอบ): ' + info : ''}

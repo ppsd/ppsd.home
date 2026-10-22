@@ -5,7 +5,7 @@ import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
 import { BOQ_CATS, type BoqItem } from './BoqTab'
 
-// ถอดแบบ → BOQ ร่าง: อัปโหลดไฟล์แบบ (DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ → ระบบถอดปริมาณ + จับคู่ราคากลาง
+// ถอดแบบ → BOQ ร่าง: อัปโหลดไฟล์แบบ (DWG / DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ → ระบบถอดปริมาณ + จับคู่ราคากลาง
 // → คนตรวจ/แก้ทีละแถว (เลือกราคากลาง ติ๊กออก) → สร้างเป็น BOQ ร่างในฟอร์มเดิม
 // ค่าแรงแยกเป็นอีกตาราง: คิดตามปริมาณงาน (ตร.ม./เมตร/ชุด/เหมา) ตามราคากลางค่าแรง — ไม่ผูกกับจำนวนวัสดุ
 
@@ -19,10 +19,16 @@ interface DxfSummary {
   areas: { layer: string; area_m2: number; count: number; source: string }[]
   circles: { layer: string; diameter_m: number; count: number }[]
 }
-interface Result { source: 'dxf' | 'pdf' | 'image'; ai: boolean; model: string; drawing: string; items: TakeoffItem[]; labor: LaborItem[]; notes: string[]; dxf: DxfSummary | null }
+interface Result { source: 'dxf' | 'pdf' | 'image' | 'multi'; files?: string[]; ai: boolean; model: string; drawing: string; items: TakeoffItem[]; labor: LaborItem[]; notes: string[]; dxf: DxfSummary | null }
 interface LaborRate { id: number; name: string; variant: string; price_min: number; price_max: number; unit: string }
 interface Row { use: boolean; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; alts: MatOpt[]; matId: number; mat: number }
 interface LRow { use: boolean; cat: string; rateId: number; qty: number; unit: string; price: number; basis: string; confidence: string }
+interface HouseFile { id: number; name: string; mime: string; size: number; category: string | null; uploaded: string }
+
+// ชนิดไฟล์ที่ถอดได้ · DWG/DXF ถอดทีละไฟล์ · PDF/รูปเลือกหลายไฟล์ให้ AI อ่านพร้อมกัน
+const fileKind = (name: string) => /\.(dwg|dxf)$/i.test(name) ? 'cad' : /\.pdf$/i.test(name) ? 'pdf' : /\.(png|jpe?g|webp|gif)$/i.test(name) ? 'image' : ''
+const MAX_AI_MB = 24 // ต้องตรงกับ TAKEOFF_MAX_BYTES ใน server/index.js
+const mb = (n: number) => (n / 1048576).toFixed(n < 1048576 ? 2 : 1) + ' MB'
 
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px', outline: 'none' }
 const cell: React.CSSProperties = { ...field, padding: '5px 7px', fontSize: 12.5 }
@@ -59,13 +65,41 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
 
   useEffect(() => { api.get<LaborRate[]>('/labor-rates').then(setRates).catch(() => setRates([])) }, [])
 
-  const isDxf = !!file && /\.dxf$/i.test(file.name)
+  // ไฟล์แบบมาจาก: อัปโหลดใหม่ หรือ เอกสารที่เก็บไว้ในบ้านนี้แล้ว (เลือกได้หลายไฟล์)
+  const [mode, setMode] = useState<'upload' | 'house'>('upload')
+  const [hfiles, setHFiles] = useState<HouseFile[]>([])
+  const [picked, setPicked] = useState<number[]>([])
+  useEffect(() => {
+    setPicked([])
+    if (!house) { setHFiles([]); return }
+    api.get<HouseFile[]>('/files?house=' + encodeURIComponent(house)).then((fs) => {
+      setHFiles(fs)
+      if (fs.some((f) => fileKind(f.name))) setMode('house') // บ้านที่มีแบบอยู่แล้ว → เปิดแท็บเอกสารของบ้านให้ก่อน
+    }).catch(() => setHFiles([]))
+  }, [house])
+  // แบบก่อสร้างขึ้นก่อน แล้วไฟล์ใหม่ก่อน · ไฟล์ที่ถอดไม่ได้ (เช่น .skp) แยกไว้นับอย่างเดียว
+  const usable = hfiles.filter((f) => fileKind(f.name)).sort((a, b) => Number(b.category === 'แบบก่อสร้าง') - Number(a.category === 'แบบก่อสร้าง') || b.id - a.id)
+  const unusable = hfiles.length - usable.length
+  const pickedFiles = usable.filter((f) => picked.includes(f.id))
+  const pickedMB = pickedFiles.reduce((s, f) => s + (f.size || 0), 0)
+  const togglePick = (f: HouseFile) => {
+    if (picked.includes(f.id)) { setPicked(picked.filter((x) => x !== f.id)); return }
+    // DWG/DXF ถอดทีละไฟล์ → เลือกแล้วล้างตัวอื่น · เลือก PDF/รูป → เอา DWG/DXF ที่ค้างอยู่ออก
+    if (fileKind(f.name) === 'cad') setPicked([f.id])
+    else setPicked([...picked.filter((x) => fileKind(usable.find((u) => u.id === x)?.name || '') !== 'cad'), f.id])
+  }
+
+  const isDxf = mode === 'house' ? pickedFiles.some((f) => fileKind(f.name) === 'cad') : !!file && fileKind(file.name) === 'cad' // DWG ถูกแปลงเป็น DXF ที่ server
+  const ready = mode === 'house' ? pickedFiles.length > 0 : !!file
+  const sourceLabel = mode === 'house' ? (pickedFiles.length ? pickedFiles.map((f) => f.name).join(', ') : 'ยังไม่ได้เลือกไฟล์') : file ? file.name : 'ยังไม่ได้เลือกไฟล์'
   const run = async () => {
-    if (!file) { setErr('กรุณาเลือกไฟล์แบบ'); return }
+    if (!ready) { setErr('กรุณาเลือกไฟล์แบบ'); return }
     setBusy(true); setErr(''); setRes(null)
     try {
-      const q = new URLSearchParams({ name: file.name, units, house: JSON.stringify(info) })
-      const r = await api.uploadRaw<Result>('/boq-takeoff?' + q.toString(), file)
+      const q = new URLSearchParams({ units, house: JSON.stringify(info) })
+      const r = mode === 'house'
+        ? await api.post<Result>('/boq-takeoff?' + q.toString(), { file_ids: pickedFiles.map((f) => f.id) })
+        : await api.uploadRaw<Result>('/boq-takeoff?' + new URLSearchParams({ name: file!.name, units, house: JSON.stringify(info) }).toString(), file!)
       setRes(r)
       setRows(r.items.map((it) => {
         const alts = it.mat_match && !it.mat_alts.some((a) => a.id === it.mat_match!.id) ? [it.mat_match, ...it.mat_alts] : it.mat_alts
@@ -152,11 +186,11 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
       items.push({ cat: l.cat, desc: 'ค่าแรง: ' + (rate ? labLabel(rate) : ''), qty: l.qty, unit: l.unit, mat: 0, lab: l.price, basis: l.basis })
     }
     if (!items.length) { alert('ไม่มีรายการที่เลือก'); return }
-    onCreate({ house_code: house, title: 'ถอดแบบ: ' + (res?.drawing || file?.name || ''), items })
+    onCreate({ house_code: house, title: 'ถอดแบบ: ' + (res?.drawing || sourceLabel), items })
   }
 
   return (
-    <ModalShell title="ถอดแบบ → BOQ ร่าง" sub="อัปโหลดไฟล์แบบ (DXF / PDF / รูป) · ระบบถอดปริมาณและจับคู่ราคากลางให้ · ตรวจแก้ก่อนสร้าง BOQ" width={1240} closeOnBackdrop={false} onClose={onClose}
+    <ModalShell title="ถอดแบบ → BOQ ร่าง" sub="อัปโหลดไฟล์แบบ (DWG / DXF / PDF / รูป) · ระบบถอดปริมาณและจับคู่ราคากลางให้ · ตรวจแก้ก่อนสร้าง BOQ" width={1240} closeOnBackdrop={false} onClose={onClose}
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#F7F9FB' }}
       footer={<>
         <button onClick={onClose} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
@@ -164,11 +198,17 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
       </>}>
 
       {/* 1) ไฟล์แบบ + ข้อมูลบ้าน — ถอดเสร็จแล้วยุบเก็บให้เอง เพื่อให้ตารางผลมีที่มากขึ้น */}
-      <Section title="ไฟล์แบบ + ข้อมูลบ้าน" meta={file ? file.name : 'ยังไม่ได้เลือกไฟล์'} open={open.input} onToggle={() => toggle('input')}>
+      <Section title="ไฟล์แบบ + ข้อมูลบ้าน" meta={sourceLabel} open={open.input} onToggle={() => toggle('input')}>
         <div style={{ padding: 14, display: 'grid', gridTemplateColumns: '1.6fr 1fr 0.7fr 0.7fr 0.7fr 0.7fr', gap: 10, alignItems: 'end' }}>
           <div>
-            <div style={label}>ไฟล์แบบ (DXF · PDF · JPG/PNG)</div>
-            <input type="file" accept=".dxf,.pdf,image/png,image/jpeg,image/webp" onChange={(e) => { setFile(e.target.files?.[0] || null); setErr('') }} style={{ ...field, width: '100%', padding: '5px 7px' }} />
+            <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+              {([['upload', 'อัปโหลดไฟล์ใหม่'], ['house', `เอกสารของบ้าน${house ? ` (${usable.length})` : ''}`]] as const).map(([k, t]) => (
+                <button key={k} onClick={() => { setMode(k); setErr('') }} style={{ ...chip, padding: '3px 10px', fontSize: 11.5, ...(mode === k ? { background: '#30506A', borderColor: '#30506A', color: '#fff' } : {}) }}>{t}</button>
+              ))}
+            </div>
+            {mode === 'upload'
+              ? <input type="file" accept=".dwg,.dxf,.pdf,image/png,image/jpeg,image/webp" onChange={(e) => { setFile(e.target.files?.[0] || null); setErr('') }} style={{ ...field, width: '100%', padding: '5px 7px' }} />
+              : <div style={{ ...field, color: pickedFiles.length ? '#1C2730' : '#94A0A8', background: '#F7F9FB', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pickedFiles.length ? `เลือก ${pickedFiles.length} ไฟล์ · ${mb(pickedMB)}` : house ? 'ติ๊กเลือกไฟล์ด้านล่าง' : 'เลือกบ้านก่อน →'}</div>}
           </div>
           <div>
             <div style={label}>บ้าน / โครงการ</div>
@@ -179,29 +219,30 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
                 {houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}
               </select>}
           </div>
+          {mode === 'house' && house && <HouseFilePicker files={usable} unusable={unusable} picked={picked} onToggle={togglePick} totalMB={pickedMB / 1048576} />}
           <div><div style={label}>พื้นที่ใช้สอย (ตร.ม.)</div><input type="number" style={{ ...field, width: '100%' }} value={info.area_m2} onChange={(e) => setInfo({ ...info, area_m2: e.target.value })} /></div>
           <div><div style={label}>จำนวนชั้น</div><input type="number" style={{ ...field, width: '100%' }} value={info.floors} onChange={(e) => setInfo({ ...info, floors: e.target.value })} /></div>
           <div><div style={label}>สูงฝ้า (ม.)</div><input type="number" style={{ ...field, width: '100%' }} value={info.ceiling_h} onChange={(e) => setInfo({ ...info, ceiling_h: e.target.value })} /></div>
           <div><div style={label}>ยกพื้น (ม.)</div><input type="number" style={{ ...field, width: '100%' }} value={info.raised_h} onChange={(e) => setInfo({ ...info, raised_h: e.target.value })} /></div>
           <div style={{ gridColumn: 'span 4' }}><div style={label}>สเปก / หมายเหตุ (ไม่บังคับ)</div><input style={{ ...field, width: '100%' }} placeholder="เช่น ท่อ PVC ชั้น 13.5 · สุขภัณฑ์ COTTO · ผนังอิฐมอญ" value={info.spec} onChange={(e) => setInfo({ ...info, spec: e.target.value })} /></div>
           <div>
-            <div style={label}>หน่วยที่วาดในแบบ {isDxf ? '' : '(เฉพาะ DXF)'}</div>
+            <div style={label}>หน่วยที่วาดในแบบ {isDxf ? '' : '(เฉพาะ DWG/DXF)'}</div>
             <select style={{ ...field, width: '100%' }} value={units} disabled={!isDxf} onChange={(e) => setUnits(e.target.value)}>
               <option value="auto">อ่านจากไฟล์</option><option value="mm">มิลลิเมตร</option><option value="cm">เซนติเมตร</option><option value="m">เมตร</option>
             </select>
           </div>
-          <button onClick={run} disabled={busy || !file} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: busy || !file ? '#9AABB8' : '#C0852C', border: 'none', borderRadius: 9, padding: '9px 14px', cursor: busy || !file ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+          <button onClick={run} disabled={busy || !ready} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: busy || !ready ? '#9AABB8' : '#C0852C', border: 'none', borderRadius: 9, padding: '9px 14px', cursor: busy || !ready ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
             {busy ? 'กำลังถอดแบบ…' : res ? 'ถอดใหม่' : 'ถอดแบบ'}
           </button>
         </div>
       </Section>
-      {busy && !isDxf && <div style={{ fontSize: 12.5, color: '#5C6770' }}>AI กำลังอ่านแบบ อาจใช้เวลา 30 วินาที – 2 นาที</div>}
+      {busy && <div style={{ fontSize: 12.5, color: '#5C6770' }}>{isDxf ? 'กำลังอ่านไฟล์แบบ (ไฟล์ DWG ต้องแปลงก่อน) แล้วให้ AI ตั้งชื่อรายการ อาจใช้เวลา 30 วินาที – 2 นาที' : 'AI กำลังอ่านแบบ อาจใช้เวลา 30 วินาที – 2 นาที'}</div>}
       {err && <div style={{ fontSize: 13, color: '#B23B30', background: '#FBE7E5', borderRadius: 8, padding: '9px 12px' }}>{err}</div>}
 
       {/* 2) ผลถอด */}
       {res && <>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 12.5, color: '#5C6770' }}>
-          <span style={{ fontWeight: 600, color: '#1C2730' }}>{res.drawing || ({ dxf: 'ไฟล์ DXF', pdf: 'ไฟล์ PDF', image: 'รูปภาพ' })[res.source]}</span>
+          <span style={{ fontWeight: 600, color: '#1C2730' }}>{res.drawing || ({ dxf: 'ไฟล์ DWG/DXF', pdf: 'ไฟล์ PDF', image: 'รูปภาพ', multi: `แบบ ${res.files?.length || ''} ไฟล์` })[res.source]}</span>
           <span>· {res.ai ? `AI ช่วยตั้งชื่อ${res.model ? ' (' + res.model + ')' : ''}` : 'ไม่ได้ใช้ AI'}</span>
           {res.dxf && <button onClick={() => setShowRaw(!showRaw)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>{showRaw ? 'ซ่อน' : 'ดู'}ข้อมูลดิบจาก DXF</button>}
         </div>
@@ -301,6 +342,39 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
         </div>
       </>}
     </ModalShell>
+  )
+}
+
+// รายการเอกสารของบ้านที่ถอดแบบได้ — ติ๊กเลือก (PDF/รูปหลายไฟล์ · DWG/DXF ทีละไฟล์)
+function HouseFilePicker({ files, unusable, picked, onToggle, totalMB }: {
+  files: HouseFile[]; unusable: number; picked: number[]; onToggle: (f: HouseFile) => void; totalMB: number
+}) {
+  const kindTag = (n: string) => ({ cad: ['DWG/DXF', '#30506A', '#E8EEF3'], pdf: ['PDF', '#B23B30', '#FBE7E5'], image: ['รูป', '#2E7D4F', '#E6F4EC'] } as Record<string, string[]>)[fileKind(n)] || ['', '', '']
+  return (
+    <div style={{ gridColumn: '1 / -1', border: '1px solid #E1E5EA', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ maxHeight: 230, overflowY: 'auto' }}>
+        {files.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: 12.5, color: '#94A0A8' }}>บ้านนี้ยังไม่มีไฟล์แบบที่ถอดได้ (DWG / DXF / PDF / รูป) — อัปโหลดไฟล์ใหม่แทนได้</div>}
+        {files.map((f) => {
+          const [tag, c, bg] = kindTag(f.name)
+          const on = picked.includes(f.id)
+          return (
+            <label key={f.id} className="hov-fafbfc" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderTop: '1px solid #F1F4F6', cursor: 'pointer', background: on ? '#F1F6FA' : undefined }}>
+              <input type="checkbox" checked={on} onChange={() => onToggle(f)} />
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: c, background: bg, borderRadius: 5, padding: '1px 6px', minWidth: 44, textAlign: 'center' }}>{tag}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: '#1C2730', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+              <span style={{ fontSize: 11.5, color: '#7A858D', whiteSpace: 'nowrap' }}>{f.category || 'ไม่ระบุหมวด'}</span>
+              <span style={{ fontSize: 11.5, color: '#7A858D', whiteSpace: 'nowrap', width: 70, textAlign: 'right' }}>{mb(f.size || 0)}</span>
+              <span style={{ fontSize: 11.5, color: '#94A0A8', whiteSpace: 'nowrap', width: 78, textAlign: 'right' }}>{f.uploaded}</span>
+            </label>
+          )
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 10, padding: '6px 12px', background: '#FAFBFC', borderTop: '1px solid #EEF1F4', fontSize: 11.5, color: '#5C6770' }}>
+        <span>PDF / รูป เลือกหลายไฟล์ได้ (AI อ่านพร้อมกัน) · DWG / DXF ถอดได้ทีละ 1 ไฟล์</span>
+        {unusable > 0 && <span>· ไฟล์อื่นอีก {unusable} ไฟล์ถอดไม่ได้ (เช่น .skp .xlsx)</span>}
+        {totalMB > MAX_AI_MB && <span style={{ marginLeft: 'auto', color: '#B23B30', fontWeight: 600 }}>รวม {totalMB.toFixed(1)} MB เกิน {MAX_AI_MB} MB — เลือกน้อยลง</span>}
+      </div>
+    </div>
   )
 }
 

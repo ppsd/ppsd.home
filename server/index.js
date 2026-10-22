@@ -5936,29 +5936,60 @@ api.post('/boqs/:id/push-to-house', auditView, (req, res) => {
   audit(req, 'ดัน BOQ เข้าราคาขาย', `${d.no} → ${h.name} (${grand.toLocaleString()})`)
   res.json({ ok: true, grand, house: withProfit(db.prepare('SELECT * FROM houses WHERE code=?').get(d.house_code)) })
 })
-// ถอดแบบ → BOQ ร่าง: รับไฟล์แบบ (DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ (query) → รายการวัสดุ + ราคากลางที่จับคู่ได้ และค่าแรงตามปริมาณงาน ให้คนตรวจก่อนสร้าง BOQ
-//  DXF อ่านเองในเครื่อง (นับ Block/วัดเส้น/พื้นที่) แล้วให้ AI ตั้งชื่อเป็นรายการวัสดุ · ไม่มีกุญแจ AI = คืนรายการดิบตาม Block/Layer
-//  PDF/รูป ให้ AI อ่านแบบโดยตรง (ความยาว/พื้นที่เป็นค่าประมาณจากมาตราส่วน)
+// ถอดแบบ → BOQ ร่าง: รับไฟล์แบบ (DWG / DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ (query) → รายการวัสดุ + ราคากลางที่จับคู่ได้ และค่าแรงตามปริมาณงาน ให้คนตรวจก่อนสร้าง BOQ
+//  ไฟล์มาได้ 2 ทาง: อัปโหลดใหม่ (body = ไฟล์ · ชื่อ/ชนิดใน query) หรือเลือกจากเอกสารของบ้านที่เก็บไว้แล้ว (JSON {file_ids})
+//  DWG/DXF อ่านเองในเครื่อง (นับ Block/วัดเส้น/พื้นที่) แล้วให้ AI ตั้งชื่อเป็นรายการวัสดุ · ไม่มีกุญแจ AI = คืนรายการดิบตาม Block/Layer · ทีละ 1 ไฟล์
+//  PDF/รูป ให้ AI อ่านแบบโดยตรง (ความยาว/พื้นที่เป็นค่าประมาณจากมาตราส่วน) · เลือกหลายไฟล์ = AI อ่านพร้อมกันในครั้งเดียว
+const TAKEOFF_MAX_BYTES = 24 * 1024 * 1024 // รวมทุกไฟล์ที่ส่งให้ AI (base64 จะโตขึ้น ~1/3 · คำขอหนึ่งครั้งรับได้ ~32MB)
+function takeoffKind(name, mime, buf) {
+  const n = String(name || '').toLowerCase()
+  const head = buf.subarray(0, 32).toString('latin1')
+  if (n.endsWith('.dwg') || head.startsWith('AC10')) return 'dwg'
+  if (n.endsWith('.dxf')) return head.startsWith('AutoCAD Binary DXF') ? 'dxfbin' : 'dxf'
+  if (String(mime).includes('pdf') || n.endsWith('.pdf')) return 'pdf'
+  if (/^image\/(png|jpeg|webp|gif)$/.test(String(mime)) || /\.(png|jpe?g|webp|gif)$/.test(n)) return 'image'
+  return ''
+}
+const imageMime = (name, mime) => /^image\//.test(String(mime)) ? mime : /\.png$/i.test(name) ? 'image/png' : /\.webp$/i.test(name) ? 'image/webp' : /\.gif$/i.test(name) ? 'image/gif' : 'image/jpeg'
 api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
-  const buf = req.body
-  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
-  const fname = String(req.query.name || '').toLowerCase()
-  const mime = String(req.query.mime || '')
+  // รวบรวมไฟล์ที่จะถอด → [{name, mime, buf, kind}]
+  let inputs = []
+  if (Buffer.isBuffer(req.body)) {
+    if (!req.body.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
+    inputs = [{ name: String(req.query.name || ''), mime: String(req.query.mime || ''), buf: req.body }]
+  } else {
+    const ids = (Array.isArray(req.body?.file_ids) ? req.body.file_ids : []).map(Number).filter(Boolean)
+    if (!ids.length) return res.status(400).json({ error: 'กรุณาเลือกไฟล์แบบอย่างน้อย 1 ไฟล์' })
+    for (const id of [...new Set(ids)].slice(0, 20)) {
+      const f = db.prepare('SELECT * FROM files WHERE id=?').get(id)
+      const buf = f && fileBuffer(f)
+      if (!buf) return res.status(404).json({ error: `ไม่พบไฟล์ #${id} บน server` })
+      inputs.push({ name: f.name, mime: f.mime || '', buf })
+    }
+  }
+  for (const it of inputs) it.kind = takeoffKind(it.name, it.mime, it.buf)
+  const bad = inputs.find((it) => !it.kind)
+  if (bad) return res.status(400).json({ error: `“${bad.name || 'ไฟล์นี้'}” ไม่ใช่ไฟล์ที่ถอดแบบได้ — รองรับ DWG, DXF, PDF หรือรูปภาพ (JPG/PNG)` })
+  const cadInputs = inputs.filter((it) => it.kind === 'dwg' || it.kind.startsWith('dxf'))
+  if (cadInputs.length && inputs.length > 1) return res.status(400).json({ error: 'ไฟล์ DWG/DXF ถอดได้ทีละ 1 ไฟล์ — PDF/รูปเลือกหลายไฟล์พร้อมกันได้' })
+  const isDxf = cadInputs.length === 1
+  const total = inputs.reduce((s, it) => s + it.buf.length, 0)
+  if (!isDxf && total > TAKEOFF_MAX_BYTES) return res.status(400).json({ error: `ไฟล์รวมกันใหญ่เกินไป (${(total / 1048576).toFixed(1)} MB · ส่งให้ AI ได้ไม่เกิน ${TAKEOFF_MAX_BYTES / 1048576} MB ต่อครั้ง) — เลือกน้อยไฟล์ลง หรือถอดทีละชุด` })
+  const label = inputs.map((it) => it.name).join(', ')
   let house = {}
   try { house = JSON.parse(String(req.query.house || '{}')) || {} } catch { house = {} }
-  const head = buf.subarray(0, 32).toString('latin1')
-  if (fname.endsWith('.dwg') || head.startsWith('AC10')) return res.status(400).json({ error: 'ไฟล์ DWG อ่านตรงไม่ได้ — เปิดในโปรแกรม CAD แล้ว Save As เป็น DXF (หรือ PDF) แล้วอัปโหลดใหม่' })
-  const isDxf = fname.endsWith('.dxf')
-  if (isDxf && head.startsWith('AutoCAD Binary DXF')) return res.status(400).json({ error: 'เป็น DXF แบบ Binary — Save As ใหม่เลือก DXF แบบ ASCII (ข้อความ)' })
-  const isPdf = !isDxf && (mime.includes('pdf') || fname.endsWith('.pdf'))
-  const isImage = !isDxf && !isPdf && mime.startsWith('image/')
-  if (!isDxf && !isPdf && !isImage) return res.status(400).json({ error: 'รองรับไฟล์ DXF, PDF หรือรูปภาพ (JPG/PNG) เท่านั้น' })
 
   let dxf = null
   if (isDxf) {
+    const c = cadInputs[0]
+    // DWG / DXF แบบ binary → แปลงเป็น DXF ข้อความด้วย ODA File Converter บนเครื่อง server ก่อน
+    let cad = c.buf
+    if (c.kind !== 'dxf') {
+      try { cad = await takeoff.cadToDxf(c.buf, c.kind === 'dwg' ? 'dwg' : 'dxf') } catch (e) { return res.status(400).json({ error: e.message }) }
+    }
     // DXF รุ่นใหม่เป็น UTF-8 · รุ่นเก่าภาษาไทยเป็น ANSI_874 (TIS-620)
-    let text = buf.toString('utf8')
-    if (text.includes('�')) { try { text = new TextDecoder('windows-874').decode(buf) } catch { /* ใช้ utf8 ต่อ */ } }
+    let text = cad.toString('utf8')
+    if (text.includes('�')) { try { text = new TextDecoder('windows-874').decode(cad) } catch { /* ใช้ utf8 ต่อ */ } }
     try { dxf = takeoff.summarizeDxf(text, String(req.query.units || 'auto')) } catch (e) { return res.status(400).json({ error: e.message }) }
   }
   const rates = db.prepare('SELECT * FROM labor_rates WHERE active=1').all()
@@ -5967,17 +5998,16 @@ api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-strea
   const notes = []
   if (process.env.PPSD_AI_MOCK_TAKEOFF) { parsed = JSON.parse(process.env.PPSD_AI_MOCK_TAKEOFF); usedAi = true } // ทดสอบ: ผลจำลอง
   else if (aiKey()) {
-    const prompt = takeoff.takeoffPrompt({ house, rates, dxfSummary: dxf })
-    const b64 = isDxf ? '' : buf.toString('base64')
-    const media = isDxf ? null : isPdf
-      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
-      : { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } }
-    const ai = await aiAsk({ media, prompt, maxTokens: 24000 })
+    const prompt = takeoff.takeoffPrompt({ house, rates, dxfSummary: dxf, files: isDxf ? [] : inputs.map((it) => it.name) })
+    const media = isDxf ? null : inputs.map((it) => it.kind === 'pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: it.buf.toString('base64') } }
+      : { type: 'image', source: { type: 'base64', media_type: imageMime(it.name, it.mime), data: it.buf.toString('base64') } })
+    const ai = await aiAsk({ media, prompt, maxTokens: 32000 })
     if (!ai.ok) {
       if (!isDxf) return res.status(ai.code || 502).json({ error: ai.error })
       notes.push('AI ตั้งชื่อรายการไม่สำเร็จ (' + ai.error + ') — แสดงรายการดิบตาม Block/Layer แทน')
     } else { parsed = extractJsonBlock(ai.text); usedAi = !!parsed; model = ai.model }
-  } else if (!isDxf) return res.status(400).json({ error: AI_NO_KEY + ' — หรือใช้ไฟล์ DXF (ระบบนับ/วัดให้เองได้โดยไม่ใช้ AI)' })
+  } else if (!isDxf) return res.status(400).json({ error: AI_NO_KEY + ' — หรือใช้ไฟล์ DWG/DXF (ระบบนับ/วัดให้เองได้โดยไม่ใช้ AI)' })
   else notes.push('ยังไม่ได้ตั้งค่า AI — แสดงรายการดิบตาม Block/Layer ให้ตั้งชื่อเอง')
 
   const items = parsed ? takeoff.cleanItems(parsed.items) : dxf ? takeoff.rawItemsFromDxf(dxf) : []
@@ -5989,8 +6019,9 @@ api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-strea
   })
   // ค่าแรงแยกจากวัสดุ: คิดตามปริมาณงาน (ตร.ม. ผนัง/พื้นที่บ้าน · เมตร · ชุด · เหมา) ตามหน่วยของราคากลางค่าแรง
   const labor = parsed ? takeoff.cleanLabor(parsed.labor, rates) : []
-  audit(req, 'ถอดแบบเป็น BOQ ร่าง', `${req.query.name || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
-  res.json({ source: isDxf ? 'dxf' : isPdf ? 'pdf' : 'image', ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, notes, dxf })
+  audit(req, 'ถอดแบบเป็น BOQ ร่าง', `${label || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
+  const source = isDxf ? 'dxf' : inputs.length > 1 ? 'multi' : inputs[0].kind
+  res.json({ source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, notes, dxf })
 })
 
 // Cash Flow Forecast
