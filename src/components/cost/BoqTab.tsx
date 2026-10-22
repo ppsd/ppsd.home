@@ -84,7 +84,8 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 12, color: '#5C6770' }}>VAT</span><input type="number" style={{ ...field, width: 60 }} value={edit.vat_pct} onChange={(e) => setEdit({ ...edit, vat_pct: Number(e.target.value) })} /><span style={{ fontSize: 12 }}>%</span></div>
         </div>
 
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, overflow: 'hidden' }}>
+        {/* flexShrink 0: กล่องที่ overflow hidden ในคอลัมน์ flex จะหดจนรายการถูกตัดและเลื่อนลงไม่ได้ — ให้ทั้ง modal เลื่อนแทน */}
+        <div style={{ flexShrink: 0, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
               <th style={th}>หมวด</th><th style={th}>รายการ</th><th style={{ ...th, textAlign: 'right' }}>จำนวน</th><th style={th}>หน่วย</th>
