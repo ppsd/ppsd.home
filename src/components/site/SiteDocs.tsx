@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 import SiteDocPrint from './SiteDocPrint'
 
 export interface SiteDoc {
@@ -75,11 +76,15 @@ export default function SiteDocs({ houseCode }: { houseCode?: string }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>เอกสาร <b className="num" style={{ color: '#1C2730' }}>{list.length}</b> รายการ</div>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเลขที่/เรื่อง/หมวด" style={{ ...field, padding: '7px 11px', fontSize: 12.5, width: 220 }} />
-        <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ ออก {cfg.label}</button>
+        <button onClick={() => setAdding(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ ออก {cfg.label}</button>
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
+        <ModalShell title={`ออก${cfg.label}`} width={820} closeOnBackdrop={false} onClose={() => setAdding(false)}
+          footer={<>
+            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก + ออกเลขที่</button>
+          </>}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: 12 }}>
             {houseCode
               ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div>
@@ -102,11 +107,7 @@ export default function SiteDocs({ houseCode }: { houseCode?: string }) {
             </div>
           )}
           {err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{err}</div>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก + ออกเลขที่</button>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>

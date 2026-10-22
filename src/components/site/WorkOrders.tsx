@@ -104,15 +104,20 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
     <SubmitWorkModal submitFor={submitFor} sf={sf} setSf={setSf} sbusy={sbusy} serr={serr} pickSubmitFile={pickSubmitFile} doSubmit={doSubmit} onClose={() => setSubmitFor(null)} />
   )
 
+  // ฟอร์มออก/แก้ใบสั่งงาน = modal เปิดทับรายการ (ย่อพับได้ ข้อมูลที่กรอกไม่หาย)
+  let editModal: React.ReactNode = null
   if (edit) {
     const e = edit
     const set = (patch: Partial<Draft>) => setEdit({ ...e, ...patch })
     const setDod = (k: string, v: string) => setEdit({ ...e, dod: { ...(e.dod || {}), [k]: v } })
     const setQc = (i: number, patch: Partial<QcRow>) => setEdit({ ...e, qc: (e.qc || []).map((x, j) => j === i ? { ...x, ...patch } : x) })
-    return (
-      <>
-      <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>{e.id ? `แก้ไขใบสั่งงาน ${e.no}` : 'ออกใบสั่งงานใหม่'}</div>
+    editModal = (
+      <ModalShell title={e.id ? `แก้ไขใบสั่งงาน ${e.no}` : 'ออกใบสั่งงานใหม่'} width={900} closeOnBackdrop={false} onClose={() => setEdit(null)}
+        bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#F7F9FB' }}
+        footer={<>
+          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+          <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{e.id ? 'บันทึก' : 'สั่งงาน + แจ้งเตือน'}</button>
+        </>}>
 
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: '#30506A' }}>ข้อมูลการสั่งงาน</div>
@@ -188,14 +193,7 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
             <div style={{ marginTop: 12 }}><div style={lbl}>สิ่งที่ต้องปรับปรุง (Lessons Learned)</div><input style={field} value={e.lessons} onChange={(ev) => set({ lessons: ev.target.value })} /></div>
           </div>
         </>) : <div style={{ fontSize: 12, color: '#94A0A8', textAlign: 'center' }}>บันทึกใบสั่งงานก่อน แล้วจึงกรอกส่วนดำเนินงาน/ตรวจคุณภาพ/ประเมินภายหลัง</div>}
-
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-          <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{e.id ? 'บันทึก' : 'สั่งงาน + แจ้งเตือน'}</button>
-        </div>
-      </div>
-      {submitModal}
-      </>
+      </ModalShell>
     )
   }
 
@@ -248,6 +246,7 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
       </div>
       {printing && <WorkOrderPrint wo={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name} onClose={() => setPrinting(null)} />}
     </div>
+    {editModal}
     {submitModal}
     </>
   )

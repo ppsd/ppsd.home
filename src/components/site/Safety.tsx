@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 import SafetyPrint from './SafetyPrint'
 
 export interface SafetyRecord { id: number; kind: string; no: string; house_code: string; date: string; title: string; data: Record<string, unknown>; by: string }
@@ -55,11 +56,15 @@ export default function Safety({ houseCode }: { houseCode?: string }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>เอกสาร <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ฉบับ</div>
-        <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ บันทึกใหม่</button>
+        <button onClick={() => setAdding(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ บันทึกใหม่</button>
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
+        <ModalShell title={`บันทึกใหม่ — ${KINDS.find((k) => k.id === kind)?.label || ''}`} width={900} closeOnBackdrop={false} onClose={() => setAdding(false)}
+          footer={<>
+            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
+          </>}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 2fr', gap: 12, marginBottom: 12 }}>
             <div><div style={lbl}>บ้าน / โครงการ</div>{houseCode ? <div style={{ ...field, display: 'flex', alignItems: 'center', color: '#5C6770', background: '#F7F9FB' }}>{houses.find((h) => h.code === houseCode)?.name || houseCode}</div> : <select style={field} value={house} onChange={(e) => setHouse(e.target.value)}><option value="">— เลือกบ้าน —</option>{houses.map((h) => <option key={h.id} value={h.code}>{h.name}</option>)}</select>}</div>
             <div><div style={lbl}>{kind === 'jha' ? 'ชื่องานที่วิเคราะห์' : kind === 'toolbox' ? 'หัวข้อพูดคุย' : 'พื้นที่/งานที่ตรวจ'}</div><input style={field} value={title} onChange={(e) => setTitle(e.target.value)} /></div>
@@ -122,11 +127,7 @@ export default function Safety({ houseCode }: { houseCode?: string }) {
             </>
           )}
 
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
-            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึก</button>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>

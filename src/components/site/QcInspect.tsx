@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import { useApp, useLiveRefresh } from '../../store'
+import ModalShell from '../shared/ModalShell'
 import { QC_PHASES, qcCategoriesOfPhase, qcFormsOf, qcFormById, qcFormItems, qcFormCount, qcLabels, qcIsPass, qcIsFail, qcDeriveStatus, qcPhaseName, qcPhaseProgress } from '../../qcTemplates'
 import QcPrint from './QcPrint'
 
@@ -127,11 +128,15 @@ export default function QcInspect({ houseCode }: { houseCode?: string }) {
             <option value="old">ใบตรวจชุดเก่า</option>
           </select>
         )}
-        <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ สร้างใบตรวจ QC</button>
+        <button onClick={() => setAdding(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ สร้างใบตรวจ QC</button>
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
+        <ModalShell title="สร้างใบตรวจ QC" width={900} closeOnBackdrop={false} onClose={() => setAdding(false)}
+          footer={<>
+            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={create} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>สร้าง + ดึงเช็กลิสต์</button>
+          </>}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
             <div>
               <div style={lbl}>บ้าน / โครงการ</div>
@@ -194,11 +199,7 @@ export default function QcInspect({ houseCode }: { houseCode?: string }) {
             </div>
             : <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 10 }}>เลือกงวด → หมวด → ฟอร์ม แล้วระบบดึงข้อตรวจตามฟอร์มต้นฉบับของบริษัทมาให้</div>}
           {err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 8 }}>{err}</div>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-            <button onClick={create} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>สร้าง + ดึงเช็กลิสต์</button>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>

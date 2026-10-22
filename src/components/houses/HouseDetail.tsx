@@ -299,16 +299,16 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
             {keepTab('boq', <div style={{ padding: 16 }}><BoqTab houseCode={house.code} /></div>)}
 
           {/* TAB: QC ตรวจงาน (เฉพาะบ้านนี้) */}
-            {tab === 'qc' && <div style={{ padding: 16 }}><QcInspect houseCode={house.code} /></div>}
+            {keepTab('qc', <div style={{ padding: 16 }}><QcInspect houseCode={house.code} /></div>)}
 
           {/* TAB: เอกสารหน้างาน (เฉพาะบ้านนี้) */}
-            {tab === 'sitedocs' && <div style={{ padding: 16 }}><SiteDocs houseCode={house.code} /></div>}
+            {keepTab('sitedocs', <div style={{ padding: 16 }}><SiteDocs houseCode={house.code} /></div>)}
 
           {/* TAB: รายงานหน้างาน (เฉพาะบ้านนี้) */}
-            {tab === 'sitereport' && <div style={{ padding: 16 }}><SiteReports houseCode={house.code} /></div>}
+            {keepTab('sitereport', <div style={{ padding: 16 }}><SiteReports houseCode={house.code} /></div>)}
 
           {/* TAB: ความปลอดภัย (เฉพาะบ้านนี้) */}
-            {tab === 'safety' && <div style={{ padding: 16 }}><Safety houseCode={house.code} /></div>}
+            {keepTab('safety', <div style={{ padding: 16 }}><Safety houseCode={house.code} /></div>)}
 
           {/* TAB: ส่งมอบงาน (เฉพาะบ้านนี้) */}
             {tab === 'handover' && <div style={{ padding: 16 }}><Handover houseCode={house.code} /></div>}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
+import ModalShell from '../shared/ModalShell'
 import SiteReportPrint from './SiteReportPrint'
 
 export interface SiteReport { id: number; kind: string; no: string; house_code: string; date: string; data: Record<string, string>; by: string }
@@ -76,11 +77,16 @@ export default function SiteReports({ houseCode }: { houseCode?: string }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>รายงาน <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ฉบับ</div>
-        <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ เขียนรายงาน</button>
+        <button onClick={() => setAdding(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>+ เขียนรายงาน</button>
       </div>
 
       {adding && (
-        <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 18 }}>
+        <ModalShell title="เขียนรายงานประจำวัน" width={860} closeOnBackdrop={false} onClose={() => setAdding(false)}
+          footer={<>
+            <button onClick={autofill} disabled={pulling} title="ดึงจำนวนคนงานจากการลงเวลา, ความคืบหน้าจาก S-curve และเอกสาร RFI/RFA/VO มากรอกให้" className="hov-f3f5f7" style={{ marginRight: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>{pulling ? 'กำลังดึง…' : '↻ ดึงข้อมูลจริง'}</button>
+            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึกรายงาน</button>
+          </>}>
           <div style={{ marginBottom: 12 }}>
             <div style={lbl}>บ้าน / โครงการ</div>
             {houseCode
@@ -100,12 +106,7 @@ export default function SiteReports({ houseCode }: { houseCode?: string }) {
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14, alignItems: 'center' }}>
-            <button onClick={autofill} disabled={pulling} title="ดึงจำนวนคนงานจากการลงเวลา, ความคืบหน้าจาก S-curve และเอกสาร RFI/RFA/VO มากรอกให้" className="hov-f3f5f7" style={{ marginRight: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>{pulling ? 'กำลังดึง…' : '↻ ดึงข้อมูลจริง'}</button>
-            <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
-            <button onClick={submit} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึกรายงาน</button>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
