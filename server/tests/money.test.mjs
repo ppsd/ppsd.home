@@ -196,6 +196,86 @@ test('เงินเดือน: ปิดงวดแล้วลงบัญ
   assert.match(inc.data.error, /ปิดแล้ว/)
 })
 
+test('เงินเดือน: ทำจ่ายหลายรอบต่อเดือน · วันทำงานรายเดือน/รายวัน (ห้ามเกินวันในเดือน) · หมายเหตุ · เปิดแก้ไขรอบได้', async () => {
+  const P = '2030-02' // ก.พ. 2573 มี 28 วัน
+  const a = await POST('/employees', { name: 'ลาออกกลางเดือน ทดสอบ', role: 'ธุรการ', pay_type: 'รายเดือน', base: 30000, retention: 0 })
+  const d = await POST('/employees', { name: 'รายวันหลายรอบ ทดสอบ', role: 'แม่บ้าน', pay_type: 'รายวัน', base: 500, retention: 0 })
+  assert.equal(a.status, 201); assert.equal(d.status, 201)
+  const A = a.data.code, D = d.data.code
+  const row = async (code) => (await GET(`/payroll?period=${P}`)).data.rows.find((x) => x.code === code)
+  // รายเดือนไม่กรอกวัน = เต็มเดือน
+  assert.equal((await row(A)).base, 30000)
+  // วันทำงานเกินจำนวนวันในเดือน → บล็อก
+  const over = await PUT('/payroll/inputs', { period: P, emp_code: A, work_days: 29 })
+  assert.equal(over.status, 400); assert.match(over.data.error, /28 วัน/)
+  assert.equal((await PUT('/payroll/inputs', { period: P, emp_code: A, work_days: 12, note: 'ลาออก 12 ก.พ.' })).status, 200)
+  let ra = await row(A)
+  assert.equal(ra.base, 12000, 'รายเดือนทำ 12 วัน = 30,000 ÷ 30 × 12')
+  assert.equal(ra.prorated, true); assert.equal(ra.sso, 600, 'ประกันสังคมคิดจากเงินที่ได้จริง')
+  assert.equal(ra.pay_note, 'ลาออก 12 ก.พ.')
+  // กรอกเท่าวันในเดือน = เต็มเดือน
+  await PUT('/payroll/inputs', { period: P, emp_code: A, work_days: 28 })
+  assert.equal((await row(A)).base, 30000)
+  await PUT('/payroll/inputs', { period: P, emp_code: A, work_days: 12 })
+  // รายวัน: วันของเดือนนี้ (ไม่ติดตัวพนักงาน)
+  await PUT('/payroll/inputs', { period: P, emp_code: D, work_days: 10.5 })
+  assert.equal((await row(D)).base, 5250)
+  assert.equal((await GET(`/payroll?period=2030-03`)).data.rows.find((x) => x.code === D).work_days, 0, 'วันทำงานต้องไม่ติดไปเดือนถัดไป')
+  // รอบ 1: จ่ายเฉพาะคนลาออก
+  const b1 = await POST('/payroll/batches', { period: P, emp_codes: [A], pay_date: '2030-02-12', note: 'จ่ายคนลาออก' })
+  assert.equal(b1.status, 201, JSON.stringify(b1.data))
+  assert.equal(b1.data.batch.no, 'PAY-203002-1'); assert.equal(b1.data.rows.length, 1)
+  assert.equal(b1.data.journal?.posted, true)
+  let p = (await GET(`/payroll?period=${P}`)).data
+  assert.equal(p.rows.find((x) => x.code === A).paid, true)
+  assert.equal(p.rows.find((x) => x.code === D).paid, false)
+  assert.equal(p.locked, false, 'ยังมีคนไม่ได้จ่าย = งวดยังไม่ปิดครบ')
+  // จ่ายซ้ำ / แก้ข้อมูล / เบิกย้อน คนที่จ่ายแล้ว → บล็อก
+  assert.equal((await POST('/payroll/batches', { period: P, emp_codes: [A] })).status, 400)
+  assert.equal((await PUT('/payroll/inputs', { period: P, emp_code: A, work_days: 5 })).status, 400)
+  const adv = await POST('/salary-advances', { emp_code: A, amount: 100, period: P })
+  assert.equal(adv.status, 400); assert.match(adv.data.error, /ปิดแล้ว/)
+  // แต่คนที่ยังไม่จ่ายยังบันทึกได้
+  assert.equal((await POST('/other-income', { emp_code: D, amount: 200, reason: 'เบี้ยขยัน', period: P })).status, 201)
+  // ไฟล์ธนาคารรายรอบ = เฉพาะคนในรอบ
+  const bank = await fetch(`${BASE}/payroll/bank-file?batch=${b1.data.batch.id}`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(bank.status, 200)
+  // เปิดแก้ไข → แก้วัน → ปิดใหม่ (รอบเดิม เลขเดิม)
+  assert.equal((await POST(`/payroll/batches/${b1.data.batch.id}/reopen`)).status, 200)
+  assert.equal((await row(A)).paid, false)
+  assert.equal((await PUT('/payroll/inputs', { period: P, emp_code: A, work_days: 14 })).status, 200)
+  const re = await POST(`/payroll/batches/${b1.data.batch.id}/close`, {})
+  assert.equal(re.status, 200, JSON.stringify(re.data))
+  assert.equal(re.data.batch.no, 'PAY-203002-1'); assert.equal(re.data.rows[0].base, 14000)
+  // คืนเงินประกันผลงาน → บวกเข้าสุทธิ
+  const before = await row(D)
+  await PUT('/payroll/inputs', { period: P, emp_code: D, retention_refund: 300 })
+  const after = await row(D)
+  assert.equal(after.retention_refund, 300)
+  // รอบ 2: ปิดงวดแบบเดิม = จ่ายทุกคนที่เหลือ (ไม่จ่ายคนลาออกซ้ำ)
+  const c = await POST('/payroll/close', { period: P })
+  assert.equal(c.status, 200, JSON.stringify(c.data))
+  assert.equal(c.data.batch.seq, 2)
+  assert.ok(!c.data.rows.some((x) => x.code === A), 'รอบ 2 ต้องไม่มีคนที่จ่ายรอบ 1 ไปแล้ว')
+  p = (await GET(`/payroll?period=${P}`)).data
+  assert.equal(p.locked, true); assert.equal(p.batches.length, 2)
+  const rd = p.rows.find((x) => x.code === D)
+  assert.equal(rd.batch_no, 'PAY-203002-2')
+  const net = (r) => r.base + r.ot + r.other_income + (r.retention_refund || 0) - r.sso - r.tax - r.leave_deduct - r.retention - r.student_loan - r.advance - r.other_deduct
+  assert.equal(net(rd) - net(before), 300, 'สุทธิเพิ่มตามยอดคืนประกัน 300')
+  assert.equal((await POST('/payroll/close', { period: P })).status, 400, 'จ่ายครบทุกคนแล้ว ปิดซ้ำไม่ได้')
+  // ยอดรวมรายเดือน (ไฟล์ สปส./ภงด./รายงาน) = ทุกรอบรวมกัน
+  const run = (await GET('/payroll/runs')).data.find((r) => r.period === P)
+  assert.ok(run, 'งวดที่มีรอบปิดแล้วต้องอยู่ในรายการงวด')
+  // ลงบัญชีแยกรอบ วันที่ตามวันจ่าย และสมดุล
+  const entries = (await GET('/journal?source=payroll&from=2030-02-01&to=2030-02-28')).data
+  const list = Array.isArray(entries) ? entries : entries.rows || []
+  const mine = list.filter((e) => /PAY-203002/.test(e.memo || ''))
+  assert.equal(mine.length, 2, 'ต้องลงบัญชี 2 รายการ (รอบละ 1)')
+  for (const e of mine) assert.equal(Math.round(e.lines.reduce((s, l) => s + l.debit - l.credit, 0) * 100), 0, 'แต่ละรอบต้องสมดุล')
+  assert.ok(mine.some((e) => e.date_iso === '2030-02-12'), 'รอบ 1 ลงวันที่จ่าย 12 ก.พ.')
+})
+
 // ---------- จัดซื้อ → รับของ → จ่าย → บัญชี ----------
 let poId
 test('จัดซื้อ: PO เครดิตรับของแล้วตั้งเจ้าหนี้ 2010 · จ่ายก่อนรับของ/จ่ายเกิน ถูกบล็อก', async () => {

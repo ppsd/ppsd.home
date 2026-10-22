@@ -3209,6 +3209,13 @@ function runEmpDedup() {
         for (const p of rows) if (p.code === dupCode) { p.code = keepCode; p.name = keepName; changed = true }
         if (changed) db.prepare('UPDATE payroll_runs SET data=? WHERE period=?').run(JSON.stringify(rows), r.period)
       }
+      for (const b of db.prepare('SELECT id, data, emp_codes FROM payroll_batches').all()) {
+        const rows = JSON.parse(b.data || '[]'); let changed = false
+        for (const p of rows) if (p.code === dupCode) { p.code = keepCode; p.name = keepName; changed = true }
+        const codes = JSON.parse(b.emp_codes || '[]').map((c) => (c === dupCode ? keepCode : c))
+        if (changed || codes.includes(keepCode)) db.prepare('UPDATE payroll_batches SET data=?, emp_codes=? WHERE id=?').run(JSON.stringify(rows), JSON.stringify(codes), b.id)
+      }
+      db.prepare('UPDATE OR IGNORE payroll_inputs SET emp_code=? WHERE emp_code=?').run(keepCode, dupCode)
     } catch { /* ignore */ }
   }
   let mergedGroups = 0, removed = 0, tidied = 0, skippedReal = 0
@@ -3267,7 +3274,7 @@ function retentionPaidBefore(empCode, opening, excludePeriod) {
   for (const r of runs) {
     try {
       const row = JSON.parse(r.data).find((x) => x.code === empCode)
-      if (row) sum += Number(row.retention) || 0
+      if (row) sum += (Number(row.retention) || 0) - (Number(row.retention_refund) || 0) // หักยอดที่คืนไปแล้ว
     } catch { /* ข้ามงวดที่ข้อมูลเสีย */ }
   }
   return (Number(opening) || 0) + sum
@@ -3287,10 +3294,53 @@ function retentionPeriodsBefore(empCode, opening, monthly, excludePeriod) {
 }
 // ตำแหน่งที่ไม่ต้องลงเวลา — ยังได้เงินเดือนเต็ม (ไม่หักขาดงานจากการไม่ตอกบัตร)
 const NO_ATTENDANCE_ROLES = ['CEO', 'ผู้จัดการ']
-// compute payroll rows live for a period (resigned employees excluded)
+// ===== เงินเดือน: คำนวณต่องวด (เดือน) + ทำจ่ายได้หลายรอบต่อเดือน =====
+// ขอบเขตวันของงวด YYYY-MM
+function periodBounds(period) {
+  const [yy, mm] = period.split('-').map(Number)
+  const dim = new Date(yy, mm, 0).getDate()
+  return { dim, from: `${period}-01`, to: `${period}-${String(dim).padStart(2, '0')}` }
+}
+// วันที่มาทำงานจริงในงวด = วันที่ลงเวลาเข้า + วันที่ขอปรับปรุงเวลา (ลืมตอก) ที่อนุมัติแล้ว — ไม่นับซ้ำ
+function attendanceDays(e, period) {
+  const { from, to } = periodBounds(period)
+  const set = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(e.code, from, to).map((r) => r.date))
+  for (const a of db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(e.name, from, to)) set.add(a.date)
+  return [...set].sort()
+}
+// วันทำงานที่ระบบแนะนำ (ปุ่ม "ดึงจากลงเวลา" · แก้ต่อได้)
+//  รายวัน = จำนวนวันที่ลงเวลา · รายเดือน = นับวันตามปฏิทินจากวันเริ่มงาน (ถ้าเริ่มกลางเดือน) ถึงวันลงเวลาวันสุดท้าย (ถ้าลาออก)
+//  รายเดือนที่อยู่ครบเดือน = null (เต็มเดือน)
+function suggestWorkDays(e, period) {
+  const days = attendanceDays(e, period)
+  if (e.pay_type === 'รายวัน') return days.length || null
+  const { from, to } = periodBounds(period)
+  let start = from, end = to
+  const empStart = parseAnyDateISO(e.start) // วันเริ่มงานเก็บได้ทั้ง ISO และแบบไทย ("2 ก.ย. 69")
+  if (empStart && empStart > from) start = empStart
+  if (e.status === 'ลาออก' && days.length) end = days[days.length - 1]
+  if (start === from && end === to) return null
+  if (end < start) return 0
+  return Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1
+}
+const payrollInputsOf = (period) => new Map(db.prepare('SELECT * FROM payroll_inputs WHERE period=?').all(period).map((r) => [r.emp_code, r]))
+// พนักงานที่อยู่ในงวด: ยังไม่ลาออก + คนที่ลาออกแล้วแต่ยังมีข้อมูลในงวดนี้ (ลงเวลา/กรอกวัน/เบิก/หัก/รายได้) → ทำจ่ายรอบสุดท้ายได้
+function payrollEmployees(period) {
+  const { from, to } = periodBounds(period)
+  return db.prepare(`SELECT * FROM employees WHERE status != 'ลาออก'
+    OR code IN (SELECT emp_code FROM payroll_inputs WHERE period=?)
+    OR code IN (SELECT emp_code FROM attendance WHERE date>=? AND date<=?)
+    OR code IN (SELECT emp_code FROM salary_advances WHERE period=?)
+    OR code IN (SELECT emp_code FROM deductions WHERE period=?)
+    OR code IN (SELECT emp_code FROM other_income WHERE period=?)
+    ORDER BY id`).all(period, from, to, period, period, period)
+}
+// compute payroll rows live for a period
 function computePayroll(period) {
-  const emps = db.prepare("SELECT * FROM employees WHERE status != 'ลาออก' ORDER BY id").all()
-  return emps.map((e) => {
+  const { dim } = periodBounds(period)
+  const inputs = payrollInputsOf(period)
+  return payrollEmployees(period).map((e) => {
+    const inp = inputs.get(e.code)
     // OT/วันลา นับ "เฉพาะของงวดนี้" (ตามวันที่ในรายการ) — ไม่งั้น OT เก่าจะถูกจ่ายซ้ำทุกเดือน
     const ot = db.prepare("SELECT date, amount FROM ot WHERE emp_code=? AND status='อนุมัติ'").all(e.code)
       .filter((r) => dateInPeriod(r.date, period)).reduce((s, r) => s + (Number(r.amount) || 0), 0)
@@ -3300,19 +3350,27 @@ function computePayroll(period) {
     const unpaid = lvs.filter((l) => l.status === 'อนุมัติ').reduce((s, l) => s + (Number(l.unpaid_days) || 0), 0)
     const isDaily = e.pay_type === 'รายวัน'
     const exempt = NO_ATTENDANCE_ROLES.includes(e.role) // CEO / ผู้จัดการ ไม่ต้องลงเวลา
-    // รายวัน (เช่น แม่บ้าน): เงิน = ค่าแรง/วัน × วันทำงานที่กรอก · ไม่หักขาด (จ่ายตามวันที่ทำจริง)
-    // ผู้ได้รับยกเว้น (CEO/ผู้จัดการ): ไม่หักขาดงาน
     const dailyRate = e.base || 0
-    const workDays = e.work_days || 0
-    const basePay = isDaily ? dailyRate * workDays : (e.base || 0)
+    // วันทำงานของงวดนี้ (กรอกต่อเดือน · ว่าง = ค่าเริ่มต้น)
+    //  รายวัน: ว่าง = จำนวนวันที่ลงเวลา (ไม่มีลงเวลาเลย → ค่าตั้งต้นที่กรอกไว้ที่ตัวพนักงาน เช่น แม่บ้าน)
+    //  รายเดือน: ว่าง = เต็มเดือน · กรอกน้อยกว่าวันในเดือน = ได้ตามวัน (เงินเดือน ÷ 30 × วัน) แล้วหักสาย/ลา/ขาดตามปกติ
+    const inWd = inp && inp.work_days != null ? Number(inp.work_days) : null
+    let workDays, basePay, prorated = false
+    if (isDaily) {
+      workDays = inWd ?? (attendanceDays(e, period).length || Number(e.work_days) || 0)
+      basePay = r2(dailyRate * workDays)
+    } else {
+      workDays = inWd
+      prorated = inWd != null && inWd < dim
+      basePay = prorated ? r2(Math.min(e.base || 0, (e.base || 0) / 30 * inWd)) : (e.base || 0)
+    }
     const absent = (isDaily || exempt) ? 0 : absentDaysInMonth(e, period)
     const daily = isDaily ? dailyRate : Math.round((e.base || 0) / 30) // เงินเดือน ÷ 30 วัน = ค่าจ้าง/วัน (หักขาด/ลา)
     const deductDays = isDaily ? 0 : (rejected + unpaid + absent)
-    // ประกันสังคมของรายวัน คิดจาก "รายได้จริงในงวด" (ค่าแรง×วันทำงาน) ไม่ใช่ค่าแรง×26
-    // รายวัน "ไม่หักภาษี" (คิดเฉพาะประกันสังคม) — ภาษีเป็น 0
-    const sso = e.no_sso ? 0 : (isDaily ? ssoOf(basePay) : e.sso)
+    // ประกันสังคมคิดจาก "เงินที่ได้จริงในงวด" เมื่อเป็นรายวัน/ทำไม่เต็มเดือน · รายวัน "ไม่หักภาษี"
+    const sso = e.no_sso ? 0 : ((isDaily || prorated) ? ssoOf(basePay) : e.sso)
     const tax = e.tax || 0 // ภาษีกรอกเอง (แก้ได้ในตารางเงินเดือน)
-    // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนสิ้นเดือน
+    // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนตอนทำจ่าย
     const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a
     // หักอื่นๆ (พร้อมเหตุผล) ที่บันทึกในงวดนี้
     const otherDeduct = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM deductions WHERE emp_code=? AND period=?').get(e.code, period).a
@@ -3322,72 +3380,245 @@ function computePayroll(period) {
     const opening = e.retention_opening || 0
     const paidBefore = retentionPaidBefore(e.code, opening, period)
     const monthly = e.retention ?? 0
-    const retention = Math.max(0, Math.min(monthly, RETENTION_CAP - paidBefore))
+    // เดือนที่ไม่มีรายได้เลย (เช่น รายวันยังไม่มีวันทำงาน) ไม่หักเงินประกัน — กันเงินสุทธิติดลบ
+    const hasIncome = basePay + ot + otherIncome > 0
+    const retention = hasIncome ? Math.max(0, Math.min(monthly, RETENTION_CAP - paidBefore)) : 0
+    const refund = Math.max(0, Number(inp?.retention_refund) || 0) // คืนเงินประกันผลงาน (เช่น รอบสุดท้ายของคนลาออก)
     // อย่าให้ข้อมูลลับ (PIN/ลายเซ็น/โทเคน) หลุดไปติดใน snapshot เงินเดือน
     const { pin, signature, track_token, ...pub } = e
     return {
       ...pub, ot, sso, tax, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
-      daily_rate: dailyRate, work_days: workDays, exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
-      retention, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct, other_income: otherIncome,
+      daily_rate: dailyRate, work_days: workDays, work_days_set: inWd != null, days_in_month: dim, prorated, monthly_base: isDaily ? null : (e.base || 0),
+      exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
+      retention, retention_refund: refund, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct, other_income: otherIncome,
       retention_cap: RETENTION_CAP, retention_opening: opening,
       retention_monthly: monthly, // ยอดที่ตั้งให้หักต่อเดือน (แก้ได้) — ต่างจาก retention ที่ถูกจำกัดด้วยเพดาน
-      retention_paid: paidBefore + retention, // ยอดสะสมถึงงวดนี้ (รวมงวดนี้)
+      retention_paid: paidBefore + retention - refund, // ยอดสะสมถึงงวดนี้ (รวมงวดนี้ · หักยอดที่คืนแล้ว)
       retention_periods: retentionPeriodsBefore(e.code, opening, monthly, period) + (retention > 0 ? 1 : 0), // จำนวนงวดที่หักสะสมมาแล้ว (รวมงวดนี้)
+      pay_note: inp?.note || '', // หมายเหตุรายคน (ขึ้นในสลิป)
     }
   })
 }
-const netOf = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
+const netOf = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) + (p.retention_refund || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
+function r2(x) { return Math.round((Number(x) || 0) * 100) / 100 }
 
-// payroll is salary data → finance only. Supports a period and locked snapshots.
+// ---- รอบจ่าย ----
+const batchInfo = (b) => {
+  let rows = []
+  try { rows = JSON.parse(b.data || '[]') } catch { /* ข้อมูลเสีย */ }
+  return { id: b.id, period: b.period, seq: b.seq, no: b.no, pay_date: b.pay_date, note: b.note || '', status: b.status, emp_codes: JSON.parse(b.emp_codes || '[]'), count: rows.length, total: rows.reduce((s, p) => s + netOf(p), 0), created: b.created, by: b.by, closed_at: b.closed_at, closed_by: b.closed_by }
+}
+const closedBatches = (period) => db.prepare("SELECT * FROM payroll_batches WHERE period=? AND status='closed' ORDER BY seq").all(period)
+// รหัสพนักงาน → รอบที่ทำจ่ายเงินเดือนเดือนนี้ไปแล้ว + แถว snapshot
+function paidMap(period) {
+  const m = new Map()
+  for (const b of closedBatches(period)) {
+    let rows = []
+    try { rows = JSON.parse(b.data) } catch { /* ข้อมูลเสีย */ }
+    for (const row of rows) m.set(row.code, { batch: b, row })
+  }
+  return m
+}
+const empPaid = (period, code) => paidMap(period).has(code)
+// แถวเงินเดือนทั้งงวด: คนที่ทำจ่ายแล้ว (snapshot ของรอบนั้น) + คนที่ยังไม่จ่าย (คำนวณสด)
+function periodRows(period) {
+  const paid = paidMap(period)
+  const done = [...paid.values()].map(({ batch, row }) => ({ ...row, paid: true, batch_id: batch.id, batch_no: batch.no, pay_date: batch.pay_date, batch_note: batch.note || '' }))
+  const live = computePayroll(period).filter((r) => !paid.has(r.code)).map((r) => ({ ...r, paid: false }))
+  return [...done, ...live].sort((a, b) => (a.id || 0) - (b.id || 0))
+}
+// payroll_runs = ยอดรวมทุกรอบที่ปิดแล้วของเดือน (ไม่มีรอบปิด = ลบทิ้ง)
+function rebuildPayrollRun(period) {
+  const bs = closedBatches(period)
+  if (!bs.length) { db.prepare('DELETE FROM payroll_runs WHERE period=?').run(period); return }
+  const rows = bs.flatMap((b) => { try { return JSON.parse(b.data).map((r) => ({ ...r, batch_no: b.no, pay_date: b.pay_date, batch_note: b.note || '' })) } catch { return [] } })
+  const last = bs[bs.length - 1]
+  db.prepare('INSERT INTO payroll_runs (period,data,total,created,by) VALUES (?,?,?,?,?) ON CONFLICT(period) DO UPDATE SET data=excluded.data,total=excluded.total,created=excluded.created,by=excluded.by')
+    .run(period, JSON.stringify(rows), rows.reduce((s, p) => s + netOf(p), 0), last.closed_at || todayTH(), last.closed_by || '')
+}
+
+// payroll is salary data → finance only. Supports a period; คนที่ทำจ่ายแล้วเป็น snapshot ที่ล็อกไว้
 api.get('/payroll', requireSalary, (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
-  const run = db.prepare('SELECT * FROM payroll_runs WHERE period=?').get(period)
-  if (run) return res.json({ period, periodLabel: periodLabelTH(period), locked: true, rows: JSON.parse(run.data) })
-  res.json({ period, periodLabel: periodLabelTH(period), locked: false, rows: computePayroll(period) })
+  const rows = periodRows(period)
+  const batches = db.prepare('SELECT * FROM payroll_batches WHERE period=? ORDER BY seq').all(period).map(batchInfo)
+  const paidCount = rows.filter((r) => r.paid).length
+  res.json({ period, periodLabel: periodLabelTH(period), locked: rows.length > 0 && paidCount === rows.length, paid_count: paidCount, days_in_month: periodBounds(period).dim, batches, rows })
 })
 // list closed periods
 api.get('/payroll/runs', requireSalary, (_req, res) =>
   res.json(db.prepare('SELECT period,total,created,by FROM payroll_runs ORDER BY period DESC').all().map((r) => ({ ...r, periodLabel: periodLabelTH(r.period) })))
 )
-// close / lock a period (snapshot the computed payroll)
-// ลงบัญชีแยกประเภทอัตโนมัติเมื่อปิดงวดเงินเดือน (บัญชีคู่ · idempotent ต่องวด)
-// Dr 6010 เงินเดือน (ยอดที่ได้จริง) / Cr 2050 ปกส. · 2040 ภาษี · 2020 เงินประกัน · 2060 กยศ+หักอื่นๆ · ธนาคาร (จ่ายสุทธิ+เบิกล่วงหน้า)
-function postPayrollJournal(period, rows, by) {
-  const r2 = (x) => Math.round((x || 0) * 100) / 100
+// ข้อมูลกรอกต่อคนต่อเดือน: วันทำงาน · หมายเหตุ · คืนเงินประกัน (ส่งเฉพาะช่องที่จะแก้)
+api.put('/payroll/inputs', financeOnly, (req, res) => {
+  const b = req.body || {}
+  const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : null
+  if (!period) return res.status(400).json({ error: 'ระบุงวด' })
+  const emp = db.prepare('SELECT code, name FROM employees WHERE code=?').get(b.emp_code)
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  if (empPaid(period, emp.code)) return res.status(400).json({ error: `${emp.name} ทำจ่ายงวด ${periodLabelTH(period)} ไปแล้ว (รอบปิดแล้ว) — กด "เปิดแก้ไข" ที่รอบจ่ายก่อน` })
+  const cur = db.prepare('SELECT * FROM payroll_inputs WHERE period=? AND emp_code=?').get(period, emp.code) || { work_days: null, note: '', retention_refund: 0 }
+  const next = { ...cur }
+  const { dim } = periodBounds(period)
+  if ('work_days' in b) {
+    if (b.work_days === null || b.work_days === '') next.work_days = null
+    else {
+      const wd = Number(b.work_days)
+      if (!Number.isFinite(wd) || wd < 0) return res.status(400).json({ error: 'จำนวนวันทำงานต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป' })
+      if (wd > dim) return res.status(400).json({ error: `จำนวนวันทำงานเกินจำนวนวันในเดือน — ${periodLabelTH(period)} มี ${dim} วัน` })
+      next.work_days = r2(wd)
+    }
+  }
+  if ('note' in b) next.note = String(b.note || '').trim().slice(0, 300)
+  if ('retention_refund' in b) {
+    const v = Number(b.retention_refund) || 0
+    if (v < 0) return res.status(400).json({ error: 'ยอดคืนเงินประกันต้องไม่ติดลบ' })
+    next.retention_refund = r2(v)
+  }
+  db.prepare('INSERT INTO payroll_inputs (period,emp_code,work_days,note,retention_refund) VALUES (?,?,?,?,?) ON CONFLICT(period,emp_code) DO UPDATE SET work_days=excluded.work_days,note=excluded.note,retention_refund=excluded.retention_refund')
+    .run(period, emp.code, next.work_days, next.note || '', next.retention_refund || 0)
+  audit(req, 'แก้ข้อมูลเงินเดือนรายเดือน', `${emp.name} · ${periodLabelTH(period)} · วันทำงาน ${next.work_days ?? 'ค่าเริ่มต้น'}${next.retention_refund ? ' · คืนประกัน ' + next.retention_refund : ''}`)
+  res.json({ ok: true, row: computePayroll(period).find((r) => r.code === emp.code) || null })
+})
+// ดึงวันทำงานจากข้อมูลลงเวลา (เฉพาะคนที่ยังไม่ทำจ่าย · ส่ง emp_codes เพื่อเลือกบางคน) — แก้ต่อได้
+api.post('/payroll/inputs/autofill', financeOnly, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.body?.period) ? req.body.period : currentPeriod()
+  const only = Array.isArray(req.body?.emp_codes) ? new Set(req.body.emp_codes) : null
+  const paid = paidMap(period)
+  const up = db.prepare('INSERT INTO payroll_inputs (period,emp_code,work_days,note,retention_refund) VALUES (?,?,?,\'\',0) ON CONFLICT(period,emp_code) DO UPDATE SET work_days=excluded.work_days')
+  const changed = []
+  db.transaction(() => {
+    for (const e of payrollEmployees(period)) {
+      if (paid.has(e.code) || (only && !only.has(e.code))) continue
+      const wd = suggestWorkDays(e, period)
+      up.run(period, e.code, wd)
+      changed.push({ code: e.code, name: e.name, work_days: wd })
+    }
+  })()
+  audit(req, 'ดึงวันทำงานจากลงเวลา', `${periodLabelTH(period)} · ${changed.length} คน`)
+  res.json({ ok: true, changed })
+})
+
+// ลงบัญชีแยกประเภทต่อรอบจ่าย (บัญชีคู่ · idempotent ต่อรอบ · วันที่ = วันที่จ่าย)
+// Dr 6010 เงินเดือน (ยอดที่ได้จริง) · Dr 2020 คืนเงินประกัน / Cr 2050 ปกส. · 2040 ภาษี · 2020 เงินประกัน · 2060 กยศ+หักอื่นๆ · ธนาคาร (จ่ายสุทธิ+เบิกล่วงหน้า)
+function postBatchJournal(batch, rows, by) {
   const sum = (f) => rows.reduce((s, p) => s + (Number(f(p)) || 0), 0)
   const earned = r2(sum((p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.leave_deduct || 0)))
-  const sid = Number(period.replace('-', ''))
-  if (!(earned > 0)) { acct.removeAutoJournal('payroll', sid); return { posted: false } }
+  const refund = r2(sum((p) => p.retention_refund || 0))
+  const sid = batch.journal_sid
+  if (!(earned > 0) && !(refund > 0)) { acct.removeAutoJournal('payroll', sid); return { posted: false } }
   const sso = r2(sum((p) => p.sso || 0)), tax = r2(sum((p) => p.tax || 0)), ret = r2(sum((p) => p.retention || 0))
   const slOther = r2(sum((p) => (p.student_loan || 0) + (p.other_deduct || 0)))
-  const bank = r2(earned - sso - tax - ret - slOther) // = จ่ายสุทธิ + เบิกล่วงหน้าที่จ่ายไปแล้ว
-  const label = periodLabelTH(period)
-  const [yy, mm] = period.split('-').map(Number)
-  const endIso = `${yy}-${String(mm).padStart(2, '0')}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`
+  const bank = r2(earned + refund - sso - tax - ret - slOther) // = จ่ายสุทธิ + เบิกล่วงหน้าที่จ่ายไปแล้ว
+  const label = `${periodLabelTH(batch.period)} รอบ ${batch.seq}`
   const lines = [
     { account: '6010', debit: earned, credit: 0, memo: 'เงินเดือน/ค่าแรง ' + label },
+    { account: '2020', debit: refund, credit: 0, memo: 'คืนเงินประกันผลงาน' },
     { account: '2050', debit: 0, credit: sso, memo: 'ประกันสังคมหักนำส่ง' },
     { account: '2040', debit: 0, credit: tax, memo: 'ภาษีหัก ณ ที่จ่ายค้างนำส่ง' },
     { account: '2020', debit: 0, credit: ret, memo: 'เงินประกันผลงานหักไว้' },
     { account: '2060', debit: 0, credit: slOther, memo: 'กยศ / หักอื่นๆ ค้างจ่าย' },
     { account: acct.defaultBank(), debit: 0, credit: bank, memo: 'จ่ายเงินเดือนสุทธิ (รวมเบิกล่วงหน้า)' },
   ]
-  acct.postJournal({ date_iso: endIso, memo: 'ปิดงวดเงินเดือน ' + label, source: 'payroll', source_id: sid, by, lines })
+  acct.postJournal({ date_iso: batch.pay_date, memo: `ทำจ่ายเงินเดือน ${label} (${batch.no})${batch.note ? ' · ' + batch.note : ''}`, source: 'payroll', source_id: sid, by, lines })
   return { posted: true, expense: earned }
 }
+const isoDateOk = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''))
+// snapshot แถวของพนักงานที่เลือก (ต้องยังไม่ทำจ่ายในรอบอื่น) → ปิดรอบ + ลงบัญชี
+function closeBatch({ period, codes, payDate, note, batch, req }) {
+  const paid = paidMap(period)
+  const dup = codes.filter((c) => paid.has(c) && paid.get(c).batch.id !== batch?.id)
+  if (dup.length) return { error: `ทำจ่ายเดือนนี้ไปแล้ว: ${dup.map((c) => paid.get(c).row.name).join(', ')} — 1 คนรับเงินเดือนของเดือนได้รอบเดียว` }
+  const rows = computePayroll(period).filter((r) => codes.includes(r.code))
+  if (!rows.length) return { error: 'เลือกพนักงานที่จะทำจ่ายอย่างน้อย 1 คน' }
+  // กันทำจ่ายคนที่ "เงินติดลบ" (ยอดหักรวมเกินเงินได้) — ต้องแก้ยอดหักก่อน
+  const negatives = rows.filter((p) => netOf(p) < 0)
+  if (negatives.length) return { error: `ทำจ่ายไม่ได้ — เงินสุทธิติดลบ: ${negatives.map((p) => `${p.name} (${netOf(p).toLocaleString()})`).join(', ')} กรุณาปรับยอดหัก/เบิกให้ไม่เกินเงินได้ก่อน` }
+  const total = rows.reduce((s, p) => s + netOf(p), 0)
+  const now = todayTH()
+  let b = batch
+  if (!b) {
+    const seq = (db.prepare('SELECT MAX(seq) m FROM payroll_batches WHERE period=?').get(period).m || 0) + 1
+    const info = db.prepare("INSERT INTO payroll_batches (period,seq,no,pay_date,note,status,emp_codes,data,total,journal_sid,created,by) VALUES (?,?,?,?,?,'closed','[]','[]',0,?,?,?)")
+      .run(period, seq, `PAY-${period.replace('-', '')}-${seq}`, payDate, note, Number(period.replace('-', '')) * 100 + seq, now, req.user.name)
+    b = db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(info.lastInsertRowid)
+  }
+  db.prepare("UPDATE payroll_batches SET status='closed', pay_date=?, note=?, emp_codes=?, data=?, total=?, closed_at=?, closed_by=? WHERE id=?")
+    .run(payDate, note, JSON.stringify(rows.map((r) => r.code)), JSON.stringify(rows), total, now, req.user.name, b.id)
+  b = db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(b.id)
+  rebuildPayrollRun(period)
+  let journal = null
+  try { journal = postBatchJournal(b, rows, req.user.name) } catch (e) { journal = { posted: false, error: e.message }; logJournalIssue('payroll', b.journal_sid, `ทำจ่ายเงินเดือน ${b.no}`, e) }
+  audit(req, 'ทำจ่ายเงินเดือน', `${b.no} · ${periodLabelTH(period)} · ${rows.length} คน · สุทธิ ${total.toLocaleString()}${journal?.posted ? ' · ลงบัญชีแล้ว' : ''}`)
+  return { batch: batchInfo(b), rows, journal }
+}
+// วันที่จ่ายเริ่มต้น = วันนี้ (ถ้าอยู่ในเดือนของงวด) ไม่งั้นวันสิ้นเดือนของงวด — ลงบัญชีให้อยู่ในเดือนที่ถูก
+const defaultPayDate = (period) => { const t = todayISO(), { from, to } = periodBounds(period); return t >= from && t <= to ? t : to }
+const batchBody = (b, period) => ({ payDate: isoDateOk(b?.pay_date) ? b.pay_date : defaultPayDate(period), note: String(b?.note || '').trim().slice(0, 300) })
+// สร้างรอบจ่าย: เลือกพนักงาน (ที่ยังไม่ได้จ่ายเดือนนี้) + วันที่จ่าย + หมายเหตุของรอบ
+api.post('/payroll/batches', financeOnly, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.body?.period) ? req.body.period : currentPeriod()
+  const codes = Array.isArray(req.body?.emp_codes) ? req.body.emp_codes.map(String) : []
+  const r = closeBatch({ period, codes, ...batchBody(req.body, period), req })
+  if (r.error) return res.status(400).json({ error: r.error })
+  res.status(201).json({ ok: true, period, ...r })
+})
+// แก้วันที่จ่าย/หมายเหตุของรอบ (รอบที่ปิดแล้วลงบัญชีใหม่ให้ตรงวันที่)
+api.put('/payroll/batches/:id', financeOnly, (req, res) => {
+  const b = db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(req.params.id)
+  if (!b) return res.status(404).json({ error: 'ไม่พบรอบจ่าย' })
+  const payDate = isoDateOk(req.body?.pay_date) ? req.body.pay_date : b.pay_date
+  const note = req.body && 'note' in req.body ? String(req.body.note || '').trim().slice(0, 300) : (b.note || '')
+  db.prepare('UPDATE payroll_batches SET pay_date=?, note=? WHERE id=?').run(payDate, note, b.id)
+  const nb = db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(b.id)
+  let journal = null
+  if (nb.status === 'closed') {
+    rebuildPayrollRun(nb.period)
+    try { journal = postBatchJournal(nb, JSON.parse(nb.data), req.user.name) } catch (e) { journal = { posted: false, error: e.message }; logJournalIssue('payroll', nb.journal_sid, `ทำจ่ายเงินเดือน ${nb.no}`, e) }
+  }
+  audit(req, 'แก้รอบจ่ายเงินเดือน', `${nb.no} · จ่าย ${payDate}${note ? ' · ' + note : ''}`)
+  res.json({ ok: true, batch: batchInfo(nb), journal })
+})
+// เปิดแก้ไขรอบที่ปิดแล้ว: คนในรอบกลับไปคำนวณสด (แก้วัน/ยอดได้) · ถอนรายการบัญชีของรอบ · ปิดใหม่ด้วย /close
+api.post('/payroll/batches/:id/reopen', financeOnly, (req, res) => {
+  const b = db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(req.params.id)
+  if (!b) return res.status(404).json({ error: 'ไม่พบรอบจ่าย' })
+  if (b.status !== 'closed') return res.status(400).json({ error: 'รอบนี้เปิดแก้ไขอยู่แล้ว' })
+  db.prepare("UPDATE payroll_batches SET status='reopened' WHERE id=?").run(b.id)
+  rebuildPayrollRun(b.period)
+  try { acct.removeAutoJournal('payroll', b.journal_sid) } catch (e) { logJournalIssue('payroll', b.journal_sid, `ถอนบัญชีรอบ ${b.no}`, e) }
+  audit(req, 'เปิดแก้ไขรอบจ่ายเงินเดือน', b.no)
+  res.json({ ok: true, batch: batchInfo(db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(b.id)) })
+})
+// ปิดรอบที่เปิดแก้ไขอีกครั้ง (คำนวณใหม่จากข้อมูลล่าสุด · เปลี่ยนรายชื่อได้ด้วย emp_codes)
+api.post('/payroll/batches/:id/close', financeOnly, (req, res) => {
+  const b = db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(req.params.id)
+  if (!b) return res.status(404).json({ error: 'ไม่พบรอบจ่าย' })
+  if (b.status === 'closed') return res.status(400).json({ error: 'รอบนี้ปิดอยู่แล้ว — กด "เปิดแก้ไข" ก่อน' })
+  const codes = Array.isArray(req.body?.emp_codes) ? req.body.emp_codes.map(String) : JSON.parse(b.emp_codes || '[]')
+  const body = { pay_date: req.body?.pay_date ?? b.pay_date, note: req.body && 'note' in req.body ? req.body.note : b.note }
+  const r = closeBatch({ period: b.period, codes, ...batchBody(body, b.period), batch: b, req })
+  if (r.error) return res.status(400).json({ error: r.error })
+  res.json({ ok: true, period: b.period, ...r })
+})
+// ลบรอบที่เปิดแก้ไขอยู่ (ยกเลิกการทำจ่ายรอบนั้น) — รอบที่ปิดอยู่ต้องเปิดแก้ไขก่อน
+api.delete('/payroll/batches/:id', financeOnly, (req, res) => {
+  const b = db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(req.params.id)
+  if (!b) return res.status(404).json({ error: 'ไม่พบรอบจ่าย' })
+  if (b.status === 'closed') return res.status(400).json({ error: 'รอบที่ปิดแล้วลบไม่ได้ — กด "เปิดแก้ไข" ก่อน' })
+  db.prepare('DELETE FROM payroll_batches WHERE id=?').run(b.id)
+  audit(req, 'ยกเลิกรอบจ่ายเงินเดือน', b.no)
+  res.json({ ok: true })
+})
+// ปิดงวดแบบเดิม = ทำจ่ายทุกคนที่ยังไม่ได้รับเงินเดือนเดือนนี้ในรอบเดียว
 api.post('/payroll/close', financeOnly, (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.body?.period) ? req.body.period : currentPeriod()
-  const rows = computePayroll(period)
-  // กันปิดงวดที่มีคน "เงินติดลบ" (ยอดหักรวมเกินเงินได้) — ต้องแก้ยอดหักก่อน
-  const negatives = rows.filter((p) => netOf(p) < 0)
-  if (negatives.length) return res.status(400).json({ error: `ปิดงวดไม่ได้ — เงินสุทธิติดลบ: ${negatives.map((p) => `${p.name} (${netOf(p).toLocaleString()})`).join(', ')} กรุณาปรับยอดหัก/เบิกให้ไม่เกินเงินได้ก่อน` })
-  const total = rows.reduce((s, p) => s + netOf(p), 0)
-  db.prepare('INSERT INTO payroll_runs (period,data,total,created,by) VALUES (?,?,?,?,?) ON CONFLICT(period) DO UPDATE SET data=excluded.data,total=excluded.total,created=excluded.created,by=excluded.by')
-    .run(period, JSON.stringify(rows), total, todayTH(), req.user.name)
-  let journal = null
-  try { journal = postPayrollJournal(period, rows, req.user.name) } catch (e) { journal = { posted: false, error: e.message }; logJournalIssue('payroll', Number(period.replace('-', '')), 'ปิดงวดเงินเดือน ' + periodLabelTH(period), e) }
-  audit(req, 'ปิดงวดเงินเดือน', `${periodLabelTH(period)}${journal?.posted ? ' · ลงบัญชีแล้ว' : ''}`)
-  res.json({ ok: true, period, periodLabel: periodLabelTH(period), locked: true, rows, journal })
+  const paid = paidMap(period)
+  const codes = computePayroll(period).map((r) => r.code).filter((c) => !paid.has(c))
+  if (!codes.length) return res.status(400).json({ error: `ทุกคนทำจ่ายงวด ${periodLabelTH(period)} ครบแล้ว` })
+  const r = closeBatch({ period, codes, ...batchBody(req.body, period), req })
+  if (r.error) return res.status(400).json({ error: r.error })
+  res.json({ ok: true, period, periodLabel: periodLabelTH(period), locked: true, ...r })
 })
 // สรุป Retention สะสมต่อคน — "แต่ละคนหักไปแล้วเท่าไหร่ / ครบ 5,000 หรือยัง"
 // paid = ยอดยกมา + ผลรวมที่หักในทุกงวดที่ปิดแล้ว (ยังไม่นับงวดที่ยังไม่ปิด)
@@ -3452,13 +3683,14 @@ api.get('/salary-advances/limit', requireSalary, (req, res) => {
   res.json({ worked, daily, limit, taken, remaining: Math.max(0, limit - taken), period })
 })
 // งวดที่ปิดแล้ว = snapshot ถูกล็อกไว้แล้ว — ห้ามบันทึกเบิก/หักย้อนเข้าไป (ยอดจะไม่ถูกหักจริง)
-const periodClosed = (period) => !!db.prepare('SELECT 1 FROM payroll_runs WHERE period=?').get(period)
+// คนที่ทำจ่ายเงินเดือนของงวดนี้ไปแล้ว (รอบปิดแล้ว) = snapshot ถูกล็อก — ห้ามบันทึกเบิก/หัก/รายได้ย้อนเข้าไป (ยอดจะไม่ถูกนับจริง)
+const periodClosed = (period, code) => empPaid(period, code)
 api.post('/salary-advances', financeOnly, (req, res) => {
   const b = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod() // งวดที่เลือก (เช่น ปิดงวด ส.ค. ต้นเดือน ก.ย.)
-  if (periodClosed(period)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว — บันทึกเบิกเข้างวดนี้ไม่ได้ (จะไม่ถูกหักในเงินเดือน) กรุณาเลือกงวดที่ยังไม่ปิด` })
+  if (periodClosed(period, emp.code)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — บันทึกเบิกเข้างวดนี้ไม่ได้ (จะไม่ถูกหักในเงินเดือน) กรุณาเลือกงวดที่ยังไม่ปิด` })
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
   const { worked, limit } = advanceLimit(emp, period)
@@ -3472,7 +3704,7 @@ api.post('/salary-advances', financeOnly, (req, res) => {
 })
 api.delete('/salary-advances/:id', financeOnly, (req, res) => {
   const a = db.prepare('SELECT * FROM salary_advances WHERE id=?').get(req.params.id)
-  if (a && periodClosed(a.period)) return res.status(400).json({ error: `งวด ${periodLabelTH(a.period)} ปิดแล้ว — ลบรายการเบิกของงวดที่ปิดไม่ได้` })
+  if (a && periodClosed(a.period, a.emp_code)) return res.status(400).json({ error: `งวด ${periodLabelTH(a.period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — ลบรายการเบิกของงวดที่ปิดไม่ได้` })
   db.prepare('DELETE FROM salary_advances WHERE id=?').run(req.params.id)
   if (a) audit(req, 'ยกเลิกเบิกล่วงหน้า', `${a.emp_name} ${a.amount}`)
   res.json({ ok: true })
@@ -3505,7 +3737,7 @@ api.post('/deductions', financeOnly, (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod()
-  if (periodClosed(period)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว — บันทึกหักเข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
+  if (periodClosed(period, emp.code)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — บันทึกหักเข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงินที่หัก' })
   const reason = String(b.reason || '').trim()
@@ -3517,7 +3749,7 @@ api.post('/deductions', financeOnly, (req, res) => {
 })
 api.delete('/deductions/:id', financeOnly, (req, res) => {
   const d = db.prepare('SELECT * FROM deductions WHERE id=?').get(req.params.id)
-  if (d && periodClosed(d.period)) return res.status(400).json({ error: `งวด ${periodLabelTH(d.period)} ปิดแล้ว — ลบรายการหักของงวดที่ปิดไม่ได้` })
+  if (d && periodClosed(d.period, d.emp_code)) return res.status(400).json({ error: `งวด ${periodLabelTH(d.period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — ลบรายการหักของงวดที่ปิดไม่ได้` })
   db.prepare('DELETE FROM deductions WHERE id=?').run(req.params.id)
   if (d) audit(req, 'ยกเลิกการหักอื่นๆ', `${d.emp_name} ${d.amount}`)
   res.json({ ok: true })
@@ -3533,7 +3765,7 @@ api.post('/other-income', financeOnly, (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod()
-  if (periodClosed(period)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว — บันทึกรายได้เข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
+  if (periodClosed(period, emp.code)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — บันทึกรายได้เข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
   const reason = String(b.reason || '').trim()
@@ -3545,7 +3777,7 @@ api.post('/other-income', financeOnly, (req, res) => {
 })
 api.delete('/other-income/:id', financeOnly, (req, res) => {
   const d = db.prepare('SELECT * FROM other_income WHERE id=?').get(req.params.id)
-  if (d && periodClosed(d.period)) return res.status(400).json({ error: `งวด ${periodLabelTH(d.period)} ปิดแล้ว — ลบรายได้ของงวดที่ปิดไม่ได้` })
+  if (d && periodClosed(d.period, d.emp_code)) return res.status(400).json({ error: `งวด ${periodLabelTH(d.period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — ลบรายได้ของงวดที่ปิดไม่ได้` })
   db.prepare('DELETE FROM other_income WHERE id=?').run(req.params.id)
   if (d) audit(req, 'ยกเลิกรายได้อื่นๆ', `${d.emp_name} ${d.amount}`)
   res.json({ ok: true })
@@ -3565,21 +3797,23 @@ api.get('/payroll/annual', requireSalary, (req, res) => {
 // ไฟล์จ่ายเงินเดือนผ่านธนาคาร (CSV) — ใช้ยอดสุทธิของงวด (snapshot ถ้าปิดงวดแล้ว)
 const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
 api.get('/payroll/bank-file', requireSalary, (req, res) => {
-  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
-  const run = db.prepare('SELECT * FROM payroll_runs WHERE period=?').get(period)
-  const rows = run ? JSON.parse(run.data) : computePayroll(period)
+  // ?batch=id = เฉพาะคนในรอบจ่ายนั้น · ไม่ระบุ = ทั้งเดือน (จ่ายแล้ว + ยังไม่จ่าย)
+  const batch = req.query.batch ? db.prepare('SELECT * FROM payroll_batches WHERE id=?').get(req.query.batch) : null
+  if (req.query.batch && !batch) return res.status(404).json({ error: 'ไม่พบรอบจ่าย' })
+  const period = batch ? batch.period : (/^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod())
+  const rows = batch ? (batch.status === 'closed' ? JSON.parse(batch.data) : computePayroll(period).filter((r) => JSON.parse(batch.emp_codes || '[]').includes(r.code))) : periodRows(period)
   const head = ['ลำดับ', 'รหัสพนักงาน', 'ชื่อ-สกุล', 'ธนาคาร', 'เลขบัญชี', 'จำนวนเงินสุทธิ', 'อ้างอิง']
   // ไฟล์โอนธนาคาร: เอาเฉพาะแถวที่โอนได้จริง (มีเลขบัญชี + ยอดสุทธิ > 0) — แถวที่เหลือหมายเหตุไว้ท้ายไฟล์
   const payable = rows.filter((p) => (p.bank_acct || '').trim() && netOf(p) > 0)
   const skipped = rows.filter((p) => !((p.bank_acct || '').trim() && netOf(p) > 0) && netOf(p) !== 0)
-  const body = payable.map((p, i) => [i + 1, p.code || '', p.name || '', p.bank_name || '', p.bank_acct || '', netOf(p).toFixed(2), 'SALARY ' + period])
+  const body = payable.map((p, i) => [i + 1, p.code || '', p.name || '', p.bank_name || '', p.bank_acct || '', netOf(p).toFixed(2), 'SALARY ' + period + (batch ? ' ' + batch.no : '')])
   const total = payable.reduce((s, p) => s + netOf(p), 0)
   const foot = ['', '', '', '', 'รวม', total.toFixed(2), payable.length + ' รายการ']
   if (skipped.length) foot.push('ข้าม (ไม่มีเลขบัญชี/ยอดผิดปกติ): ' + skipped.map((p) => p.name).join(' · '))
   const csv = '﻿' + [head, ...body, foot].map((r) => r.map(csvCell).join(',')).join('\r\n')
   audit(req, 'ดาวน์โหลดไฟล์จ่ายเงินเดือนธนาคาร', periodLabelTH(period))
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
-  res.setHeader('Content-Disposition', `attachment; filename="bank_salary_${period}.csv"`)
+  res.setHeader('Content-Disposition', `attachment; filename="bank_salary_${batch ? batch.no : period}.csv"`)
   res.send(csv)
 })
 
@@ -3611,8 +3845,7 @@ api.get('/payroll/annual-emp', requireSalary, (req, res) => {
 // ไฟล์นำส่งประกันสังคม (แนว สปส.1-10 ส่วนที่ 2) — รายชื่อ + ค่าจ้าง + เงินสมทบของงวด
 api.get('/payroll/sso-file', requireSalary, (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
-  const run = db.prepare('SELECT data FROM payroll_runs WHERE period=?').get(period)
-  const rows = (run ? JSON.parse(run.data) : computePayroll(period)).filter((p) => (p.sso || 0) > 0)
+  const rows = periodRows(period).filter((p) => (p.sso || 0) > 0)
   const split = (full) => { const t = String(full || '').trim().split(/\s+/); return { first: t[0] || '', last: t.slice(1).join(' ') } }
   const head = ['ลำดับ', 'เลขบัตรประชาชน', 'คำนำหน้า', 'ชื่อ', 'นามสกุล', 'ค่าจ้างงวดนี้', 'เงินสมทบผู้ประกันตน (5%)']
   const body = rows.map((p, i) => {
@@ -4925,8 +5158,7 @@ function expressCsv(kind, reqPeriod) {
   }
   // payroll — เลือกงวดได้ (?period=YYYY-MM) · ใช้ snapshot ถ้าปิดงวดแล้ว
   const period = /^\d{4}-\d{2}$/.test(reqPeriod || '') ? reqPeriod : currentPeriod()
-  const run = db.prepare('SELECT data FROM payroll_runs WHERE period=?').get(period)
-  const rows = run ? JSON.parse(run.data) : computePayroll(period)
+  const rows = periodRows(period)
   // "เงินได้" สำหรับ ภงด.1 = เงินได้พึงประเมิน (เงินเดือน+OT−หักวันลา) ไม่ใช่ยอดโอนสุทธิหลังหักเบิก/ประกันผลงาน
   const earnedOf = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.leave_deduct || 0)
   const head = ['งวด', 'รหัสพนักงาน', 'ชื่อ-สกุล', 'เลขผู้เสียภาษี', 'เงินเดือน', 'OT', 'รายได้อื่นๆ', 'ประกันสังคม', 'ภาษีหัก(ภงด.1)', 'เงินได้พึงประเมิน', 'จ่ายสุทธิ', 'ธนาคาร', 'เลขบัญชี']

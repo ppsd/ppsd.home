@@ -124,7 +124,7 @@ export interface ApiEmployee {
   user_id?: number | null // บัญชีผู้ใช้ที่ผูก
   no_sso?: number
 }
-export interface ApiPayroll extends ApiEmployee {
+export interface ApiPayroll extends Omit<ApiEmployee, 'work_days'> {
   base: number
   ot: number
   sso: number
@@ -144,9 +144,28 @@ export interface ApiPayroll extends ApiEmployee {
   retention_monthly?: number
   retention_periods?: number
   daily_rate?: number
-  work_days?: number
+  work_days?: number | null // วันทำงานของงวดนี้ (รายเดือน null = เต็มเดือน)
+  work_days_set?: boolean // กรอกวันเองในงวดนี้ (ไม่ใช่ค่าเริ่มต้น)
+  days_in_month?: number
+  prorated?: boolean // รายเดือนทำไม่เต็มเดือน → ได้ตามวัน
+  monthly_base?: number | null // เงินเดือนเต็ม (รายเดือน) ก่อนคิดตามวัน
+  retention_refund?: number // คืนเงินประกันผลงานในงวดนี้
+  pay_note?: string // หมายเหตุรายคน
+  paid?: boolean // ทำจ่ายเดือนนี้แล้ว (อยู่ในรอบที่ปิดแล้ว)
+  batch_id?: number
+  batch_no?: string
+  pay_date?: string
+  batch_note?: string
   exempt_attendance?: boolean
 }
+// รอบจ่ายเงินเดือน (เดือนหนึ่งมีได้หลายรอบ · 1 คนรับเงินเดือนของเดือนได้รอบเดียว)
+export interface ApiPayrollBatch {
+  id: number; period: string; seq: number; no: string; pay_date: string; note: string; status: 'closed' | 'reopened'
+  emp_codes: string[]; count: number; total: number; created: string; by: string; closed_at?: string; closed_by?: string
+}
+export interface PayrollMeta { period: string; periodLabel: string; locked: boolean; paidCount: number; daysInMonth: number; batches: ApiPayrollBatch[] }
+type PayrollResp = { period: string; periodLabel: string; locked: boolean; paid_count?: number; days_in_month?: number; batches?: ApiPayrollBatch[]; rows: ApiPayroll[] }
+const payrollMetaOf = (r: PayrollResp): PayrollMeta => ({ period: r.period, periodLabel: r.periodLabel, locked: r.locked, paidCount: r.paid_count || 0, daysInMonth: r.days_in_month || 30, batches: r.batches || [] })
 export interface ApiLeave {
   id: number
   emp_code: string
@@ -470,7 +489,7 @@ interface AppData {
   expenses: ApiExpense[]
   employees: ApiEmployee[]
   payroll: ApiPayroll[] | null
-  payrollMeta: { period: string; periodLabel: string; locked: boolean } | null
+  payrollMeta: PayrollMeta | null
   ot: ApiOT[]
   vendors: ApiVendor[] | null
   prs: ApiPR[] | null
@@ -609,7 +628,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const site = role === 'site'
     // salary/payroll visible to: บัญชี (accounting) + ผู้จัดการ + HR (บุคคล) + admin
     const salary = finance || me.position === 'ผู้จัดการ' || me.position === 'CEO' || !!me.isManager || me.position === 'บุคคล'
-    type PayrollResp = { period: string; periodLabel: string; locked: boolean; rows: ApiPayroll[] }
     const p1 = Promise.all([
       tryGet<ApiHouse[]>('/houses', []),
       tryGet<ApiInstallment[]>('/installments', []),
@@ -646,7 +664,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLoadingMore(true)
     p2.then(([expenses, ot, payrollResp, vendors, prs, payments, efilings, users, salesDocs, leaves, timeAdjustments, attendance, kioskEmployees, reports, purchaseOrders, materialPrices]) => {
       const payroll = payrollResp ? payrollResp.rows : null
-      const payrollMeta = payrollResp ? { period: payrollResp.period, periodLabel: payrollResp.periodLabel, locked: payrollResp.locked } : null
+      const payrollMeta = payrollResp ? payrollMetaOf(payrollResp) : null
       setData((prev) => ({ ...prev, expenses, ot, payroll, payrollMeta, vendors, prs, payments, efilings, users, salesDocs, leaves, timeAdjustments, attendance, kioskEmployees, reports, purchaseOrders, materialPrices }))
     }).finally(() => setLoadingMore(false))
   }
@@ -720,10 +738,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const next = await tryGet<AppData[K]>(path, data[key])
     setData((d) => ({ ...d, [key]: next }))
   }
-  type PayrollResp = { period: string; periodLabel: string; locked: boolean; rows: ApiPayroll[] }
   async function reloadPayroll(period?: string) {
     const resp = await tryGet<PayrollResp | null>('/payroll' + (period ? '?period=' + period : ''), null)
-    if (resp) setData((d) => ({ ...d, payroll: resp.rows, payrollMeta: { period: resp.period, periodLabel: resp.periodLabel, locked: resp.locked } }))
+    if (resp) setData((d) => ({ ...d, payroll: resp.rows, payrollMeta: payrollMetaOf(resp) }))
   }
 
   return (

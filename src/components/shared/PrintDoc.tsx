@@ -47,13 +47,18 @@ export function SlipBody({ slip }: { slip?: ApiPayroll }) { // ใช้ซ้�
   const advance = slip?.advance ?? 0
   const otherDeduct = slip?.other_deduct ?? 0
   const otherIncome = slip?.other_income ?? 0
+  const refund = slip?.retention_refund ?? 0 // คืนเงินประกันผลงาน
   // เงินประกันผลงานสะสม (บริษัทเก็บไว้ คืนเมื่อครบเงื่อนไข)
   const retPaid = slip?.retention_paid ?? 0
   const retCap = slip?.retention_cap ?? 5000
   const retPeriods = slip?.retention_periods ?? 0
   const retComplete = retPaid >= retCap
   const retRemain = Math.max(0, retCap - retPaid)
-  const gross = base + ot + otherIncome
+  const gross = base + ot + otherIncome + refund
+  // วันทำงาน: รายวัน = วัน × ค่าแรง · รายเดือนทำไม่เต็มเดือน = เงินเดือน ÷ 30 × วัน
+  const daysText = slip?.pay_type === 'รายวัน'
+    ? `${slip?.work_days || 0} วัน × ${fmt2(slip?.daily_rate || 0)}`
+    : slip?.prorated ? `${slip?.work_days} วัน (เงินเดือน ${fmt2(slip?.monthly_base || 0)} ÷ 30 × วัน)` : 'เต็มเดือน'
   const totalDeduct = sso + tax + leave + retention + loan + advance + otherDeduct
   const net = gross - totalDeduct
   return (
@@ -63,6 +68,7 @@ export function SlipBody({ slip }: { slip?: ApiPayroll }) { // ใช้ซ้�
         <tbody>
           <tr><td style={lblTd}>ชื่อพนักงาน</td><td style={valTd}>{slip?.name || '-'}</td><td style={lblTd}>รหัสพนักงาน</td><td style={valTd}>{slip?.code || '-'}</td></tr>
           <tr><td style={lblTd}>ตำแหน่ง</td><td style={valTd}>{slip?.role || '-'}</td><td style={lblTd}>ประเภทจ้าง</td><td style={valTd}>{slip?.pay_type || 'รายเดือน'}</td></tr>
+          <tr><td style={lblTd}>วันทำงาน</td><td style={valTd}>{daysText}</td><td style={lblTd}>วันที่จ่าย</td><td style={valTd}>{slip?.pay_date ? new Date(slip.pay_date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) + (slip.batch_no ? ` (${slip.batch_no})` : '') : '-'}</td></tr>
         </tbody>
       </table>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -73,6 +79,7 @@ export function SlipBody({ slip }: { slip?: ApiPayroll }) { // ใช้ซ้�
               <tr><td style={lblTd}>{slip?.pay_type === 'รายวัน' ? 'ค่าแรง' : 'เงินเดือน'}</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(base)}</td></tr>
               <tr><td style={lblTd}>ค่าล่วงเวลา (OT)</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(ot)}</td></tr>
               {otherIncome > 0 && <tr><td style={lblTd}>รายได้อื่นๆ</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(otherIncome)}</td></tr>}
+              {refund > 0 && <tr><td style={lblTd}>คืนเงินประกันผลงาน</td><td className="num" style={{ ...valTd, textAlign: 'right' }}>{fmt2(refund)}</td></tr>}
               <tr><td style={{ ...lblTd, fontWeight: 700, color: '#1C2730' }}>รวมรายได้</td><td className="num" style={{ ...valTd, textAlign: 'right', fontWeight: 700 }}>{fmt2(gross)}</td></tr>
             </tbody>
           </table>
@@ -101,6 +108,11 @@ export function SlipBody({ slip }: { slip?: ApiPayroll }) { // ใช้ซ้�
           {retComplete
             ? <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: '#2E7D55', background: '#E2F1EA', borderRadius: 20, padding: '2px 11px' }}>ครบเพดานแล้ว — หยุดหัก</span>
             : <span style={{ marginLeft: 'auto', fontSize: 11.5, color: '#8A6A1F' }}>คงเหลือหักอีก ฿{fmt2(retRemain)}</span>}
+        </div>
+      )}
+      {(slip?.pay_note || slip?.batch_note) && (
+        <div style={{ marginTop: 14, fontSize: 12.5, color: '#3C4750', border: '1px dashed #D2DAE1', borderRadius: 8, padding: '8px 14px' }}>
+          <b>หมายเหตุ:</b> {[slip?.pay_note, slip?.batch_note].filter(Boolean).join(' · ')}
         </div>
       )}
       <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>

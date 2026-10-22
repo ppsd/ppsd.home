@@ -3,7 +3,7 @@ import { SlipBody } from '../shared/PrintDoc'
 
 // สลิปเงินเดือน "ทั้งบริษัท" ในเอกสารเดียว — คนละหน้า A4 พิมพ์ครั้งเดียวจบสิ้นเดือน
 export default function AllSlipsDoc({ rows, periodLabel, onClose }: { rows: ApiPayroll[]; periodLabel: string; onClose: () => void }) {
-  const data = rows.filter((r) => r.status !== 'ลาออก')
+  const data = rows // แถวของงวด/รอบที่เลือก (รวมคนที่ลาออกกลางเดือนแต่ยังได้รับเงินเดือนเดือนนี้)
   return (
     <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '18px 12px' }}>
       <style>{`@media print { @page { size: A4 portrait; margin: 12mm } .no-print { display: none !important } .print-area { box-shadow: none !important; width: 100% !important } .slip-page { page-break-after: always; box-shadow: none !important; margin-bottom: 0 !important } .slip-page:last-child { page-break-after: auto } }`}</style>

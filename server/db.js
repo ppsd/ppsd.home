@@ -365,6 +365,30 @@ ensureColumn('pms_reviews', 'att_late', 'INTEGER')
 ensureColumn('pms_reviews', 'att_wo_overdue', 'INTEGER') // ใบสั่งงานเกินกำหนด → หักคะแนน KPI
 ensureColumn('pms_reviews', 'penalty', 'REAL')
 ensureColumn('pms_reviews', 'raw_total', 'REAL')
+
+// ===== เงินเดือน: ทำจ่ายได้หลายรอบต่อเดือน =====
+// payroll_batches = รอบจ่าย (เลือกพนักงานกี่คนก็ได้ · 1 คนรับเงินเดือนของเดือนหนึ่งได้ 1 รอบ) · data = snapshot แถวเงินเดือนของคนในรอบ
+// payroll_runs (เดิม) = ยอดรวมของทุกรอบที่ปิดแล้วในเดือน — สร้างใหม่จากรอบจ่ายทุกครั้ง (ไฟล์ธนาคาร/สปส./ภงด./รายงาน อ่านจากตัวนี้)
+db.exec(`CREATE TABLE IF NOT EXISTS payroll_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  period TEXT, seq INTEGER, no TEXT, pay_date TEXT, note TEXT, status TEXT,
+  emp_codes TEXT, data TEXT, total REAL, journal_sid INTEGER,
+  created TEXT, by TEXT, closed_at TEXT, closed_by TEXT
+)`)
+// ข้อมูลกรอกต่อคนต่อเดือน: วันทำงาน (ว่าง = รายเดือนเต็มเดือน / รายวันตามลงเวลา) · หมายเหตุ · คืนเงินประกันผลงาน
+db.exec(`CREATE TABLE IF NOT EXISTS payroll_inputs (
+  period TEXT, emp_code TEXT, work_days REAL, note TEXT, retention_refund REAL,
+  PRIMARY KEY (period, emp_code)
+)`)
+// ย้ายงวดที่ปิดไว้แบบเดิม (1 งวด = 1 snapshot) มาเป็น "รอบ 1" — ใช้รหัสลงบัญชีเดิม (YYYYMM) ต่อ ไม่ลงบัญชีซ้ำ
+for (const r of db.prepare('SELECT * FROM payroll_runs WHERE period NOT IN (SELECT period FROM payroll_batches)').all()) {
+  let codes = []
+  try { codes = JSON.parse(r.data).map((x) => x.code) } catch { /* ข้อมูลงวดเสีย */ }
+  const [yy, mm] = r.period.split('-').map(Number)
+  const payDate = `${r.period}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`
+  db.prepare("INSERT INTO payroll_batches (period,seq,no,pay_date,note,status,emp_codes,data,total,journal_sid,created,by,closed_at,closed_by) VALUES (?,1,?,?,'','closed',?,?,?,?,?,?,?,?)")
+    .run(r.period, `PAY-${r.period.replace('-', '')}-1`, payDate, JSON.stringify(codes), r.data, r.total, Number(r.period.replace('-', '')), r.created, r.by, r.created, r.by)
+}
 ensureColumn('pms_reviews', 'kpi_set_id', 'INTEGER') // ชุด KPI ที่ใช้ตอนประเมิน (ตัวหัวข้อเก็บสำเนาไว้ในใบแล้ว — แก้ชุดทีหลังไม่กระทบใบเก่า)
 
 // ชุด KPI (แบบฟอร์มประเมิน) — แก้ไขได้จากหน้าประเมินผล · ผูกกับตำแหน่ง (pms_position_sets) หรือรายคน (employees.kpi_set_id)

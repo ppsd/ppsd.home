@@ -16,17 +16,18 @@ const C_TOTAL = '#FFF2A8'  // แถวรวม (เหลือง)
 
 const otherOf = (p: ApiPayroll) => (p.leave_deduct || 0) + (p.other_deduct || 0) // คอลัมน์ "อื่นๆ" = หักลา/ขาด + หักอื่นๆ
 const deductOf = (p: ApiPayroll) => (p.sso || 0) + (p.tax || 0) + (p.advance || 0) + (p.student_loan || 0) + otherOf(p) + (p.retention || 0) // รวมหักทั้งหมด
-const netOf = (p: ApiPayroll) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
+const netOf = (p: ApiPayroll) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) + (p.retention_refund || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 
 export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows: ApiPayroll[]; periodLabel: string; onClose: () => void }) {
-  const data = rows.filter((r) => r.status !== 'ลาออก')
+  const data = rows // แถวของงวด/รอบที่เลือก (รวมคนที่ลาออกกลางเดือนแต่ยังได้รับเงินเดือนเดือนนี้)
   // แยกชื่อ/สกุลจากชื่อเต็ม (ถ้าไม่ได้แยกไว้)
   const split = (full: string) => { const parts = String(full || '').trim().split(/\s+/); return { first: parts[0] || '', last: parts.slice(1).join(' ') } }
   const isDaily = (p: ApiPayroll) => p.pay_type === 'รายวัน'
-  const rateOf = (p: ApiPayroll) => (isDaily(p) ? (p.daily_rate || 0) : (p.base || 0))
-  const countOf = (p: ApiPayroll) => (isDaily(p) ? (p.work_days || 0) : 1)
+  const rateOf = (p: ApiPayroll) => (isDaily(p) ? (p.daily_rate || 0) : (p.monthly_base ?? p.base ?? 0))
+  // จำนวนเดือน/วัน: รายวัน = วัน · รายเดือนทำไม่เต็มเดือน = วัน ÷ 30 (เช่น 12 วัน = 0.40 เดือน)
+  const countOf = (p: ApiPayroll) => (isDaily(p) ? (p.work_days || 0) : p.prorated ? (p.work_days || 0) / 30 : 1)
   const wageOf = (p: ApiPayroll) => p.base || 0
-  const extraOf = (p: ApiPayroll) => (p.ot || 0) + (p.other_income || 0) // คอลัมน์ "รายรับอื่นๆ" = OT + รายได้อื่นๆ (โบนัส/เบี้ยขยัน ฯลฯ)
+  const extraOf = (p: ApiPayroll) => (p.ot || 0) + (p.other_income || 0) + (p.retention_refund || 0) // คอลัมน์ "รายรับอื่นๆ" = OT + รายได้อื่นๆ (โบนัส/เบี้ยขยัน ฯลฯ) + คืนเงินประกัน
   const incomeOf = (p: ApiPayroll) => (p.base || 0) + extraOf(p)
 
   const sum = (f: (p: ApiPayroll) => number) => data.reduce((s, p) => s + (f(p) || 0), 0)
@@ -72,7 +73,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <th style={{ ...th, background: C_ORANGE }} colSpan={2}>อัตราปกติ 5%</th>
                 <th style={{ ...th, border: 'none' }} colSpan={5} />
                 <th style={{ ...th, background: C_ORANGE }}>คีย์ส่งแบงค์</th>
-                <th style={{ ...th, border: 'none' }} colSpan={3} />
+                <th style={{ ...th, border: 'none' }} colSpan={4} />
               </tr>
               <tr>
                 {['ลำดับ', 'คำนำหน้า', 'ชื่อ', 'สกุล', 'เลขบัตรประชาชน', 'ค่าจ้างรายวัน/รายเดือน', 'เดือนละ/วันละ', 'จำนวนเดือน/วัน'].map((h, i) => <th key={i} style={th}>{h}</th>)}
@@ -90,6 +91,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <th style={th}>ชื่อเรียก</th>
                 <th style={th}>เลขที่บัญชี</th>
                 <th style={th}>ธนาคาร</th>
+                <th style={th}>หมายเหตุ</th>
               </tr>
             </thead>
             <tbody>
@@ -105,7 +107,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                     <td style={tdC} className="num">{p.tax_id || ''}</td>
                     <td style={tdC}>{p.pay_type || 'รายเดือน'}</td>
                     <td style={tdR} className="num">{f2(rateOf(p))}</td>
-                    <td style={{ ...tdR, color: '#C0392B' }} className="num">{daily ? f2(countOf(p)) : '1.00'}</td>
+                    <td style={{ ...tdR, color: '#C0392B' }} className="num">{daily || p.prorated ? f2(countOf(p)) : '1.00'}</td>
                     <td style={{ ...tdR, background: C_WAGE, fontWeight: 600 }} className="num">{f2z(wageOf(p))}</td>
                     <td style={tdR} className="num">{f2z(extraOf(p))}</td>
                     <td style={tdR} className="num">{f2z(incomeOf(p))}</td>
@@ -120,6 +122,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                     <td style={tdC}>{p.nickname || ''}</td>
                     <td style={tdC} className="num">{p.bank_acct || ''}</td>
                     <td style={tdC}>{p.bank_name || ''}</td>
+                    <td style={{ ...td, whiteSpace: 'normal', minWidth: 110 }}>{[p.prorated ? `ทำงาน ${p.work_days} วัน` : '', p.pay_note, p.batch_no].filter(Boolean).join(' · ')}</td>
                   </tr>
                 )
               })}
@@ -137,7 +140,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <td style={tdR} className="num">{f2(T.ret)}</td>
                 <td style={{ ...tdR, color: '#C0392B' }} className="num">{f2(T.deduct)}</td>
                 <td style={tdR} className="num">{f2(T.net)}</td>
-                <td style={td} colSpan={3} />
+                <td style={td} colSpan={4} />
               </tr>
             </tbody>
           </table>
