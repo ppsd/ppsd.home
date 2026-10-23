@@ -99,6 +99,7 @@ export function statusStyle(s: string): Swatch {
   if (s === 'ส่งมอบแล้ว') return { c: '#2E7D55', bg: '#E2F1EA' }
   if (s === 'after-service') return { c: '#C0852C', bg: '#F6ECD6' }
   if (s === 'เพิ่งเริ่ม') return { c: '#5C6770', bg: '#EDF1F4' }
+  if (s === 'test') return { c: '#7A4FB5', bg: '#F0EAF8' } // บ้านทดสอบ
   return { c: '#30506A', bg: '#E2E9EF' } // กำลังสร้าง
 }
 
@@ -333,6 +334,7 @@ export const HOUSE_STATUSES = [
   { id: 'กำลังสร้าง', label: 'กำลังสร้าง' },
   { id: 'ส่งมอบแล้ว', label: 'ส่งมอบแล้ว' },
   { id: 'after-service', label: 'After-service' },
+  { id: 'test', label: 'Test (บ้านทดสอบ)' }, // บ้านทดสอบ — แยกออกจาก "ทั้งหมด" ในหน้ารวมบ้าน
 ]
 // ---- house list status filters ----
 export const filters = [
@@ -341,6 +343,7 @@ export const filters = [
   { id: 'ส่งมอบแล้ว', label: 'ส่งมอบแล้ว' },
   { id: 'after-service', label: 'After-service' },
   { id: 'เพิ่งเริ่ม', label: 'เพิ่งเริ่ม' },
+  { id: 'test', label: 'Test' },
 ]
 
 // ---- house detail static data ----

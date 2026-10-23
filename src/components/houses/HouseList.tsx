@@ -49,11 +49,12 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
   // search = รหัสบ้านที่เลือกจาก dropdown ('' = ทุกหลัง)
   const st = (h: ApiHouse) => String(h.status || '').trim()
   const filtered = houses.filter((h) => {
-    const okS = statusFilter === 'all' || st(h) === statusFilter
+    // "ทั้งหมด" ไม่รวมบ้านทดสอบ (status test) — ดูได้จากปุ่ม Test แยก
+    const okS = statusFilter === 'all' ? st(h) !== 'test' : st(h) === statusFilter
     const okQ = !search || h.code === search
     return okS && okQ
   })
-  const countOf = (id: string) => houses.filter((h) => id === 'all' || st(h) === id).length
+  const countOf = (id: string) => houses.filter((h) => (id === 'all' ? st(h) !== 'test' : st(h) === id)).length
   const houseOptions = houses.slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
 
   return (
