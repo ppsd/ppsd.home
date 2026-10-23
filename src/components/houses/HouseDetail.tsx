@@ -110,6 +110,12 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
   ]
   const known = new Set(cats.map((c) => c.key))
   for (const k of new Set(houseInst.map((r) => r.category || 'house'))) if (!known.has(k)) cats.push({ key: k, label: k })
+  // หมวดงวดงานที่ย่อไว้ — จำต่อบ้านในเบราว์เซอร์นี้
+  const closedKey = 'ppsd_inst_closed_' + house.code
+  const [closedCats, setClosedCats] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(closedKey) || '[]') } catch { return [] } })
+  useEffect(() => { try { setClosedCats(JSON.parse(localStorage.getItem(closedKey) || '[]')) } catch { setClosedCats([]) } /* eslint-disable-next-line */ }, [house.code])
+  const saveClosed = (next: string[]) => { setClosedCats(next); try { localStorage.setItem(closedKey, JSON.stringify(next)) } catch { /* ignore */ } }
+  const toggleCat = (key: string) => saveClosed(closedCats.includes(key) ? closedCats.filter((k) => k !== key) : [...closedCats, key])
   const houseIssues = data.issues.filter((r) => r.house_code === house.code)
   const houseExp = data.expenses.filter((r) => r.house_code === house.code && r.status !== 'ปฏิเสธ')
   const expTotal = houseExp.reduce((s, e) => s + e.amount, 0)
@@ -290,20 +296,37 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', borderBottom: '1px solid #EEF1F4', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12.5, color: '#5C6770' }}>ไม่ต้องกรอกทีละงวด — อัปโหลดสัญญาให้ AI อ่าน หรือวางจาก Excel</span>
-                <button onClick={() => setImporting(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>⬆ นำเข้างวดงาน (อัปโหลดสัญญา)</button>
+                <button onClick={() => saveClosed(closedCats.length >= cats.length ? [] : cats.map((c) => c.key))} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>{closedCats.length >= cats.length ? '▼ ขยายทุกหมวด' : '▲ ย่อทุกหมวด'}</button>
+                <button onClick={() => setImporting(true)} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>⬆ นำเข้างวดงาน (อัปโหลดสัญญา)</button>
               </div>
-              {cats.map((c) => (
+              {cats.map((c) => {
+                const open = !closedCats.includes(c.key)
+                const cu = instOf(c.key, 'customer'), co = instOf(c.key, 'contractor')
+                const sumAmt = (a: typeof cu) => a.reduce((s2, r) => s2 + (r.amount || 0), 0)
+                const sumPaid = (a: typeof cu) => a.reduce((s2, r) => s2 + (r.paid || 0), 0)
+                return (
                 <div key={c.key}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', background: '#F0F3F6', borderTop: '1px solid #E1E5EA', borderBottom: '1px solid #E1E5EA' }}>
+                  <div onClick={() => toggleCat(c.key)} title={open ? 'กดเพื่อย่อหมวดนี้' : 'กดเพื่อขยายหมวดนี้'}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', background: '#F0F3F6', borderTop: '1px solid #E1E5EA', borderBottom: '1px solid #E1E5EA', cursor: 'pointer', userSelect: 'none', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, color: '#5C6770', width: 12, display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▶</span>
                     <span style={{ fontSize: 14, fontWeight: 700, color: '#1E2E3B' }}>หมวด: {c.label}</span>
+                    {!open && (
+                      <span className="num" style={{ fontSize: 12, color: '#5C6770' }}>
+                        ลูกค้า {cu.length} งวด · เก็บแล้ว <b style={{ color: '#2E7D55' }}>{baht(sumPaid(cu))}</b> / {baht(sumAmt(cu))}
+                        {co.length > 0 && <> · ช่าง {co.length} งวด · จ่ายแล้ว <b style={{ color: '#30506A' }}>{baht(sumPaid(co))}</b> / {baht(sumAmt(co))}</>}
+                      </span>
+                    )}
                     {c.id != null && (
-                      <button onClick={() => delCat(c.id!, c.label)} title="ลบหัวข้อนี้ (ต้องไม่มีงวดค้างอยู่)" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #E7CDC9', borderRadius: 7, padding: '3px 10px', cursor: 'pointer' }}>ลบหัวข้อ</button>
+                      <button onClick={(e) => { e.stopPropagation(); delCat(c.id!, c.label) }} title="ลบหัวข้อนี้ (ต้องไม่มีงวดค้างอยู่)" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #E7CDC9', borderRadius: 7, padding: '3px 10px', cursor: 'pointer' }}>ลบหัวข้อ</button>
                     )}
                   </div>
-                  <InstallmentSection houseCode={house.code} side="customer" category={c.key} rows={instOf(c.key, 'customer')} />
-                  <InstallmentSection houseCode={house.code} side="contractor" category={c.key} rows={instOf(c.key, 'contractor')} />
+                  <div style={{ display: open ? 'block' : 'none' }}>
+                    <InstallmentSection houseCode={house.code} side="customer" category={c.key} rows={cu} />
+                    <InstallmentSection houseCode={house.code} side="contractor" category={c.key} rows={co} />
+                  </div>
                 </div>
-              ))}
+                )
+              })}
               {/* เพิ่มหัวข้อใหญ่เอง */}
               <div style={{ padding: '14px 18px', background: '#FAFBFC', borderTop: '1px solid #E1E5EA', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: '#5C6770' }}>+ เพิ่มหัวข้อใหญ่:</span>
