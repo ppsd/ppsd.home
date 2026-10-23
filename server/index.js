@@ -6750,6 +6750,15 @@ api.post('/files', canWrite, express.raw({ type: 'application/octet-stream', lim
   db.prepare('UPDATE files SET path=? WHERE id=?').run(String(id), id)
   res.status(201).json(db.prepare(`SELECT ${FILE_COLS} FROM files WHERE id=?`).get(id))
 })
+// ย้ายหมวดไฟล์ (อัปโหลดผิดหมวด → แก้ทีหลังได้)
+api.put('/files/:id', canWrite, (req, res) => {
+  const f = db.prepare('SELECT id, name, category FROM files WHERE id=?').get(req.params.id)
+  if (!f) return res.status(404).json({ error: 'ไม่พบไฟล์' })
+  const category = String(req.body?.category ?? '').trim().slice(0, 60)
+  db.prepare('UPDATE files SET category=? WHERE id=?').run(category, f.id)
+  audit(req, 'ย้ายหมวดไฟล์', `${f.name}: ${f.category || 'อื่นๆ'} → ${category || 'อื่นๆ'}`)
+  res.json(db.prepare(`SELECT ${FILE_COLS} FROM files WHERE id=?`).get(f.id))
+})
 function fileBuffer(f) {
   if (f.path) { const p = join(uploadsDir, f.path); if (existsSync(p)) return readFileSync(p) }
   if (f.data) return Buffer.from(String(f.data).replace(/^data:[^;]+;base64,/, ''), 'base64') // เดิม (base64 ในฐานข้อมูล)

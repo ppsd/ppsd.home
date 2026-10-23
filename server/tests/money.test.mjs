@@ -2304,3 +2304,14 @@ test('ใบสั่งงาน: คนอื่นดูได้แต่แ
   const wo2 = await POST('/work-orders', { executor: 'ช่างใบสั่งงาน', project: 'ใบที่จะลบ' })
   assert.equal((await DEL(`/work-orders/${wo2.data.id}`)).status, 200)
 })
+
+test('ไฟล์บ้าน: ย้ายหมวดไฟล์ที่อัปโหลดผิดหมวดได้', async () => {
+  const up = await fetch(`${BASE}/files?name=${encodeURIComponent('แบบบ้าน.dwg')}&mime=application/octet-stream&house=H-FILES&category=${encodeURIComponent('สัญญา')}`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.from('dummy') })
+  assert.equal(up.status, 201)
+  const f = await up.json()
+  assert.equal(f.category, 'สัญญา')
+  const mv = await PUT(`/files/${f.id}`, { category: 'แบบก่อสร้าง' })
+  assert.equal(mv.status, 200); assert.equal(mv.data.category, 'แบบก่อสร้าง')
+  assert.equal((await GET('/files?house=H-FILES')).data.find((x) => x.id === f.id).category, 'แบบก่อสร้าง')
+  assert.equal((await PUT('/files/999999', { category: 'x' })).status, 404)
+})

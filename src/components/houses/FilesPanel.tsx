@@ -23,13 +23,22 @@ function extColor(ext: string) {
   if (['DWG', 'DXF'].includes(ext)) return { bg: '#E2E9EF', c: '#30506A' }
   return { bg: '#EDF1F4', c: '#5C6770' }
 }
+// อัปโหลดแบบ "อัตโนมัติ": เดาหมวดจากชนิดไฟล์ (แก้หมวดทีหลังได้ที่แต่ละไฟล์)
+const AUTO = 'auto'
+const guessCat = (file: File) => {
+  const ext = extOf(file.name)
+  if (['DWG', 'DXF', 'SKP', 'RVT', 'IFC'].includes(ext)) return 'แบบก่อสร้าง'
+  if (file.type.startsWith('image/') || ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'HEIC'].includes(ext)) return 'รูปหน้างาน'
+  return 'อื่นๆ'
+}
+const catOf = (f: ApiFile) => String(f.category || '').trim() || 'อื่นๆ' // ไม่มีหมวด = อื่นๆ
 const viewable = (f: ApiFile) => /pdf|image\//.test(f.mime || '') || /\.(pdf|jpe?g|png|gif|webp)$/i.test(f.name)
 
 export default function FilesPanel({ houseCode }: { houseCode: string }) {
   const [files, setFiles] = useState<ApiFile[]>([])
   const [busy, setBusy] = useState<{ done: number; total: number } | null>(null)
   const [err, setErr] = useState('')
-  const [cat, setCat] = useState('สัญญา')      // หมวดที่จะอัปโหลดเข้า
+  const [cat, setCat] = useState(AUTO)          // หมวดที่จะอัปโหลดเข้า (ค่าเริ่มต้น = เดาจากชนิดไฟล์ · เดิมตั้งเป็น "สัญญา" ทำให้แบบบ้านตกไปหมวดสัญญา)
   const [filter, setFilter] = useState('')      // ตัวกรองหมวดที่แสดง
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -45,19 +54,27 @@ export default function FilesPanel({ houseCode }: { houseCode: string }) {
     setBusy({ done: 0, total: picked.length })
     for (const file of picked) {
       if (file.size > MAX_MB * KB * KB) { setErr(`"${file.name}" ใหญ่เกิน ${MAX_MB}MB — ข้ามไฟล์นี้`); continue }
-      try { await api.uploadFile(file, { house: houseCode, category: cat }); done++; setBusy({ done, total: picked.length }) }
+      try { await api.uploadFile(file, { house: houseCode, category: cat === AUTO ? guessCat(file) : cat }); done++; setBusy({ done, total: picked.length }) }
       catch (ex) { setErr((ex as Error).message) }
     }
     setBusy(null)
     await load()
   }
   const remove = async (id: number) => { if (confirm('ลบไฟล์นี้?')) { await api.del('/files/' + id); await load() } }
+  // ย้ายหมวดไฟล์ที่อัปโหลดผิดหมวด
+  const move = async (fl: ApiFile, category: string) => {
+    if (category === catOf(fl)) return
+    try { await api.put('/files/' + fl.id, { category: category === 'อื่นๆ' ? '' : category }); await load() } catch (e) { alert((e as Error).message) }
+  }
 
-  const shown = filter ? files.filter((f) => (f.category || 'อื่นๆ') === filter) : files
+  // หมวดทั้งหมดที่มีไฟล์: หมวดมาตรฐาน + หมวดจากส่วนอื่นของระบบ (เช่น ใบส่งของ / ส่งงาน / เอกสารขาย) — เดิมไฟล์หมวดอื่นไม่ขึ้นเลย
+  const extraCats = [...new Set(files.map(catOf))].filter((c) => !CATS.includes(c)).sort((a, b) => a.localeCompare(b, 'th'))
+  const allCats = [...CATS.filter((c) => c !== 'อื่นๆ'), ...extraCats, 'อื่นๆ'] // "อื่นๆ" ไว้ท้ายสุดครั้งเดียว
+  const shown = filter ? files.filter((f) => catOf(f) === filter) : files
   // จัดกลุ่มตามหมวด
   const groups: Record<string, ApiFile[]> = {}
-  for (const f of shown) { const c = f.category || 'อื่นๆ'; (groups[c] = groups[c] || []).push(f) }
-  const orderedCats = [...CATS, 'อื่นๆ'].filter((c) => groups[c]?.length)
+  for (const f of shown) { const c = catOf(f); (groups[c] = groups[c] || []).push(f) }
+  const orderedCats = allCats.filter((c) => groups[c]?.length)
 
   return (
     <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }}>
@@ -67,6 +84,7 @@ export default function FilesPanel({ houseCode }: { houseCode: string }) {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 11.5, color: '#5C6770' }}>หมวด:</span>
           <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 8px', outline: 'none' }}>
+            <option value={AUTO}>อัตโนมัติ (ตามชนิดไฟล์)</option>
             {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <button onClick={() => inputRef.current?.click()} disabled={!!busy} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 7, padding: '6px 12px', cursor: busy ? 'not-allowed' : 'pointer' }}>{busy ? `กำลังอัปโหลด ${busy.done}/${busy.total}…` : '+ อัปโหลด'}</button>
@@ -76,8 +94,8 @@ export default function FilesPanel({ houseCode }: { houseCode: string }) {
 
       {/* ตัวกรองหมวด */}
       <div style={{ display: 'flex', gap: 6, padding: '8px 12px 4px', flexWrap: 'wrap', borderBottom: '1px solid #F4F6F8' }}>
-        {[['', 'ทั้งหมด'], ...CATS.map((c) => [c, c] as [string, string]), ['อื่นๆ', 'อื่นๆ']].map(([v, l]) => {
-          const n = v ? files.filter((f) => (f.category || 'อื่นๆ') === v).length : files.length
+        {[['', 'ทั้งหมด'], ...allCats.map((c) => [c, c] as [string, string])].map(([v, l]) => {
+          const n = v ? files.filter((f) => catOf(f) === v).length : files.length
           if (v && !n) return null
           const on = filter === v
           return <button key={v} onClick={() => setFilter(v)} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: on ? 600 : 500, color: on ? '#fff' : '#5C6770', background: on ? '#30506A' : '#F1F4F6', border: 'none', borderRadius: 20, padding: '3px 11px', cursor: 'pointer' }}>{l} {n ? <span className="num">({n})</span> : ''}</button>
@@ -101,6 +119,10 @@ export default function FilesPanel({ houseCode }: { houseCode: string }) {
                       <div style={{ fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: canView ? '#30506A' : '#1C2730' }}>{f.name}</div>
                       <div style={{ fontSize: 11, color: '#94A0A8' }}>{fmtSize(f.size)} · {f.uploaded} · {f.uploader}</div>
                     </div>
+                    <select value={catOf(f)} onChange={(e) => move(f, e.target.value)} onClick={(e) => e.stopPropagation()} title="ย้ายหมวด"
+                      style={{ fontFamily: 'inherit', fontSize: 11, color: catColor(catOf(f)).c, background: catColor(catOf(f)).bg, border: 'none', borderRadius: 6, padding: '3px 4px', maxWidth: 104, cursor: 'pointer', outline: 'none', flexShrink: 0 }}>
+                      {[...new Set([...CATS, catOf(f)])].map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
                     {canView && (
                       <button onClick={() => api.openFile('/files/' + f.id + '/view')} title="เปิดดู" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ดู</button>
                     )}
