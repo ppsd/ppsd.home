@@ -9,6 +9,7 @@ import AcceptanceModal from './AcceptanceModal'
 
 const th: React.CSSProperties = { padding: '9px 12px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 10px', outline: 'none', width: '100%' }
+const fl: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: '#5C6770', minWidth: 0 }
 
 const blank = { no: '', detail: '', days: '', due: '', due_iso: '', amount: '', contractor: '' }
 
@@ -95,7 +96,7 @@ export default function InstallmentSection({
   const startEdit = (r: ApiInstallment) => {
     setAdding(false)
     setEditId(r.id)
-    setForm({ no: String(r.no), detail: r.detail, days: String(r.days || ''), due: r.due || '', due_iso: r.due_iso || '', amount: String(r.amount), contractor: r.contractor || '' })
+    setForm({ no: String(r.no), detail: r.detail, days: r.days && r.days !== '-' ? String(r.days) : '', due: r.due || '', due_iso: r.due_iso || '', amount: String(r.amount), contractor: r.contractor || '' })
   }
   const cancel = () => {
     setAdding(false)
@@ -108,7 +109,7 @@ export default function InstallmentSection({
       const body = {
         no: Number(form.no) || 0,
         detail: form.detail,
-        days: form.days,
+        days: form.days.trim() || '-', // ระยะเวลาทำงานของงวด (วัน) — ข้อมูลประกอบ ไม่ได้ใช้คำนวณ
         due: form.due,
         due_iso: form.due_iso,
         amount: Number(String(form.amount).replace(/,/g, '')) || 0,
@@ -146,7 +147,7 @@ export default function InstallmentSection({
           <tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
             <th style={{ ...th, padding: '9px 18px' }}>งวด</th>
             <th style={th}>รายละเอียด</th>
-            <th style={{ ...th, textAlign: 'center' }}>วัน</th>
+            <th style={{ ...th, textAlign: 'center' }} title="จำนวนวันทำงานของงวดนี้ตามสัญญา (ข้อมูลประกอบ ไม่มีผลกับวันครบกำหนด)">ระยะเวลา (วัน)</th>
             <th style={th}>กำหนด</th>
             <th style={{ ...th, textAlign: 'right' }}>จำนวนเงิน</th>
             <th style={{ ...th, textAlign: 'center' }}>สถานะ</th>
@@ -175,7 +176,7 @@ export default function InstallmentSection({
                   <div>{r.detail}</div>
                   {!isCustomer && r.contractor && <div style={{ fontSize: 11, color: '#94A0A8' }}>👷 {r.contractor}</div>}
                 </td>
-                <td className="num" style={{ padding: '10px 12px', textAlign: 'center', color: '#5C6770' }}>{r.days}</td>
+                <td className="num" style={{ padding: '10px 12px', textAlign: 'center', color: '#5C6770' }}>{!r.days || r.days === '-' ? '-' : /^\d+(\.\d+)?$/.test(String(r.days).trim()) ? `${r.days} วัน` : r.days}</td>
                 <td className="num" style={{ padding: '10px 12px', color: r.status === 'เลยกำหนด' ? '#C24036' : '#5C6770' }}>{r.due}</td>
                 <td className="num" style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>
                   <div>{baht(r.amount)}</div>
@@ -244,12 +245,15 @@ function InstForm({
   const overBy = con && (con.contract_total || 0) > 0 ? afterTotal - (con.contract_total || 0) : 0
   return (
     <div style={{ padding: '12px 18px', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 80px 130px 130px', gap: 8 }}>
-        <input style={field} placeholder="งวด" value={form.no} onChange={(e) => setForm({ ...form, no: e.target.value })} />
-        <input style={field} placeholder="รายละเอียดงาน" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} />
-        <input style={field} placeholder="วัน" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} />
-        <input style={field} type="date" title="วันครบกำหนด (ใช้คำนวณอายุหนี้)" value={form.due_iso} onChange={(e) => setForm({ ...form, due_iso: e.target.value, due: '' })} />
-        <MoneyInput style={field} placeholder="จำนวนเงิน" value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} />
+      <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 110px 140px 130px', gap: 8 }}>
+        <label style={fl}>งวด<input style={field} placeholder="1" value={form.no} onChange={(e) => setForm({ ...form, no: e.target.value })} /></label>
+        <label style={fl}>รายละเอียดงาน<input style={field} placeholder="เช่น งานฐานราก-เสาเข็ม" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} /></label>
+        <label style={fl} title="จำนวนวันทำงานของงวดนี้ตามสัญญา เช่น 30 — ข้อมูลประกอบ ไม่มีผลกับวันครบกำหนด (ไม่ทราบเว้นว่างได้)">ระยะเวลา (วัน)
+          <input style={field} inputMode="numeric" placeholder="เช่น 30" value={form.days}
+            onChange={(e) => setForm({ ...form, days: /^\d*$/.test(form.days) ? e.target.value.replace(/\D/g, '') : e.target.value })} />
+        </label>
+        <label style={fl} title="วันครบกำหนดเก็บเงิน/จ่ายเงิน (ใช้คำนวณเลยกำหนด/อายุหนี้)">วันครบกำหนด<input style={field} type="date" value={form.due_iso} onChange={(e) => setForm({ ...form, due_iso: e.target.value, due: '' })} /></label>
+        <label style={fl}>จำนวนเงิน<MoneyInput style={field} placeholder="0" value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} /></label>
       </div>
       {showContractor && (
         <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
