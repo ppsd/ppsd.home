@@ -9,8 +9,8 @@ import MaterialSummaryPrint from './MaterialSummaryPrint'
 import type { WorkSec } from './boqFloors'
 import ModalShell from '../shared/ModalShell'
 
-// ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ · floor/part/sheet = ชั้น/ส่วนงาน/แผ่นแบบ (จากหน้าถอดแบบ)
-export interface BoqItem { floor?: string; part?: string; sheet?: string; cat: string; desc: string; qty: number; unit: string; mat: number; lab: number; ref?: number; basis?: string }
+// ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ · floor/part/sheet = ชั้น/ส่วนงาน/แผ่นแบบ · spec = ชื่อ/สเปกตามแบบ ก่อนผูกราคากลาง (จากหน้าถอดแบบ)
+export interface BoqItem { floor?: string; part?: string; sheet?: string; spec?: string; cat: string; desc: string; qty: number; unit: string; mat: number; lab: number; ref?: number; basis?: string }
 // work = ปริมาณงานต่อหมวด (ชั้น × ประเภทงาน × ส่วนงาน) จากการถอดแบบ
 export interface Boq { id: number; no: string; house_code: string; title: string; markup_pct: number; vat_pct: number; items: BoqItem[]; work?: WorkSec[]; date: string }
 

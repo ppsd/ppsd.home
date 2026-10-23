@@ -231,7 +231,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   const buildItems = () => {
     const items: BoqItem[] = used.map((r) => {
       const m = r.alts.find((a) => a.id === r.matId)
-      return { floor: r.floor, part: r.part, sheet: r.sheet, cat: r.cat, desc: m ? m.name : r.desc, qty: r.qty, unit: r.unit, mat: r.mat, lab: 0, ref: m?.id, basis: !m && r.web && r.web.price === r.mat ? [r.basis, 'ราคาจากเว็บ: ' + (r.web.shop || 'ร้านออนไลน์')].filter(Boolean).join(' · ') : r.basis }
+      return { floor: r.floor, part: r.part, sheet: r.sheet, spec: r.desc, cat: r.cat, desc: m ? m.name : r.desc, qty: r.qty, unit: r.unit, mat: r.mat, lab: 0, ref: m?.id, basis: !m && r.web && r.web.price === r.mat ? [r.basis, 'ราคาจากเว็บ: ' + (r.web.shop || 'ร้านออนไลน์')].filter(Boolean).join(' · ') : r.basis }
     })
     for (const l of usedL) {
       const rate = rates.find((x) => x.id === l.rateId)
