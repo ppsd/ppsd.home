@@ -81,20 +81,60 @@ const cleanMText = (s) => String(s || '')
   .replace(/\\P/g, ' ').replace(/\\[A-Za-z][^;\\{}]*;/g, '').replace(/[{}]/g, '').replace(/\\~/g, ' ')
   .replace(/%%[cC]/g, 'ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/\s+/g, ' ').trim()
 
-// แยก entity ในส่วน ENTITIES — คืน [{type, codes:[[c,v]...]}]
-function entitiesOf(pairs) {
+// แยก entity ในส่วนที่ต้องการ (ENTITIES / BLOCKS / TABLES) — คืน [{type, codes:[[c,v]...]}]
+function entitiesOf(pairs, want = 'ENTITIES') {
   const out = []
   let section = '', cur = null
   for (let i = 0; i < pairs.length; i++) {
     const [c, v] = pairs[i]
     if (c === 0 && v === 'SECTION') { section = pairs[i + 1]?.[1] || ''; cur = null; continue }
     if (c === 0 && v === 'ENDSEC') { section = ''; cur = null; continue }
-    if (section !== 'ENTITIES') continue
+    if (section !== want) continue
     if (c === 0) { cur = { type: v, codes: [] }; out.push(cur); continue }
     if (cur) cur.codes.push([c, v])
   }
   return out
 }
+// อยู่ใน Layout (paper space: กรอบแบบ ตารางรายการแบบ viewport) — ไม่ใช่ตัวแบบ ห้ามนับ
+const inPaperSpace = (codes) => codes.some(([c, v]) => c === 67 && String(v).trim() === '1')
+// ชื่อจริงของบล็อกไม่มีชื่อ (*U… = dynamic block ที่ถูกปรับค่า/อาร์เรย์) จากตาราง BLOCK_RECORD
+//  XDATA "AcDbBlockRepBTag" ชี้ handle ของบล็อกต้นฉบับ · บางไฟล์มี "AcDbDynamicBlockTrueName" เป็นชื่อตรงๆ
+function anonNamesOf(pairs) {
+  const recs = entitiesOf(pairs, 'TABLES').filter((e) => e.type === 'BLOCK_RECORD')
+  const byHandle = new Map()
+  for (const r of recs) {
+    const h = r.codes.find(([c]) => c === 5)?.[1], n = r.codes.find(([c]) => c === 2)?.[1]
+    if (h && n) byHandle.set(String(h).trim().toUpperCase(), String(n).trim())
+  }
+  const out = new Map()
+  for (const r of recs) {
+    const name = String(r.codes.find(([c]) => c === 2)?.[1] || '').trim()
+    if (!name.startsWith('*')) continue
+    const i = r.codes.findIndex(([c, v]) => c === 1001 && /AcDbBlockRepBTag|AcDbDynamicBlockTrueName/.test(String(v)))
+    if (i < 0) continue
+    const app = String(r.codes[i][1])
+    let real = ''
+    for (let j = i + 1; j < r.codes.length && r.codes[j][0] !== 1001; j++) {
+      if (/TrueName/.test(app) && r.codes[j][0] === 1000) { real = String(r.codes[j][1]).trim(); break }
+      if (r.codes[j][0] === 1005) { real = byHandle.get(String(r.codes[j][1]).trim().toUpperCase()) || ''; break }
+    }
+    if (real && !real.startsWith('*')) out.set(name, real)
+  }
+  return out
+}
+// บล็อกที่ซ้อนอยู่ในบล็อก: ชื่อบล็อก → [{name, layer, mult}] ของ INSERT ข้างใน (ไว้นับสัญลักษณ์ที่อยู่ในบล็อกใหญ่ เช่น ห้องน้ำทั้งชุด)
+function blockChildrenOf(pairs) {
+  const out = new Map()
+  let cur = null
+  for (const e of entitiesOf(pairs, 'BLOCKS')) {
+    if (e.type === 'BLOCK') { cur = String(e.codes.find(([c]) => c === 2)?.[1] || '').trim(); if (!out.has(cur)) out.set(cur, []); continue }
+    if (e.type === 'ENDBLK') { cur = null; continue }
+    if (cur && e.type === 'INSERT') out.get(cur).push({ name: String(e.codes.find(([c]) => c === 2)?.[1] || '').trim(), layer: layerOf(e.codes), mult: insertMult(e.codes) })
+  }
+  return out
+}
+// MINSERT (อาร์เรย์) = จำนวนคอลัมน์ × แถว
+const insertMult = (codes) => Math.max(1, parseInt(codes.find(([c]) => c === 70)?.[1], 10) || 1) * Math.max(1, parseInt(codes.find(([c]) => c === 71)?.[1], 10) || 1)
 function headerUnits(pairs) {
   for (let i = 0; i < pairs.length - 2; i++) {
     if (pairs[i][0] === 9 && pairs[i][1] === '$INSUNITS') return parseInt(pairs[i + 1][1], 10) || 0
@@ -160,9 +200,30 @@ export function summarizeDxf(text, unitOverride = 'auto') {
   const fileUnit = headerUnits(pairs)
   const unit = OVERRIDE[unitOverride] || (UNIT_TO_M[fileUnit] ? fileUnit : 4)
   const k = UNIT_TO_M[unit]
-  const ents = entitiesOf(pairs)
+  const all = entitiesOf(pairs)
+  const ents = all.filter((e) => !inPaperSpace(e.codes))
+  const paperSkipped = all.length - ents.length
+  const anon = anonNamesOf(pairs)
+  const children = blockChildrenOf(pairs)
+  const realName = (n) => anon.get(n) || n
 
   const blocks = new Map(), lengths = new Map(), areas = new Map(), circles = new Map(), texts = new Map()
+  const addBlock = (rawName, layer, n, nested) => {
+    const name = realName(rawName)
+    const key = name + '|' + layer
+    const o = blocks.get(key) || { name: name.startsWith('*') ? '(บล็อกไม่มีชื่อ)' : name, layer, count: 0, nested: 0 }
+    o.count += n; if (nested) o.nested += n
+    blocks.set(key, o)
+  }
+  // นับบล็อกที่ซ้อนอยู่ข้างใน (หลายชั้นได้) — Layer "0" ในบล็อก = ใช้ Layer ของตัวที่วางบล็อก (ตามหลัก CAD)
+  const addNested = (rawName, layer, n, depth, seen) => {
+    if (depth > 8 || seen.has(rawName)) return
+    for (const ch of children.get(rawName) || []) {
+      const chLayer = ch.layer === '0' ? layer : ch.layer
+      addBlock(ch.name, chLayer, n * ch.mult, true)
+      addNested(ch.name, chLayer, n * ch.mult, depth + 1, new Set([...seen, rawName]))
+    }
+  }
   const addLen = (layer, len) => { const o = lengths.get(layer) || { layer, length_m: 0, segments: 0 }; o.length_m += len * k; o.segments++; lengths.set(layer, o) }
   const addArea = (layer, a, source) => { const key = layer + '|' + source; const o = areas.get(key) || { layer, area_m2: 0, count: 0, source }; o.area_m2 += a * k * k; o.count++; areas.set(key, o) }
 
@@ -172,9 +233,9 @@ export function summarizeDxf(text, unitOverride = 'auto') {
     const g = (c) => codes.find(([x]) => x === c)?.[1]
     if (type === 'INSERT') {
       const name = String(g(2) || '').trim()
-      const key = name + '|' + layer
-      const o = blocks.get(key) || { name: name.startsWith('*') ? '(บล็อกไม่มีชื่อ)' : name, layer, count: 0 }
-      o.count++; blocks.set(key, o)
+      const n = insertMult(codes)
+      addBlock(name, layer, n, false)
+      addNested(name, layer, n, 0, new Set())
     } else if (type === 'LINE') {
       addLen(layer, dist([num(g(10)), num(g(20))], [num(g(11)), num(g(21))]))
     } else if (type === 'LWPOLYLINE') {
@@ -215,7 +276,7 @@ export function summarizeDxf(text, unitOverride = 'auto') {
   const r2 = (x) => Math.round(x * 100) / 100
   return {
     units: UNIT_NAME[unit], unit_from_file: !!UNIT_TO_M[fileUnit] && !OVERRIDE[unitOverride],
-    entity_count: ents.length,
+    entity_count: ents.length, paper_skipped: paperSkipped,
     blocks: [...blocks.values()].sort((a, b) => b.count - a.count),
     lengths: [...lengths.values()].map((o) => ({ ...o, length_m: r2(o.length_m) })).filter((o) => o.length_m > 0).sort((a, b) => b.length_m - a.length_m),
     areas: [...areas.values()].map((o) => ({ ...o, area_m2: r2(o.area_m2) })).filter((o) => o.area_m2 > 0).sort((a, b) => b.area_m2 - a.area_m2),
@@ -228,7 +289,7 @@ export function summarizeDxf(text, unitOverride = 'auto') {
 // ผลถอดแบบไม่มี AI: แปลงสรุป DXF เป็นรายการดิบให้คนตั้งชื่อเอง
 export function rawItemsFromDxf(s) {
   const items = []
-  for (const b of s.blocks) items.push({ cat: catGuess(b.name + ' ' + b.layer), desc: b.name, qty: b.count, unit: 'ชิ้น', basis: `นับ Block "${b.name}" ใน Layer ${b.layer}`, confidence: 'สูง', floor: FLOOR_ALL })
+  for (const b of s.blocks) items.push({ cat: catGuess(b.name + ' ' + b.layer), desc: b.name, qty: b.count, unit: 'ชิ้น', basis: `นับ Block "${b.name}" ใน Layer ${b.layer}${b.nested ? ` (อยู่ในบล็อกอื่น ${b.nested})` : ''}`, confidence: 'สูง', floor: FLOOR_ALL })
   for (const c of s.circles) items.push({ cat: catGuess(c.layer), desc: `วงกลม ø${c.diameter_m} ม. ใน Layer ${c.layer}`, qty: c.count, unit: 'ชิ้น', basis: `นับวงกลม ${c.count} วง`, confidence: 'กลาง', floor: FLOOR_ALL })
   for (const l of s.lengths) items.push({ cat: catGuess(l.layer), desc: `เส้นใน Layer ${l.layer}`, qty: l.length_m, unit: 'ม.', basis: `รวมความยาว ${l.segments} เส้น`, confidence: 'กลาง', floor: FLOOR_ALL })
   for (const a of s.areas) items.push({ cat: catGuess(a.layer), desc: `พื้นที่ใน Layer ${a.layer}`, qty: a.area_m2, unit: 'ตร.ม.', basis: `${a.source} ${a.count} รูป`, confidence: 'กลาง', floor: FLOOR_ALL })
@@ -328,7 +389,7 @@ export function takeoffPrompt({ house, rates, dxfSummary, files = [] }) {
   // แบบจริง (เช่น DWG ทั้งชุด) มี Block/ตัวหนังสือเป็นพันๆ — ตัดให้พอดีกับคำสั่ง AI (เรียงจากมากไปน้อยอยู่แล้ว)
   const s = dxfSummary && { ...dxfSummary, blocks: dxfSummary.blocks.slice(0, 300), lengths: dxfSummary.lengths.slice(0, 150), areas: dxfSummary.areas.slice(0, 150), circles: dxfSummary.circles.slice(0, 50), texts: dxfSummary.texts.slice(0, 300), layers: dxfSummary.layers.slice(0, 300) }
   const src = s
-    ? `ข้อมูลนี้สรุปมาจากไฟล์ DXF (หน่วยเป็นเมตรแล้ว) — blocks = จำนวนสัญลักษณ์, lengths = ความยาวเส้นรวมต่อ Layer, areas = พื้นที่รูปปิด/Hatch ต่อ Layer, texts = ตัวหนังสือในแบบ:\n${JSON.stringify(s)}`
+    ? `ข้อมูลนี้สรุปมาจากไฟล์ DXF (หน่วยเป็นเมตรแล้ว) — blocks = จำนวนสัญลักษณ์ (count รวมที่ซ้อนอยู่ในบล็อกอื่นแล้ว · nested = ส่วนที่อยู่ในบล็อกอื่น · ไม่รวมของในหน้า Layout), lengths = ความยาวเส้นรวมต่อ Layer, areas = พื้นที่รูปปิด/Hatch ต่อ Layer, texts = ตัวหนังสือในแบบ:\n${JSON.stringify(s)}`
     : files.length > 1
       ? `อ่านจากไฟล์แบบที่แนบมา ${files.length} ไฟล์ (${files.join(', ')}) — เป็นแผ่นต่างๆ ของอาคารเดียวกัน ให้ใช้ทุกแผ่นประกอบกัน (เช่น ขนาดจากแบบโครงสร้าง วัสดุจากแปลน/รูปตัด) และห้ามนับสิ่งเดียวกันซ้ำเมื่อปรากฏในหลายแผ่น · ใช้มาตราส่วนและเส้นบอกระยะในแบบคำนวณความยาว/พื้นที่`
       : 'อ่านจากไฟล์แบบที่แนบมา (ใช้มาตราส่วนและเส้นบอกระยะในแบบคำนวณความยาว/พื้นที่)'

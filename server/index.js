@@ -2,7 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync, appendFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync, appendFileSync, rmSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { registerCrm, crmNotifications } from './crm.js'
@@ -2016,6 +2016,12 @@ const nextSeq = db.transaction((key, initFn) => {
   return row.next
 })
 // เลขท้ายสูงสุดของเอกสารที่มีอยู่ (ใช้ตั้งต้นตัวนับครั้งแรก)
+// เลขลำดับเอกสารถัดไป = มากกว่าทั้ง "จำนวนแถว" และ "เลขท้ายสูงสุดที่มีอยู่" — เดิมใช้จำนวนแถว + 1 ลบใบไปแล้วสร้างใหม่ได้เลขชนกับใบเดิม
+function seqAfter(table, where = '', args = []) {
+  const rows = db.prepare(`SELECT no FROM ${table}${where ? ' WHERE ' + where : ''}`).all(...args)
+  const max = rows.reduce((m, r) => { const x = String(r.no || '').match(/(\d+)$/); return x ? Math.max(m, Number(x[1])) : m }, 0)
+  return Math.max(max, rows.length) + 1
+}
 function maxNoSuffix(table) {
   let max = 0
   try {
@@ -5609,7 +5615,7 @@ api.post('/site-docs', canWrite, (req, res) => {
   if (!kind) return res.status(400).json({ error: 'ชนิดเอกสารไม่ถูกต้อง' })
   if (!b.title) return res.status(400).json({ error: 'กรุณากรอกหัวข้อ/เรื่อง' })
   const cfg = SITE_KINDS[kind]
-  const seq = db.prepare('SELECT COUNT(*) c FROM site_docs WHERE kind=?').get(kind).c + 1
+  const seq = seqAfter('site_docs', 'kind=?', [kind])
   const no = `${cfg.prefix}-${docYear()}-${String(seq).padStart(3, '0')}`
   const img = typeof b.image === 'string' && b.image.startsWith('data:image/') ? b.image : null
   const info = db.prepare(`INSERT INTO site_docs
@@ -5654,7 +5660,7 @@ api.get('/safety-records', (req, res) => {
 api.post('/safety-records', canWrite, (req, res) => {
   const b = req.body || {}
   const kind = SAFETY_PREFIX[b.kind] ? b.kind : 'ppe'
-  const seq = db.prepare('SELECT COUNT(*) c FROM safety_records WHERE kind=?').get(kind).c + 1
+  const seq = seqAfter('safety_records', 'kind=?', [kind])
   const no = `${SAFETY_PREFIX[kind]}-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO safety_records (kind,no,house_code,date,title,data,by,created) VALUES (?,?,?,?,?,?,?,?)')
     .run(kind, no, b.house_code || '', b.date || todayTH(), b.title || '', JSON.stringify(b.data || {}), req.user.name, todayTH())
@@ -5682,7 +5688,7 @@ api.get('/handovers', (req, res) => {
 api.post('/handovers', canWrite, (req, res) => {
   const b = req.body || {}
   const kind = HANDOVER_PREFIX[b.kind] ? b.kind : 'handover'
-  const seq = db.prepare('SELECT COUNT(*) c FROM handover_docs WHERE kind=?').get(kind).c + 1
+  const seq = seqAfter('handover_docs', 'kind=?', [kind])
   const no = `${HANDOVER_PREFIX[kind]}-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO handover_docs (kind,no,house_code,date,title,data,status,by,created) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(kind, no, b.house_code || '', b.date || todayTH(), b.title || '', JSON.stringify(b.data || {}), b.status || 'ร่าง', req.user.name, todayTH())
@@ -5745,7 +5751,7 @@ api.get('/doc-register', auditView, (req, res) => {
 })
 api.post('/doc-register', auditView, (req, res) => {
   const b = req.body || {}
-  const seq = db.prepare('SELECT COUNT(*) c FROM doc_register').get().c + 1
+  const seq = seqAfter('doc_register')
   const no = `DOC-${docYear()}-${String(seq).padStart(3, '0')}`
   const rev = b.revision || 'A'
   const revisions = [{ rev, date: b.rev_date || todayTH(), note: 'ฉบับแรก', by: req.user.name }]
@@ -5769,7 +5775,7 @@ api.post('/doc-register/import-contracts', auditView, (req, res) => {
   for (const h of houses) {
     const exists = db.prepare("SELECT COUNT(*) c FROM doc_register WHERE category='contract' AND (doc_no=? OR house_code=?)").get(h.contract_no, h.code).c
     if (exists) continue
-    const seq = db.prepare('SELECT COUNT(*) c FROM doc_register').get().c + 1
+    const seq = seqAfter('doc_register')
     const no = `DOC-${docYear()}-${String(seq).padStart(3, '0')}`
     const revisions = [{ rev: 'A', date: todayTH(), note: 'นำเข้าจากข้อมูลบ้าน', by: req.user.name }]
     db.prepare('INSERT INTO doc_register (no,category,title,doc_no,revision,rev_date,status,owner,house_code,note,revisions,expiry,by,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
@@ -5810,7 +5816,7 @@ api.post('/qc', canWrite, (req, res) => {
   const b = req.body || {}
   if (!b.category || !b.type) return res.status(400).json({ error: 'กรุณาเลือกหมวด/ประเภทงาน' })
   const items = Array.isArray(b.items) ? qcItems(b.items) : []
-  const seq = db.prepare('SELECT COUNT(*) c FROM qc_inspections').get().c + 1
+  const seq = seqAfter('qc_inspections')
   const no = `QC-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO qc_inspections (no,house_code,category,type,zone,inspector,date,status,items,remark,images,start_date,end_date,by,created,phase,form_id,kind,extra,worker,std,fix_date,recheck_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, b.house_code || '', b.category, b.type, b.zone || '', b.inspector || req.user.name, todayTH(), b.status || 'กำลังตรวจ', JSON.stringify(items), b.remark || '', JSON.stringify(cleanImgs(b.images)), b.start_date || '', b.end_date || '', req.user.name, todayTH(),
@@ -5914,7 +5920,7 @@ api.get('/site-report-autofill', (req, res) => {
 api.post('/site-reports', canWrite, (req, res) => {
   const b = req.body || {}
   const kind = b.kind === 'weekly' ? 'weekly' : 'daily'
-  const seq = db.prepare('SELECT COUNT(*) c FROM site_reports WHERE kind=?').get(kind).c + 1
+  const seq = seqAfter('site_reports', 'kind=?', [kind])
   const no = `${kind === 'weekly' ? 'WR' : 'DR'}-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO site_reports (kind,no,house_code,date,data,by,created) VALUES (?,?,?,?,?,?,?)')
     .run(kind, no, b.house_code || '', b.date || todayTH(), JSON.stringify(b.data || {}), req.user.name, todayTH())
@@ -5945,7 +5951,7 @@ api.post('/installments/:id/acceptance', canWrite, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
   const b = req.body || {}
-  const seq = db.prepare('SELECT COUNT(*) c FROM inst_acceptance').get().c + 1
+  const seq = seqAfter('inst_acceptance')
   const no = `AC-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO inst_acceptance (installment_id,house_code,no,date,inspector,result,checklist,works,note,by,created) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
     .run(inst.id, inst.house_code, no, b.date || todayTH(), b.inspector || req.user.name, b.result || 'ผ่าน', JSON.stringify(b.checklist || []), JSON.stringify(b.works || []), b.note || '', req.user.name, todayTH())
@@ -5964,7 +5970,7 @@ api.get('/boqs', auditView, (req, res) => {
 })
 api.post('/boqs', auditView, (req, res) => {
   const b = req.body || {}
-  const seq = db.prepare('SELECT COUNT(*) c FROM boqs').get().c + 1
+  const seq = seqAfter('boqs')
   const no = `BOQ-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO boqs (no,house_code,title,markup_pct,vat_pct,items,work,by,date,created) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(no, b.house_code || '', b.title || 'ประมาณราคาก่อสร้าง', Number(b.markup_pct) || 0, Number(b.vat_pct) || 0, JSON.stringify(b.items || []), JSON.stringify(Array.isArray(b.work) ? b.work : []), req.user.name, todayTH(), todayTH())
@@ -6024,9 +6030,9 @@ function takeoffKind(name, mime, buf) {
   return ''
 }
 const imageMime = (name, mime) => /^image\//.test(String(mime)) ? mime : /\.png$/i.test(name) ? 'image/png' : /\.webp$/i.test(name) ? 'image/webp' : /\.gif$/i.test(name) ? 'image/gif' : 'image/jpeg'
-// ถอดแบบจริง: คืน [รหัส HTTP, ผล] — เรียกได้ทั้งแบบรอผล และแบบงานเบื้องหลัง (ดูด้านล่าง)
-async function takeoffCore(req) {
-  // รวบรวมไฟล์ที่จะถอด → [{name, mime, buf, kind}]
+// คำขอ → spec ของงานถอดแบบ { inputs:[{name,mime,buf}], house, units, user } — ไม่ผูกกับ req
+// (งานเบื้องหลังเก็บ spec ลงดิสก์ → server รีสตาร์ตแล้วรันต่อเองได้) · คืน [รหัส HTTP ถ้าผิด, spec]
+function takeoffSpec(req) {
   let inputs = []
   if (Buffer.isBuffer(req.body)) {
     if (!req.body.length) return [400, { error: 'ไฟล์ไม่ถูกต้อง' }]
@@ -6041,6 +6047,13 @@ async function takeoffCore(req) {
       inputs.push({ name: f.name, mime: f.mime || '', buf })
     }
   }
+  let house = {}
+  try { house = JSON.parse(String(req.query.house || '{}')) || {} } catch { house = {} }
+  return [0, { inputs, house, units: String(req.query.units || 'auto'), user: { id: req.user?.id || null, name: req.user?.name || '-' } }]
+}
+// ถอดแบบจริง: คืน [รหัส HTTP, ผล] — เรียกได้ทั้งแบบรอผล และแบบงานเบื้องหลัง (ดูด้านล่าง)
+async function takeoffCore(spec) {
+  const { inputs, house } = spec
   for (const it of inputs) it.kind = takeoffKind(it.name, it.mime, it.buf)
   const bad = inputs.find((it) => !it.kind)
   if (bad) return [400, { error: `“${bad.name || 'ไฟล์นี้'}” ไม่ใช่ไฟล์ที่ถอดแบบได้ — รองรับ DWG, DXF, PDF หรือรูปภาพ (JPG/PNG)` }]
@@ -6050,8 +6063,6 @@ async function takeoffCore(req) {
   const total = inputs.reduce((s, it) => s + it.buf.length, 0)
   if (!isDxf && total > TAKEOFF_MAX_BYTES) return [400, { error: `ไฟล์รวมกันใหญ่เกินไป (${(total / 1048576).toFixed(1)} MB · ส่งให้ AI ได้ไม่เกิน ${TAKEOFF_MAX_BYTES / 1048576} MB ต่อครั้ง) — เลือกน้อยไฟล์ลง หรือถอดทีละชุด` }]
   const label = inputs.map((it) => it.name).join(', ')
-  let house = {}
-  try { house = JSON.parse(String(req.query.house || '{}')) || {} } catch { house = {} }
 
   let dxf = null
   if (isDxf) {
@@ -6066,7 +6077,7 @@ async function takeoffCore(req) {
     // DXF รุ่นใหม่เป็น UTF-8 · รุ่นเก่าภาษาไทยเป็น ANSI_874 (TIS-620)
     let text = cad.toString('utf8')
     if (text.includes('�')) { try { text = new TextDecoder('windows-874').decode(cad) } catch { /* ใช้ utf8 ต่อ */ } }
-    try { dxf = takeoff.summarizeDxf(text, String(req.query.units || 'auto')) } catch (e) { return [400, { error: e.message }] }
+    try { dxf = takeoff.summarizeDxf(text, spec.units) } catch (e) { return [400, { error: e.message }] }
   }
   const rates = db.prepare('SELECT * FROM labor_rates WHERE active=1').all()
 
@@ -6097,33 +6108,69 @@ async function takeoffCore(req) {
   })
   // ค่าแรงแยกจากวัสดุ: คิดตามปริมาณงาน (ตร.ม. ผนัง/พื้นที่บ้าน · เมตร · ชุด · เหมา) ตามหน่วยของราคากลางค่าแรง
   const labor = parsed ? takeoff.cleanLabor(flat.labor, rates) : []
-  audit(req, 'ถอดแบบเป็น BOQ ร่าง', `${label || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
+  audit({ user: spec.user }, 'ถอดแบบเป็น BOQ ร่าง', `${label || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
   const source = isDxf ? 'dxf' : inputs.length > 1 ? 'multi' : inputs[0].kind
   return [200, { source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, work: flat.work, notes, dxf }]
 }
 // ถอดแบบอาจใช้เวลาหลายนาที (แปลง DWG + AI อ่านหลายหน้า) — ?async=1 คืนเลขงานทันที แล้วหน้าเว็บถามผลซ้ำ
-// เลี่ยงคำขอค้างนานจนเบราว์เซอร์/proxy ตัดทิ้ง · งานเก็บในหน่วยความจำ 1 ชม. (รีสตาร์ต server = หาย)
-const takeoffJobs = new Map()
+// เลี่ยงคำขอค้างนานจนเบราว์เซอร์/proxy ตัดทิ้ง
+// งานเก็บในฐานข้อมูล + ไฟล์ที่ส่งมาเก็บลงดิสก์ระหว่างรัน → server รีสตาร์ตกลางคัน (build/deploy) แล้วรันต่อเองอัตโนมัติ
+// ผลเก็บไว้ 7 วัน (เปิดดูซ้ำได้ ไม่ต้องจ่ายค่า AI ใหม่)
+db.exec(`CREATE TABLE IF NOT EXISTS takeoff_jobs (id TEXT PRIMARY KEY, user TEXT, label TEXT, started INTEGER, finished INTEGER, status TEXT, code INTEGER, result TEXT, attempts INTEGER DEFAULT 1)`)
+const TAKEOFF_DIR = join(dirname(dbFile), 'takeoff-jobs')
+const TAKEOFF_KEEP_MS = 7 * 86400000
+const takeoffJobDir = (id) => join(TAKEOFF_DIR, String(id).replace(/[^a-f0-9]/g, ''))
+function saveTakeoffSpec(id, spec) {
+  const dir = takeoffJobDir(id)
+  mkdirSync(dir, { recursive: true })
+  spec.inputs.forEach((it, i) => writeFileSync(join(dir, `${i}.bin`), it.buf))
+  writeFileSync(join(dir, 'spec.json'), JSON.stringify({ inputs: spec.inputs.map((it) => ({ name: it.name, mime: it.mime })), house: spec.house, units: spec.units, user: spec.user }))
+}
+function loadTakeoffSpec(id) {
+  try {
+    const dir = takeoffJobDir(id)
+    const s = JSON.parse(readFileSync(join(dir, 'spec.json'), 'utf8'))
+    return { ...s, inputs: s.inputs.map((it, i) => ({ ...it, buf: readFileSync(join(dir, `${i}.bin`)) })) }
+  } catch { return null }
+}
+const dropTakeoffSpec = (id) => { try { rmSync(takeoffJobDir(id), { recursive: true, force: true }) } catch { /* ignore */ } }
+function runTakeoffJob(id, spec) {
+  const finish = (code, body) => {
+    db.prepare('UPDATE takeoff_jobs SET status=?, code=?, result=?, finished=? WHERE id=?').run(code === 200 ? 'done' : 'failed', code, JSON.stringify(body), Date.now(), id)
+    dropTakeoffSpec(id)
+  }
+  takeoffCore(spec).then(([code, body]) => finish(code, body)).catch((e) => finish(500, { error: 'ถอดแบบไม่สำเร็จ: ' + e.message }))
+}
+// เปิด server: ล้างงานเก่าเกิน 7 วัน · งานที่ค้าง "running" (server ดับกลางคัน) → รันต่อจากไฟล์ที่เก็บไว้ (สูงสุด 3 ครั้ง)
+// หน่วงไว้ให้โหลดโมดูลครบก่อน (takeoffCore ใช้ค่าที่ประกาศถัดลงไปในไฟล์)
+setTimeout(() => { try {
+  for (const j of db.prepare('SELECT id FROM takeoff_jobs WHERE started < ?').all(Date.now() - TAKEOFF_KEEP_MS)) { dropTakeoffSpec(j.id); db.prepare('DELETE FROM takeoff_jobs WHERE id=?').run(j.id) }
+  for (const j of db.prepare("SELECT id, attempts FROM takeoff_jobs WHERE status='running'").all()) {
+    const spec = (j.attempts || 1) < 3 ? loadTakeoffSpec(j.id) : null
+    if (spec) { db.prepare('UPDATE takeoff_jobs SET attempts=COALESCE(attempts,1)+1 WHERE id=?').run(j.id); runTakeoffJob(j.id, spec) }
+    else { db.prepare("UPDATE takeoff_jobs SET status='failed', code=500, result=?, finished=? WHERE id=?").run(JSON.stringify({ error: 'งานถอดแบบหยุดกลางคัน (server รีสตาร์ต) และรันต่อไม่ได้ — กดถอดแบบใหม่' }), Date.now(), j.id); dropTakeoffSpec(j.id) }
+  }
+} catch (e) { console.error('takeoff jobs resume:', e.message) } }, 2000)
 api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-stream', limit: '210mb' }), async (req, res) => {
+  const [bad, spec] = takeoffSpec(req)
+  if (bad) return res.status(bad).json(spec)
   if (req.query.async !== '1') {
-    const [status, body] = await takeoffCore(req).catch((e) => [500, { error: 'ถอดแบบไม่สำเร็จ: ' + e.message }])
+    const [status, body] = await takeoffCore(spec).catch((e) => [500, { error: 'ถอดแบบไม่สำเร็จ: ' + e.message }])
     return res.status(status).json(body)
   }
-  for (const [k, j] of takeoffJobs) if (Date.now() - j.started > 3600000) takeoffJobs.delete(k)
   const id = randomBytes(8).toString('hex')
-  const job = { id, user: req.user.name, started: Date.now(), status: 'running', code: 0, result: null }
-  takeoffJobs.set(id, job)
-  takeoffCore(req)
-    .then(([code, body]) => Object.assign(job, { status: code === 200 ? 'done' : 'failed', code, result: body }))
-    .catch((e) => Object.assign(job, { status: 'failed', code: 500, result: { error: 'ถอดแบบไม่สำเร็จ: ' + e.message } }))
+  try { saveTakeoffSpec(id, spec) } catch (e) { console.error('takeoff save spec:', e.message) } // เก็บไม่ได้ = รันได้แต่รีสตาร์ตแล้วต่อไม่ได้
+  db.prepare("INSERT INTO takeoff_jobs (id,user,label,started,status,code) VALUES (?,?,?,?,'running',0)").run(id, spec.user.name, spec.inputs.map((it) => it.name).join(', ').slice(0, 300), Date.now())
+  runTakeoffJob(id, spec)
   res.status(202).json({ job: id })
 })
 api.get('/boq-takeoff/jobs/:id', auditView, (req, res) => {
-  const j = takeoffJobs.get(String(req.params.id))
-  if (!j) return res.status(404).json({ error: 'ไม่พบงานถอดแบบนี้ (หมดอายุ หรือ server รีสตาร์ต) — กดถอดแบบใหม่' })
-  if (j.status === 'running') return res.json({ status: 'running', seconds: Math.round((Date.now() - j.started) / 1000) })
-  if (j.status === 'failed') return res.status(j.code || 500).json(j.result)
-  res.json({ status: 'done', result: j.result })
+  const j = db.prepare('SELECT * FROM takeoff_jobs WHERE id=?').get(String(req.params.id))
+  if (!j) return res.status(404).json({ error: 'ไม่พบงานถอดแบบนี้ (เก่าเกิน 7 วัน) — กดถอดแบบใหม่' })
+  if (j.status === 'running') return res.json({ status: 'running', seconds: Math.round((Date.now() - j.started) / 1000), attempts: j.attempts || 1 })
+  const result = jparse(j.result) || {}
+  if (j.status === 'failed') return res.status(j.code || 500).json(result)
+  res.json({ status: 'done', result })
 })
 // ราคาจากอินเทอร์เน็ต (ชั่วคราว) สำหรับวัสดุที่ยังไม่มีในราคากลาง — AI ค้นเว็บร้านวัสดุก่อสร้างไทย แล้วสรุปราคาตลาดต่อหน่วยที่ขอ
 // แบ่งเป็นชุดละ 8 รายการค้นพร้อมกัน · ผลใช้กรอกในหน้าถอดแบบเท่านั้น ไม่บันทึกเข้าราคากลางเอง (คนกด "เพิ่มเข้าราคากลาง" เอง)
@@ -6170,7 +6217,7 @@ const cfRow = (r) => r ? { ...r, months: jparse(r.months) || [], rows: jparse(r.
 api.get('/cashflows', auditView, (_req, res) => res.json(db.prepare('SELECT * FROM cashflows ORDER BY id DESC').all().map(cfRow)))
 api.post('/cashflows', auditView, (req, res) => {
   const b = req.body || {}
-  const seq = db.prepare('SELECT COUNT(*) c FROM cashflows').get().c + 1
+  const seq = seqAfter('cashflows')
   const no = `CF-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO cashflows (no,house_code,title,opening,months,rows,by,date,created) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(no, b.house_code || '', b.title || 'ประมาณการกระแสเงินสด', Number(b.opening) || 0, JSON.stringify(b.months || []), JSON.stringify(b.rows || []), req.user.name, todayTH(), todayTH())
@@ -6422,7 +6469,7 @@ function savePms(id, b, req) {
       .run(b.emp_code || '', b.emp_name || '', b.position || '', b.template || '', b.month || '', b.evaluator || req.user.name, JSON.stringify(c.kpi), JSON.stringify(c.comp), JSON.stringify(c.beh), c.kpi_score, c.comp_score, c.beh_score, c.absent, c.leave, c.late, c.wo_overdue, c.penalty, c.raw, c.total, c.grade, c.bonus, b.strengths || '', b.improve || '', b.plan || '', Number(b.kpi_set_id) || null, id)
     return db.prepare('SELECT * FROM pms_reviews WHERE id=?').get(id)
   }
-  const seq = db.prepare('SELECT COUNT(*) c FROM pms_reviews').get().c + 1
+  const seq = seqAfter('pms_reviews')
   const no = `PMS-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare(`INSERT INTO pms_reviews (no,emp_code,emp_name,position,template,month,evaluator,kpi,competency,behavior,kpi_score,comp_score,beh_score,att_absent,att_leave,att_late,att_wo_overdue,penalty,raw_total,total,grade,bonus_pct,strengths,improve,plan,by,created,kpi_set_id)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -6468,7 +6515,7 @@ function woKpiScore(wo, submitIso) {
 api.get('/work-orders', (_req, res) => res.json(db.prepare('SELECT * FROM work_orders ORDER BY id DESC').all().map(woRow)))
 // สร้างใบสั่งงาน (ใช้ร่วมกัน: หน้าเว็บ / สั่งงานด้วยเสียง / บอท LINE)
 function createWorkOrder(b, byName) {
-  const seq = db.prepare('SELECT COUNT(*) c FROM work_orders').get().c + 1
+  const seq = seqAfter('work_orders')
   const no = `WO-${docYear()}-${String(seq).padStart(3, '0')}`
   const urgent = b.urgent ? 1 : 0
   const priority = urgent ? 'ด่วน' : (b.priority || 'ปกติ')

@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,6 +43,44 @@ test('อ่าน DXF: นับ Block (ไม่นับเส้นใน BL
   assert.ok(s.texts.some((t) => t.text === 'ห้องนอน +2.10'))
   const raw = rawItemsFromDxf(s)
   assert.ok(raw.find((r) => r.desc === 'MH' && r.qty === 3 && r.cat === 'ระบบประปา-สุขาภิบาล'))
+})
+
+// ห้องน้ำทั้งชุดเป็นบล็อก (มี WC/LAV ซ้อนข้างใน) · ประตูเป็น dynamic block (*U5 → DOOR-90) · โคมไฟวางแบบอาร์เรย์ 2×3 · กรอบแบบใน Layout
+function nestedDxf() {
+  const o = []
+  const p = (c, v) => o.push(String(c), String(v))
+  p(0, 'SECTION'); p(2, 'HEADER'); p(9, '$INSUNITS'); p(70, 4); p(0, 'ENDSEC')
+  p(0, 'SECTION'); p(2, 'TABLES'); p(0, 'TABLE'); p(2, 'BLOCK_RECORD')
+  p(0, 'BLOCK_RECORD'); p(5, '1A'); p(2, 'DOOR-90')
+  p(0, 'BLOCK_RECORD'); p(5, '2B'); p(2, '*U5'); p(1001, 'AcDbBlockRepBTag'); p(1070, 1); p(1005, '1A')
+  p(0, 'ENDTAB'); p(0, 'ENDSEC')
+  p(0, 'SECTION'); p(2, 'BLOCKS')
+  p(0, 'BLOCK'); p(8, '0'); p(2, 'BATH-SET'); p(0, 'INSERT'); p(8, '0'); p(2, 'WC'); p(0, 'INSERT'); p(8, 'P-FIX'); p(2, 'LAV'); p(0, 'ENDBLK')
+  p(0, 'BLOCK'); p(8, '0'); p(2, 'WC'); p(0, 'ENDBLK')
+  p(0, 'ENDSEC')
+  p(0, 'SECTION'); p(2, 'ENTITIES')
+  p(0, 'INSERT'); p(8, 'P-SAN'); p(2, 'BATH-SET'); p(10, 0); p(20, 0)
+  p(0, 'INSERT'); p(8, 'P-SAN'); p(2, 'BATH-SET'); p(10, 5000); p(20, 0)
+  p(0, 'INSERT'); p(8, 'A-DOOR'); p(2, '*U5'); p(10, 0); p(20, 0)
+  p(0, 'INSERT'); p(8, 'E-LIGHT'); p(2, 'LAMP'); p(70, 2); p(71, 3); p(10, 0); p(20, 0)
+  p(0, 'LINE'); p(8, 'TITLE'); p(67, 1); p(10, 0); p(20, 0); p(11, 420000); p(21, 0)
+  p(0, 'INSERT'); p(8, 'TITLE'); p(67, 1); p(2, 'TITLEBLOCK'); p(10, 0); p(20, 0)
+  p(0, 'ENDSEC'); p(0, 'EOF')
+  return o.join('\r\n') + '\r\n'
+}
+test('อ่าน DXF: ไม่นับของในหน้า Layout · ชื่อจริงของ dynamic block · นับบล็อกที่ซ้อนในบล็อก · อาร์เรย์ MINSERT', () => {
+  const s = summarizeDxf(nestedDxf())
+  const cnt = Object.fromEntries(s.blocks.map((b) => [b.name + '@' + b.layer, b.count]))
+  assert.equal(cnt['BATH-SET@P-SAN'], 2)
+  assert.equal(cnt['WC@P-SAN'], 2, 'WC ใน Layer 0 ของบล็อก → ใช้ Layer ของตัวที่วาง')
+  assert.equal(cnt['LAV@P-FIX'], 2)
+  assert.equal(cnt['DOOR-90@A-DOOR'], 1, '*U5 ต้องได้ชื่อจริง DOOR-90')
+  assert.equal(cnt['LAMP@E-LIGHT'], 6, 'อาร์เรย์ 2×3 = 6 ดวง')
+  assert.equal(cnt['TITLEBLOCK@TITLE'], undefined, 'บล็อกในหน้า Layout ต้องไม่ถูกนับ')
+  assert.equal(s.lengths.find((l) => l.layer === 'TITLE'), undefined, 'เส้นในหน้า Layout ต้องไม่ถูกนับ')
+  assert.equal(s.paper_skipped, 2)
+  assert.equal(s.blocks.find((b) => b.name === 'WC').nested, 2)
+  assert.match(rawItemsFromDxf(s).find((r) => r.desc === 'WC').basis, /อยู่ในบล็อกอื่น 2/)
 })
 
 test('อ่าน DXF: บังคับหน่วยเป็นเมตร → ค่าเปลี่ยนตาม · ไฟล์ที่ไม่ใช่ DXF แจ้งข้อผิดพลาด', () => {
@@ -245,4 +283,26 @@ test('BOQ เก็บปริมาณงานต่อหมวด (work) �
   assert.equal(b.items[0].part, 'เสา คาน พื้น')
   const u = await (await fetch(BASE + '/boqs/' + b.id, { method: 'PUT', headers: h, body: JSON.stringify({ title: 't2' }) })).json()
   assert.deepEqual(u.work, work, 'แก้ BOQ โดยไม่ส่ง work ต้องไม่ลบของเดิม')
+})
+
+test('เลข BOQ: ลบใบเก่าแล้วสร้างใหม่ เลขต้องไม่ซ้ำใบที่ยังอยู่', async () => {
+  const h = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+  const mk = async () => (await (await fetch(BASE + '/boqs', { method: 'POST', headers: h, body: JSON.stringify({ title: 'เลข', items: [] }) })).json())
+  const a = await mk(), b = await mk()
+  await fetch(BASE + '/boqs/' + a.id, { method: 'DELETE', headers: h })
+  const c = await mk()
+  assert.notEqual(c.no, b.no, `ได้เลขซ้ำ ${c.no}`)
+  const nos = (await (await fetch(BASE + '/boqs', { headers: h })).json()).map((x) => x.no)
+  assert.equal(new Set(nos).size, nos.length, 'เลข BOQ ต้องไม่ซ้ำ')
+})
+
+test('งานถอดแบบเบื้องหลังเก็บในฐานข้อมูล: ถามผลซ้ำได้หลังเสร็จ · ไฟล์ชั่วคราวถูกลบเมื่อเสร็จ', async () => {
+  const r = await fetch(BASE + '/boq-takeoff?' + new URLSearchParams({ name: 'plan.pdf', mime: 'application/pdf', async: '1' }), { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF-1.4 x') })
+  const { job } = await r.json()
+  let d
+  for (let i = 0; i < 50; i++) { d = await (await fetch(BASE + '/boq-takeoff/jobs/' + job, { headers: { Authorization: 'Bearer ' + token } })).json(); if (d.status === 'done') break; await new Promise((ok) => setTimeout(ok, 100)) }
+  assert.equal(d.status, 'done')
+  const again = await (await fetch(BASE + '/boq-takeoff/jobs/' + job, { headers: { Authorization: 'Bearer ' + token } })).json()
+  assert.equal(again.result.items.length, d.result.items.length, 'ถามซ้ำต้องได้ผลเดิม')
+  assert.equal(existsSync(join(tmp, 'takeoff-jobs', job)), false, 'ไฟล์ชั่วคราวต้องถูกลบเมื่อเสร็จ')
 })

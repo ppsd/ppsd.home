@@ -16,6 +16,7 @@ server/data/files/
 cloudflared.exe
 server/data/logs/
 server/data/*.env
+server/data/takeoff-jobs/
 
 # รหัสลับ Supabase/ฐานข้อมูล — ห้ามขึ้น GitHub
 .env

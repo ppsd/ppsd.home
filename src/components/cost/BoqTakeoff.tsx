@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '../../api'
+import { api, ApiError } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
@@ -110,9 +110,19 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
         : await api.uploadRaw<{ job: string }>('/boq-takeoff?' + new URLSearchParams({ name: file!.name, units, house: JSON.stringify(info), async: '1' }).toString(), file!)
       let r: Result | null = null
       setElapsed(0)
+      let offline = 0 // ถามผลไม่ได้ติดกันกี่ครั้ง (server กำลังรีสตาร์ต — งานรันต่อเองที่ server)
       while (!r) {
         await new Promise((ok) => setTimeout(ok, 3000))
-        const j = await api.get<{ status: 'running'; seconds: number } | { status: 'done'; result: Result }>('/boq-takeoff/jobs/' + started.job)
+        let j: { status: 'running'; seconds: number } | { status: 'done'; result: Result }
+        try {
+          j = await api.get<typeof j>('/boq-takeoff/jobs/' + started.job)
+          offline = 0
+        } catch (e) {
+          // ต่อ server ไม่ได้ / proxy ตอบ 502–504 ที่ไม่ใช่ JSON (ไม่ใช่ข้อผิดพลาดจากงานถอดแบบ) → รอแล้วถามใหม่ ไม่เกิน ~3 นาที
+          const transient = !(e instanceof ApiError) || (e.status >= 502 && e.status <= 504 && e.message === 'เกิดข้อผิดพลาด')
+          if (!transient || ++offline > 60) throw e
+          continue
+        }
         if (j.status === 'done') r = j.result
         else setElapsed(j.seconds)
       }
