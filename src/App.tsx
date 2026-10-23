@@ -74,6 +74,9 @@ export default function App() {
   const ownerPages = useModalOwnerPages()
   const [printDoc, setPrintDoc] = useState<{ kind: DocKind; slip?: ApiPayroll } | null>(null)
   const [forcePin, setForcePin] = useState(false) // ถูกรีเซ็ต PIN → บังคับตั้งใหม่ก่อนใช้งาน
+  // จอคอม: ย่อเมนูซ้ายเหลือแถบไอคอน — จำค่าไว้ในเบราว์เซอร์นี้
+  const [sbCollapsed, setSbCollapsed] = useState(() => { try { return localStorage.getItem('ppsd_sb_collapsed') === '1' } catch { return false } })
+  const toggleSb = () => setSbCollapsed((v) => { const n = !v; try { localStorage.setItem('ppsd_sb_collapsed', n ? '1' : '0') } catch { /* ignore */ } return n })
   const [navOpen, setNavOpen] = useState(false) // จอแคบ (< 1024px): เมนูซ้ายซ่อนไว้ กด ☰ แล้วเลื่อนออกมา
   useEffect(() => { setForcePin(!!user?.mustChangePin) }, [user?.mustChangePin])
   const openPrint = (kind: DocKind, data?: unknown) =>
@@ -350,7 +353,7 @@ export default function App() {
 
   return (
     <>{moreBar}<div className={'app-shell' + (navOpen ? ' nav-open' : '')} style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#F3F5F7', fontFamily: "'Kanit',sans-serif" }}>
-      <Sidebar activePage={activePage} onNavigate={(id) => { setNavOpen(false); onNavigate(id) }} onClose={() => setNavOpen(false)} />
+      <Sidebar activePage={activePage} onNavigate={(id) => { setNavOpen(false); onNavigate(id) }} onClose={() => setNavOpen(false)} collapsed={sbCollapsed} onToggleCollapse={toggleSb} />
       <div className="nav-backdrop" onClick={() => setNavOpen(false)} />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>

@@ -99,6 +99,9 @@ input::placeholder {
 .nav-backdrop {
   display: none;
 }
+.sb-collapse {
+  display: flex; /* ปุ่มย่อเมนู: เฉพาะจอคอม */
+}
 
 @media (max-width: 1023px) {
   /* ---- เมนูซ้าย → ลิ้นชักเลื่อนออก ---- */
@@ -129,6 +132,9 @@ input::placeholder {
   .sb-close,
   .tb-menu {
     display: flex !important;
+  }
+  .sb-collapse {
+    display: none !important; /* จอแคบ: เมนูเป็นลิ้นชักอยู่แล้ว */
   }
   .sb nav > div > div {
     padding-top: 11px !important; /* เป้ากดใหญ่ขึ้นสำหรับนิ้ว */
