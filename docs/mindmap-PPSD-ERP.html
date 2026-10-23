@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PPSD ERP Mindmap</title>
+<style>
+:root{
+  --bg:#F3F5F7; --panel:#ffffff; --ink:#1C2730; --muted:#5C6770; --line:#C9D2DA;
+  --root:#30506A; --rootInk:#ffffff; --hl:#F6C744;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121A21; --panel:#1B2630; --ink:#E6ECF1; --muted:#9AA8B4; --line:#34444F;
+    --root:#5D8AAE; --rootInk:#0E151B; --hl:#B8902A;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121A21; --panel:#1B2630; --ink:#E6ECF1; --muted:#9AA8B4; --line:#34444F;
+  --root:#5D8AAE; --rootInk:#0E151B; --hl:#B8902A;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:"Kanit","Sarabun","Leelawadee UI",Tahoma,sans-serif}
+header{position:fixed;top:0;left:0;right:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0 8px 0 0;font-weight:600}
+header .sp{flex:1}
+button,input{font:inherit;font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+button{cursor:pointer}
+button:hover{border-color:var(--root)}
+input{width:200px}
+#hint{font-size:12px;color:var(--muted)}
+#stage{position:absolute;top:54px;left:0;right:0;bottom:0;overflow:hidden;cursor:grab;touch-action:none}
+#stage.drag{cursor:grabbing}
+svg{display:block;width:100%;height:100%}
+.node rect{stroke-width:1.5;rx:9}
+.node text{font-size:13px;fill:var(--ink);dominant-baseline:middle}
+.node.root text{font-size:17px;font-weight:600;fill:var(--rootInk)}
+.node.l1 text{font-weight:600;font-size:14px}
+.node.click{cursor:pointer}
+.node .tog{font-size:11px;fill:var(--muted)}
+.node.hit rect{stroke:var(--hl)!important;stroke-width:3}
+path.link{fill:none;stroke-width:1.6;opacity:.75}
+@media (max-width:640px){ input{width:130px} #hint{display:none} }
+@media print{ header{display:none} #stage{top:0} }
+</style>
+</head>
+<body>
+<header>
+  <h1>🗺️ PPSD Construction ERP — แผนผังระบบ</h1>
+  <button id="expandAll">กางทั้งหมด</button>
+  <button id="collapseAll">ย่อถึงชั้น 2</button>
+  <button id="fit">พอดีจอ</button>
+  <input id="q" placeholder="ค้นหาหัวข้อ…">
+  <button id="theme" title="สลับโหมดสว่าง/มืด">◐</button>
+  <span class="sp"></span>
+  <span id="hint">คลิกหัวข้อเพื่อกาง/ย่อ · ลากเพื่อเลื่อน · เลื่อนล้อเมาส์เพื่อซูม</span>
+</header>
+<div id="stage"><svg id="svg"><g id="vp"></g></svg></div>
+
+<script>
+// ===== ข้อมูลแผนผัง (ตรงกับคู่มือ docs/คู่มือการใช้งาน-PPSD-ERP.md) =====
+const DATA = {t:'PPSD Construction ERP', c:[
+ {t:'1 · เริ่มต้นใช้งาน', side:'L', c:[
+  {t:'เปิดระบบ', c:[{t:'start.bat / autostart'},{t:'LAN: http://IP:3001'},{t:'นอกออฟฟิศ: ลิงก์สาธารณะ'},{t:'ติดตั้งแอปบนมือถือ (PWA)'},{t:'update.bat หลังอัปเดต'}]},
+  {t:'เข้าสู่ระบบ', c:[{t:'ชื่อผู้ใช้ + PIN 4 หลัก'},{t:'ผิด 5 ครั้ง ล็อก 5 นาที'},{t:'ลืม PIN → แอดมินอนุมัติ'},{t:'บังคับตั้ง PIN ใหม่'},{t:'PIN เว็บ = PIN ลงเวลา'}]},
+  {t:'หน้าจอหลัก', c:[{t:'ค้นหาบ้าน / ลูกค้า'},{t:'🔔 กระดิ่งแจ้งเตือน'},{t:'💬 ผูก LINE ของฉัน'},{t:'เมนูซ้าย 6 กลุ่ม (ย่อเป็นไอคอนได้)'},{t:'ฟอร์มย่อพับได้ (Esc)'},{t:'อัปเดตสด ไม่ต้อง F5'}]},
+  {t:'สิทธิ์', c:[
+   {t:'บทบาท', c:[{t:'ผู้ดูแล (admin)'},{t:'บัญชี'},{t:'หน้างาน'},{t:'ดูอย่างเดียว'}]},
+   {t:'ตำแหน่ง', c:[{t:'ผู้จัดการ/CEO → อนุมัติ'},{t:'CEO → KPI / สรุป QC / เสียง'},{t:'บุคคล → ดูเงินเดือน'}]},
+   {t:'Gate เมนู', c:[{t:'finance'},{t:'manager'},{t:'ceo / pms'},{t:'vault'}]},
+   {t:'ปิดโมดูลรายคน'}]}]},
+ {t:'2 · บ้าน / โครงการ', side:'R', c:[
+  {t:'รายการบ้าน', c:[{t:'dropdown เลือกบ้าน'},{t:'กรองสถานะ + จำนวน'},{t:'Test (บ้านทดสอบ) / 🏢 ออฟฟิศ'},{t:'+ เพิ่มบ้าน (ขาย / CM / ออฟฟิศ)'},{t:'ใส่รูปบ้าน'}]},
+  {t:'รายละเอียดบ้าน', c:[
+   {t:'เปลี่ยนสถานะได้ทันที'},{t:'🖨 พิมพ์สรุปบ้าน (A4)'},{t:'สรุปการเงิน 6 ช่อง'},{t:'กำไร (เฉพาะผู้จัดการ)'},{t:'มูลค่าแยกหมวด ตัวบ้าน/โรงรถ/ถนน-รั้ว'},{t:'แก้ไขข้อมูล'},
+   {t:'12 แท็บ', c:[{t:'งวดงาน'},{t:'ใบสั่งงาน'},{t:'ช่าง / ผู้รับเหมา'},{t:'ปัญหา'},{t:'BOQ'},{t:'QC ตรวจงาน'},{t:'เอกสารหน้างาน'},{t:'รายงานหน้างาน'},{t:'ความปลอดภัย'},{t:'ส่งมอบงาน'},{t:'จัดซื้อ'},{t:'รายจ่าย'}]}]},
+  {t:'งวดงาน', c:[{t:'ลูกค้า (รับเงิน) / ช่าง (จ่ายเงิน)'},{t:'หัวข้อใหญ่เพิ่มเอง'},{t:'หมวดย่อ/ขยาย + ยอดสรุป'},{t:'ตรวจรับก่อนเก็บเงิน'},{t:'เก็บเต็ม / บางส่วน / ยกเลิก'},{t:'ใบเสร็จ RC'},{t:'ลงบัญชีอัตโนมัติ'},{t:'นำเข้า: AI อ่านสัญญา / วาง Excel'}]},
+  {t:'ช่าง / ผู้รับเหมา', c:[{t:'จ้างช่าง เทียบราคากลาง'},{t:'สูงกว่าราคากลาง ต้องมีเหตุผล'},{t:'ค่าของออกให้ก่อน / หักงวด'},{t:'ประเมิน 10 หัวข้อ → เกรด'}]},
+  {t:'ไฟล์แบบบ้าน / สัญญา', c:[{t:'7 หมวด'},{t:'หมวดอัตโนมัติตามชนิดไฟล์'},{t:'ย้ายหมวดได้'},{t:'หลายไฟล์ ≤ 200MB'}]},
+  {t:'ส่งมอบ / รับรองงาน', c:[{t:'ใบส่งมอบ HD'},{t:'หนังสือรับรอง CERT'},{t:'↻ ดึงข้อมูลจริง'}]},
+  {t:'งวดงานรวมทุกบ้าน', c:[{t:'รอเก็บ / เลยกำหนด / เก็บแล้ว'},{t:'ส่งออก Excel'}]}]},
+ {t:'3 · งานหน้างาน', side:'R', c:[
+  {t:'ปัญหาหน้างาน', c:[{t:'+ แจ้งปัญหา'},{t:'ความเร่งด่วน 3 ระดับ'},{t:'เปลี่ยนสถานะที่ CRM → เคส'}]},
+  {t:'ใบสั่งงาน (WO)', c:[{t:'สั่งงาน + LINE'},{t:'รับทราบ (ตอบ "รับ")'},{t:'ส่งงาน + ไฟล์/ลิงก์'},{t:'✓ รับงาน → KPI'},{t:'งานด่วน ไล่ระดับ'},{t:'สิทธิ์รายใบ'}]},
+  {t:'ตรวจงาน QC', c:[{t:'10 งวด · 60 ฟอร์ม PPSD'},{t:'ผ่าน / ไม่ผ่าน + รูป'},{t:'สถานะคำนวณอัตโนมัติ'},{t:'งวดผ่านครบ → LINE ลูกค้า'}]},
+  {t:'เอกสารหน้างาน', c:[{t:'RFI สอบถามแบบ'},{t:'RFA ขออนุมัติ'},{t:'NCR งานไม่ตามข้อกำหนด'},{t:'VO งานเปลี่ยนแปลง'}]},
+  {t:'รายงานหน้างาน', c:[{t:'Daily DR'},{t:'Weekly WR'},{t:'↻ ดึงข้อมูลจริง'}]},
+  {t:'ความปลอดภัย', c:[{t:'PPE 8 อุปกรณ์'},{t:'Toolbox Talk'},{t:'JHA วิเคราะห์งานเสี่ยง'}]}]},
+ {t:'4 · จัดซื้อ / วัสดุ', side:'R', c:[
+  {t:'ขั้นตอน 5 ขั้น', c:[{t:'① สั่งของ (LINE/เว็บ) → PR'},{t:'② ผู้ตรวจสอบ'},{t:'③ ผู้บริหารอนุมัติ PR'},{t:'④ ใบเสนอราคา → AI เทียบ → ร่าง PO'},{t:'⑤ อนุมัติ PO → สั่ง → ตรวจรับ'}]},
+  {t:'ใบขอซื้อ (PR)', c:[{t:'หลายรายการ + รูป'},{t:'VAT 3 แบบ + ส่วนลด'},{t:'เตือนราคากลาง'},{t:'⚖ เทียบราคา / 🔎 ออนไลน์'}]},
+  {t:'ใบสั่งซื้อ (PO)', c:[{t:'เงินสด / เครดิต'},{t:'อนุมัติ 3 คน (ค่าเริ่มต้น)'},{t:'📦 ตรวจรับ AI อ่านใบส่งของ'},{t:'รับของแล้ว → ต้นทุน + เจ้าหนี้'}]},
+  {t:'จ่ายเงิน / หัก ณ ที่จ่าย', c:[{t:'ใบจ่าย PV'},{t:'ภงด.3 / 53'},{t:'50 ทวิ'}]},
+  {t:'ยอดค้างจ่าย', c:[{t:'PO เครดิตรับของแล้ว'},{t:'ตรวจ 2010 ตรงบัญชี'}]},
+  {t:'ผู้ขาย / ผู้รับเหมา', c:[{t:'เครดิต (วัน)'},{t:'จด VAT'}]},
+  {t:'ประวัติการซื้อ / ราคา'},{t:'รายงานภาษี + e-Filing'},
+  {t:'สต๊อกวัสดุ', c:[{t:'รับเข้า / เบิกออก / ตรวจนับ'},{t:'จุดสั่งซื้อ → ใกล้หมด'}]},
+  {t:'ราคากลาง', c:[{t:'วัสดุ (จากประวัติจริง)'},{t:'ค่าแรงช่าง (เหมา / แยกงาน)'}]},
+  {t:'เบิกค่าน้ำมันผ่าน LINE (FR)'}]},
+ {t:'5 · บัญชี / การเงิน', side:'L', c:[
+  {t:'รายจ่าย', c:[{t:'+ เพิ่มรายจ่าย'},{t:'ใบกำกับภาษี / VAT'},{t:'หมวด → รหัสบัญชี'},{t:'ใบจ่าย OE'}]},
+  {t:'บัญชีแยกประเภท (GL)', c:[
+   {t:'↻ สร้างบัญชีจากข้อมูลเดิม'},
+   {t:'14 แท็บ', c:[{t:'งบการเงิน'},{t:'งบกระแสเงินสด'},{t:'กำไรรายโครงการ'},{t:'ลูกหนี้ / เจ้าหนี้'},{t:'กระทบยอดธนาคาร'},{t:'เงินสดย่อย'},{t:'ค่าน้ำมันรถ'},{t:'งบทดลอง'},{t:'สมุดรายวัน (JV)'},{t:'แยกประเภท'},{t:'ผังบัญชี'},{t:'สินทรัพย์ / ค่าเสื่อม'},{t:'สรุปภาษี'},{t:'ปิดบัญชี / ยอดยกมา'}]},
+   {t:'รายการบัญชีอัตโนมัติ'}]},
+  {t:'เงินสดย่อย / น้ำมัน', c:[{t:'สองกอง 1030 / 1031'},{t:'วงเงิน + เติมกอง'},{t:'RV อัตโนมัติ'},{t:'อ้างอิง RR / PO / OE / PS'},{t:'ใบสรุป'}]},
+  {t:'ต้นทุน / การเงิน', c:[{t:'BOQ ตีราคา → ราคาขาย'},{t:'📐 ถอดจากแบบ → BOQ ร่าง', c:[{t:'DWG / DXF / PDF / รูป'},{t:'AI ถอดปริมาณ + จับคู่ราคากลาง'},{t:'🌐 ราคาจากเว็บ'},{t:'ค่าแรงตามปริมาณงาน'}]},{t:'Cash Flow ประมาณการ'},{t:'บัญชีรับ-จ่าย'}]},
+  {t:'ส่งออก Express (CSV)'},
+  {t:'e-Filing', c:[{t:'ภงด.1 / สปส.1-10'},{t:'ภงด.3 / 53'},{t:'ภพ.30'}]},
+  {t:'ทะเบียนเอกสาร', c:[{t:'เวอร์ชัน / ประวัติ'},{t:'วันหมดอายุใบอนุญาต'}]}]},
+ {t:'6 · การขาย / CRM', side:'L', c:[
+  {t:'เอกสารขาย', c:[{t:'QT → INV → RC'},{t:'VAT 3 แบบ'},{t:'AI อ่านใบเก่า'},{t:'เซ็นสัญญา → บ้าน + 7 งวด'}]},
+  {t:'ลูกค้า 360°', c:[{t:'บ้าน · งวด · เคส · ประกัน'},{t:'Timeline + ต้องทำต่อ'},{t:'💬 ผูก LINE ลูกค้า'},{t:'🔗 พอร์ทัลลูกค้า'}]},
+  {t:'Lead / Pipeline', c:[{t:'Kanban 5 ขั้น'},{t:'เงียบ > 3 วัน เตือน'},{t:'ปิดการขาย → ลูกค้า + บ้าน'}]},
+  {t:'เคสบริการ (SLA 24 ชม.)'},
+  {t:'NPS / บอกต่อ (REF)'},
+  {t:'LINE อัตโนมัติ', c:[{t:'ความคืบหน้ารายสัปดาห์'},{t:'เตือนงวด'},{t:'ผ่าน QC'},{t:'ส่งมอบ + ประกัน'},{t:'ตรวจบ้าน 6/12 เดือน'}]},
+  {t:'รายงาน CRM'},
+  {t:'พอร์ทัลลูกค้า (ไม่ต้องล็อกอิน)'}]},
+ {t:'7 · ภาพรวม / ผู้บริหาร', side:'L', c:[
+  {t:'หน้าสรุป', c:[{t:'แถบสุขภาพระบบ'},{t:'การ์ด 8 ใบ'},{t:'กำไรทุกหลัง'},{t:'กล่องเตือน 3 กล่อง'}]},
+  {t:'แผนงาน Gantt / S-Curve'},
+  {t:'รายงาน', c:[{t:'กำไรรายโครงการ'},{t:'กระแสเงินสด'},{t:'งบ vs จริง'},{t:'📊 รายงานผู้บริหาร → LINE'}]},
+  {t:'สรุป QC (ผู้บริหาร)'},
+  {t:'สั่งงานด้วยเสียง (CEO)', c:[{t:'🎤 พูด → ใบสั่งงาน'},{t:'งานด่วน ไล่ระดับ'}]},
+  {t:'สรุปเช้าทาง LINE'}]},
+ {t:'8 · HR / ลงเวลา / KPI', side:'R', c:[
+  {t:'ลงเวลา', c:[{t:'Kiosk เข้า/ออกงาน'},{t:'#checkin บนมือถือ'},{t:'GPS รัศมีออฟฟิศ'},{t:'ดูสลิปของฉัน'},{t:'ปรับปรุงเวลา ≤ 2 วัน'}]},
+  {t:'พนักงาน', c:[{t:'+ เพิ่ม → บัญชีอัตโนมัติ'},{t:'ลดหย่อน / ธนาคาร / Retention / กยศ'},{t:'โควต้าวันลา'}]},
+  {t:'OT / ลา / วันหยุด', c:[{t:'OT กรอกเงินเอง'},{t:'ลาเต็มวัน / ครึ่งวัน / ชั่วโมง'},{t:'ผู้จัดการอนุมัติ'}]},
+  {t:'เงินเดือน', c:[{t:'↺ ดึงวันจากลงเวลา'},{t:'💸 ทำจ่ายหลายรอบ (PAY-)'},{t:'เบิกล่วงหน้า / รายได้ / หักอื่น'},{t:'ปกส. 5% สูงสุด 875'},{t:'ลงบัญชีอัตโนมัติ'},{t:'สลิป / ใบสรุป / ไฟล์ธนาคาร'}]},
+  {t:'ภงด.1 / ประกันสังคม', c:[{t:'ภงด.1ก'},{t:'50 ทวิ'},{t:'สปส.1-10'}]},
+  {t:'ประเมินผล KPI', c:[{t:'KPI 70 · Comp 20 · Behav 10'},{t:'ดึงผล WO / QC'},{t:'เกรด A–F → โบนัส'}]},
+  {t:'ติดตามตำแหน่ง', c:[{t:'เส้นทางรายวัน'},{t:'GPSLogger เบื้องหลัง'}]}]},
+ {t:'9 · ผู้ดูแลระบบ', side:'R', c:[
+  {t:'ผู้ใช้งาน', c:[{t:'+ เพิ่มผู้ใช้ (+ HR)'},{t:'บทบาท / ตำแหน่ง / โมดูล'},{t:'ลายเซ็น'},{t:'คำขอรีเซ็ต PIN'}]},
+  {t:'ตั้งค่า LINE', c:[{t:'Token / Secret'},{t:'ลิงก์สาธารณะ + Webhook'},{t:'สรุปเช้า'}]},
+  {t:'ตั้งค่า AI (กุญแจ)'},
+  {t:'ขั้นตอนจัดซื้อ (ผู้ตรวจ / ผู้รับใบ PR)'},
+  {t:'ตรวจสอบ (Audit)', c:[{t:'สัญญาณเตือน'},{t:'กระทบยอด'},{t:'ประวัติการใช้งาน'},{t:'กติกาควบคุม'}]},
+  {t:'คลังรหัสผ่าน (เข้ารหัส)'},
+  {t:'สำรอง / กู้คืน', c:[{t:'อัตโนมัติทุกวัน'},{t:'สำรองนอกเครื่อง'},{t:'กู้คืนชุดนี้'}]},
+  {t:'↻ รีสตาร์ทเซิร์ฟเวอร์'}]}
+]};
+
+// ===== สีต่อสาขา =====
+const PAL_L = ['#2F6B9A','#2E7D55','#B5652B','#7A4FA0','#B33F62','#1F7F86','#8C6D1F','#4B5FB8','#6B7A2A'];
+const PAL_D = ['#7FB2DD','#6CC79A','#E7A06A','#B993DB','#E58AA6','#62C3CA','#D4B465','#94A4F0','#B3C46A'];
+const isDark = () => document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+
+// ===== เตรียมโหนด =====
+let uid = 0;
+function prep(n, depth, color, parent){
+  n.id = uid++; n.depth = depth; n.parent = parent; n.color = color;
+  n.open = depth < 2;
+  (n.c||[]).forEach((ch, i) => prep(ch, depth+1, depth === 0 ? i : color, n));
+}
+prep(DATA, 0, 0, null);
+
+const svg = document.getElementById('svg'), vp = document.getElementById('vp');
+const NS = 'http://www.w3.org/2000/svg';
+const measure = document.createElementNS(NS, 'text'); measure.setAttribute('visibility','hidden'); svg.appendChild(measure);
+function textW(t, depth){
+  measure.setAttribute('style', `font-size:${depth===0?17:depth===1?14:13}px;font-weight:${depth<2?600:400};font-family:Kanit,Sarabun,'Leelawadee UI',Tahoma,sans-serif`);
+  measure.textContent = t; return measure.getComputedTextLength();
+}
+
+const ROW = 30, GAP_X = 46;
+// layout: วางลูกเป็นคอลัมน์ ด้านซ้าย/ขวาของราก
+function layoutSide(nodes, dir, x0){
+  let y = 0;
+  function place(n, x){
+    n.w = textW(n.t, n.depth) + 26 + ((n.c && n.c.length) ? 16 : 0);
+    n.h = n.depth === 1 ? 32 : 26;
+    n.dir = dir;
+    const kids = n.open ? (n.c||[]) : [];
+    const nx = dir > 0 ? x : x - n.w;
+    n.x = nx;
+    if(!kids.length){ n.y = y; y += ROW; return; }
+    const childX = dir > 0 ? x + n.w + GAP_X : x - n.w - GAP_X;
+    kids.forEach(k => place(k, childX));
+    n.y = (kids[0].y + kids[kids.length-1].y) / 2;
+  }
+  nodes.forEach((n, i) => { place(n, x0); y += 14; });
+  return y;
+}
+function layout(){
+  const r = DATA;
+  r.w = textW(r.t, 0) + 40; r.h = 46; r.x = -r.w/2;
+  const L = r.c.filter(n => n.side === 'L'), R = r.c.filter(n => n.side !== 'L');
+  const hR = layoutSide(R, 1, r.w/2 + 70);
+  const hL = layoutSide(L, -1, -r.w/2 - 70);
+  // จัดกึ่งกลางแนวตั้ง
+  const shift = (arr, h) => { const off = -h/2; const walk = n => { n.y += off; if(n.open) (n.c||[]).forEach(walk); }; arr.forEach(walk); };
+  shift(R, hR); shift(L, hL);
+  r.y = 0;
+}
+
+function visible(n, out = []){ out.push(n); if(n.open) (n.c||[]).forEach(k => visible(k, out)); return out; }
+
+let query = '';
+function render(){
+  layout();
+  const dark = isDark(), pal = dark ? PAL_D : PAL_L;
+  vp.innerHTML = '';
+  const gLinks = document.createElementNS(NS, 'g'), gNodes = document.createElementNS(NS, 'g');
+  vp.appendChild(gLinks); vp.appendChild(gNodes);
+  for(const n of visible(DATA)){
+    const col = n.depth === 0 ? 'var(--root)' : pal[n.color % pal.length];
+    // เส้นเชื่อม
+    if(n.parent){
+      const p = n.parent;
+      const px = p.depth === 0 ? (n.dir > 0 ? p.x + p.w : p.x) : (n.dir > 0 ? p.x + p.w : p.x);
+      const py = p.y;
+      const cx = n.dir > 0 ? n.x : n.x + n.w, cy = n.y;
+      const mx = (px + cx) / 2;
+      const path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', `M${px},${py} C${mx},${py} ${mx},${cy} ${cx},${cy}`);
+      path.setAttribute('class', 'link'); path.setAttribute('stroke', col);
+      gLinks.appendChild(path);
+    }
+    const g = document.createElementNS(NS, 'g');
+    const has = n.c && n.c.length;
+    const hit = query && n.t.toLowerCase().includes(query);
+    g.setAttribute('class', `node ${n.depth===0?'root':n.depth===1?'l1':''} ${has?'click':''} ${hit?'hit':''}`);
+    g.setAttribute('transform', `translate(${n.x},${n.y - n.h/2})`);
+    const rect = document.createElementNS(NS, 'rect');
+    rect.setAttribute('width', n.w); rect.setAttribute('height', n.h); rect.setAttribute('rx', n.depth===0?14:9);
+    if(n.depth === 0){ rect.setAttribute('fill', 'var(--root)'); rect.setAttribute('stroke', 'var(--root)'); }
+    else if(n.depth === 1){ rect.setAttribute('fill', col); rect.setAttribute('fill-opacity', dark ? .28 : .14); rect.setAttribute('stroke', col); }
+    else { rect.setAttribute('fill', 'var(--panel)'); rect.setAttribute('stroke', col); rect.setAttribute('stroke-opacity', .7); }
+    g.appendChild(rect);
+    const tx = document.createElementNS(NS, 'text');
+    tx.setAttribute('x', 13); tx.setAttribute('y', n.h/2 + 1); tx.textContent = n.t;
+    g.appendChild(tx);
+    if(has && n.depth > 0){
+      const tg = document.createElementNS(NS, 'text');
+      tg.setAttribute('class', 'tog'); tg.setAttribute('x', n.w - 16); tg.setAttribute('y', n.h/2 + 1);
+      tg.textContent = n.open ? '−' : `+${n.c.length}`;
+      if(!n.open) tg.setAttribute('x', n.w - 22);
+      g.appendChild(tg);
+    }
+    if(has && n.depth > 0) g.addEventListener('click', e => { e.stopPropagation(); n.open = !n.open; render(); });
+    gNodes.appendChild(g);
+  }
+  applyView();
+}
+
+// ===== pan / zoom =====
+let view = {x: 0, y: 0, k: 1};
+function applyView(){ vp.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`); }
+function fit(){
+  const b = vp.getBBox(), W = svg.clientWidth, H = svg.clientHeight;
+  const k = Math.min(1.4, Math.max(0.2, Math.min((W - 40) / b.width, (H - 40) / b.height)));
+  view.k = k; view.x = W/2 - (b.x + b.width/2) * k; view.y = H/2 - (b.y + b.height/2) * k; applyView();
+}
+const stage = document.getElementById('stage');
+let drag = null;
+stage.addEventListener('pointerdown', e => { if(e.target.closest('.node.click')) return; drag = {x: e.clientX - view.x, y: e.clientY - view.y}; stage.classList.add('drag'); stage.setPointerCapture(e.pointerId); });
+stage.addEventListener('pointermove', e => { if(!drag) return; view.x = e.clientX - drag.x; view.y = e.clientY - drag.y; applyView(); });
+stage.addEventListener('pointerup', () => { drag = null; stage.classList.remove('drag'); });
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const k2 = Math.min(3, Math.max(0.15, view.k * (e.deltaY < 0 ? 1.12 : 1/1.12)));
+  view.x = mx - (mx - view.x) * k2 / view.k; view.y = my - (my - view.y) * k2 / view.k; view.k = k2; applyView();
+}, {passive: false});
+
+// ===== ปุ่ม =====
+const all = (n, f) => { f(n); (n.c||[]).forEach(k => all(k, f)); };
+document.getElementById('expandAll').onclick = () => { all(DATA, n => n.open = true); render(); fit(); };
+document.getElementById('collapseAll').onclick = () => { all(DATA, n => n.open = n.depth < 2); render(); fit(); };
+document.getElementById('fit').onclick = fit;
+document.getElementById('q').addEventListener('input', e => {
+  query = e.target.value.trim().toLowerCase();
+  if(query) all(DATA, n => { if(n.t.toLowerCase().includes(query)) for(let p = n.parent; p; p = p.parent) p.open = true; });
+  render();
+});
+document.getElementById('theme').onclick = () => {
+  const root = document.documentElement;
+  root.dataset.theme = isDark() ? 'light' : 'dark';
+  try { localStorage.setItem('ppsd-mm-theme', root.dataset.theme); } catch(e) {}
+  render();
+};
+try { const t = localStorage.getItem('ppsd-mm-theme'); if(t) document.documentElement.dataset.theme = t; } catch(e) {}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+const placeStage = () => { stage.style.top = document.querySelector('header').offsetHeight + 'px'; };
+window.addEventListener('resize', () => { placeStage(); fit(); });
+
+placeStage(); render(); fit();
+</script>
+</body>
+</html>
