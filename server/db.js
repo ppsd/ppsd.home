@@ -312,6 +312,8 @@ ensureColumn('purchase_requests', 'approved2_date', 'TEXT')
 // audit: เก็บค่าก่อน→หลัง สำหรับการแก้ไขข้อมูลการเงิน (immutable trail)
 ensureColumn('audit', 'before', 'TEXT')
 ensureColumn('audit', 'after', 'TEXT')
+// รหัสผู้ใช้ของคนที่ทำรายการ — แยกคนชื่อซ้ำ/เปลี่ยนชื่อได้ (แถวเก่าเป็น NULL)
+ensureColumn('audit', 'user_id', 'INTEGER')
 // การรับทราบ/เคลียร์สัญญาณเตือน (acknowledge red flags)
 db.exec(`CREATE TABLE IF NOT EXISTS flag_acks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

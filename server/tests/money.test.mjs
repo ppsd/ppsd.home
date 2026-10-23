@@ -2322,3 +2322,19 @@ test('ไฟล์บ้าน: ย้ายหมวดไฟล์ที่อ
   assert.equal((await GET('/files?house=H-FILES')).data.find((x) => x.id === f.id).category, 'แบบก่อสร้าง')
   assert.equal((await PUT('/files/999999', { category: 'x' })).status, 404)
 })
+
+test('ความปลอดภัย: พนักงานลาออกตอกบัตร/ส่งตำแหน่งที่ kiosk ไม่ได้ · audit เก็บรหัสผู้ใช้', async () => {
+  const e = await POST('/employees', { name: 'ช่างลาออก kiosk', role: 'ช่าง', base: 12000, pin: '5151' })
+  assert.equal(e.status, 201, JSON.stringify(e.data))
+  const code = e.data.code
+  assert.equal((await POST('/kiosk/location', { emp_code: code, pin: '5151', lat: 13.7, lng: 100.5 })).status, 200)
+  assert.equal((await PUT(`/employees/${e.data.id}`, { status: 'ลาออก' })).status, 200)
+  const p = await POST('/kiosk/punch', { emp_code: code, pin: '5151', kind: 'in' })
+  assert.equal(p.status, 403); assert.match(p.data.error, /พ้นสภาพ/)
+  assert.equal((await POST('/kiosk/location', { emp_code: code, pin: '5151', lat: 13.7, lng: 100.5 })).status, 403)
+  // audit: แถวใหม่มี user_id ของคนที่ทำรายการ
+  const me = (await GET('/me')).data
+  assert.equal((await POST('/houses', { code: 'H-AUDIT-UID', name: 'บ้านทดสอบ audit' })).status, 201)
+  const row = (await GET('/audit')).data.find((r) => r.action === 'เพิ่มบ้าน' && r.detail === 'บ้านทดสอบ audit')
+  assert.ok(row, 'ต้องลง audit'); assert.equal(row.user_id, me.id)
+})

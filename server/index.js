@@ -202,7 +202,7 @@ function docYear() {
 }
 // lightweight audit log
 function audit(req, action, detail) {
-  try { db.prepare('INSERT INTO audit (ts,user,action,detail) VALUES (?,?,?,?)').run(new Date().toISOString(), req.user?.name || '-', action, detail || '') } catch { /* ignore */ }
+  try { db.prepare('INSERT INTO audit (ts,user,action,detail,user_id) VALUES (?,?,?,?,?)').run(new Date().toISOString(), req.user?.name || '-', action, detail || '', Number(req.user?.id) || null) } catch { /* ignore */ }
 }
 // format a number as Thai baht with commas (server-side, for audit detail strings)
 const baht = (n) => (Number(n) || 0).toLocaleString('en-US') + ' บาท'
@@ -391,6 +391,7 @@ api.post('/kiosk/location', (req, res) => {
   const { emp_code, pin, lat, lng, accuracy, note } = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
   const bad = kioskPinCheck(emp_code, pin, emp)
   if (bad) return res.status(bad.code).json({ error: bad.error })
   logLocation(emp, lat, lng, accuracy, note)
@@ -401,7 +402,7 @@ api.post('/kiosk/location', (req, res) => {
 function trackHandler(req, res) {
   const token = req.params.token
   const emp = token && db.prepare('SELECT * FROM employees WHERE track_token=?').get(token)
-  if (!emp) return res.status(404).send('unknown token')
+  if (!emp || emp.status === 'ลาออก') return res.status(404).send('unknown token')
   const src = { ...(req.query || {}), ...(req.body || {}) }
   const lat = parseFloat(src.lat), lng = parseFloat(src.lng ?? src.lon ?? src.long)
   if (Number.isNaN(lat) || Number.isNaN(lng)) return res.status(400).send('need lat & lng')
@@ -830,7 +831,7 @@ async function useOnlineOffer(hit, u, uid, replyToken) {
 }
 async function handleLinePostback(uid, data, replyToken) {
   const u = userByLine(uid)
-  if (!u) return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ')
+  if (!u) return lineReply(replyToken, lineUserDisabled(uid) ? LINE_DISABLED_MSG : 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ')
   const m = String(data || '').match(/^apv:(pr|po|payment|expense):(\d+):(approve|hold|reject)$/)
   if (m) return lineApprovalAction(u, m[1], Number(m[2]), m[3], '', replyToken)
   // การ์ดขอเบิกค่าน้ำมัน: อนุมัติ = จ่ายจากกองน้ำมันทันที · ปฏิเสธ = ถามเหตุผลก่อน
@@ -943,8 +944,11 @@ function consumeLineLinkCode(code, uid) {
   db.prepare('UPDATE users SET line_uid=? WHERE id=?').run(uid, u.id)
   return u
 }
-const userByLine = (uid) => { const u = db.prepare("SELECT * FROM users WHERE line_uid=? AND status<>'ปิดใช้งาน'").get(uid) || db.prepare('SELECT * FROM users WHERE line_uid=?').get(uid); return u ? { ...u, position: effectivePosition(u) } : u }
-const lineUidOfName = (name) => db.prepare('SELECT line_uid FROM users WHERE name=? AND line_uid IS NOT NULL').get(name)?.line_uid || null
+// บัญชีที่ปิดใช้งาน (เช่น พนักงานลาออก) ใช้บอทไม่ได้ — ไม่ลบการผูก LINE ไว้ เปิดบัญชีคืนแล้วใช้ต่อได้ทันที
+const userByLine = (uid) => { const u = db.prepare("SELECT * FROM users WHERE line_uid=? AND status<>'ปิดใช้งาน'").get(uid); return u ? { ...u, position: effectivePosition(u) } : u }
+const lineUserDisabled = (uid) => !!db.prepare("SELECT 1 FROM users WHERE line_uid=? AND status='ปิดใช้งาน'").get(uid)
+const LINE_DISABLED_MSG = 'บัญชี ERP ที่ผูกกับ LINE นี้ถูกปิดใช้งานแล้วค่ะ — ติดต่อผู้ดูแลระบบ'
+const lineUidOfName = (name) => db.prepare("SELECT line_uid FROM users WHERE name=? AND line_uid IS NOT NULL AND status<>'ปิดใช้งาน'").get(name)?.line_uid || null
 // พนักงานที่ผูกกับบัญชีผู้ใช้ (employees.user_id หรือชื่อเดียวกัน) — ใช้หาว่างานถูกสั่งถึงคนนี้ไหม
 const empOfUser = (u) => db.prepare('SELECT code, name FROM employees WHERE user_id=? OR name=? ORDER BY CASE WHEN user_id=? THEN 0 ELSE 1 END LIMIT 1').get(u.id, u.name, u.id)
 // CEO/ผู้บริหารที่สั่งงานผ่าน LINE ได้ = แอดมิน หรือผู้จัดการ
@@ -1394,6 +1398,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   const u = userByLine(uid)
   // ยังไม่ผูก → รับเฉพาะรหัส 6 หลัก
   if (!u) {
+    if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
     // ลูกค้า (CRM) ที่ผูก LINE แล้ว → บอทฝั่งลูกค้า
     const cust = customerByLine(uid)
     if (cust) return handleCustomerLineMessage(crmDeps, uid, cust, t, replyToken)
@@ -1813,6 +1818,7 @@ function submitLineOrder(uid, u, d, replyToken) {
 async function handleLineUserImage(uid, message, replyToken) {
   const u = userByLine(uid)
   if (!u) {
+    if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
     const cust = customerByLine(uid)
     if (cust) { const cimg = await lineFetchImage(message); if (!cimg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return handleCustomerLineImage(crmDeps, uid, cust, cimg, replyToken) }
     return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ — ขอรหัส 6 หลักที่ ERP (ไอคอน 💬 มุมขวาบน) แล้วส่งมาที่นี่')
@@ -1901,6 +1907,7 @@ api.post('/kiosk/punch', (req, res) => {
   const { emp_code, pin, kind } = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
   const bad = kioskPinCheck(emp_code, pin, emp)
   if (bad) return res.status(bad.code).json({ error: bad.error })
   // geofence: เช็คอินได้เฉพาะในรัศมีออฟฟิศ (ถ้าเปิดใช้)
@@ -6488,16 +6495,17 @@ function backupChain(startCode) {
   let i = 0
   while (code && !seen.has(code) && chain.length < 6) {
     seen.add(code)
-    const e = db.prepare('SELECT code,name,backup_code FROM employees WHERE code=?').get(code)
+    const e = db.prepare('SELECT code,name,backup_code,status FROM employees WHERE code=?').get(code)
     if (!e) break
-    if (i > 0) chain.push({ code: e.code, name: e.name }) // ข้ามคนแรก (ผู้รับหลัก) — เก็บเฉพาะคนสำรองถัดไป
+    // ข้ามคนแรก (ผู้รับหลัก) — เก็บเฉพาะคนสำรองถัดไป · คนลาออกข้ามไป แต่ยังไล่ต่อไปที่คนสำรองของเขา
+    if (i > 0 && e.status !== 'ลาออก') chain.push({ code: e.code, name: e.name })
     code = e.backup_code
     i++
   }
   // ตัวจบสาย (ผู้จัดการ/CEO) กันงานด่วนตกหล่น
   const finalCode = getSetting('urgent_fallback_code', '')
   if (finalCode && !seen.has(finalCode)) {
-    const f = db.prepare('SELECT code,name FROM employees WHERE code=?').get(finalCode)
+    const f = db.prepare("SELECT code,name FROM employees WHERE code=? AND COALESCE(status,'') != 'ลาออก'").get(finalCode)
     if (f) chain.push({ code: f.code, name: f.name })
   }
   return chain
