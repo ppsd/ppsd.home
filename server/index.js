@@ -2381,7 +2381,7 @@ api.post('/houses', canWrite, (req, res) => {
   const kind = ['cm', 'office'].includes(b.kind) ? b.kind : 'sale'
   const info = db
     .prepare('INSERT INTO houses (code,name,project,customer,value,pct,collected,remain,status,area,design,start_date,deliver_date,manager,kind,owner,contract_no,scope,engineer,supervisor,service_fee,site_location) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(code, b.name, b.project || '', b.customer || '', v, Number(b.pct) || 0, 0, v, b.status || 'เพิ่งเริ่ม', b.area || '', b.design || '', b.start_date || '', b.deliver_date || '', b.manager || '', kind, b.owner || '', b.contract_no || '', b.scope || '', b.engineer || '', b.supervisor || '', Number(b.service_fee) || 0, b.site_location || '')
+    .run(code, b.name, b.project || '', b.customer || '', v, Number(b.pct) || 0, 0, v, String(b.status || 'เพิ่งเริ่ม').trim(), b.area || '', b.design || '', b.start_date || '', b.deliver_date || '', b.manager || '', kind, b.owner || '', b.contract_no || '', b.scope || '', b.engineer || '', b.supervisor || '', Number(b.service_fee) || 0, b.site_location || '')
   for (const k of HOUSE_NUM_FIELDS) if (b[k] != null) db.prepare(`UPDATE houses SET ${k}=? WHERE code=?`).run(Number(b[k]) || 0, code)
   recomputeHouse(code)
   audit(req, 'เพิ่มบ้าน', b.name)
@@ -2394,7 +2394,7 @@ api.put('/houses/:id', canWrite, (req, res) => {
   const b = req.body || {}
   const f = (k, num) => (b[k] != null && b[k] !== '' ? (num ? Number(b[k]) : b[k]) : h[k])
   db.prepare(`UPDATE houses SET name=?, project=?, customer=?, value=?, pct=?, status=?, area=?, design=?, start_date=?, deliver_date=?, manager=?, kind=?, owner=?, contract_no=?, scope=?, engineer=?, supervisor=?, service_fee=?, site_location=?, photo=? WHERE id=?`)
-    .run(f('name'), f('project'), f('customer'), f('value', true), b.pct != null && b.pct !== '' ? Number(b.pct) : h.pct, f('status'), f('area'), f('design'), f('start_date'), f('deliver_date'), f('manager'), ['cm', 'sale', 'office'].includes(b.kind) ? b.kind : h.kind, f('owner'), f('contract_no'), f('scope'), f('engineer'), f('supervisor'), f('service_fee', true), f('site_location'), b.photo != null ? b.photo : h.photo, h.id)
+    .run(f('name'), f('project'), f('customer'), f('value', true), b.pct != null && b.pct !== '' ? Number(b.pct) : h.pct, String(f('status') || '').trim(), f('area'), f('design'), f('start_date'), f('deliver_date'), f('manager'), ['cm', 'sale', 'office'].includes(b.kind) ? b.kind : h.kind, f('owner'), f('contract_no'), f('scope'), f('engineer'), f('supervisor'), f('service_fee', true), f('site_location'), b.photo != null ? b.photo : h.photo, h.id)
   for (const k of HOUSE_NUM_FIELDS) db.prepare(`UPDATE houses SET ${k}=? WHERE id=?`).run(f(k, true) || 0, h.id)
   recomputeHouse(h.code)
   audit(req, 'แก้ไขบ้าน', h.name)

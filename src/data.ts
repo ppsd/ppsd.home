@@ -327,6 +327,13 @@ export interface DashIssue {
 }
 export const issues: DashIssue[] = []
 
+// ---- สถานะบ้าน (ตั้งเองต่อหลัง · ไม่ได้คำนวณจากความคืบหน้า) ----
+export const HOUSE_STATUSES = [
+  { id: 'เพิ่งเริ่ม', label: 'เพิ่งเริ่ม' },
+  { id: 'กำลังสร้าง', label: 'กำลังสร้าง' },
+  { id: 'ส่งมอบแล้ว', label: 'ส่งมอบแล้ว' },
+  { id: 'after-service', label: 'After-service' },
+]
 // ---- house list status filters ----
 export const filters = [
   { id: 'all', label: 'ทั้งหมด' },

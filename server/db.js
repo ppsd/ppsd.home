@@ -366,6 +366,9 @@ ensureColumn('pms_reviews', 'att_wo_overdue', 'INTEGER') // ใบสั่ง�
 ensureColumn('pms_reviews', 'penalty', 'REAL')
 ensureColumn('pms_reviews', 'raw_total', 'REAL')
 
+// สถานะบ้านที่เคยพิมพ์เองมีช่องว่างเกิน (เช่น "after-service ") → ตัวกรองหน้ารวมบ้านหาไม่เจอ — ล้างให้ (ทำซ้ำได้)
+db.prepare("UPDATE houses SET status=TRIM(status) WHERE status IS NOT NULL AND status != TRIM(status)").run()
+
 // ===== เงินเดือน: ทำจ่ายได้หลายรอบต่อเดือน =====
 // payroll_batches = รอบจ่าย (เลือกพนักงานกี่คนก็ได้ · 1 คนรับเงินเดือนของเดือนหนึ่งได้ 1 รอบ) · data = snapshot แถวเงินเดือนของคนในรอบ
 // payroll_runs (เดิม) = ยอดรวมของทุกรอบที่ปิดแล้วในเดือน — สร้างใหม่จากรอบจ่ายทุกครั้ง (ไฟล์ธนาคาร/สปส./ภงด./รายงาน อ่านจากตัวนี้)

@@ -46,29 +46,25 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
     try { const photo = await resizeImage(file); await app.updateHouse(h.id, { photo }) }
     catch { /* ignore */ } finally { setUploading(null) }
   }
-  const q = search.trim().toLowerCase()
+  // search = รหัสบ้านที่เลือกจาก dropdown ('' = ทุกหลัง)
+  const st = (h: ApiHouse) => String(h.status || '').trim()
   const filtered = houses.filter((h) => {
-    const okS = statusFilter === 'all' || h.status === statusFilter
-    const okQ = !q || h.name.toLowerCase().includes(q) || h.customer.toLowerCase().includes(q)
+    const okS = statusFilter === 'all' || st(h) === statusFilter
+    const okQ = !search || h.code === search
     return okS && okQ
   })
+  const countOf = (id: string) => houses.filter((h) => id === 'all' || st(h) === id).length
+  const houseOptions = houses.slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
 
   return (
     <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* filter bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 13px', width: 300 }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94A0A8" strokeWidth="2" strokeLinecap="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M21 21l-4-4" />
-          </svg>
-          <input
-            value={search}
-            onChange={(e) => onSearch(e.target.value)}
-            placeholder="ค้นหาชื่อบ้าน หรือ ลูกค้า"
-            style={{ border: 'none', background: 'transparent', outline: 'none', fontFamily: 'inherit', fontSize: 13.5, color: '#1C2730', width: '100%' }}
-          />
-        </div>
+        <select value={houses.some((h) => h.code === search) ? search : ''} onChange={(e) => onSearch(e.target.value)} title="เลือกบ้าน"
+          style={{ fontFamily: 'inherit', fontSize: 13.5, color: search ? '#1C2730' : '#5C6770', background: '#fff', border: '1px solid ' + (search ? '#30506A' : '#E1E5EA'), borderRadius: 9, padding: '9px 12px', minWidth: 280, maxWidth: '100%', outline: 'none', cursor: 'pointer' }}>
+          <option value="">🏠 บ้านทั้งหมด ({houses.length} หลัง)</option>
+          {houseOptions.map((h) => <option key={h.code} value={h.code}>{h.name} ({h.code}){h.customer ? ' · ' + h.customer : ''}</option>)}
+        </select>
         <div style={{ display: 'flex', gap: 6, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: 4 }}>
           {filters.map((f) => {
             const active = statusFilter === f.id
@@ -78,7 +74,7 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
                 onClick={() => onSetFilter(f.id)}
                 style={{ fontSize: 12.5, fontWeight: 500, padding: '6px 13px', borderRadius: 6, cursor: 'pointer', color: active ? '#fff' : '#5C6770', background: active ? '#30506A' : 'transparent' }}
               >
-                {f.label}
+                {f.label} <span className="num" style={{ opacity: 0.7 }}>{countOf(f.id)}</span>
               </div>
             )
           })}

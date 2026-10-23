@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   baht,
+  HOUSE_STATUSES,
   statusStyle,
   prStyle,
   isStyle,
@@ -51,7 +52,15 @@ const INST_CATS = [
 ]
 
 export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHouse }: HouseDetailProps) {
-  const { data, user, reloadData } = useApp()
+  const { data, user, reloadData, updateHouse } = useApp()
+  // สถานะบ้าน (ใช้กรองหน้ารวมบ้าน) — แก้ได้ทันทีจากหัวหน้า (สิทธิ์เดียวกับแก้ข้อมูลบ้าน)
+  const canEditHouse = user?.role === 'admin' || user?.role === 'accounting' || user?.role === 'site' || !!user?.isManager
+  const [statusSaving, setStatusSaving] = useState(false)
+  const setStatus = async (status: string) => {
+    if (status === String(house.status || '').trim()) return
+    setStatusSaving(true)
+    try { await updateHouse(house.id, { status }) } catch (e) { alert((e as Error).message) } finally { setStatusSaving(false) }
+  }
   const [importing, setImporting] = useState(false)
   const [printing, setPrinting] = useState(false) // ใบสรุปบ้าน (ปุ่ม พิมพ์สรุป)
   // แท็บที่มีฟอร์ม/modal (ใบสั่งงาน · จัดซื้อ · BOQ): เปิดแล้วเก็บไว้เบื้องหลัง — modal ที่ย่อค้างไว้ไม่หายตอนสลับแท็บ
@@ -139,7 +148,19 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
           <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.1 }}>{house.name}</div>
           <div style={{ fontSize: 13, color: '#94A0A8' }}>{house.project} · ลูกค้า {house.customer} · <span style={{ fontFamily: 'monospace' }}>{house.code}</span></div>
         </div>
-        <span style={{ fontSize: 12, fontWeight: 600, color: ss.c, background: ss.bg, padding: '5px 13px', borderRadius: 20 }}>{house.status}</span>
+        {canEditHouse
+          ? <select value={String(house.status || '').trim()} disabled={statusSaving} onChange={(e) => setStatus(e.target.value)} title="เปลี่ยนสถานะบ้าน (ใช้กรองในหน้ารวมบ้าน)"
+            style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: ss.c, background: ss.bg, border: '1px solid ' + ss.c + '55', padding: '5px 10px', borderRadius: 20, cursor: 'pointer', outline: 'none' }}>
+            {!HOUSE_STATUSES.some((s) => s.id === String(house.status || '').trim()) && <option value={String(house.status || '').trim()}>{house.status || '— ไม่ระบุ —'}</option>}
+            {HOUSE_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          : <span style={{ fontSize: 12, fontWeight: 600, color: ss.c, background: ss.bg, padding: '5px 13px', borderRadius: 20 }}>{house.status}</span>}
+        {canEditHouse && String(house.status || '').trim() === 'เพิ่งเริ่ม' && (house.pct || 0) > 0 && (
+          <button onClick={() => setStatus('กำลังสร้าง')} disabled={statusSaving} title="ความคืบหน้ามากกว่า 0% แล้ว แต่สถานะยังเป็น เพิ่งเริ่ม"
+            style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#B7791F', background: '#FBF6EC', border: '1px dashed #E2C98F', borderRadius: 20, padding: '4px 11px', cursor: 'pointer' }}>
+            คืบหน้า {house.pct}% แล้ว → เปลี่ยนเป็น “กำลังสร้าง”
+          </button>
+        )}
         {house.kind === 'cm' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#C0852C', padding: '5px 13px', borderRadius: 20 }}>ควบคุมงาน (CM)</span>}
         {house.kind === 'office' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#30506A', padding: '5px 13px', borderRadius: 20 }}>🏢 ออฟฟิศ / ค่าใช้จ่ายภายใน</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>

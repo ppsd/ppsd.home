@@ -38,7 +38,7 @@ import Vault from './components/admin/Vault'
 import CeoVoice from './components/dashboard/CeoVoice'
 import Login from './Login'
 import { useApp } from './store'
-import { titles, OFFICE_CATS, type ModalDef } from './data'
+import { titles, OFFICE_CATS, HOUSE_STATUSES, type ModalDef } from './data'
 import type { DocKind } from './erpData'
 import type { ApiPayroll } from './store'
 
@@ -178,7 +178,7 @@ export default function App() {
         { label: 'ผู้ควบคุมงาน', value: selHouse.supervisor || '', ph: '' },
         { label: 'วิศวกรโครงการ', value: selHouse.engineer || '', ph: '' },
         { label: 'ขอบเขตงาน (Scope)', value: selHouse.scope || '', ph: '' },
-        { label: 'สถานะ (เพิ่งเริ่ม/กำลังสร้าง/ส่งมอบแล้ว/after-service)', value: selHouse.status, ph: '' },
+        { label: 'สถานะ', value: String(selHouse.status || '').trim(), ph: '', options: [...(HOUSE_STATUSES.some((s) => s.id === String(selHouse.status || '').trim()) ? [] : [{ value: String(selHouse.status || '').trim(), label: selHouse.status || '— ไม่ระบุ —' }]), ...HOUSE_STATUSES.map((s) => ({ value: s.id, label: s.label }))] },
         { label: 'แบบบ้าน', value: selHouse.design || '', ph: 'เช่น PD-2 ชั้น 4 ห้องนอน' },
         { label: 'เริ่มก่อสร้าง', value: selHouse.start_date || '', ph: '' },
         { label: 'กำหนดส่งมอบ', value: selHouse.deliver_date || '', ph: '' },
