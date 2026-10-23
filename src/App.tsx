@@ -77,22 +77,34 @@ export default function App() {
   // จอคอม: ย่อเมนูซ้ายเหลือแถบไอคอน — จำค่าไว้ในเบราว์เซอร์นี้
   const [sbCollapsed, setSbCollapsed] = useState(() => { try { return localStorage.getItem('ppsd_sb_collapsed') === '1' } catch { return false } })
   const toggleSb = () => setSbCollapsed((v) => { const n = !v; try { localStorage.setItem('ppsd_sb_collapsed', n ? '1' : '0') } catch { /* ignore */ } return n })
-  // หน้าพิมพ์เอกสารทุกหน้า (.printdoc-backdrop): คลิกพื้นที่มืดนอกเอกสาร = กดปุ่ม "ปิด" ของหน้านั้นให้
+  // หน้าพิมพ์เอกสารทุกหน้า (.printdoc-backdrop): คลิกพื้นที่มืดนอกเอกสาร หรือกด Esc = กดปุ่ม "ปิด" ของหน้านั้นให้
   //  นับเฉพาะเมื่อกดลงและปล่อยบนพื้นหลังเอง (ลากคลุมข้อความจากในเอกสารออกมาไม่ปิด) · ไม่ปิดหน้าที่มี data-keep-open (เช่น ฟอร์มตรวจรับงวด)
   useEffect(() => {
     let downOn: EventTarget | null = null
+    const closeBtnOf = (bd: HTMLElement) => [...bd.querySelectorAll<HTMLButtonElement>('.no-print button')].find((b) => /^(ปิด|✕|×)$/.test((b.textContent || '').trim()))
     const isOutside = (t: EventTarget | null) => t instanceof HTMLElement && (t.classList.contains('printdoc-backdrop') || (t.classList.contains('no-print') && !!t.parentElement?.classList.contains('printdoc-backdrop')))
     const onDown = (e: MouseEvent) => { downOn = e.target }
     const onClick = (e: MouseEvent) => {
       if (!isOutside(e.target) || downOn !== e.target) return
       const bd = (e.target as HTMLElement).closest('.printdoc-backdrop') as HTMLElement | null
       if (!bd || bd.dataset.keepOpen != null) return
-      const close = [...bd.querySelectorAll<HTMLButtonElement>('.no-print button')].find((b) => /^(ปิด|✕|×)$/.test((b.textContent || '').trim()))
-      close?.click()
+      closeBtnOf(bd)?.click()
+    }
+    // Esc = ปิดหน้าพิมพ์ที่อยู่บนสุด (จับก่อน modal — ไม่ให้ modal ข้างหลังถูกย่อไปพร้อมกัน)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const open = [...document.querySelectorAll<HTMLElement>('.printdoc-backdrop')].filter((el) => getComputedStyle(el).position === 'fixed' && el.getClientRects().length)
+      const top = open[open.length - 1]
+      if (!top || top.dataset.keepOpen != null) return
+      const btn = closeBtnOf(top)
+      if (!btn) return
+      e.preventDefault(); e.stopImmediatePropagation()
+      btn.click()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('click', onClick)
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('click', onClick) }
+    window.addEventListener('keydown', onKey, true) // capture: ทำงานก่อน Esc ของ ModalShell
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('click', onClick); window.removeEventListener('keydown', onKey, true) }
   }, [])
   const [navOpen, setNavOpen] = useState(false) // จอแคบ (< 1024px): เมนูซ้ายซ่อนไว้ กด ☰ แล้วเลื่อนออกมา
   useEffect(() => { setForcePin(!!user?.mustChangePin) }, [user?.mustChangePin])
