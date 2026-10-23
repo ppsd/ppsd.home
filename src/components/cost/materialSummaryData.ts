@@ -33,9 +33,9 @@ const r2 = (n: number) => Math.round(n * 100) / 100
 
 /**
  * Excel สรุปวัสดุ — sheet: สรุป · รวมทั้งงาน · ข้อมูลทั้งหมด (กรอง/ทำ Pivot ได้) · แต่ละชั้น · แต่ละระบบงาน
- * showPrice = เพิ่มคอลัมน์ราคา/ค่าแรง (ตรงกับติ๊ก "แสดงราคา" ในหน้าสรุป)
+ * showPrice = เพิ่มคอลัมน์ราคา/ค่าแรง (ตรงกับติ๊ก "แสดงราคา" ในหน้าสรุป) · extraSheets = ต่อท้าย (เช่น BOQ แบบมีราคา)
  */
-export function exportMaterialSummaryXlsx({ title, houseName, items, work = [], showPrice }: { title: string; houseName?: string; items: BoqItem[]; work?: WorkSec[]; showPrice: boolean }) {
+export function exportMaterialSummaryXlsx({ title, houseName, items, work = [], showPrice, extraSheets = [] }: { title: string; houseName?: string; items: BoqItem[]; work?: WorkSec[]; showPrice: boolean; extraSheets?: XlsxSheet[] }) {
   const list = summaryItems(items, showPrice)
   const nm = (it: BoqItem) => nameOf(it, showPrice)
   const floors = sortFloors(list.map(floorOf))
@@ -108,5 +108,6 @@ export function exportMaterialSummaryXlsx({ title, houseName, items, work = [], 
     sheets.push({ name: 'งาน' + cat.replace(/^ระบบ/, ''), cols, rows: [...header(cat), ...detail(xs, floorOf, 'ชั้น')] })
   }
 
+  sheets.push(...extraSheets)
   return exportXlsxBook(`สรุปวัสดุ-${houseName || 'ถอดแบบ'}`.replace(/[\\/:*?"<>|]/g, '-'), sheets)
 }

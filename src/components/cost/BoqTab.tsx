@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
-import { exportXlsx, ExportButton } from '../../exportCsv'
+import { ExportButton } from '../../exportCsv'
 import BoqPrint from './BoqPrint'
 import BoqTakeoff from './BoqTakeoff'
 import MaterialSummaryPrint from './MaterialSummaryPrint'
 import type { WorkSec } from './boqFloors'
+import { exportMaterialSummaryXlsx } from './materialSummaryData'
 import ModalShell from '../shared/ModalShell'
 
 // ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ · floor/part/sheet = ชั้น/ส่วนงาน/แผ่นแบบ · spec = ชื่อ/สเปกตามแบบ ก่อนผูกราคากลาง (จากหน้าถอดแบบ)
@@ -63,8 +64,16 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
     } catch (e) { alert((e as Error).message) }
   }
   const setItem = (i: number, patch: Partial<BoqItem>) => setEdit((e) => e ? { ...e, items: e.items.map((x, j) => j === i ? { ...x, ...patch } : x) } : e)
-  const doExport = (b: Boq) => exportXlsx('BOQ-' + b.no, ['หมวด', 'รายการ', 'จำนวน', 'หน่วย', 'ค่าวัสดุ/หน่วย', 'ค่าวัสดุรวม', 'ค่าแรง/หน่วย', 'ค่าแรงรวม', 'รวม'],
-    b.items.map((it) => [it.cat, it.desc, it.qty, it.unit, it.mat, it.qty * it.mat, it.lab, it.qty * it.lab, it.qty * (it.mat + it.lab)]), 'BOQ')
+  // Excel ของ BOQ = สรุปวัสดุหลาย sheet (สรุป · รวมทั้งงาน · ข้อมูลทั้งหมด · แยกชั้น · แยกระบบงาน — ปริมาณอย่างเดียว)
+  // + sheet สุดท้าย "BOQ (ราคา)" แบบเดิม (ค่าวัสดุ/ค่าแรงต่อรายการ)
+  const doExport = (b: Boq) => exportMaterialSummaryXlsx({
+    title: b.no + ' · ' + b.title, houseName: houses.find((h) => h.code === b.house_code)?.name || b.house_code, items: b.items, work: b.work, showPrice: false,
+    extraSheets: [{
+      name: 'BOQ (ราคา)', cols: [16, 14, 20, 48, 10, 9, 12, 13, 12, 13, 14],
+      rows: [['ชั้น', 'หมวด', 'ส่วนงาน', 'รายการ', 'จำนวน', 'หน่วย', 'ค่าวัสดุ/หน่วย', 'ค่าวัสดุรวม', 'ค่าแรง/หน่วย', 'ค่าแรงรวม', 'รวม'],
+        ...b.items.map((it) => [it.floor || '', it.cat, it.part || '', it.desc, it.qty, it.unit, it.mat, it.qty * it.mat, it.lab, it.qty * it.lab, it.qty * (it.mat + it.lab)])],
+    }],
+  }).catch((e) => alert('ส่งออก Excel ไม่สำเร็จ: ' + (e as Error).message))
 
   // ฟอร์มสร้าง/แก้ BOQ เป็น modal (ย่อพับได้ · ไม่ปิดเมื่อคลิกพื้นหลัง — รายการเยอะ กันข้อมูลหาย)
   const editorModal = edit && (() => {
