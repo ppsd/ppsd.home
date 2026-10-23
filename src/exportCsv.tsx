@@ -8,6 +8,24 @@ export async function exportXlsx(filename: string, headers: string[], rows: (str
   XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : filename + '.xlsx')
 }
 
+// ไฟล์ Excel หลาย sheet — rows = ตารางทั้งแผ่น (รวมหัวตาราง/แถวหัวกลุ่มเอง) · cols = ความกว้างคอลัมน์ (ตัวอักษร)
+export interface XlsxSheet { name: string; rows: (string | number)[][]; cols?: number[] }
+export async function exportXlsxBook(filename: string, sheets: XlsxSheet[]) {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.utils.book_new()
+  const used = new Set<string>()
+  for (const s of sheets) {
+    // ชื่อ sheet: ห้าม \ / ? * [ ] : และยาวไม่เกิน 31 ตัว · ซ้ำกันไม่ได้
+    let name = s.name.replace(/[\\/?*[\]:]/g, '-').slice(0, 31) || 'Sheet'
+    for (let i = 2; used.has(name); i++) name = name.slice(0, 28) + ' ' + i
+    used.add(name)
+    const ws = XLSX.utils.aoa_to_sheet(s.rows)
+    if (s.cols) ws['!cols'] = s.cols.map((wch) => ({ wch }))
+    XLSX.utils.book_append_sheet(wb, ws, name)
+  }
+  XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : filename + '.xlsx')
+}
+
 // Export tabular data as an Excel-friendly CSV (UTF-8 BOM so Thai opens correctly).
 export function exportCsv(filename: string, headers: string[], rows: (string | number)[][]) {
   const esc = (v: string | number) => {

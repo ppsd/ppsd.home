@@ -4,6 +4,7 @@ import { PPSD_LOGO_FULL } from '../../assets'
 import { baht } from '../../data'
 import { BOQ_CATS, type BoqItem } from './BoqTab'
 import { FLOOR_ALL, sortFloors, type WorkSec } from './boqFloors'
+import { exportMaterialSummaryXlsx, floorOf, mergeAcrossFloors, nameOf as nameFor, sumLab, sumMat, summaryItems } from './materialSummaryData'
 
 // สรุปวัสดุ (A4 → พิมพ์/บันทึกเป็น PDF จากหน้าต่างพิมพ์ของเบราว์เซอร์)
 //  1) ภาพรวม: แยกชั้น × ประเภทงาน (จำนวนรายการ หรือมูลค่าเมื่อเปิดแสดงราคา)
@@ -18,34 +19,16 @@ const num: React.CSSProperties = { ...c, textAlign: 'right', whiteSpace: 'nowrap
 const sec: React.CSSProperties = { fontSize: 13.5, fontWeight: 700, color: '#1E2E3B', margin: '18px 0 8px', paddingBottom: 4, borderBottom: '1.5px solid #1E2E3B' }
 const q = (n: number) => n ? (Math.round(n * 100) / 100).toLocaleString('th-TH') : '-'
 
-const floorOf = (it: BoqItem) => it.floor || FLOOR_ALL
-const isLabor = (it: BoqItem) => it.desc.startsWith('ค่าแรง:')
-const sumMat = (xs: BoqItem[]) => xs.reduce((s, it) => s + (it.qty || 0) * (it.mat || 0), 0)
-const sumLab = (xs: BoqItem[]) => xs.reduce((s, it) => s + (it.qty || 0) * (it.lab || 0), 0)
-
-// วัสดุชนิดเดียวกัน (ชื่อ + หน่วย) จากหลายชั้น → แถวเดียว · ราคา/หน่วยเฉลี่ยถ่วงตามจำนวน
-function mergeAcrossFloors(items: BoqItem[], nameOf: (it: BoqItem) => string) {
-  const m = new Map<string, { desc: string; unit: string; qty: number; mat: number; lab: number; floors: string[] }>()
-  for (const it of items) {
-    const k = nameOf(it).trim() + '|' + (it.unit || '').trim()
-    const o = m.get(k) || { desc: nameOf(it), unit: it.unit, qty: 0, mat: 0, lab: 0, floors: [] }
-    o.qty += it.qty || 0; o.mat += (it.qty || 0) * (it.mat || 0); o.lab += (it.qty || 0) * (it.lab || 0)
-    if (!o.floors.includes(floorOf(it))) o.floors.push(floorOf(it))
-    m.set(k, o)
-  }
-  return [...m.values()].map((o) => ({ ...o, floors: sortFloors(o.floors) }))
-}
-
 export default function MaterialSummaryPrint({ title, houseName, items, work = [], onClose }: { title: string; houseName?: string; items: BoqItem[]; work?: WorkSec[]; onClose: () => void }) {
   const [showPrice, setShowPrice] = useState(false)
   // ไม่แสดงราคา = วัสดุอย่างเดียว (แถวค่าแรงเป็นปริมาณงาน ซึ่งแสดงอยู่ในหัวส่วนงานแล้ว)
-  const list = showPrice ? items : items.filter((it) => !isLabor(it))
+  const list = summaryItems(items, showPrice)
   const floors = sortFloors(list.map(floorOf))
   const cats = BOQ_CATS.filter((cat) => list.some((it) => it.cat === cat))
   const totMat = sumMat(list), totLab = sumLab(list)
   const cols = showPrice ? 8 : 4
   // ไม่แสดงราคา = ใช้ชื่อ/สเปกตามแบบ · แสดงราคา = ชื่อตามราคากลางที่ผูกไว้
-  const nameOf = (it: BoqItem) => showPrice ? it.desc : it.spec || it.desc
+  const nameOf = (it: BoqItem) => nameFor(it, showPrice)
   const print = () => {
     // ชื่อหน้าต่าง = ชื่อไฟล์ตั้งต้นตอน "บันทึกเป็น PDF"
     const old = document.title
@@ -87,6 +70,7 @@ export default function MaterialSummaryPrint({ title, houseName, items, work = [
         </label>
         <div style={{ color: '#D6E0E8', fontSize: 12 }}>กด “พิมพ์ / PDF” แล้วเลือกปลายทาง “บันทึกเป็น PDF”</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+          <button onClick={() => exportMaterialSummaryXlsx({ title, houseName, items, work, showPrice }).catch((e) => alert('ส่งออก Excel ไม่สำเร็จ: ' + (e as Error).message))} title="Excel: สรุป · รวมทั้งงาน · ข้อมูลทั้งหมด · แยกชั้น · แยกระบบงาน" style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>⬇ Excel</button>
           <button onClick={print} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>🖨 พิมพ์ / PDF</button>
           <button onClick={onClose} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 500, color: '#1C2730', background: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ปิด</button>
         </div>
