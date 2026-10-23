@@ -67,7 +67,15 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
     setEdit(null); load(); refreshNotifications?.()
   }
   const ack = async (r: WorkOrder) => { await api.post('/work-orders/' + r.id + '/ack', {}); load(); refreshNotifications?.() }
-  const remove = async (id: number) => { if (confirm('ลบใบสั่งงานนี้?')) { try { await api.del('/work-orders/' + id); load() } catch (e) { alert((e as Error).message) } } }
+  const remove = async (id: number) => {
+    const r = rows.find((x) => x.id === id)
+    const msg = r && accepted(r)
+      ? `ลบใบสั่งงาน ${r.no} ที่ตรวจรับแล้ว?
+
+คะแนน KPI ของใบนี้ (${r.score ?? '-'} คะแนน ของ ${r.executor || '-'}) จะหายไปด้วย และจะไม่ถูกนับในหน้าประเมินผล KPI อีก
+การลบจะถูกบันทึกในประวัติการใช้งาน`
+      : 'ลบใบสั่งงานนี้?'
+    if (confirm(msg)) { try { await api.del('/work-orders/' + id); load() } catch (e) { alert((e as Error).message) } } }
   const isMine = (r: WorkOrder) => r.executor === user?.name
   const canAccept = (r: WorkOrder) => !r.reviewer || r.reviewer === user?.name || r.by === (user?.name) || !!user?.isManager
   // สิทธิ์ต่อใบ: full = ผู้สั่งงาน/ผู้บริหาร (แก้ได้ทุกช่อง) · exec = ผู้รับงาน/คนสำรอง (กรอกส่วนดำเนินงาน) · คนอื่นดูอย่างเดียว
@@ -253,7 +261,7 @@ export default function WorkOrders({ houseCode }: { houseCode?: string }) {
                     {r.status === 'ส่งงาน' && canAccept(r) && <button onClick={() => accept(r)} className="btn-primary" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>✓ รับงาน</button>}
                     <button onClick={() => openEdit(r)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>{accessOf(r).full || accessOf(r).exec ? 'เปิด/บันทึกผล' : 'ดูรายละเอียด'}</button>
                     <button onClick={() => setPrinting(r)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨</button>
-                    {accessOf(r).full && !accepted(r)
+                    {accessOf(r).full && (!accepted(r) || user?.role === 'admin') // ใบที่ตรวจรับแล้ว: ลบได้เฉพาะแอดมิน
                       ? <button onClick={() => remove(r.id)} title="ลบใบสั่งงาน" style={{ marginLeft: 6, border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
                       : <span style={{ display: 'inline-block', width: 23 }} />}
                   </td>

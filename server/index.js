@@ -6583,9 +6583,10 @@ api.delete('/work-orders/:id', canWrite, (req, res) => {
   const d = db.prepare('SELECT * FROM work_orders WHERE id=?').get(req.params.id)
   if (!d) return res.status(404).json({ error: 'ไม่พบใบสั่งงาน' })
   if (!woAccess(req.user, d).full) return res.status(403).json({ error: 'ลบใบสั่งงานได้เฉพาะผู้สั่งงานหรือผู้บริหาร' })
-  if (woAccepted(d)) return res.status(400).json({ error: `ใบสั่งงาน ${d.no} ตรวจรับแล้ว (มีคะแนน KPI) — ลบไม่ได้ เก็บไว้เป็นประวัติ` })
+  // ใบที่ตรวจรับแล้ว (มีคะแนน KPI) ลบได้เฉพาะแอดมิน — คนอื่นเก็บไว้เป็นประวัติ
+  if (woAccepted(d) && req.user.role !== 'admin') return res.status(400).json({ error: `ใบสั่งงาน ${d.no} ตรวจรับแล้ว (มีคะแนน KPI) — ลบไม่ได้ เก็บไว้เป็นประวัติ (ลบได้เฉพาะผู้ดูแลระบบ)` })
   db.prepare('DELETE FROM work_orders WHERE id=?').run(d.id)
-  audit(req, 'ลบใบสั่งงาน', d.no)
+  audit(req, 'ลบใบสั่งงาน', woAccepted(d) ? `${d.no} (ตรวจรับแล้ว · KPI ${d.score ?? '-'} ของ ${d.executor || '-'} หายไปด้วย)` : d.no)
   res.json({ ok: true })
 })
 // สถิติใบสั่งงานของผู้รับงาน (สำหรับผูก KPI / หักคะแนนเมื่อเกินกำหนด)

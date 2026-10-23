@@ -2295,11 +2295,18 @@ test('ใบสั่งงาน: คนอื่นดูได้แต่แ
   assert.equal(up.status, 200, JSON.stringify(up.data))
   assert.equal(up.data.obstacle, 'ฝนตก'); assert.equal(up.data.project, 'ทดสอบสิทธิ์ใบสั่งงาน')
   assert.equal((await DEL(`/work-orders/${id}`)).status, 403, 'ผู้รับงานลบไม่ได้')
-  // ผู้สั่งงาน (admin) ตรวจรับแล้ว → ห้ามลบ
+  // ตรวจรับแล้ว → ผู้สั่งงานที่ไม่ใช่แอดมินลบไม่ได้ · แอดมินลบได้
+  token = adminToken
+  assert.equal((await POST('/users', { name: 'ผู้จัดการสั่งงาน', username: 'womgr', pin: '4747', role: 'site', position: 'ผู้จัดการ' })).status, 201)
+  token = (await POST('/login', { username: 'womgr', pin: '4747' })).data.token
+  const mwo = await POST('/work-orders', { executor: 'ช่างใบสั่งงาน', project: 'ใบที่ตรวจรับแล้ว' })
+  await POST(`/work-orders/${mwo.data.id}/accept`, { force: true })
+  const del = await DEL(`/work-orders/${mwo.data.id}`)
+  assert.equal(del.status, 400); assert.match(del.data.error, /ตรวจรับแล้ว/)
   token = adminToken
   await POST(`/work-orders/${id}/accept`, { force: true })
-  const del = await DEL(`/work-orders/${id}`)
-  assert.equal(del.status, 400); assert.match(del.data.error, /ตรวจรับแล้ว/)
+  assert.equal((await DEL(`/work-orders/${id}`)).status, 200, 'แอดมินลบใบที่ตรวจรับแล้วได้')
+  assert.equal((await DEL(`/work-orders/${mwo.data.id}`)).status, 200)
   // ใบที่ยังไม่ตรวจรับ ผู้สั่งลบได้
   const wo2 = await POST('/work-orders', { executor: 'ช่างใบสั่งงาน', project: 'ใบที่จะลบ' })
   assert.equal((await DEL(`/work-orders/${wo2.data.id}`)).status, 200)
