@@ -117,12 +117,14 @@ export default function FilesPanel({ houseCode }: { houseCode: string }) {
                     <span style={{ width: 32, height: 32, borderRadius: 7, background: ec.bg, color: ec.c, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, fontFamily: 'monospace', flexShrink: 0 }}>{ext || 'FILE'}</span>
                     <div style={{ minWidth: 0, flex: 1, cursor: canView ? 'pointer' : 'default' }} onClick={() => canView && api.openFile('/files/' + f.id + '/view')}>
                       <div style={{ fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: canView ? '#30506A' : '#1C2730' }}>{f.name}</div>
-                      <div style={{ fontSize: 11, color: '#94A0A8' }}>{fmtSize(f.size)} · {f.uploaded} · {f.uploader}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                      <select value={catOf(f)} onChange={(e) => move(f, e.target.value)} onClick={(e) => e.stopPropagation()} title="ย้ายหมวด"
+                        style={{ fontFamily: 'inherit', fontSize: 11, color: catColor(catOf(f)).c, background: catColor(catOf(f)).bg, border: 'none', borderRadius: 6, padding: '3px 4px', maxWidth: 130, cursor: 'pointer', outline: 'none', flexShrink: 0 }}>
+                        {[...new Set([...CATS, catOf(f)])].map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                        <span style={{ fontSize: 11, color: '#94A0A8' }}>{fmtSize(f.size)} · {f.uploaded} · {f.uploader}</span>
+                      </div>
                     </div>
-                    <select value={catOf(f)} onChange={(e) => move(f, e.target.value)} onClick={(e) => e.stopPropagation()} title="ย้ายหมวด"
-                      style={{ fontFamily: 'inherit', fontSize: 11, color: catColor(catOf(f)).c, background: catColor(catOf(f)).bg, border: 'none', borderRadius: 6, padding: '3px 4px', maxWidth: 104, cursor: 'pointer', outline: 'none', flexShrink: 0 }}>
-                      {[...new Set([...CATS, catOf(f)])].map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
                     {canView && (
                       <button onClick={() => api.openFile('/files/' + f.id + '/view')} title="เปิดดู" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ดู</button>
                     )}

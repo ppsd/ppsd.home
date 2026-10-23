@@ -103,7 +103,7 @@ export default function Sales() {
   }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>เอกสารทั้งหมด <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{docList.length}/{docs.length}</span> ฉบับ</div>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ค้นหาเลขที่/ลูกค้า/สถานะ" style={{ ...field, padding: '8px 11px', fontSize: 12.5, width: 220 }} />

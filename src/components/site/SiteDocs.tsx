@@ -63,7 +63,7 @@ function SiteDocsKind({ houseCode, kind, setKind }: { houseCode?: string; kind: 
   const list = rows.filter((r) => (!houseCode || r.house_code === houseCode) && (!ql || `${r.no} ${r.title} ${r.discipline} ${r.house_code} ${r.status}`.toLowerCase().includes(ql)))
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* kind tabs */}
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px', flexWrap: 'wrap' }}>
         {Object.keys(KINDS).map((k) => (

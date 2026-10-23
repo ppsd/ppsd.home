@@ -56,7 +56,7 @@ export default function Stock() {
   const houseName = (code: string) => data.houses.find((h) => h.code === code)?.name || code
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {lowCount > 0 && (
         <div style={{ fontSize: 12.5, color: '#B7791F', background: '#FBF6EC', border: '1px solid #ECDCB8', borderRadius: 10, padding: '9px 14px' }}>
           ⚠️ วัสดุใกล้หมด {lowCount} รายการ (ต่ำกว่าจุดสั่งซื้อ) — แถวสีเหลืองในตาราง

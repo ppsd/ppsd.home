@@ -57,7 +57,7 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
   const houseOptions = houses.slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* filter bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <select value={houses.some((h) => h.code === search) ? search : ''} onChange={(e) => onSearch(e.target.value)} title="เลือกบ้าน"

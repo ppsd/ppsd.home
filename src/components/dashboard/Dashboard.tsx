@@ -83,7 +83,7 @@ export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }
   const seeMoney = dashboard == null || dashboard.collected != null // ไม่มีสิทธิ์เห็นเงินรวม → ซ่อนกราฟการเงิน
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* แถบสุขภาพระบบ — สรุปสิ่งที่ต้องรู้ก่อนเริ่มวัน */}
       {health && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '9px 14px' }}>

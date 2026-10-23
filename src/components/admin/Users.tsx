@@ -228,7 +228,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
 
   if (!users) {
     return (
-      <div style={{ maxWidth: 1320, margin: '0 auto' }}>
+      <div style={{ maxWidth: '100%', margin: '0 auto' }}>
         <div style={{ background: '#fff', border: '1px dashed #CFD8DF', borderRadius: 14, padding: '54px 40px', textAlign: 'center' }}>
           <div style={{ fontSize: 16, fontWeight: 600, color: '#1C2730' }}>ไม่มีสิทธิ์จัดการผู้ใช้งาน</div>
           <div style={{ fontSize: 13, color: '#5C6770', marginTop: 6 }}>เฉพาะบทบาท <b>ผู้ดูแล</b> เท่านั้นที่จัดการผู้ใช้และสิทธิ์ได้</div>
@@ -238,7 +238,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* role definition cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         {roles.map((r) => (

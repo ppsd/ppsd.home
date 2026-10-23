@@ -432,7 +432,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   // procurement is finance-only (admin/accounting). Others get a locked page.
   if (data.prs === null) {
     return (
-      <div style={{ maxWidth: 1320, margin: '0 auto' }}>
+      <div style={{ maxWidth: '100%', margin: '0 auto' }}>
         <div style={{ background: '#fff', border: '1px dashed #CFD8DF', borderRadius: 14, padding: '54px 40px', textAlign: 'center' }}>
           <div style={{ width: 50, height: 50, borderRadius: 12, background: '#F3F5F7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A0A8" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V8a4 4 0 018 0v3" /></svg>
@@ -468,7 +468,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const searchBox = <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเลขที่/ผู้ขาย/รายการ" style={{ ...prField, width: 220, padding: '6px 10px', fontSize: 12.5 }} />
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px', flexWrap: 'wrap' }}>
         {shownTabs.map((t) => {
           const active = tab === t.id

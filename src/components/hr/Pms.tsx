@@ -69,7 +69,7 @@ export default function Pms() {
     try { await api.post('/verify-pin', { pin }); setUnlocked(true) } catch (e) { setPinErr((e as Error).message) } finally { setChecking(false) }
   }
 
-  if (!allowed) return <div style={{ maxWidth: 1320, margin: '0 auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, padding: 40, textAlign: 'center' }}>หน้าประเมินผล KPI เข้าได้เฉพาะ <b>CEO / ผู้ดูแลระบบ</b> เท่านั้น</div>
+  if (!allowed) return <div style={{ maxWidth: '100%', margin: '0 auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, padding: 40, textAlign: 'center' }}>หน้าประเมินผล KPI เข้าได้เฉพาะ <b>CEO / ผู้ดูแลระบบ</b> เท่านั้น</div>
 
   if (!unlocked) return (
     <div style={{ maxWidth: 420, margin: '48px auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, padding: 34, textAlign: 'center' }}>
@@ -319,7 +319,7 @@ export default function Pms() {
   if (view === 'sets') return <PmsKpiSets payload={kpiSets} onChange={setKpiSets} onBack={() => setView('list')} />
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>ใบประเมิน <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ใบ</div>
         <button onClick={() => setView('sets')} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>⚙ ชุด KPI ตามตำแหน่ง</button>

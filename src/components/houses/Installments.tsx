@@ -32,7 +32,7 @@ export default function Installments() {
   const houseOptions = (data.houses || []).filter((h) => h.kind !== 'office' || instCount[h.code]).slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* summary (computed from live data) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         {([

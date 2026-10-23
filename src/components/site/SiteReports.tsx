@@ -68,7 +68,7 @@ function SiteReportsKind({ houseCode, kind, setKind }: { houseCode?: string; kin
   }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px' }}>
         {([['daily', 'รายงานประจำวัน (Daily)'], ['weekly', 'รายงานประจำสัปดาห์ (Weekly)']] as const).map(([id, label]) => (
           <div key={id} onClick={() => setKind(id)} style={{ fontSize: 13, fontWeight: kind === id ? 600 : 500, color: kind === id ? '#fff' : '#5C6770', background: kind === id ? '#30506A' : 'transparent', padding: '7px 16px', borderRadius: 7, cursor: 'pointer' }}>{label}</div>

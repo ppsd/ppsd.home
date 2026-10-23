@@ -97,7 +97,7 @@ export default function PmsKpiSets({ payload, onChange, onBack }: { payload: Kpi
   }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <button onClick={onBack} style={btn}>← ใบประเมิน</button>
         <div style={{ fontSize: 15, fontWeight: 600 }}>ชุด KPI ตามตำแหน่ง</div>

@@ -135,7 +135,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
   ]
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* back + title row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onGoHouses} className="hov-f3f5f7" style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', fontSize: 13, fontWeight: 500, color: '#5C6770', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '8px 13px', cursor: 'pointer' }}>
@@ -251,7 +251,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
       </>)}
 
       {/* two columns: info+files / main tabs */}
-      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 400px) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
         {/* left: info + files */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }}>

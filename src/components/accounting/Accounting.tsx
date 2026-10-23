@@ -64,7 +64,7 @@ export default function Accounting() {
   const dismissIssue = async (id: number) => { try { await api.del('/accounting/journal-issues/' + id); loadIssues() } catch { /* ignore */ } }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#1E2E3B' }}>บัญชีแยกประเภท (ระบบบัญชีคู่)</div>

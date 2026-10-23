@@ -61,7 +61,7 @@ function HandoverKind({ houseCode, kind, setKind }: { houseCode?: string; kind: 
   }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px' }}>
         {KINDS.map((k) => (
           <div key={k.id} onClick={() => setKind(k.id)} style={{ fontSize: 13, fontWeight: kind === k.id ? 600 : 500, color: kind === k.id ? '#fff' : '#5C6770', background: kind === k.id ? '#30506A' : 'transparent', padding: '7px 16px', borderRadius: 7, cursor: 'pointer' }}>{k.label}</div>

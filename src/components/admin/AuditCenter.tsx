@@ -85,7 +85,7 @@ export default function AuditCenter() {
   const saveCtrl = async () => { if (ctrl) { await api.put('/controls', ctrl); alert('บันทึกกติกาแล้ว'); load() } }
 
   // เข้าได้เฉพาะผู้จัดการ
-  if (!isManager) return <div style={{ maxWidth: 1320, margin: '0 auto', ...card, padding: 40, textAlign: 'center' }}>หน้าตรวจสอบเปิดให้เฉพาะ <b>ผู้จัดการ</b> เท่านั้น</div>
+  if (!isManager) return <div style={{ maxWidth: '100%', margin: '0 auto', ...card, padding: 40, textAlign: 'center' }}>หน้าตรวจสอบเปิดให้เฉพาะ <b>ผู้จัดการ</b> เท่านั้น</div>
 
   // ล็อกด้วย PIN ก่อนเข้า
   if (!unlocked) return (
@@ -103,7 +103,7 @@ export default function AuditCenter() {
     </div>
   )
 
-  if (denied) return <div style={{ maxWidth: 1320, margin: '0 auto', ...card, padding: 40, textAlign: 'center', color: '#94A0A8' }}>ไม่มีสิทธิ์เข้าถึงศูนย์ตรวจสอบ</div>
+  if (denied) return <div style={{ maxWidth: '100%', margin: '0 auto', ...card, padding: 40, textAlign: 'center', color: '#94A0A8' }}>ไม่มีสิทธิ์เข้าถึงศูนย์ตรวจสอบ</div>
 
   const shownFlags = flags.filter((f) => showAcked || !f.acked)
   const sevPill = (s: string) => s === 'high'
@@ -111,7 +111,7 @@ export default function AuditCenter() {
     : { c: '#B7791F', bg: '#F6ECD6', t: 'ควรตรวจ' }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }} className="print-area page-print">
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }} className="print-area page-print">
       {/* summary */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
         <div style={{ ...card, padding: '15px 18px' }}><div style={{ fontSize: 12.5, color: '#5C6770' }}>สัญญาณเสี่ยงสูง (ยังไม่เคลียร์)</div><div className="num" style={{ fontSize: 26, fontWeight: 700, marginTop: 5, color: counts.high ? '#C24036' : '#2E7D55' }}>{counts.high}</div></div>

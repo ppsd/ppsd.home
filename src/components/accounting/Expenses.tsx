@@ -27,7 +27,7 @@ export default function Expenses({ onAddExpense }: { onAddExpense: () => void })
   const total = rows.reduce((s, r) => s + r.amount, 0)
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* category summary (computed from live data) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         {expenseSummary.map((s) => {

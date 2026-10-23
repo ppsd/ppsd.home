@@ -377,7 +377,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px', flexWrap: 'wrap' }}>
         {hrTabs.filter((t) => t.id !== 'location' || isMgr).map((t) => {
           const active = tab === t.id

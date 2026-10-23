@@ -21,7 +21,7 @@ export default function Issues({ onAddIssue }: { onAddIssue: () => void }) {
   const rows = issues.filter((r) => filter === 'all' || r.priority === filter)
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         <Card label="ค้างอยู่ทั้งหมด" value={`${issues.filter((i) => i.status !== 'แก้ไขแล้ว').length} ปัญหา`} color="#1C2730" />
         <Card label="ด่วนมาก" value={`${issues.filter((i) => i.priority === 'ด่วนมาก').length} ปัญหา`} color="#C24036" />

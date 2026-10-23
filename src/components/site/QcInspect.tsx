@@ -93,7 +93,7 @@ export default function QcInspect({ houseCode }: { houseCode?: string }) {
   const remove = async (id: number) => { if (confirm('ลบใบตรวจนี้?')) { await api.del('/qc/' + id); load() } }
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* ความคืบหน้าต่องวด (เฉพาะหน้าบ้าน) — ใช้ประกอบตรวจรับงวด */}
       {houseCode && (
         <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: '12px 16px' }}>

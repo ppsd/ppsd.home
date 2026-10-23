@@ -35,7 +35,7 @@ export default function Reports() {
 
   if (!reports) {
     return (
-      <div style={{ maxWidth: 1320, margin: '0 auto' }}>
+      <div style={{ maxWidth: '100%', margin: '0 auto' }}>
         <div style={{ background: '#fff', border: '1px dashed #CFD8DF', borderRadius: 14, padding: '54px 40px', textAlign: 'center' }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: '#1C2730' }}>ไม่มีสิทธิ์ดูรายงาน</div>
           <div style={{ fontSize: 13, color: '#5C6770', marginTop: 6 }}>รายงานเปิดให้เฉพาะบทบาท <b>ผู้ดูแล</b> และ <b>บัญชี</b></div>
@@ -61,7 +61,7 @@ export default function Reports() {
   return (
     <>
     {mr && <MonthlyReportDoc r={mr} onClose={() => setMr(null)} onSendLine={sendMonthlyLine} />}
-    <div className="print-area page-print" style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div className="print-area page-print" style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
         <span style={{ fontSize: 12.5, color: '#5C6770' }}>รายงานประจำเดือน</span>
         <input type="month" value={mrPeriod} onChange={(e) => setMrPeriod(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 9px' }} />

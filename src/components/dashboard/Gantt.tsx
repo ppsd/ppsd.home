@@ -63,7 +63,7 @@ export default function Gantt() {
   const houseOpts = Array.from(new Set(parsed.map((t) => t.house_code).filter(Boolean)))
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>งานทั้งหมด <span className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{tasks.length}</span> รายการ</div>
         <button onClick={() => setAdding(true)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '10px 16px', cursor: 'pointer' }}>+ เพิ่มงาน</button>

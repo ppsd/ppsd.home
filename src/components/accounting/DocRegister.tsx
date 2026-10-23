@@ -56,7 +56,7 @@ export default function DocRegister() {
   const list = rows.filter((r) => (!fCat || r.category === fCat) && `${r.no} ${r.title} ${r.doc_no} ${r.owner}`.toLowerCase().includes(q.trim().toLowerCase()))
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>ทะเบียนเอกสาร <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ฉบับ</div>
         <select style={{ ...field, width: 'auto', padding: '6px 8px' }} value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="">ทุกหมวด</option>{CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select>
