@@ -208,8 +208,11 @@ export function summarizeDxf(text, unitOverride = 'auto') {
   const realName = (n) => anon.get(n) || n
 
   const blocks = new Map(), lengths = new Map(), areas = new Map(), circles = new Map(), texts = new Map()
+  let wrappers = 0
   const addBlock = (rawName, layer, n, nested) => {
     const name = realName(rawName)
+    // บล็อกไม่มีชื่อที่หาชื่อจริงไม่ได้ แต่มีบล็อกอื่นอยู่ข้างใน (อาร์เรย์/กลุ่มที่ copy มา) = แค่ "กล่องห่อ" → นับของข้างในแทน ไม่ต้องลงเป็นรายการ
+    if (name.startsWith('*') && (children.get(rawName) || []).length) { wrappers += n; return }
     const key = name + '|' + layer
     const o = blocks.get(key) || { name: name.startsWith('*') ? '(บล็อกไม่มีชื่อ)' : name, layer, count: 0, nested: 0 }
     o.count += n; if (nested) o.nested += n
@@ -276,7 +279,7 @@ export function summarizeDxf(text, unitOverride = 'auto') {
   const r2 = (x) => Math.round(x * 100) / 100
   return {
     units: UNIT_NAME[unit], unit_from_file: !!UNIT_TO_M[fileUnit] && !OVERRIDE[unitOverride],
-    entity_count: ents.length, paper_skipped: paperSkipped,
+    entity_count: ents.length, paper_skipped: paperSkipped, anon_wrappers: wrappers,
     blocks: [...blocks.values()].sort((a, b) => b.count - a.count),
     lengths: [...lengths.values()].map((o) => ({ ...o, length_m: r2(o.length_m) })).filter((o) => o.length_m > 0).sort((a, b) => b.length_m - a.length_m),
     areas: [...areas.values()].map((o) => ({ ...o, area_m2: r2(o.area_m2) })).filter((o) => o.area_m2 > 0).sort((a, b) => b.area_m2 - a.area_m2),
