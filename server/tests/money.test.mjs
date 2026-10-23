@@ -2338,3 +2338,82 @@ test('ความปลอดภัย: พนักงานลาออกต
   const row = (await GET('/audit')).data.find((r) => r.action === 'เพิ่มบ้าน' && r.detail === 'บ้านทดสอบ audit')
   assert.ok(row, 'ต้องลง audit'); assert.equal(row.user_id, me.id)
 })
+
+test('กลุ่ม 1: ขาดงานใน KPI คิดแบบเดียวกับเงินเดือน · ลาคร่อมเดือนแบ่งตามสัดส่วน · กดอนุมัติลาซ้ำไม่นับซ้ำ · ไม่อนุมัติคืนวันลา', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบขาดลา', role: 'ธุรการ', pay_type: 'รายเดือน', base: 30000, sick_quota: 30, pin: '6161' })
+  assert.equal(e.status, 201, JSON.stringify(e.data))
+  const code = e.data.code
+  // ลงเวลา จ. 4 มี.ค. กับ ศ. 8 มี.ค. 2030 → อ.–พฤ. ไม่มา = ขาด 3 วัน
+  for (const d of ['2030-03-04', '2030-03-08']) assert.equal((await POST('/attendance/manual', { emp_code: code, date: d, check_in: '08:00' })).status < 300, true)
+  const a = await GET(`/pms/employee/${code}/attendance?period=2030-03`)
+  assert.equal(a.status, 200, JSON.stringify(a.data)); assert.equal(a.data.absent, 3)
+  // ลาป่วย ส. 30 มี.ค. – อ. 2 เม.ย. (3 วันทำงาน: 30 มี.ค., 1–2 เม.ย.) → มี.ค. 1 วัน · เม.ย. 2 วัน
+  const lv = await POST('/leaves', { emp_code: code, emp_name: 'ทดสอบขาดลา', type: 'ลาป่วย', start_date: '2030-03-30', end_date: '2030-04-02', days: 3 })
+  assert.equal(lv.status, 201)
+  assert.equal((await POST(`/leaves/${lv.data.id}/decision`, { status: 'อนุมัติ' })).status, 200)
+  const again = await POST(`/leaves/${lv.data.id}/decision`, { status: 'อนุมัติ' })
+  assert.equal(again.status, 400, 'กดอนุมัติซ้ำต้องไม่ผ่าน')
+  const usedOf = async () => (await GET('/employees')).data.find((x) => x.code === code).sick_used
+  // ใบลาปี 2030 อยู่คนละปีกับตัวนับปีนี้ → ตัวนับเพิ่มตอนอนุมัติ (+3)
+  assert.equal(await usedOf(), 3)
+  assert.equal((await GET(`/pms/employee/${code}/attendance?period=2030-03`)).data.leave, 1)
+  assert.equal((await GET(`/pms/employee/${code}/attendance?period=2030-04`)).data.leave, 2)
+  // ลาปีนี้: อนุมัติ → ไม่อนุมัติ ต้องคืนวันลา
+  const y = new Date().getFullYear()
+  const lv2 = await POST('/leaves', { emp_code: code, emp_name: 'ทดสอบขาดลา', type: 'ลาป่วย', start_date: `${y}-01-05`, days: 2 })
+  await POST(`/leaves/${lv2.data.id}/decision`, { status: 'อนุมัติ' })
+  assert.equal(await usedOf(), 5)
+  assert.equal((await POST(`/leaves/${lv2.data.id}/decision`, { status: 'ไม่อนุมัติ' })).status, 200)
+  assert.equal(await usedOf(), 3, 'เปลี่ยนเป็นไม่อนุมัติต้องคืน 2 วัน')
+})
+
+test('กลุ่ม 1: OT คิดเงินจากชั่วโมง × อัตราเมื่อไม่กรอกเงิน · กดอนุมัติซ้ำไม่ได้ · ไม่อนุมัติได้', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบ OT', role: 'ช่าง', pay_type: 'รายเดือน', base: 24000, pin: '7171' })
+  const code = e.data.code
+  // 24000 ÷ 30 ÷ 8 = 100/ชม. × 3 ชม. × 1.5 = 450
+  const o = await POST('/ot', { emp_code: code, date: '2030-03-05', hours: '3', rate: '1.5x' })
+  assert.equal(o.status, 201, JSON.stringify(o.data)); assert.equal(o.data.amount, 450)
+  assert.equal((await POST('/ot', { emp_code: code, date: '2030-03-05' })).status, 400, 'ไม่มีชั่วโมงและเงิน → ไม่ผ่าน')
+  assert.equal((await POST(`/ot/${o.data.id}/approve`)).status, 200)
+  assert.equal((await POST(`/ot/${o.data.id}/approve`)).status, 400)
+  const o2 = await POST('/ot', { emp_code: code, date: '2030-03-06', hours: '2', rate: '2x', amount: 999 })
+  assert.equal(o2.data.amount, 999, 'กรอกเงินเองใช้ตามที่กรอก')
+  const rj = await POST(`/ot/${o2.data.id}/reject`)
+  assert.equal(rj.status, 200); assert.equal(rj.data.status, 'ไม่อนุมัติ')
+})
+
+test('กลุ่ม 1: ไฟล์ภาษี ภ.พ.30 ใช้ตัวเลขเดือนเดียวกับหน้าสรุปภาษี · ไฟล์ e-Filing ดาวน์โหลดได้ครบ', async () => {
+  const list = (await GET('/efiling')).data
+  assert.ok(list.length >= 5)
+  for (const f of list) {
+    const r = await fetch(`${BASE}/efiling/${f.id}/download`, { headers: { Authorization: 'Bearer ' + token } })
+    assert.equal(r.status, 200, f.id)
+  }
+  const txt = await (await fetch(`${BASE}/efiling/pp30/download`, { headers: { Authorization: 'Bearer ' + token } })).text()
+  const m = /เดือนภาษี (\S+) (\d{4})/.exec(txt)
+  assert.ok(m, txt)
+  const TH = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+  const yy = Number(m[2]) - 543, mm = TH.indexOf(m[1]) + 1
+  const from = `${yy}-${String(mm).padStart(2, '0')}-01`, to = `${yy}-${String(mm).padStart(2, '0')}-${new Date(yy, mm, 0).getDate()}`
+  const t = (await GET(`/tax-summary?from=${from}&to=${to}`)).data
+  assert.ok(txt.includes('ภาษีขาย (Output VAT)\t' + t.outputVat.toFixed(2)), txt)
+  assert.ok(txt.includes('ภาษีซื้อ (Input VAT)\t' + t.inputVat.toFixed(2)), txt)
+})
+
+test('กลุ่ม 1: รหัสบ้านห้ามซ้ำ · รหัสอัตโนมัติ NEW- ไม่ชนกัน', async () => {
+  assert.equal((await POST('/houses', { code: 'H-DUP-1', name: 'บ้านรหัสซ้ำ 1' })).status, 201)
+  const d = await POST('/houses', { code: 'H-DUP-1', name: 'บ้านรหัสซ้ำ 2' })
+  assert.equal(d.status, 409); assert.match(d.data.error, /ถูกใช้แล้ว/)
+  const a = await POST('/houses', { name: 'บ้านอัตโนมัติ A' }), b = await POST('/houses', { name: 'บ้านอัตโนมัติ B' })
+  assert.equal(a.status, 201); assert.equal(b.status, 201)
+  assert.match(a.data.code, /^NEW-\d{4}$/); assert.notEqual(a.data.code, b.data.code)
+})
+
+test('กลุ่ม 1: รายงานรวมค่าช่างในรายจ่าย · ดึงยอดจริงเข้ากระแสเงินสดแยกปี-เดือน ไม่นับรายจ่ายที่ถูกปฏิเสธ', async () => {
+  const r = (await GET('/reports')).data
+  assert.equal(Math.round(r.totals.expense), Math.round(r.cashflow.out), 'รายจ่ายรวม = เงินออกในงบกระแสเงินสด')
+  const ca = await GET('/cashflow-actuals?months=' + encodeURIComponent('พ.ย.,ธ.ค.,ม.ค.') + '&start=2029-11-10')
+  assert.equal(ca.status, 200)
+  assert.deepEqual(ca.data.columns, ['2029-11', '2029-12', '2030-01'])
+  assert.equal(ca.data.materialByCol.length, 3)
+})

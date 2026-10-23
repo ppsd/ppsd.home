@@ -521,8 +521,10 @@ export function taxSummary(range = {}) {
   const outputVat = r2(salesRows.reduce((sm, r) => sm + ((r.type === 'receipt' && r.ref && invNos.has(r.ref)) ? 0 : (Number(r.vat) || 0)), 0))
   // ภาษีซื้อจาก "ใบกำกับภาษีจริง" ที่กรอกไว้ต่อใบ (เลิกเดา 7/107 จากรายจ่ายทุกใบ — บางร้านไม่จด VAT)
   const inRow = db.prepare(`SELECT COALESCE(SUM(vat_amount),0) v, COUNT(CASE WHEN COALESCE(vat_amount,0) > 0 THEN 1 END) n FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args)
-  const inputVat = r2(inRow.v)
-  const inputVatDocs = inRow.n
+  // + ภาษีซื้อจากเงินสดย่อย/น้ำมัน (ใบที่อ้าง PO ไม่นับ — PO นั้นมีรายจ่ายแยกอยู่แล้ว)
+  const petRow = db.prepare(`SELECT COALESCE(SUM(vat_amount),0) v, COUNT(CASE WHEN COALESCE(vat_amount,0) > 0 THEN 1 END) n FROM petty_expenses WHERE UPPER(COALESCE(ref_kind,'')) != 'PO'${rs.sql}`).get(...rs.args)
+  const inputVat = r2(inRow.v + petRow.v)
+  const inputVatDocs = inRow.n + petRow.n
   const vatPayable = r2(outputVat - inputVat)
   const wht = r2(db.prepare(`SELECT COALESCE(SUM(wht),0) w FROM payments WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql}`).get(...rs.args).w)
   const whtByType = db.prepare(`SELECT type, COALESCE(SUM(gross),0) gross, COALESCE(SUM(wht),0) wht, COUNT(*) n FROM payments WHERE COALESCE(status,'') != 'ปฏิเสธ'${rs.sql} GROUP BY type`).all(...rs.args)

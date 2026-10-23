@@ -3,6 +3,7 @@
 // These produce standard-shaped files; they do NOT submit on the user's behalf
 // (that requires the agency's own credentials and portal).
 import { db } from './db.js'
+import { taxSummary } from './accounting.js'
 
 const TAB = '\t'
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
@@ -19,6 +20,25 @@ function parts(period) {
   const [yy, mm] = period.split('-').map(Number)
   const be = yy + 543
   return { yy, mm, be, label: `${TH_MONTHS[mm - 1]} ${be}`, fileTag: `${be}-${String(mm).padStart(2, '0')}` }
+}
+// วันแรก–วันสุดท้ายของเดือนภาษี (YYYY-MM-DD)
+function monthRange(period) {
+  const [yy, mm] = period.split('-').map(Number)
+  return { from: `${period}-01`, to: `${period}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}` }
+}
+// วันที่ในรายการเก่า (ไม่มี date_iso) อาจเป็น "23 ต.ค. 69" / "23/10/2569" / ISO → YYYY-MM-DD
+function toISO(s) {
+  const t = String(s || '').trim()
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10)
+  let m = /^(\d{1,2})\s+(\S+)\s+(\d{2,4})$/.exec(t)
+  if (m) {
+    const mi = TH_MONTHS.indexOf(m[2]); if (mi < 0) return ''
+    let y = Number(m[3]); if (y < 100) y += 2500; if (y > 2400) y -= 543
+    return `${y}-${String(mi + 1).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`
+  }
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t)
+  if (m) { let y = Number(m[3]); if (y > 2400) y -= 543; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` }
+  return ''
 }
 // due date = given day of the *next* month, in พ.ศ.
 function due(period, day) {
@@ -37,6 +57,8 @@ function payrollRows(period) {
 
 // ภงด.1 — ใบแนบภาษีหัก ณ ที่จ่ายเงินเดือน (รูปแบบเต็มตามกรมสรรพากร)
 // คอลัมน์: ลำดับ · เลขผู้เสียภาษี(13) · คำนำหน้า · ชื่อ-สกุล · วันที่จ่าย · ประเภทเงินได้ · เงินได้ · ภาษีหัก · เงื่อนไข
+// เงินได้พึงประเมินของงวด = เงินเดือน (หลังคิดตามวันทำงาน) + OT + รายได้อื่น − หักลา/ขาด
+const incomeOf = (e) => Math.max(0, (e.base || 0) + (e.ot || 0) + (e.other_income || 0) - (e.leave_deduct || 0))
 export function pnd1() {
   const p = activePeriod(), pp = parts(p)
   // วันที่จ่าย = วันสิ้นเดือนของงวดภาษี (จ่ายเงินเดือนสิ้นเดือน)
@@ -46,9 +68,9 @@ export function pnd1() {
   const header = ['ลำดับ', 'เลขประจำตัวผู้เสียภาษี', 'คำนำหน้า', 'ชื่อ-สกุล', 'วันเดือนปีที่จ่าย', 'ประเภทเงินได้', 'จำนวนเงินได้', 'ภาษีที่หัก', 'เงื่อนไข'].join(TAB)
   const lines = rows.map((e, i) =>
     // ประเภทเงินได้ 1 = เงินเดือน ม.40(1); เงื่อนไข 1 = หัก ณ ที่จ่าย
-    [i + 1, e.tax_id || '-', '', e.name, payDate, '1', ((e.base || 0) + (e.ot || 0)).toFixed(2), (e.tax || 0).toFixed(2), '1'].join(TAB)
+    [i + 1, e.tax_id || '-', e.prefix || '', e.name, payDate, '1', incomeOf(e).toFixed(2), (e.tax || 0).toFixed(2), '1'].join(TAB)
   )
-  const income = rows.reduce((s, e) => s + (e.base || 0) + (e.ot || 0), 0)
+  const income = rows.reduce((s, e) => s + incomeOf(e), 0)
   const total = rows.reduce((s, e) => s + (e.tax || 0), 0)
   return {
     filename: `PND1_${pp.fileTag}.txt`,
@@ -71,10 +93,12 @@ export function pnd53() {
 }
 function whtFile(type, prefix) {
   const p = activePeriod(), pp = parts(p)
-  const rows = db.prepare('SELECT * FROM payments WHERE type = ?').all(type)
+  const { from, to } = monthRange(p)
+  const rows = db.prepare("SELECT * FROM payments WHERE type = ? AND COALESCE(status,'') != 'ปฏิเสธ' ORDER BY id").all(type)
+    .filter((r) => { const d = r.date_iso || toISO(r.date); return d >= from && d <= to })
   const header = ['ลำดับ', 'วันที่จ่าย', 'ผู้ถูกหัก', 'ยอดก่อนหัก', 'อัตรา(%)', 'ภาษีหัก'].join(TAB)
-  const lines = rows.map((r, i) => [i + 1, r.date, r.payee, r.gross.toFixed(2), r.wht_rate, r.wht.toFixed(2)].join(TAB))
-  const total = rows.reduce((s, r) => s + r.wht, 0)
+  const lines = rows.map((r, i) => [i + 1, r.date, r.payee, (Number(r.gross) || 0).toFixed(2), r.wht_rate, (Number(r.wht) || 0).toFixed(2)].join(TAB))
+  const total = rows.reduce((s, r) => s + (Number(r.wht) || 0), 0)
   return {
     filename: `${prefix}_${pp.fileTag}.txt`,
     content: [`แบบ ${type} ภาษีหัก ณ ที่จ่าย เดือนภาษี ${pp.label}`, header, ...lines,
@@ -85,9 +109,8 @@ function whtFile(type, prefix) {
 // ภพ.30 — VAT return summary (output VAT from sales docs, input VAT from expenses)
 export function pp30() {
   const p = activePeriod(), pp = parts(p)
-  const outputVat = db.prepare('SELECT COALESCE(SUM(vat),0) v FROM sales_docs').get().v
-  const expenseTotal = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM expenses').get().a
-  const inputVat = Math.round((expenseTotal * 7) / 107) // VAT-inclusive expenses → input VAT
+  // ตัวเลขเดียวกับหน้าสรุปภาษี: เฉพาะเดือนภาษี · ใบเสร็จที่ออกต่อจากใบแจ้งหนี้ไม่นับซ้ำ · ไม่นับรายจ่ายที่ถูกปฏิเสธ · ภาษีซื้อจากใบกำกับจริง
+  const { outputVat, inputVat } = taxSummary(monthRange(p))
   const header = `แบบ ภพ.30 สรุปภาษีมูลค่าเพิ่ม เดือนภาษี ${pp.label}`
   const body = [
     `ภาษีขาย (Output VAT)\t${outputVat.toFixed(2)}`,

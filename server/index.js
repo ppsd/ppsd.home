@@ -2380,11 +2380,20 @@ function recomputeHouse(code) {
 
 const HOUSE_NUM_FIELDS = ['house_customer', 'house_contractor', 'carport_customer', 'carport_contractor', 'road_customer', 'road_contractor']
 
+// รหัสบ้านอัตโนมัติ NEW-0001, NEW-0002 … ต่อจากเลขสูงสุดที่มี (เดิมใช้เลขท้ายเวลา ชนกันได้)
+function newHouseCode() {
+  const max = db.prepare("SELECT code FROM houses WHERE code LIKE 'NEW-%'").all()
+    .reduce((m, r) => Math.max(m, Number(String(r.code).slice(4)) || 0), 0)
+  return 'NEW-' + String(max + 1).padStart(4, '0')
+}
 api.post('/houses', canWrite, (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อบ้าน' })
   const v = Number(b.value) || 0
-  const code = b.code?.trim() || 'NEW-' + String(Date.now()).slice(-4)
+  const code = b.code?.trim() || newHouseCode()
+  // รหัสซ้ำ = งวด/จัดซื้อ/ไฟล์ของ 2 บ้านปนกัน → ห้าม
+  const dup = db.prepare('SELECT name FROM houses WHERE code=?').get(code)
+  if (dup) return res.status(409).json({ error: `รหัสบ้าน ${code} ถูกใช้แล้ว (บ้าน "${dup.name}")` })
   const kind = ['cm', 'office'].includes(b.kind) ? b.kind : 'sale'
   const info = db
     .prepare('INSERT INTO houses (code,name,project,customer,value,pct,collected,remain,status,area,design,start_date,deliver_date,manager,kind,owner,contract_no,scope,engineer,supervisor,service_fee,site_location) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
@@ -3000,6 +3009,7 @@ api.get('/health', (req, res) => {
 // list excludes the PIN; includes signature + computed sso/tax for display
 const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname,no_sso,user_id'
 api.get('/employees', (req, res) => {
+  syncLeaveYear() // ขึ้นปีใหม่ → วันลาที่ใช้ไปเริ่มนับใหม่
   const rows = db.prepare(`SELECT ${EMP_COLS} FROM employees ORDER BY id`).all()
   const showSalary = canSeeSalary(req.user)
   res.json(rows.map((e) => {
@@ -3352,10 +3362,11 @@ function computePayroll(period) {
     // OT/วันลา นับ "เฉพาะของงวดนี้" (ตามวันที่ในรายการ) — ไม่งั้น OT เก่าจะถูกจ่ายซ้ำทุกเดือน
     const ot = db.prepare("SELECT date, amount FROM ot WHERE emp_code=? AND status='อนุมัติ'").all(e.code)
       .filter((r) => dateInPeriod(r.date, period)).reduce((s, r) => s + (Number(r.amount) || 0), 0)
-    const lvs = db.prepare("SELECT start_date, days, unpaid_days, status FROM leaves WHERE emp_code=? AND status IN ('อนุมัติ','ไม่อนุมัติ')").all(e.code)
-      .filter((l) => dateInPeriod(l.start_date, period))
-    const rejected = lvs.filter((l) => l.status === 'ไม่อนุมัติ').reduce((s, l) => s + (Number(l.days) || 0), 0)
-    const unpaid = lvs.filter((l) => l.status === 'อนุมัติ').reduce((s, l) => s + (Number(l.unpaid_days) || 0), 0)
+    // ลาคร่อมเดือน → แบ่งวันตามสัดส่วนของแต่ละเดือน (เดิมนับทั้งหมดไว้เดือนแรก)
+    const lvs = db.prepare("SELECT start_date, end_date, days, unpaid_days, status FROM leaves WHERE emp_code=? AND status IN ('อนุมัติ','ไม่อนุมัติ')").all(e.code)
+      .map((l) => ({ ...l, share: leaveShare(l, period) })).filter((l) => l.share > 0)
+    const rejected = r2(lvs.filter((l) => l.status === 'ไม่อนุมัติ').reduce((s, l) => s + (Number(l.days) || 0) * l.share, 0))
+    const unpaid = r2(lvs.filter((l) => l.status === 'อนุมัติ').reduce((s, l) => s + (Number(l.unpaid_days) || 0) * l.share, 0))
     const isDaily = e.pay_type === 'รายวัน'
     const exempt = NO_ATTENDANCE_ROLES.includes(e.role) // CEO / ผู้จัดการ ไม่ต้องลงเวลา
     const dailyRate = e.base || 0
@@ -3883,23 +3894,73 @@ api.get('/payroll/pnd1k', requireSalary, (req, res) => {
 })
 
 api.get('/ot', (_req, res) => res.json(db.prepare('SELECT * FROM ot ORDER BY id DESC').all()))
+// ค่า OT = ค่าจ้างต่อชั่วโมง × ชั่วโมง × อัตรา (1.5x / 2x / 3x)
+//  รายเดือน: เงินเดือน ÷ 30 ÷ 8 · รายวัน: ค่าแรงต่อวัน ÷ 8
+function otAmountOf(emp, hours, rate) {
+  const h = parseFloat(hours), mult = parseFloat(String(rate || '1.5').replace(/[^\d.]/g, '')) || 1.5
+  if (!emp || !(h > 0)) return 0
+  const hourly = emp.pay_type === 'รายวัน' ? (emp.base || 0) / HOURS_PER_DAY : (emp.base || 0) / 30 / HOURS_PER_DAY
+  return r2(hourly * h * mult)
+}
 api.post('/ot', canWrite, (req, res) => {
   const b = req.body || {}
-  if (!b.emp_code || !b.amount) return res.status(400).json({ error: 'กรุณาเลือกพนักงานและจำนวนเงิน' })
-  const emp = db.prepare('SELECT name FROM employees WHERE code=?').get(b.emp_code)
+  if (!b.emp_code) return res.status(400).json({ error: 'กรุณาเลือกพนักงาน' })
+  const emp = db.prepare('SELECT name,base,pay_type FROM employees WHERE code=?').get(b.emp_code)
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  // ไม่กรอกจำนวนเงิน → คิดจากชั่วโมง × อัตรา ให้อัตโนมัติ
+  const amount = Number(b.amount) > 0 ? Number(b.amount) : otAmountOf(emp, b.hours, b.rate || '1.5x')
+  if (!(amount > 0)) return res.status(400).json({ error: 'กรุณากรอกจำนวนชั่วโมง (หรือจำนวนเงิน)' })
   const info = db.prepare('INSERT INTO ot (emp_code,name,date,hours,rate,amount,status) VALUES (?,?,?,?,?,?,?)')
-    .run(b.emp_code, emp?.name || b.name || '', b.date || todayISO(), b.hours || '', b.rate || '1.5x', Number(b.amount) || 0, 'รออนุมัติ')
+    .run(b.emp_code, emp.name || b.name || '', b.date || todayISO(), b.hours || '', b.rate || '1.5x', amount, 'รออนุมัติ')
   res.status(201).json(db.prepare('SELECT * FROM ot WHERE id=?').get(info.lastInsertRowid))
 })
-api.post('/ot/:id/approve', requireManager, (req, res) => {
-  db.prepare("UPDATE ot SET status='อนุมัติ' WHERE id=?").run(req.params.id)
-  audit(req, 'อนุมัติ OT', 'ot#' + req.params.id)
-  res.json(db.prepare('SELECT * FROM ot WHERE id=?').get(req.params.id))
-})
+// อนุมัติ / ไม่อนุมัติ — ตัดสินได้เฉพาะใบที่ยังรออนุมัติ (กันกดซ้ำ)
+function otDecide(req, res, status) {
+  const o = db.prepare('SELECT * FROM ot WHERE id=?').get(req.params.id)
+  if (!o) return res.status(404).json({ error: 'ไม่พบรายการ OT' })
+  if (o.status !== 'รออนุมัติ') return res.status(400).json({ error: `รายการนี้${o.status}ไปแล้ว` })
+  db.prepare('UPDATE ot SET status=? WHERE id=?').run(status, o.id)
+  audit(req, status === 'อนุมัติ' ? 'อนุมัติ OT' : 'ไม่อนุมัติ OT', `${o.name} ${o.date} ${fmtMoney(o.amount)}`)
+  res.json(db.prepare('SELECT * FROM ot WHERE id=?').get(o.id))
+}
+api.post('/ot/:id/approve', requireManager, (req, res) => otDecide(req, res, 'อนุมัติ'))
+api.post('/ot/:id/reject', requireManager, (req, res) => otDecide(req, res, 'ไม่อนุมัติ'))
 
 // ---------- leave requests ----------
 api.get('/leaves', (_req, res) => res.json(db.prepare('SELECT * FROM leaves ORDER BY id DESC').all()))
 const HOURS_PER_DAY = 8 // ชั่วโมงทำงานต่อวัน (ใช้แปลงลารายชั่วโมง → วัน)
+// ประเภทลาที่มีโควตา → [คอลัมน์ที่ใช้ไป, คอลัมน์โควตา]
+const LEAVE_COUNTERS = { ลาป่วย: ['sick_used', 'sick_quota'], ลากิจ: ['personal_used', 'personal_quota'], พักร้อน: ['vacation_used', 'vacation_quota'] }
+// ขึ้นปีใหม่ → ตัวนับวันลาที่ใช้ไปเริ่มใหม่ (นับใหม่จากใบลาที่อนุมัติแล้วของปีนี้)
+function syncLeaveYear(empCode) {
+  const year = new Date().getFullYear()
+  const rows = empCode
+    ? db.prepare('SELECT code FROM employees WHERE code=? AND COALESCE(leave_used_year,0) < ?').all(empCode, year)
+    : db.prepare('SELECT code FROM employees WHERE COALESCE(leave_used_year,0) < ?').all(year)
+  for (const e of rows) {
+    const sets = Object.entries(LEAVE_COUNTERS).map(([type, [col]]) => [col, db.prepare("SELECT COALESCE(SUM(days),0) d FROM leaves WHERE emp_code=? AND type=? AND status='อนุมัติ' AND start_date>=?").get(e.code, type, `${year}-01-01`).d])
+    db.prepare(`UPDATE employees SET ${sets.map(([c]) => c + '=?').join(', ')}, leave_used_year=? WHERE code=?`).run(...sets.map(([, v]) => v), year, e.code)
+  }
+}
+// สัดส่วนของใบลาที่ตกอยู่ในงวด (ลาคร่อมเดือน → แบ่งตามวันทำงาน จ.–ส. ในแต่ละเดือน) · ใบลาวันเดียว/รายชั่วโมง = 1 หรือ 0
+function leaveShare(l, period) {
+  const start = parseAnyDateISO(l.start_date) || '', end = parseAnyDateISO(l.end_date) || start
+  if (!start) return 0
+  const last = end >= start ? end : start
+  if (start.slice(0, 7) === last.slice(0, 7)) return start.slice(0, 7) === period ? 1 : 0
+  let total = 0, inside = 0
+  for (const d of eachDay(start, last)) {
+    if (new Date(d + 'T00:00:00').getDay() === 0) continue
+    total++
+    if (d.slice(0, 7) === period) inside++
+  }
+  return total ? inside / total : 0
+}
+// วันลาที่อนุมัติของเดือน (ลาคร่อมเดือนแบ่งตามสัดส่วน)
+function leaveDaysInMonth(empCode, period) {
+  const lvs = db.prepare("SELECT start_date,end_date,days FROM leaves WHERE emp_code=? AND status='อนุมัติ'").all(empCode)
+  return Math.round(lvs.reduce((s, l) => s + (Number(l.days) || 0) * leaveShare(l, period), 0) * 100) / 100
+}
 api.post('/leaves', canWrite, (req, res) => {
   const b = req.body || {}
   if (!b.emp_code || !b.type || !b.start_date) return res.status(400).json({ error: 'กรุณาเลือกพนักงาน ประเภท และวันที่' })
@@ -3915,10 +3976,12 @@ api.post('/leaves/:id/decision', requireManager, (req, res) => {
   const lv = db.prepare('SELECT * FROM leaves WHERE id=?').get(req.params.id)
   if (!lv) return res.status(404).json({ error: 'ไม่พบใบลา' })
   const status = req.body?.status === 'อนุมัติ' ? 'อนุมัติ' : 'ไม่อนุมัติ'
+  // กดซ้ำ (ดับเบิลคลิก/กดจากหลายเครื่อง) ต้องไม่นับวันลาซ้ำ
+  if (lv.status === status) return res.status(400).json({ error: `ใบลานี้${status}ไปแล้ว` })
+  syncLeaveYear(lv.emp_code)
+  const cols = LEAVE_COUNTERS[lv.type]
   let unpaid = 0
   if (status === 'อนุมัติ') {
-    const map = { ลาป่วย: ['sick_used', 'sick_quota'], ลากิจ: ['personal_used', 'personal_quota'], พักร้อน: ['vacation_used', 'vacation_quota'] }
-    const cols = map[lv.type]
     if (cols) {
       const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(lv.emp_code)
       const used = emp?.[cols[0]] || 0
@@ -3927,6 +3990,9 @@ api.post('/leaves/:id/decision', requireManager, (req, res) => {
       unpaid = Math.max(0, lv.days - remaining) // days beyond quota are unpaid (หักเงิน)
       db.prepare(`UPDATE employees SET ${cols[0]} = COALESCE(${cols[0]},0) + ? WHERE code=?`).run(lv.days, lv.emp_code)
     }
+  } else if (lv.status === 'อนุมัติ' && cols && String(lv.start_date || '').slice(0, 4) === String(new Date().getFullYear())) {
+    // เปลี่ยนจากอนุมัติ → ไม่อนุมัติ: คืนวันลาที่ตัดไปแล้ว (เฉพาะใบของปีนี้ — ตัวนับปีก่อนรีเซ็ตไปแล้ว)
+    db.prepare(`UPDATE employees SET ${cols[0]} = MAX(0, COALESCE(${cols[0]},0) - ?) WHERE code=?`).run(lv.days, lv.emp_code)
   }
   db.prepare('UPDATE leaves SET status=?, approver=?, approved_date=?, unpaid_days=? WHERE id=?').run(status, req.user.name, todayTH(), unpaid, lv.id)
   audit(req, status === 'อนุมัติ' ? 'อนุมัติใบลา' : 'ไม่อนุมัติใบลา', `${lv.emp_name} ${lv.type} ${lv.days}วัน`)
@@ -4062,7 +4128,7 @@ api.get('/attendance/summary', requireSalary, (req, res) => {
     // CEO/ผู้จัดการ ไม่ต้องลงเวลา · รายวันจ่ายตามวันทำงานที่กรอก → ไม่นับขาด
     const noAttendance = NO_ATTENDANCE_ROLES.includes(e.role) || e.pay_type === 'รายวัน'
     const absent = noAttendance ? 0 : absentDaysInMonth(e, period)
-    const leave = db.prepare("SELECT COALESCE(SUM(days),0) d FROM leaves WHERE emp_code=? AND status='อนุมัติ' AND start_date>=? AND start_date<=?").get(e.code, monthStart, monthEnd).d
+    const leave = leaveDaysInMonth(e.code, period)
     return { code: e.code, name: e.name, role: e.role || '', present, late, absent, leave, came, adj: adjExtra, no_attendance: noAttendance }
   })
   res.json({ period, periodLabel: periodLabelTH(period), monthStart, monthEnd, rows })
@@ -5818,7 +5884,7 @@ const SITE_DOC_LABEL = { rfi: 'RFI', rfa: 'RFA', ncr: 'NCR', vo: 'VO' }
 api.get('/site-report-autofill', (req, res) => {
   const kind = req.query.kind === 'weekly' ? 'weekly' : 'daily'
   const hc = req.query.house_code || ''
-  const today = todayTH()
+  const today = todayISO() // ตาราง attendance เก็บวันที่แบบ YYYY-MM-DD
   // แรงงาน: จำนวนคนที่ลงเวลาเข้างานวันนี้ (ทั้งบริษัท — การลงเวลาไม่ผูกกับบ้าน)
   const presentToday = db.prepare("SELECT COUNT(DISTINCT emp_code) c FROM attendance WHERE date=? AND COALESCE(check_in,'')!=''").get(today).c
   const presentNames = db.prepare("SELECT DISTINCT emp_name FROM attendance WHERE date=? AND COALESCE(check_in,'')!=''").all(today).map((r) => r.emp_name).filter(Boolean)
@@ -6170,16 +6236,30 @@ api.get('/cashflow-actuals', auditView, (req, res) => {
   const args = hc ? [hc] : []
   const collected = db.prepare(`SELECT COALESCE(SUM(paid),0) a FROM installments WHERE side='customer' AND COALESCE(paid,0)>0${where}`).get(...args).a
   const paidContractor = db.prepare(`SELECT COALESCE(SUM(paid),0) a FROM installments WHERE side='contractor' AND COALESCE(paid,0)>0${where}`).get(...args).a
-  // รายจ่าย (วัสดุ/PO) แยกตามเดือน โดยอ่านชื่อเดือนไทยจากวันที่ "5 ก.ค. 68"
-  const materialByMonth = Array(12).fill(0)
+  // รายจ่าย (วัสดุ/PO) แยกตาม "ปี-เดือน" — ไม่นับใบที่ถูกปฏิเสธ · เดิมจับแค่ชื่อเดือน ทำให้ ก.ค. ของทุกปีรวมกัน
+  const byYM = {}
   let materialTotal = 0
-  for (const e of db.prepare(`SELECT date, amount FROM expenses WHERE 1=1${where}`).all(...args)) {
+  for (const e of db.prepare(`SELECT date, date_iso, amount FROM expenses WHERE COALESCE(status,'') != 'ปฏิเสธ'${where}`).all(...args)) {
     const amt = Number(e.amount) || 0
     materialTotal += amt
-    const mi = TH_MONTHS.findIndex((m) => (e.date || '').includes(m))
-    if (mi >= 0) materialByMonth[mi] += amt
+    const iso = e.date_iso || parseAnyDateISO(e.date)
+    if (iso) byYM[iso.slice(0, 7)] = (byYM[iso.slice(0, 7)] || 0) + amt
   }
-  res.json({ collected, paidContractor, materialByMonth, materialTotal })
+  // คอลัมน์ของตาราง (?months=ต.ค.,พ.ย.,…) → ปี-เดือน: เริ่มจากปีที่สร้างตาราง (?start=วันที่สร้าง) แล้วข้ามปีเมื่อเดือนวนกลับ
+  const months = String(req.query.months || '').split(',').filter(Boolean)
+  const base = parseAnyDateISO(req.query.start) || todayISO()
+  let y = Number(base.slice(0, 4)), prev = -1
+  const first = TH_MONTHS.indexOf(months[0])
+  if (first >= 0 && first < Number(base.slice(5, 7)) - 1 - 6) y++ // เดือนแรกอยู่ก่อนเดือนที่สร้างเกินครึ่งปี = ปีหน้า
+  const columns = months.map((m) => {
+    const mi = TH_MONTHS.indexOf(m)
+    if (mi < 0) return ''
+    if (prev >= 0 && mi <= prev) y++
+    prev = mi
+    return `${y}-${String(mi + 1).padStart(2, '0')}`
+  })
+  const materialByCol = columns.map((ym) => (ym ? r2(byYM[ym] || 0) : 0))
+  res.json({ collected, paidContractor, materialByCol, columns, materialTotal })
 })
 
 // ---------- ประเมินผลรายเดือน (PMS / KPI) — ระบบคำนวณคะแนนเอง ----------
@@ -6309,6 +6389,16 @@ api.get('/pms/employee/:code', pmsOnly, (req, res) => {
   const info = pmsEmployeeInfo(req.params.code)
   if (!info) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
   res.json(info)
+})
+// ขาด/ลา/สาย ของเดือน (?period=YYYY-MM) สำหรับหน้าประเมิน — "ขาด" คิดแบบเดียวกับเงินเดือน (ระบบไม่ได้บันทึกสถานะ "ขาด" ไว้)
+api.get('/pms/employee/:code/attendance', pmsOnly, (req, res) => {
+  const e = db.prepare('SELECT * FROM employees WHERE code=?').get(req.params.code)
+  if (!e) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  const { from: monthStart, to: monthEnd } = periodBounds(period)
+  const late = db.prepare("SELECT COUNT(*) c FROM attendance WHERE emp_code=? AND status='สาย' AND date>=? AND date<=?").get(e.code, monthStart, monthEnd).c
+  const noAttendance = NO_ATTENDANCE_ROLES.includes(e.role) || e.pay_type === 'รายวัน'
+  res.json({ period, absent: noAttendance ? 0 : absentDaysInMonth(e, period), leave: leaveDaysInMonth(e.code, period), late, no_attendance: noAttendance })
 })
 // ตั้งชุด KPI เฉพาะคน (set_id ว่าง = กลับไปใช้ตามตำแหน่ง)
 api.put('/pms/employee/:code/kpi-set', pmsOnly, (req, res) => {
@@ -6733,7 +6823,7 @@ api.post('/sales-docs/:id/convert', canWrite, (req, res) => {
   const total = doc.total || 0
   const name = String(req.body?.name || '').trim() || `บ้าน ${doc.customer}`
   const project = String(req.body?.project || '').trim() || ''
-  const code = 'NEW-' + String(Date.now()).slice(-4)
+  const code = newHouseCode()
   db.prepare('INSERT INTO houses (code,name,project,customer,value,pct,collected,remain,status) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(code, name, project, doc.customer, total, 0, 0, total, 'เพิ่งเริ่ม')
   // build the customer installment plan (last งวด absorbs rounding)
@@ -6926,9 +7016,9 @@ api.get('/notifications', (req, res) => {
         out.push({ kind: 'pinreset', icon: 'warn', title: `คำขอรีเซ็ต PIN — ${r.name || r.username}`, sub: `ผู้ใช้ ${r.username} · ยืนยันตัวตนแล้วรีเซ็ตที่หน้าผู้ใช้งาน`, page: 'users' })
     }
     // ความปลอดภัย: มีคนเข้างานวันนี้ แต่ยังไม่ได้บันทึกงานความปลอดภัย (Toolbox Talk/PPE) วันนี้
-    const todayTHStr = todayTH()
-    const presentCnt = db.prepare("SELECT COUNT(*) c FROM attendance WHERE date=? AND COALESCE(check_in,'')!=''").get(todayTHStr).c
-    const safToday = db.prepare('SELECT COUNT(*) c FROM safety_records WHERE date=?').get(todayTHStr).c
+    // attendance เก็บ YYYY-MM-DD · safety_records เก็บวันที่ไทย (บางใบอาจเป็น ISO) → เทียบทั้งสองแบบ
+    const presentCnt = db.prepare("SELECT COUNT(*) c FROM attendance WHERE date=? AND COALESCE(check_in,'')!=''").get(isoDate(new Date())).c
+    const safToday = db.prepare('SELECT COUNT(*) c FROM safety_records WHERE date IN (?,?)').get(todayTH(), isoDate(new Date())).c
     if (presentCnt > 0 && safToday === 0)
       out.push({ kind: 'safety', icon: 'warn', title: 'วันนี้ยังไม่ได้บันทึกงานความปลอดภัย', sub: `มีผู้เข้างาน ${presentCnt} คน — ควรทำ Toolbox Talk / ตรวจ PPE`, page: 'safety' })
     // JHA ที่ประเมินความเสี่ยง "สูง" (เตือนให้ทบทวนมาตรการ)
@@ -7023,6 +7113,7 @@ api.get('/reports', financeOnly, (_req, res) => {
     byProject[h.project] = byProject[h.project] || { project: h.project, value: 0, collected: 0, expense: 0 }
     byProject[h.project].value += h.value
     byProject[h.project].collected += h.collected
+    byProject[h.project].expense += h.paid || 0 // ค่าช่างที่จ่ายแล้ว (เดิมไม่นับ → กำไรรายโครงการสูงเกินจริง)
   }
   const houseProj = Object.fromEntries(houses.map((h) => [h.code, h.project]))
   for (const e of expenses) {
@@ -7068,7 +7159,9 @@ api.get('/reports', financeOnly, (_req, res) => {
     totals: {
       contract: houses.reduce((s, h) => s + h.value, 0),
       collected: houses.reduce((s, h) => s + h.collected, 0),
-      expense: expenses.reduce((s, e) => s + e.amount, 0),
+      // รายจ่ายรวม = เงินออกทั้งหมดแบบเดียวกับงบกระแสเงินสดด้านล่าง (ค่าช่าง + วัสดุ/รายจ่าย + เงินเดือน + ใบจ่ายอื่น)
+      expense: cashflow.out,
+      material: outMaterial,
     },
     cashflow,
     budget,

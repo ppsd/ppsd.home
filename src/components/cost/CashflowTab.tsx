@@ -43,14 +43,15 @@ export default function CashflowTab() {
     if (!edit) return
     setPulling(true)
     try {
-      const q = edit.house_code ? '?house_code=' + edit.house_code : ''
-      const a = await api.get<{ collected: number; paidContractor: number; materialByMonth: number[]; materialTotal: number }>('/cashflow-actuals' + q)
-      const mIdx = edit.months.map((m) => TH_MONTHS.indexOf(m)) // แต่ละคอลัมน์ตรงกับเดือนไทยไหน
+      // ส่งเดือนของคอลัมน์ + วันที่สร้างตาราง → เซิร์ฟเวอร์จับคู่เป็นปี-เดือนให้ (ไม่ปนยอดข้ามปี)
+      const q = new URLSearchParams({ months: edit.months.join(','), start: edit.date || '' })
+      if (edit.house_code) q.set('house_code', edit.house_code)
+      const a = await api.get<{ collected: number; paidContractor: number; materialByCol: number[]; materialTotal: number }>('/cashflow-actuals?' + q.toString())
       const findRow = (sec: 'in' | 'out', kw: string) => edit.rows.findIndex((r) => r.section === sec && r.label.includes(kw))
       const rows = edit.rows.map((r) => ({ ...r, values: [...r.values] }))
       // ค่าวัสดุ (out) แยกตามเดือน
       const matRi = findRow('out', 'วัสดุ')
-      if (matRi >= 0) mIdx.forEach((gi, col) => { rows[matRi].values[col] = gi >= 0 ? (a.materialByMonth[gi] || 0) : 0 })
+      if (matRi >= 0) edit.months.forEach((_, col) => { rows[matRi].values[col] = a.materialByCol[col] || 0 })
       // รายได้จากงวดงาน (in) — ยอดรวมที่เก็บจริง ใส่เดือนแรก
       const inRi = findRow('in', 'งวดงาน')
       if (inRi >= 0 && rows[inRi].values.length) rows[inRi].values[0] = a.collected

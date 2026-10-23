@@ -93,10 +93,9 @@ export default function Pms() {
     const ym = monthToYM(e.month)
     if (!ym || !e.emp_code) { alert('เลือกพนักงานและระบุเดือนเป็นรูปแบบ ด/ปปปป (เช่น 7/2568) ก่อน'); return }
     const emp = employees.find((x) => x.code === e.emp_code)
-    const att = (data.attendance || []).filter((a) => (a.emp_code === e.emp_code || a.emp_name === emp?.name) && (a.date || '').startsWith(ym))
-    const late = att.filter((a) => a.status === 'สาย').length
-    const absent = att.filter((a) => a.status === 'ขาด' || a.status === 'ขาดงาน').length
-    const leave = (data.leaves || []).filter((l) => (l.emp_code === e.emp_code || l.emp_name === emp?.name) && l.status === 'อนุมัติ' && (l.start_date || '').startsWith(ym)).reduce((s, l) => s + (l.days || 0), 0)
+    // ขาด/ลา/สาย คิดที่เซิร์ฟเวอร์แบบเดียวกับเงินเดือน (ระบบไม่ได้บันทึกสถานะ "ขาด" ไว้ในลงเวลา)
+    let late = 0, absent = 0, leave = 0
+    try { const a = await api.get<{ late: number; absent: number; leave: number }>(`/pms/employee/${encodeURIComponent(e.emp_code)}/attendance?period=${ym}`); late = a.late; absent = a.absent; leave = a.leave } catch (err) { alert((err as Error).message); return }
     let wo_overdue = e.att.wo_overdue || 0
     try { const s = await api.get<{ overdue: number }>('/work-orders/executor-stats?executor=' + encodeURIComponent(emp?.name || e.emp_name)); wo_overdue = s.overdue } catch { /* ignore */ }
     setEdit({ ...e, att: { absent, leave, late, wo_overdue } })

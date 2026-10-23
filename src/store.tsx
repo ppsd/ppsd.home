@@ -532,7 +532,7 @@ interface AppCtx {
   addInstallment: (code: string, b: Record<string, unknown>) => Promise<void>
   addIssue: (b: Record<string, unknown>) => Promise<void>
   addExpense: (b: Record<string, unknown>) => Promise<void>
-  approveOt: (id: number) => Promise<void>
+  approveOt: (id: number, reject?: boolean) => Promise<void>
   addEmployee: (b: Record<string, unknown>) => Promise<{ pin?: string; username?: string }>
   deleteEmployee: (id: number) => Promise<void>
   setEmpSignature: (id: number, dataUrl: string) => Promise<void>
@@ -774,9 +774,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await api.post('/expenses', b)
           await reload('expenses', '/expenses')
         },
-        approveOt: async (id) => {
-          await api.post('/ot/' + id + '/approve')
-          await reload('ot', '/ot')
+        approveOt: async (id, reject) => {
+          await api.post('/ot/' + id + (reject ? '/reject' : '/approve'))
+          await Promise.all([reload('ot', '/ot'), reload('notifications', '/notifications')])
         },
         addEmployee: async (b) => {
           const created = await api.post<{ pin?: string; username?: string }>('/employees', b)

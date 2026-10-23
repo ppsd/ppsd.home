@@ -529,9 +529,12 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>อัตรา
                 <input style={field} placeholder="เช่น 1.5x" value={otForm.rate} onChange={(e) => setOtForm({ ...otForm, rate: e.target.value })} />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}><span>จำนวนเงิน <span style={{ color: '#C24036' }}>*</span></span>
-                <MoneyInput style={field} placeholder="0" value={otForm.amount} onChange={(v) => setOtForm({ ...otForm, amount: v })} />
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>จำนวนเงิน
+                <MoneyInput style={field} placeholder="เว้นว่าง = คิดให้อัตโนมัติ" value={otForm.amount} onChange={(v) => setOtForm({ ...otForm, amount: v })} />
               </label>
+            </div>
+            <div style={{ fontSize: 11.5, color: '#5C6770', marginTop: 8 }}>
+              ไม่กรอกจำนวนเงิน → ระบบคิดให้จาก ค่าจ้างต่อชั่วโมง × ชั่วโมง × อัตรา (รายเดือน: เงินเดือน ÷ 30 ÷ 8 · รายวัน: ค่าแรง ÷ 8)
             </div>
             {otErr && <div style={{ fontSize: 12.5, color: '#C24036', background: '#FBEEEC', borderRadius: 8, padding: '8px 12px', marginTop: 12 }}>{otErr}</div>}
           </ModalShell>
@@ -967,7 +970,10 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                       <Pill s={o.status} />
-                      {o.status === 'รออนุมัติ' && isMgr && <button onClick={() => app.approveOt(o.id)} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>อนุมัติ</button>}
+                      {o.status === 'รออนุมัติ' && isMgr && <>
+                        <button onClick={() => app.approveOt(o.id).catch((e) => alert((e as Error).message))} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>อนุมัติ</button>
+                        <button onClick={() => app.approveOt(o.id, true).catch((e) => alert((e as Error).message))} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#FBEEEC', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ไม่อนุมัติ</button>
+                      </>}
                     </div>
                   </td>
                 </tr>
@@ -1167,8 +1173,8 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                       <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                         {l.status === 'รออนุมัติ' && isMgr ? (
                           <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                            <button onClick={() => app.decideLeave(l.id, 'อนุมัติ')} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>อนุมัติ</button>
-                            <button onClick={() => app.decideLeave(l.id, 'ไม่อนุมัติ')} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#FBEEEC', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>ไม่อนุมัติ</button>
+                            <button onClick={() => app.decideLeave(l.id, 'อนุมัติ').catch((e) => alert((e as Error).message))} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>อนุมัติ</button>
+                            <button onClick={() => app.decideLeave(l.id, 'ไม่อนุมัติ').catch((e) => alert((e as Error).message))} style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#FBEEEC', border: 'none', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>ไม่อนุมัติ</button>
                           </div>
                         ) : <Pill s={l.status} />}
                       </td>

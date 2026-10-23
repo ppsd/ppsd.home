@@ -157,6 +157,9 @@ ensureColumn('purchase_requests', 'image', 'TEXT')
 ensureColumn('users', 'position', 'TEXT')
 for (const c of ['pay_type']) ensureColumn('employees', c, 'TEXT')
 for (const c of ['sick_quota', 'sick_used', 'personal_quota', 'personal_used', 'vacation_quota', 'vacation_used']) ensureColumn('employees', c, 'INTEGER')
+// ปีของตัวนับวันลาที่ใช้ไป — ขึ้นปีใหม่แล้วตัวนับเริ่มใหม่ (แถวเดิมถือว่าเป็นของปีนี้ ไม่รีเซ็ตย้อนหลัง)
+ensureColumn('employees', 'leave_used_year', 'INTEGER')
+db.prepare('UPDATE employees SET leave_used_year=? WHERE leave_used_year IS NULL').run(new Date().getFullYear())
 ensureColumn('employees', 'pin', 'TEXT')
 ensureColumn('employees', 'signature', 'TEXT')
 ensureColumn('employees', 'spouse', 'INTEGER')
@@ -521,6 +524,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS journal_issues (
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_jissues ON journal_issues(source, source_id)')
 ensureColumn('houses', 'photo', 'TEXT')                // รูปหน้าปกบ้าน (data URL ย่อขนาดแล้ว)
+// รหัสบ้านห้ามซ้ำ (ทุกอย่างผูกกับบ้านด้วยรหัส) — ถ้ามีรหัสซ้ำค้างอยู่สร้าง index ไม่ได้ → ข้ามไป (API ยังกันซ้ำอยู่)
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_houses_code ON houses(code)') } catch (e) { console.warn('houses.code มีรหัสซ้ำ — ยังสร้าง unique index ไม่ได้:', e.message) }
 
 // ===== ราคากลางวัสดุ (Material Standard Prices) — อ้างอิงจากประวัติสั่งซื้อจริง =====
 db.exec(`CREATE TABLE IF NOT EXISTS material_prices (
