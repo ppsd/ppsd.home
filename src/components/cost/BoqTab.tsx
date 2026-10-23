@@ -6,11 +6,13 @@ import { exportXlsx, ExportButton } from '../../exportCsv'
 import BoqPrint from './BoqPrint'
 import BoqTakeoff from './BoqTakeoff'
 import MaterialSummaryPrint from './MaterialSummaryPrint'
+import type { WorkSec } from './boqFloors'
 import ModalShell from '../shared/ModalShell'
 
-// ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ · floor = ชั้น (จากหน้าถอดแบบ)
-export interface BoqItem { floor?: string; cat: string; desc: string; qty: number; unit: string; mat: number; lab: number; ref?: number; basis?: string }
-export interface Boq { id: number; no: string; house_code: string; title: string; markup_pct: number; vat_pct: number; items: BoqItem[]; date: string }
+// ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ · floor/part/sheet = ชั้น/ส่วนงาน/แผ่นแบบ (จากหน้าถอดแบบ)
+export interface BoqItem { floor?: string; part?: string; sheet?: string; cat: string; desc: string; qty: number; unit: string; mat: number; lab: number; ref?: number; basis?: string }
+// work = ปริมาณงานต่อหมวด (ชั้น × ประเภทงาน × ส่วนงาน) จากการถอดแบบ
+export interface Boq { id: number; no: string; house_code: string; title: string; markup_pct: number; vat_pct: number; items: BoqItem[]; work?: WorkSec[]; date: string }
 
 export const BOQ_CATS = ['โครงสร้าง', 'สถาปัตยกรรม', 'ระบบไฟฟ้า', 'ระบบประปา-สุขาภิบาล', 'อื่นๆ']
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 9px', outline: 'none' }
@@ -44,7 +46,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
   const newBoq = () => setEdit({ id: 0, no: '', house_code: houseCode || '', title: 'ประมาณราคาก่อสร้าง', markup_pct: 20, vat_pct: 7, items: [{ ...emptyItem }], date: '' })
   const save = async () => {
     if (!edit) return
-    const body = { house_code: edit.house_code, title: edit.title, markup_pct: edit.markup_pct, vat_pct: edit.vat_pct, items: edit.items.filter((i) => i.desc.trim()) }
+    const body = { house_code: edit.house_code, title: edit.title, markup_pct: edit.markup_pct, vat_pct: edit.vat_pct, items: edit.items.filter((i) => i.desc.trim()), work: edit.work || [] }
     if (edit.id) await api.put('/boqs/' + edit.id, body); else await api.post('/boqs', body)
     setEdit(null); load()
   }
@@ -158,8 +160,8 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
       </div>
       {editorModal}
       {takeoff && <BoqTakeoff houseCode={houseCode} onClose={() => setTakeoff(false)}
-        onCreate={(b) => { setTakeoff(false); setEdit({ id: 0, no: '', house_code: b.house_code, title: b.title, markup_pct: 20, vat_pct: 7, items: b.items, date: '' }) }} />}
-      {summary && <MaterialSummaryPrint title={summary.no + ' · ' + summary.title} houseName={houses.find((h) => h.code === summary.house_code)?.name || summary.house_code} items={summary.items} onClose={() => setSummary(null)} />}
+        onCreate={(b) => { setTakeoff(false); setEdit({ id: 0, no: '', house_code: b.house_code, title: b.title, markup_pct: 20, vat_pct: 7, items: b.items, work: b.work, date: '' }) }} />}
+      {summary && <MaterialSummaryPrint title={summary.no + ' · ' + summary.title} houseName={houses.find((h) => h.code === summary.house_code)?.name || summary.house_code} items={summary.items} work={summary.work} onClose={() => setSummary(null)} />}
       {printing && <BoqPrint boq={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} onClose={() => setPrinting(null)} />}
     </div>
   )

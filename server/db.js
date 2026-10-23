@@ -423,6 +423,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS boqs (
   no TEXT, house_code TEXT, title TEXT, markup_pct REAL, vat_pct REAL,
   items TEXT, by TEXT, date TEXT, created TEXT
 )`)
+ensureColumn('boqs', 'work', 'TEXT') // ปริมาณงานต่อหมวด (ชั้น × ประเภทงาน × ส่วนงาน) จากการถอดแบบ — JSON
 db.exec(`CREATE TABLE IF NOT EXISTS cashflows (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   no TEXT, house_code TEXT, title TEXT, opening INTEGER, months TEXT, rows TEXT, by TEXT, date TEXT, created TEXT

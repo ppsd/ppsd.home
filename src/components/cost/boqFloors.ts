@@ -12,3 +12,6 @@ const rank = (f: string) => {
 export const sortFloors = (fs: string[]) => [...new Set(fs)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, 'th'))
 /** ตัวเลือกชั้นในช่องเลือก = ชั้นมาตรฐาน + ชั้นที่มีอยู่ในรายการแล้ว */
 export const floorOptions = (present: string[]) => sortFloors([...BASE, ...present.filter(Boolean)])
+
+/** ปริมาณงานของหมวดหนึ่ง (ชั้น × ประเภทงาน × ส่วนงาน) ที่ AI วัดจากแบบ เช่น พื้นที่พื้น 25.5 ตร.ม. · คานยาว 42 ม. */
+export interface WorkSec { floor: string; cat: string; part: string; sheet: string; work: { desc: string; qty: number; unit: string }[] }

@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { summarizeDxf, rawItemsFromDxf, matchMaterial, matchLabor, cleanItems, cleanLabor, cleanFloor } from '../takeoff.js'
+import { summarizeDxf, rawItemsFromDxf, matchMaterial, matchLabor, cleanItems, cleanLabor, cleanFloor, flattenSections, floorFromText } from '../takeoff.js'
 
 // แปลนสุขาภิบาลย่อ หน่วย มม. — WC/LAV/MH (block) · ท่อน้ำดี 11 ม. · ท่อน้ำทิ้ง 7.5 ม. · ห้อง 3.6x3 · hatch 1.8x3
 function sampleDxf() {
@@ -219,4 +219,30 @@ test('ชั้นของรายการ: ชื่อชั้นจาก
   const rates = [{ id: 5, name: 'งานก่อผนังอิฐแดง', variant: '', price_min: 120, price_max: 150, unit: 'ตร.ม.' }]
   assert.equal(cleanLabor([{ floor: '1', labor: 'งานก่อผนังอิฐแดง', qty: 50 }], rates)[0].floor, 'ชั้น 1')
   assert.ok(rawItemsFromDxf(summarizeDxf(sampleDxf())).every((x) => x.floor === 'ทั้งหลัง'))
+})
+
+test('ผล AI แบบแบ่งหมวด: แถวได้ชั้น/ประเภทงาน/ส่วนงาน/แผ่นแบบจากหมวด · ปริมาณงานต่อหมวด · ไม่ระบุชั้นเดาจากข้อความ', () => {
+  const f = flattenSections({ sections: [
+    { floor: 'ชั้นที่ 2', cat: 'โครงสร้าง', part: 'เสา คาน พื้น', sheet: 'S-03', work: [{ desc: 'พื้นที่พื้น', qty: '25.5', unit: 'ตร.ม.' }, { desc: '' }], items: [{ desc: 'เหล็ก DB12', qty: 30, unit: 'เส้น' }], labor: [{ labor: 'งานโครงสร้าง (รวมไม้แบบ)', qty: 25.5 }] },
+    { floor: 'หลังคา', cat: 'โครงสร้าง', part: 'โครงหลังคา', items: [{ desc: 'เหล็กตัวซี', qty: 14, unit: 'เส้น' }] },
+  ], items: [{ cat: 'โครงสร้าง', desc: 'ปูน', qty: 5, unit: 'ถุง', basis: 'ฉาบผนังชั้น 3' }] })
+  const it = cleanItems(f.items)
+  assert.deepEqual(it.map((x) => [x.desc, x.floor, x.part, x.sheet]), [['เหล็ก DB12', 'ชั้น 2', 'เสา คาน พื้น', 'S-03'], ['เหล็กตัวซี', 'หลังคา', 'โครงหลังคา', ''], ['ปูน', 'ชั้น 3', '', '']])
+  assert.deepEqual(f.work, [{ floor: 'ชั้น 2', cat: 'โครงสร้าง', part: 'เสา คาน พื้น', sheet: 'S-03', work: [{ desc: 'พื้นที่พื้น', qty: 25.5, unit: 'ตร.ม.' }] }])
+  const rates = [{ id: 1, name: 'งานโครงสร้าง', variant: 'รวมไม้แบบ', price_min: 1200, price_max: 1200, unit: 'ตร.ม.' }]
+  assert.deepEqual(cleanLabor(f.labor, rates).map((x) => [x.floor, x.part, x.cat]), [['ชั้น 2', 'เสา คาน พื้น', 'โครงสร้าง']])
+  assert.equal(floorFromText('เสาเข็ม I-0.18'), 'ฐานราก/ใต้ดิน')
+  assert.equal(floorFromText('อะไรก็ไม่รู้'), 'ทั้งหลัง')
+})
+
+test('BOQ เก็บปริมาณงานต่อหมวด (work) ตอนสร้าง/แก้ และคืนกลับมา', async () => {
+  const work = [{ floor: 'ชั้น 1', cat: 'โครงสร้าง', part: 'เสา คาน พื้น', sheet: 'S-02', work: [{ desc: 'พื้นที่พื้น', qty: 25.5, unit: 'ตร.ม.' }] }]
+  const h = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+  const r = await fetch(BASE + '/boqs', { method: 'POST', headers: h, body: JSON.stringify({ title: 't', items: [{ floor: 'ชั้น 1', part: 'เสา คาน พื้น', cat: 'โครงสร้าง', desc: 'DB12', qty: 1, unit: 'เส้น', mat: 1, lab: 0 }], work }) })
+  const b = await r.json()
+  assert.equal(r.status, 201)
+  assert.deepEqual(b.work, work)
+  assert.equal(b.items[0].part, 'เสา คาน พื้น')
+  const u = await (await fetch(BASE + '/boqs/' + b.id, { method: 'PUT', headers: h, body: JSON.stringify({ title: 't2' }) })).json()
+  assert.deepEqual(u.work, work, 'แก้ BOQ โดยไม่ส่ง work ต้องไม่ลบของเดิม')
 })

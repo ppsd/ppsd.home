@@ -336,21 +336,32 @@ export function takeoffPrompt({ house, rates, dxfSummary, files = [] }) {
 ${src}
 ${info ? 'ข้อมูลบ้านจากผู้ใช้ (ใช้ประกอบและตรวจสอบ): ' + info : ''}
 
-รูปแบบ: {"drawing":"แบบนี้คือแบบอะไร เช่น แปลนสุขาภิบาล","items":[{"floor":"ชั้น 1","cat":"ระบบประปา-สุขาภิบาล","desc":"ท่อ PVC ชั้น 13.5 ขนาด 1/2 นิ้ว","qty":5,"unit":"ท่อน","basis":"แนวราบ ~11 ม. + แนวดิ่ง 2 จุด x 2 ม. = 15 ม. ÷ 4 ม./ท่อน + เผื่อ 10%","confidence":"กลาง"}],"labor":[{"floor":"ชั้น 1","labor":"งานติดตั้งสุขภัณฑ์ (เหมาย่อห้อง)","qty":1,"basis":"ห้องน้ำ 1 ห้อง","confidence":"สูง"}],"notes":["ข้อสังเกตหรือสิ่งที่ต้องตรวจ"]}
-items = วัสดุเท่านั้น (ไม่รวมค่าแรง)
-floor = ชั้นที่ใช้วัสดุ/ทำงานนั้น — ต้องแยกตามชั้นเสมอ: วัสดุเดียวกันที่ใช้หลายชั้นให้แยกเป็นคนละแถวต่อชั้น (เช่น เหล็ก DB12 ชั้น 1 กับ ชั้น 2) ทั้ง items และ labor
-- ใช้ค่า: "ชั้น 1" "ชั้น 2" "ชั้น 3" ... ตามแบบ · "ฐานราก/ใต้ดิน" (เสาเข็ม ฐานราก ตอม่อ คานคอดิน) · "หลังคา" (โครงหลังคา มุงหลังคา เชิงชาย รางน้ำ) · "ภายนอก" (รั้ว ถนน ลาน บ่อพัก ถังบำบัด ท่อภายนอก) · "${FLOOR_ALL}" เฉพาะที่แยกชั้นไม่ได้จริงๆ
-- งานที่คิดเหมา/ทั้งหลัง (เช่น ค่าแรงเหมาไฟฟ้า) ใช้ "${FLOOR_ALL}" ได้
+รูปแบบ (แบ่งเป็นหมวดย่อย — ทุกรายการต้องอยู่ในหมวดใดหมวดหนึ่ง):
+{"drawing":"แบบนี้คือแบบอะไร","sections":[
+ {"floor":"ฐานราก/ใต้ดิน","cat":"โครงสร้าง","part":"เสาเข็ม ฐานราก ตอม่อ","sheet":"S-02","work":[{"desc":"เสาเข็ม I-0.18 ยาว 18 ม.","qty":20,"unit":"ต้น"},{"desc":"ฐานราก F1","qty":9,"unit":"ฐาน"}],
+  "items":[{"desc":"คอนกรีตผสมเสร็จ 240 ksc","qty":3.5,"unit":"ลบ.ม.","basis":"F1 9 ฐาน x 0.7x0.7x0.5 + ตอม่อ + เผื่อ 5%","confidence":"กลาง"}],
+  "labor":[{"labor":"งานโครงสร้าง (รวมไม้แบบ)","qty":12,"basis":"พื้นที่ฐานราก","confidence":"กลาง"}]},
+ {"floor":"ชั้น 1","cat":"โครงสร้าง","part":"เสา คาน พื้น","sheet":"S-02","work":[{"desc":"พื้นที่พื้น คสล.","qty":25.5,"unit":"ตร.ม."},{"desc":"คาน B1/B2 ยาวรวม","qty":42,"unit":"ม."},{"desc":"เสา C1","qty":8,"unit":"ต้น"}],"items":[...],"labor":[...]}
+],"notes":["ข้อสังเกตหรือสิ่งที่ต้องตรวจ"]}
+
+การแบ่งหมวด (สำคัญที่สุด):
+- 1 หมวด = 1 ชั้น × 1 ประเภทงาน × 1 ส่วนงาน · ไล่ทุกแผ่นแบบตามลำดับ (เช่น S-02 แปลนฐานราก/เสาคานพื้นชั้น 1 → S-03 ชั้น 2/โครงหลังคา → ... → แบบไฟฟ้า → แบบสุขาภิบาล) จนครบทุกชั้น ทุกระบบ
+- floor: "ฐานราก/ใต้ดิน" (เสาเข็ม ฐานราก ตอม่อ คานคอดิน) · "ชั้น 1" "ชั้น 2" "ชั้น 3" ... · "หลังคา" (โครงหลังคา มุงหลังคา เชิงชาย รางน้ำ) · "ภายนอก" (รั้ว ลาน บ่อพัก ถังบำบัด ท่อภายนอก) · "${FLOOR_ALL}" เฉพาะที่แยกชั้นไม่ได้จริงๆ (เช่น ค่าแรงเหมาทั้งหลัง) — ห้ามใช้ "${FLOOR_ALL}" กับงานที่แบบแยกชั้นไว้
+- cat = ประเภทงาน: ${BOQ_CATS.join(' | ')}
+- part = ส่วนงานในชั้นนั้น เช่น "เสาเข็ม ฐานราก ตอม่อ" · "เสา คาน พื้น" · "บันได" · "โครงหลังคา" · "มุงหลังคา" · "ผนัง" · "ฉาบ/ทาสี" · "ฝ้าเพดาน" · "พื้น/กระเบื้อง" · "ประตู/หน้าต่าง" · "ไฟฟ้าแสงสว่าง" · "เต้ารับ/สวิตช์" · "ท่อน้ำดี" · "ท่อน้ำทิ้ง/สุขภัณฑ์"
+- sheet = เลขแผ่นแบบที่ใช้ถอด (เช่น S-02, A-03, E-01) ถ้ามี
+- work = ปริมาณงานหลักของหมวดนี้ที่วัดจากแบบ (พื้นที่ ตร.ม. · ความยาว ม. · ปริมาตร ลบ.ม. · จำนวนต้น/จุด/ชุด) — ต้องมีทุกหมวด ใช้ตรวจสอบและคิดค่าแรง
+- ส่วนต่อเติม/งานใหม่เท่านั้น — ส่วนที่แบบระบุว่าเป็นโครงสร้างเดิม/ของเดิม (แรเงา "โครงสร้างบ้านเดิม") ห้ามถอด แต่ให้บอกใน notes
+items = วัสดุเท่านั้น (ไม่รวมค่าแรง) ของหมวดนั้น — วัสดุเดียวกันที่ใช้หลายหมวด/หลายชั้น ให้แยกตามหมวด ห้ามรวมทั้งหลัง
 labor = ค่าแรงแยกต่างหาก คิดตาม "ปริมาณงาน" ในหน่วยของหมวดค่าแรงนั้น ไม่ได้คิดตามจำนวนวัสดุ เช่น งานก่อผนัง = พื้นที่ผนัง ตร.ม. · งานโครงสร้าง/โครงหลังคา/มุงหลังคา = พื้นที่ ตร.ม. · งานเชิงชาย = ความยาว เมตร · งานตั้งวงกบ = จำนวนชุด · หมวดที่คิดเป็น "เหมา"/"หลัง"/"ห้อง" ให้ qty เป็นจำนวนเหมา/หลัง/ห้อง
 - labor ต้องเลือกชื่อจากรายการนี้เท่านั้น (ตัวในวงเล็บเหลี่ยมคือหน่วย ห้ามใส่ลงในชื่อ) และใส่เฉพาะงานที่มีในแบบนี้: ${laborList.join(' | ')}
 กติกา items:
-- cat = ประเภทงาน ต้องเป็นหนึ่งใน: ${BOQ_CATS.join(' | ')}
 - desc ตั้งชื่อแบบที่ร้านวัสดุก่อสร้างไทยใช้ ระบุชนิด/ขนาด/สเปกที่จำเป็น (ถ้าแบบไม่ระบุสเปก ให้ใช้สเปกที่นิยมกับบ้านพักอาศัย และบอกใน basis ว่าสมมติ)
 - qty เป็นตัวเลขล้วน หน่วยเป็นหน่วยที่ซื้อจริง (ท่อน เส้น ถุง ก้อน ชุด ตัว ตร.ม. ลบ.ม. ม.) ปัดขึ้นและเผื่อเสียหายตามความเหมาะสม
 - นับสัญลักษณ์ทุกชนิดที่เห็น (สุขภัณฑ์ ดวงไฟ ปลั๊ก สวิตช์ ประตู หน้าต่าง บ่อพัก ฯลฯ) และข้อต่อที่ต้องใช้โดยประมาณ
 - ความยาวท่อ/สายไฟ ให้รวมแนวดิ่งด้วย (ใช้ระดับพื้น/ความสูงฝ้าจากแบบหรือข้อมูลผู้ใช้)
 - basis = วิธีคิดสั้นๆ ให้คนตรวจตามได้ (ทั้ง items และ labor) · confidence = สูง (นับได้ชัด) | กลาง (วัด/ประมาณจากแบบ) | ต่ำ (สมมติ/เดา)
-- ใส่เฉพาะสิ่งที่มีในแบบนี้ ห้ามแต่งหมวดที่แบบไม่ได้แสดง · ถ้าอ่านแบบไม่ได้เลยให้คืน {"items":[],"labor":[],"notes":["เหตุผล"]}`
+- ใส่เฉพาะสิ่งที่มีในแบบนี้ ห้ามแต่งหมวดที่แบบไม่ได้แสดง · ถ้าอ่านแบบไม่ได้เลยให้คืน {"sections":[],"notes":["เหตุผล"]}`
 }
 
 /** ทำให้ผลจาก AI อยู่ในรูปที่ปลอดภัย */
@@ -363,7 +374,9 @@ export function cleanItems(list) {
     unit: String(it.unit || '').trim(),
     basis: String(it.basis || '').trim(),
     confidence: ['สูง', 'กลาง', 'ต่ำ'].includes(it.confidence) ? it.confidence : 'กลาง',
-    floor: cleanFloor(it.floor),
+    floor: it.floor ? cleanFloor(it.floor) : floorFromText(it.desc + ' ' + it.basis),
+    part: String(it.part || '').trim().slice(0, 60),
+    sheet: String(it.sheet || '').trim().slice(0, 30),
   })).filter((it) => it.desc)
 }
 /** ค่าแรงจาก AI → ผูกกับราคากลางค่าแรง (หน่วยใช้ของหมวดค่าแรงเสมอ · ชื่อที่ไม่มีในราคากลางทิ้ง) */
@@ -373,11 +386,46 @@ export function cleanLabor(list, rates) {
     const m = matchLabor({ labor: String(it.labor || '').replace(/\s*\[[^\]]*\]\s*$/, '') }, rates)
     if (!m) return null
     return {
-      cat: catGuess(m.name), rate_id: m.id, name: m.name, unit: m.unit, price: m.price, quote: m.quote,
+      cat: BOQ_CATS.includes(it.cat) ? it.cat : catGuess(m.name), rate_id: m.id, name: m.name, unit: m.unit, price: m.price, quote: m.quote,
       qty: Math.round(n(it.qty) * 100) / 100,
       basis: String(it.basis || '').trim(),
       confidence: ['สูง', 'กลาง', 'ต่ำ'].includes(it.confidence) ? it.confidence : 'กลาง',
-      floor: cleanFloor(it.floor),
+      floor: it.floor ? cleanFloor(it.floor) : floorFromText(it.basis),
+      part: String(it.part || '').trim().slice(0, 60),
+      sheet: String(it.sheet || '').trim().slice(0, 30),
     }
   }).filter(Boolean)
+}
+
+// AI ไม่ระบุชั้น → ลองหาจากคำว่า "ชั้น N" / ฐานราก / หลังคา ในชื่อหรือวิธีคิด
+export function floorFromText(t) {
+  const x = String(t || '')
+  const n = /ชั้น(?:ที่)?\s*(\d+)/.exec(x)
+  if (n) return 'ชั้น ' + Number(n[1])
+  if (/เสาเข็ม|ฐานราก|ตอม่อ|คานคอดิน/.test(x)) return 'ฐานราก/ใต้ดิน'
+  if (/หลังคา|จันทัน|แป |อะเส|เชิงชาย/.test(x)) return 'หลังคา'
+  return FLOOR_ALL
+}
+
+/**
+ * ผล AI แบบแบ่งหมวด → แถววัสดุ/ค่าแรงที่มีชั้น ประเภทงาน ส่วนงาน + ปริมาณงานต่อหมวด
+ * รองรับผลแบบเก่า (items/labor ระดับบน) ด้วย
+ */
+export function flattenSections(parsed) {
+  const secs = Array.isArray(parsed?.sections) ? parsed.sections : []
+  const items = [], labor = [], work = []
+  const n = (v) => Number(String(v ?? 0).replace(/,/g, '')) || 0
+  for (const sec of secs) {
+    const base = { floor: sec.floor ? cleanFloor(sec.floor) : '', cat: sec.cat, part: sec.part, sheet: sec.sheet }
+    const pick = (o) => ({ ...o, floor: o.floor || base.floor || undefined, cat: o.cat || base.cat, part: o.part || base.part, sheet: o.sheet || base.sheet })
+    for (const it of Array.isArray(sec.items) ? sec.items : []) items.push(pick(it))
+    for (const it of Array.isArray(sec.labor) ? sec.labor : []) labor.push(pick(it))
+    const w = (Array.isArray(sec.work) ? sec.work : [])
+      .map((x) => ({ desc: String(x.desc || '').trim().slice(0, 120), qty: Math.round(n(x.qty) * 100) / 100, unit: String(x.unit || '').trim().slice(0, 20) }))
+      .filter((x) => x.desc)
+    if (w.length) work.push({ floor: base.floor || FLOOR_ALL, cat: BOQ_CATS.includes(base.cat) ? base.cat : catGuess(String(base.part || '') + ' ' + w[0].desc), part: String(base.part || '').trim().slice(0, 60), sheet: String(base.sheet || '').trim().slice(0, 30), work: w.slice(0, 20) })
+  }
+  if (Array.isArray(parsed?.items)) items.push(...parsed.items)
+  if (Array.isArray(parsed?.labor)) labor.push(...parsed.labor)
+  return { items, labor, work }
 }

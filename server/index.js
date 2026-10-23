@@ -5883,7 +5883,7 @@ api.delete('/acceptances/:id', canWrite, (req, res) => { db.prepare('DELETE FROM
 
 // ---------- เฟส 4: BOQ / Cash Flow / บัญชีรับ-จ่าย (เห็น/แก้ได้ admin/บัญชี/ผู้จัดการ) ----------
 // BOQ (ตีราคา)
-const boqRow = (r) => r ? { ...r, items: jparse(r.items) || [] } : r
+const boqRow = (r) => r ? { ...r, items: jparse(r.items) || [], work: jparse(r.work) || [] } : r
 api.get('/boqs', auditView, (req, res) => {
   const hc = req.query.house_code
   const rows = hc ? db.prepare('SELECT * FROM boqs WHERE house_code=? ORDER BY id DESC').all(hc) : db.prepare('SELECT * FROM boqs ORDER BY id DESC').all()
@@ -5893,8 +5893,8 @@ api.post('/boqs', auditView, (req, res) => {
   const b = req.body || {}
   const seq = db.prepare('SELECT COUNT(*) c FROM boqs').get().c + 1
   const no = `BOQ-${docYear()}-${String(seq).padStart(3, '0')}`
-  const info = db.prepare('INSERT INTO boqs (no,house_code,title,markup_pct,vat_pct,items,by,date,created) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(no, b.house_code || '', b.title || 'ประมาณราคาก่อสร้าง', Number(b.markup_pct) || 0, Number(b.vat_pct) || 0, JSON.stringify(b.items || []), req.user.name, todayTH(), todayTH())
+  const info = db.prepare('INSERT INTO boqs (no,house_code,title,markup_pct,vat_pct,items,work,by,date,created) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(no, b.house_code || '', b.title || 'ประมาณราคาก่อสร้าง', Number(b.markup_pct) || 0, Number(b.vat_pct) || 0, JSON.stringify(b.items || []), JSON.stringify(Array.isArray(b.work) ? b.work : []), req.user.name, todayTH(), todayTH())
   audit(req, 'สร้าง BOQ', no)
   res.status(201).json(boqRow(db.prepare('SELECT * FROM boqs WHERE id=?').get(info.lastInsertRowid)))
 })
@@ -5902,8 +5902,8 @@ api.put('/boqs/:id', auditView, (req, res) => {
   const d = db.prepare('SELECT * FROM boqs WHERE id=?').get(req.params.id)
   if (!d) return res.status(404).json({ error: 'ไม่พบ BOQ' })
   const b = req.body || {}
-  db.prepare('UPDATE boqs SET house_code=?, title=?, markup_pct=?, vat_pct=?, items=? WHERE id=?')
-    .run(b.house_code ?? d.house_code, b.title ?? d.title, b.markup_pct != null ? Number(b.markup_pct) : d.markup_pct, b.vat_pct != null ? Number(b.vat_pct) : d.vat_pct, b.items ? JSON.stringify(b.items) : d.items, d.id)
+  db.prepare('UPDATE boqs SET house_code=?, title=?, markup_pct=?, vat_pct=?, items=?, work=? WHERE id=?')
+    .run(b.house_code ?? d.house_code, b.title ?? d.title, b.markup_pct != null ? Number(b.markup_pct) : d.markup_pct, b.vat_pct != null ? Number(b.vat_pct) : d.vat_pct, b.items ? JSON.stringify(b.items) : d.items, Array.isArray(b.work) ? JSON.stringify(b.work) : d.work, d.id)
   res.json(boqRow(db.prepare('SELECT * FROM boqs WHERE id=?').get(d.id)))
 })
 api.delete('/boqs/:id', auditView, (req, res) => { db.prepare('DELETE FROM boqs WHERE id=?').run(req.params.id); res.json({ ok: true }) })
@@ -6005,7 +6005,7 @@ async function takeoffCore(req) {
     const media = isDxf ? null : inputs.map((it) => it.kind === 'pdf'
       ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: it.buf.toString('base64') } }
       : { type: 'image', source: { type: 'base64', media_type: imageMime(it.name, it.mime), data: it.buf.toString('base64') } })
-    const ai = await aiAsk({ media, prompt, maxTokens: 32000, timeoutMs: 600000 }) // แบบหลายหน้าอ่านนาน — ให้เวลา 10 นาที (รันเป็นงานเบื้องหลัง)
+    const ai = await aiAsk({ media, prompt, maxTokens: 48000, timeoutMs: 600000 }) // แบบหลายหน้าอ่านนาน — ให้เวลา 10 นาที (รันเป็นงานเบื้องหลัง)
     if (!ai.ok) {
       if (!isDxf) return [ai.code || 502, { error: ai.error }]
       notes.push('AI ตั้งชื่อรายการไม่สำเร็จ (' + ai.error + ') — แสดงรายการดิบตาม Block/Layer แทน')
@@ -6013,7 +6013,9 @@ async function takeoffCore(req) {
   } else if (!isDxf) return [400, { error: AI_NO_KEY + ' — หรือใช้ไฟล์ DWG/DXF (ระบบนับ/วัดให้เองได้โดยไม่ใช้ AI)' }]
   else notes.push('ยังไม่ได้ตั้งค่า AI — แสดงรายการดิบตาม Block/Layer ให้ตั้งชื่อเอง')
 
-  const items = parsed ? takeoff.cleanItems(parsed.items) : dxf ? takeoff.rawItemsFromDxf(dxf) : []
+  // ผล AI แบ่งหมวด (ชั้น × ประเภทงาน × ส่วนงาน) → แถว + ปริมาณงานต่อหมวด
+  const flat = parsed ? takeoff.flattenSections(parsed) : { items: [], labor: [], work: [] }
+  const items = parsed ? takeoff.cleanItems(flat.items) : dxf ? takeoff.rawItemsFromDxf(dxf) : []
   if (parsed && Array.isArray(parsed.notes)) notes.push(...parsed.notes.map(String))
   const materials = db.prepare('SELECT id,name,unit,central,confidence FROM material_prices WHERE active=1').all()
   const out = items.map((it) => {
@@ -6021,10 +6023,10 @@ async function takeoffCore(req) {
     return { ...it, mat_match: m.match, mat_alts: m.alts }
   })
   // ค่าแรงแยกจากวัสดุ: คิดตามปริมาณงาน (ตร.ม. ผนัง/พื้นที่บ้าน · เมตร · ชุด · เหมา) ตามหน่วยของราคากลางค่าแรง
-  const labor = parsed ? takeoff.cleanLabor(parsed.labor, rates) : []
+  const labor = parsed ? takeoff.cleanLabor(flat.labor, rates) : []
   audit(req, 'ถอดแบบเป็น BOQ ร่าง', `${label || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
   const source = isDxf ? 'dxf' : inputs.length > 1 ? 'multi' : inputs[0].kind
-  return [200, { source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, notes, dxf }]
+  return [200, { source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, work: flat.work, notes, dxf }]
 }
 // ถอดแบบอาจใช้เวลาหลายนาที (แปลง DWG + AI อ่านหลายหน้า) — ?async=1 คืนเลขงานทันที แล้วหน้าเว็บถามผลซ้ำ
 // เลี่ยงคำขอค้างนานจนเบราว์เซอร์/proxy ตัดทิ้ง · งานเก็บในหน่วยความจำ 1 ชม. (รีสตาร์ต server = หาย)

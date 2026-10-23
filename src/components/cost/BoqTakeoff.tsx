@@ -4,7 +4,7 @@ import { baht } from '../../data'
 import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
 import { BOQ_CATS, type BoqItem } from './BoqTab'
-import { FLOOR_ALL, floorOptions, sortFloors } from './boqFloors'
+import { FLOOR_ALL, floorOptions, sortFloors, type WorkSec } from './boqFloors'
 import MaterialSummaryPrint from './MaterialSummaryPrint'
 
 // ถอดแบบ → BOQ ร่าง: อัปโหลดไฟล์แบบ (DWG / DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ → ระบบถอดปริมาณ + จับคู่ราคากลาง
@@ -12,8 +12,8 @@ import MaterialSummaryPrint from './MaterialSummaryPrint'
 // ค่าแรงแยกเป็นอีกตาราง: คิดตามปริมาณงาน (ตร.ม./เมตร/ชุด/เหมา) ตามราคากลางค่าแรง — ไม่ผูกกับจำนวนวัสดุ
 
 interface MatOpt { id: number; name: string; unit: string; central: number; confidence?: string; score?: number }
-interface TakeoffItem { floor?: string; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; mat_match: MatOpt | null; mat_alts: MatOpt[] }
-interface LaborItem { floor?: string; cat: string; rate_id: number; name: string; unit: string; price: number; quote: boolean; qty: number; basis: string; confidence: string }
+interface TakeoffItem { floor?: string; part?: string; sheet?: string; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; mat_match: MatOpt | null; mat_alts: MatOpt[] }
+interface LaborItem { floor?: string; part?: string; sheet?: string; cat: string; rate_id: number; name: string; unit: string; price: number; quote: boolean; qty: number; basis: string; confidence: string }
 interface DxfSummary {
   units: string; unit_from_file: boolean; entity_count: number; layers: string[]
   blocks: { name: string; layer: string; count: number }[]
@@ -21,12 +21,12 @@ interface DxfSummary {
   areas: { layer: string; area_m2: number; count: number; source: string }[]
   circles: { layer: string; diameter_m: number; count: number }[]
 }
-interface Result { source: 'dxf' | 'pdf' | 'image' | 'multi'; files?: string[]; ai: boolean; model: string; drawing: string; items: TakeoffItem[]; labor: LaborItem[]; notes: string[]; dxf: DxfSummary | null }
+interface Result { source: 'dxf' | 'pdf' | 'image' | 'multi'; files?: string[]; ai: boolean; model: string; drawing: string; items: TakeoffItem[]; labor: LaborItem[]; work?: WorkSec[]; notes: string[]; dxf: DxfSummary | null }
 interface LaborRate { id: number; name: string; variant: string; price_min: number; price_max: number; unit: string }
 interface WebPrice { price: number; low: number; high: number; shop: string; url: string; sources: number; note: string }
 // web = ราคาจากอินเทอร์เน็ต (ชั่วคราว) สำหรับวัสดุที่ยังไม่มีในราคากลาง
-interface Row { use: boolean; floor: string; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; alts: MatOpt[]; matId: number; mat: number; web?: WebPrice }
-interface LRow { use: boolean; floor: string; cat: string; rateId: number; qty: number; unit: string; price: number; basis: string; confidence: string }
+interface Row { use: boolean; floor: string; part: string; sheet: string; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; alts: MatOpt[]; matId: number; mat: number; web?: WebPrice }
+interface LRow { use: boolean; floor: string; part: string; sheet: string; cat: string; rateId: number; qty: number; unit: string; price: number; basis: string; confidence: string }
 interface HouseFile { id: number; name: string; mime: string; size: number; category: string | null; uploaded: string }
 
 // ชนิดไฟล์ที่ถอดได้ · DWG/DXF ถอดทีละไฟล์ · PDF/รูปเลือกหลายไฟล์ให้ AI อ่านพร้อมกัน
@@ -46,7 +46,7 @@ const labMid = (r: LaborRate) => r.price_max > 0 ? Math.round((r.price_min + r.p
 export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   houseCode?: string
   onClose: () => void
-  onCreate: (b: { house_code: string; title: string; items: BoqItem[] }) => void
+  onCreate: (b: { house_code: string; title: string; items: BoqItem[]; work: WorkSec[] }) => void
 }) {
   const { data } = useApp()
   const houses = data.houses
@@ -120,12 +120,12 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
       setRows(r.items.map((it) => {
         const alts = it.mat_match && !it.mat_alts.some((a) => a.id === it.mat_match!.id) ? [it.mat_match, ...it.mat_alts] : it.mat_alts
         return {
-          use: true, floor: it.floor || FLOOR_ALL, cat: it.cat, desc: it.desc, qty: it.qty, unit: it.unit, basis: it.basis, confidence: it.confidence, alts,
+          use: true, floor: it.floor || FLOOR_ALL, part: it.part || '', sheet: it.sheet || '', cat: it.cat, desc: it.desc, qty: it.qty, unit: it.unit, basis: it.basis, confidence: it.confidence, alts,
           matId: it.mat_match?.id || 0, mat: it.mat_match?.central || 0,
         }
       }))
       setOpen({ input: false, notes: true, mat: true, lab: true }); setClosedCats([]); setOnlyUnpriced(false)
-      setLRows(r.labor.map((l) => ({ use: true, floor: l.floor || FLOOR_ALL, cat: l.cat, rateId: l.rate_id, qty: l.qty, unit: l.unit, price: l.price, basis: l.basis, confidence: l.confidence })))
+      setLRows(r.labor.map((l) => ({ use: true, floor: l.floor || FLOOR_ALL, part: l.part || '', sheet: l.sheet || '', cat: l.cat, rateId: l.rate_id, qty: l.qty, unit: l.unit, price: l.price, basis: l.basis, confidence: l.confidence })))
     } catch (e) { setErr((e as Error).message) }
     setBusy(false)
   }
@@ -141,7 +141,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
     const l = rates.find((x) => x.id === id)
     setLRow(i, l ? { rateId: l.id, unit: l.unit, price: labMid(l) } : { rateId: 0, unit: '', price: 0 })
   }
-  const addLabor = () => setLRows((rs) => [...rs, { use: true, floor: FLOOR_ALL, cat: 'สถาปัตยกรรม', rateId: 0, qty: 0, unit: '', price: 0, basis: '', confidence: 'กลาง' }])
+  const addLabor = () => setLRows((rs) => [...rs, { use: true, floor: FLOOR_ALL, part: '', sheet: '', cat: 'สถาปัตยกรรม', rateId: 0, qty: 0, unit: '', price: 0, basis: '', confidence: 'กลาง' }])
   // วัสดุที่ยังไม่มีในราคากลาง → เพิ่มเข้าราคากลางด้วยชื่อ/หน่วย/ราคาที่กรอกในแถวนี้
   // วัสดุที่ไม่มีในราคากลางและยังไม่ได้กรอกราคา → ให้ AI ค้นราคาตลาดจากเว็บมาใส่ไว้ก่อน (แก้ได้ · ไม่บันทึกเข้าราคากลางเอง)
   const [webBusy, setWebBusy] = useState(false)
@@ -182,8 +182,10 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   const floorsHere = sortFloors(rows.map((r) => r.floor))
   const floorOpts = floorOptions([...rows.map((r) => r.floor), ...lrows.map((l) => l.floor)])
   const groups = (groupBy === 'floor'
-    ? floorsHere.flatMap((f) => BOQ_CATS.map((c) => ({ cat: f + ' · ' + c, idx: rows.flatMap((r, i) => r.floor === f && r.cat === c ? [i] : []) })))
-    : BOQ_CATS.map((cat) => ({ cat, idx: rows.flatMap((r, i) => r.cat === cat ? [i] : []) }))).filter((g) => g.idx.length)
+    ? floorsHere.flatMap((f) => BOQ_CATS.flatMap((c) => [...new Set(rows.filter((r) => r.floor === f && r.cat === c).map((r) => r.part))].map((pt) => ({ cat: [f, c, pt].filter(Boolean).join(' · '), floor: f, c, part: pt, idx: rows.flatMap((r, i) => r.floor === f && r.cat === c && r.part === pt ? [i] : []) }))))
+    : BOQ_CATS.map((cat) => ({ cat, floor: '', c: cat, part: '', idx: rows.flatMap((r, i) => r.cat === cat ? [i] : []) }))).filter((g) => g.idx.length)
+  // ปริมาณงานที่ AI วัดได้ของกลุ่มนี้ (เฉพาะโหมดแยกชั้น)
+  const workOf = (g: { floor: string; c: string; part: string }) => groupBy === 'floor' ? (res?.work || []).filter((w) => w.floor === g.floor && w.cat === g.c && (w.part || '') === g.part) : []
 
   // แถววัสดุ 1 แถว (แสดงใต้หัวหมวด)
   const matRow = (r: Row, i: number) => {
@@ -192,7 +194,8 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
     return (
       <tr key={i} style={{ borderTop: '1px solid #F1F4F6', opacity: r.use ? 1 : 0.45, verticalAlign: 'top' }}>
         <td style={{ padding: '8px 8px' }}><input type="checkbox" checked={r.use} onChange={(e) => setRow(i, { use: e.target.checked })} /></td>
-        <td style={{ padding: '5px 6px' }}><select style={{ ...cell, width: 104 }} value={r.floor} onChange={(e) => setRow(i, { floor: e.target.value })}>{floorOpts.map((f) => <option key={f}>{f}</option>)}</select></td>
+        <td style={{ padding: '5px 6px' }}><select style={{ ...cell, width: 104 }} value={r.floor} onChange={(e) => setRow(i, { floor: e.target.value })}>{floorOpts.map((f) => <option key={f}>{f}</option>)}</select>
+          <input style={{ ...cell, width: 104, marginTop: 4, fontSize: 11, padding: '3px 6px' }} placeholder="ส่วนงาน" title="ส่วนงาน เช่น เสา คาน พื้น" value={r.part} onChange={(e) => setRow(i, { part: e.target.value })} /></td>
         <td style={{ padding: '5px 6px' }}><select style={{ ...cell, width: 118 }} value={r.cat} onChange={(e) => setRow(i, { cat: e.target.value })}>{BOQ_CATS.map((c) => <option key={c}>{c}</option>)}</select></td>
         <td style={{ padding: '5px 6px', minWidth: 220 }}>
           <input style={{ ...cell, width: '100%' }} value={r.desc} onChange={(e) => setRow(i, { desc: e.target.value })} />
@@ -228,18 +231,18 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   const buildItems = () => {
     const items: BoqItem[] = used.map((r) => {
       const m = r.alts.find((a) => a.id === r.matId)
-      return { floor: r.floor, cat: r.cat, desc: m ? m.name : r.desc, qty: r.qty, unit: r.unit, mat: r.mat, lab: 0, ref: m?.id, basis: !m && r.web && r.web.price === r.mat ? [r.basis, 'ราคาจากเว็บ: ' + (r.web.shop || 'ร้านออนไลน์')].filter(Boolean).join(' · ') : r.basis }
+      return { floor: r.floor, part: r.part, sheet: r.sheet, cat: r.cat, desc: m ? m.name : r.desc, qty: r.qty, unit: r.unit, mat: r.mat, lab: 0, ref: m?.id, basis: !m && r.web && r.web.price === r.mat ? [r.basis, 'ราคาจากเว็บ: ' + (r.web.shop || 'ร้านออนไลน์')].filter(Boolean).join(' · ') : r.basis }
     })
     for (const l of usedL) {
       const rate = rates.find((x) => x.id === l.rateId)
-      items.push({ floor: l.floor, cat: l.cat, desc: 'ค่าแรง: ' + (rate ? labLabel(rate) : ''), qty: l.qty, unit: l.unit, mat: 0, lab: l.price, basis: l.basis })
+      items.push({ floor: l.floor, part: l.part, sheet: l.sheet, cat: l.cat, desc: 'ค่าแรง: ' + (rate ? labLabel(rate) : ''), qty: l.qty, unit: l.unit, mat: 0, lab: l.price, basis: l.basis })
     }
     return items
   }
   const create = () => {
     const items = buildItems()
     if (!items.length) { alert('ไม่มีรายการที่เลือก'); return }
-    onCreate({ house_code: house, title: 'ถอดแบบ: ' + (res?.drawing || sourceLabel), items })
+    onCreate({ house_code: house, title: 'ถอดแบบ: ' + (res?.drawing || sourceLabel), items, work: res?.work || [] })
   }
 
   return (<>
@@ -318,7 +321,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
                 <th style={th}><input type="checkbox" checked={rows.length > 0 && rows.every((r) => r.use)} onChange={(e) => setRows(rows.map((r) => ({ ...r, use: e.target.checked })))} /></th>
-                <th style={th}>ชั้น</th><th style={th}>ประเภทงาน</th><th style={th}>รายการที่ถอดได้</th><th style={{ ...th, textAlign: 'right' }}>จำนวน</th><th style={th}>หน่วย</th>
+                <th style={th}>ชั้น / ส่วนงาน</th><th style={th}>ประเภทงาน</th><th style={th}>รายการที่ถอดได้</th><th style={{ ...th, textAlign: 'right' }}>จำนวน</th><th style={th}>หน่วย</th>
                 <th style={th}>ราคากลางวัสดุ</th><th style={{ ...th, textAlign: 'right' }}>วัสดุ/หน่วย</th><th style={{ ...th, textAlign: 'right' }}>รวม</th>
               </tr></thead>
               <tbody>
@@ -334,6 +337,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
                       <td colSpan={8} style={{ padding: '7px 10px', fontSize: 12.5, fontWeight: 600, color: '#30506A' }}>
                         <span style={{ display: 'inline-block', width: 14, transform: closed ? 'none' : 'rotate(90deg)', transition: 'transform .15s', fontSize: 10 }}>▶</span>
                         {g.cat} <span style={{ fontWeight: 400, color: '#5C6770' }}>· {g.idx.length} รายการ{miss > 0 && <span style={{ color: '#B23B30' }}> · ยังไม่มีราคา {miss}</span>}</span>
+                        {workOf(g).map((w, k) => <div key={k} style={{ fontWeight: 400, fontSize: 11.5, color: '#3A5A72', marginLeft: 14, marginTop: 2 }}>📏 {w.sheet && <b>{w.sheet} · </b>}{w.work.map((x) => `${x.desc} ${x.qty.toLocaleString()} ${x.unit}`).join(' · ')}</div>)}
                       </td>
                       <td className="num" style={{ padding: '7px 8px', textAlign: 'right', fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{baht(sub)}</td>
                     </tr>,
@@ -353,7 +357,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
-                <th style={th}></th><th style={th}>ชั้น</th><th style={th}>ประเภทงาน</th><th style={th}>หมวดค่าแรง</th><th style={{ ...th, textAlign: 'right' }}>ปริมาณงาน</th><th style={th}>หน่วย</th>
+                <th style={th}></th><th style={th}>ชั้น / ส่วนงาน</th><th style={th}>ประเภทงาน</th><th style={th}>หมวดค่าแรง</th><th style={{ ...th, textAlign: 'right' }}>ปริมาณงาน</th><th style={th}>หน่วย</th>
                 <th style={{ ...th, textAlign: 'right' }}>ค่าแรง/หน่วย</th><th style={{ ...th, textAlign: 'right' }}>รวม</th><th style={th}></th>
               </tr></thead>
               <tbody>
@@ -364,7 +368,8 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
                   return (
                     <tr key={i} style={{ borderTop: '1px solid #F1F4F6', opacity: l.use ? 1 : 0.45, verticalAlign: 'top' }}>
                       <td style={{ padding: '8px 8px' }}><input type="checkbox" checked={l.use} onChange={(e) => setLRow(i, { use: e.target.checked })} /></td>
-                      <td style={{ padding: '5px 6px' }}><select style={{ ...cell, width: 104 }} value={l.floor} onChange={(e) => setLRow(i, { floor: e.target.value })}>{floorOpts.map((f) => <option key={f}>{f}</option>)}</select></td>
+                      <td style={{ padding: '5px 6px' }}><select style={{ ...cell, width: 104 }} value={l.floor} onChange={(e) => setLRow(i, { floor: e.target.value })}>{floorOpts.map((f) => <option key={f}>{f}</option>)}</select>
+                        <input style={{ ...cell, width: 104, marginTop: 4, fontSize: 11, padding: '3px 6px' }} placeholder="ส่วนงาน" value={l.part} onChange={(e) => setLRow(i, { part: e.target.value })} /></td>
                       <td style={{ padding: '5px 6px' }}><select style={{ ...cell, width: 118 }} value={l.cat} onChange={(e) => setLRow(i, { cat: e.target.value })}>{BOQ_CATS.map((c) => <option key={c}>{c}</option>)}</select></td>
                       <td style={{ padding: '5px 6px', minWidth: 260 }}>
                         <select style={{ ...cell, width: '100%', color: l.rateId ? '#1C2730' : '#B23B30' }} value={l.rateId} onChange={(e) => pickRate(i, Number(e.target.value))}>
@@ -399,7 +404,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
         </div>
       </>}
     </ModalShell>
-    {printing && <MaterialSummaryPrint title={'สรุปวัสดุจากการถอดแบบ: ' + (res?.drawing || sourceLabel)} houseName={houses.find((h) => h.code === house)?.name || house} items={buildItems()} onClose={() => setPrinting(false)} />}
+    {printing && <MaterialSummaryPrint title={'สรุปวัสดุจากการถอดแบบ: ' + (res?.drawing || sourceLabel)} houseName={houses.find((h) => h.code === house)?.name || house} items={buildItems()} work={res?.work || []} onClose={() => setPrinting(false)} />}
   </>)
 }
 

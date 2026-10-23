@@ -3,12 +3,12 @@ import { company } from '../../erpData'
 import { PPSD_LOGO_FULL } from '../../assets'
 import { baht } from '../../data'
 import { BOQ_CATS, type BoqItem } from './BoqTab'
-import { FLOOR_ALL, sortFloors } from './boqFloors'
+import { FLOOR_ALL, sortFloors, type WorkSec } from './boqFloors'
 
 // สรุปวัสดุ (A4 → พิมพ์/บันทึกเป็น PDF จากหน้าต่างพิมพ์ของเบราว์เซอร์)
 //  1) ภาพรวม: มูลค่าแยกชั้น × ประเภทงาน
 //  2) รวมทั้งงาน: วัสดุชนิดเดียวกันจากทุกชั้นรวมเป็นแถวเดียว แยกตามประเภทงาน
-//  3) แยกชั้น → ประเภทงาน: ใช้วัสดุอะไร เท่าไหร่ คิดยังไง
+//  3) แยกชั้น → ประเภทงาน → ส่วนงาน (เสา คาน พื้น ฯลฯ): ปริมาณงานที่วัดจากแบบ + ใช้วัสดุอะไร เท่าไหร่ คิดยังไง
 // รายการค่าแรง (ชื่อขึ้นต้น "ค่าแรง:") อยู่ในตารางเดียวกัน ช่องค่าวัสดุว่าง
 
 const bd = '1px solid #C9D2DA'
@@ -35,7 +35,7 @@ function mergeAcrossFloors(items: BoqItem[]) {
   return [...m.values()].map((o) => ({ ...o, floors: sortFloors(o.floors) }))
 }
 
-export default function MaterialSummaryPrint({ title, houseName, items, onClose }: { title: string; houseName?: string; items: BoqItem[]; onClose: () => void }) {
+export default function MaterialSummaryPrint({ title, houseName, items, work = [], onClose }: { title: string; houseName?: string; items: BoqItem[]; work?: WorkSec[]; onClose: () => void }) {
   const floors = sortFloors(items.map(floorOf))
   const cats = BOQ_CATS.filter((cat) => items.some((it) => it.cat === cat))
   const totMat = sumMat(items), totLab = sumLab(items)
@@ -145,7 +145,7 @@ export default function MaterialSummaryPrint({ title, houseName, items, onClose 
         </table>
 
         {/* 3) แยกชั้น → ประเภทงาน */}
-        <div style={{ ...sec, breakBefore: 'page' }}>3. รายการวัสดุแยกตามชั้น และประเภทงาน</div>
+        <div style={{ ...sec, breakBefore: 'page' }}>3. รายการวัสดุแยกตามชั้น · ประเภทงาน · ส่วนงาน</div>
         {floors.map((f) => {
           const xs = items.filter((it) => floorOf(it) === f)
           return (
@@ -156,18 +156,33 @@ export default function MaterialSummaryPrint({ title, houseName, items, onClose 
                 <tbody>
                   {cats.filter((cat) => xs.some((it) => it.cat === cat)).map((cat) => {
                     const ys = xs.filter((it) => it.cat === cat)
+                    const parts = [...new Set(ys.map((it) => it.part || ''))]
                     return (
                       <Fragment key={cat}>
                         <tr style={{ breakInside: 'avoid', breakAfter: 'avoid' }}><td colSpan={8} style={{ ...c, background: '#EEF2F5', fontWeight: 700 }}>{cat}</td></tr>
-                        {ys.map((it, i) => (
-                          <tr key={i} style={{ breakInside: 'avoid' }}>
-                            <td style={{ ...c, textAlign: 'center', color: '#7A858D' }}>{i + 1}</td>
-                            <td style={c}>{it.desc}{it.basis && <div style={{ fontSize: 9.5, color: '#7A858D' }}>{it.basis}</div>}</td>
-                            <td style={num}>{q(it.qty)}</td><td style={c}>{it.unit || '-'}</td>
-                            <td style={num}>{it.mat ? baht(it.mat) : '-'}</td><td style={num}>{it.mat ? baht(it.qty * it.mat) : '-'}</td>
-                            <td style={num}>{it.lab ? baht(it.qty * it.lab) : '-'}</td><td style={{ ...num, fontWeight: 600 }}>{baht(it.qty * (it.mat + it.lab))}</td>
-                          </tr>
-                        ))}
+                        {parts.map((pt) => {
+                          const zs = ys.filter((it) => (it.part || '') === pt)
+                          const ws = work.filter((w) => (w.floor || FLOOR_ALL) === f && w.cat === cat && (w.part || '') === pt)
+                          const sheets = [...new Set([...zs.map((it) => it.sheet || ''), ...ws.map((w) => w.sheet || '')].filter(Boolean))]
+                          return (
+                            <Fragment key={pt}>
+                              {(pt || ws.length > 0) && <tr style={{ breakInside: 'avoid', breakAfter: 'avoid' }}><td colSpan={8} style={{ ...c, background: '#FAFBFC' }}>
+                                <b>{pt || 'อื่นๆ'}</b>{sheets.length > 0 && <span style={{ color: '#7A858D' }}> · แบบ {sheets.join(', ')}</span>}
+                                {ws.length > 0 && <div style={{ fontSize: 10, color: '#3A5A72', marginTop: 2 }}>ปริมาณงาน: {ws.flatMap((w) => w.work).map((x) => `${x.desc} ${q(x.qty)} ${x.unit}`).join(' · ')}</div>}
+                              </td></tr>}
+                              {zs.map((it, i) => (
+                                <tr key={i} style={{ breakInside: 'avoid' }}>
+                                  <td style={{ ...c, textAlign: 'center', color: '#7A858D' }}>{i + 1}</td>
+                                  <td style={c}>{it.desc}{it.basis && <div style={{ fontSize: 9.5, color: '#7A858D' }}>{it.basis}</div>}</td>
+                                  <td style={num}>{q(it.qty)}</td><td style={c}>{it.unit || '-'}</td>
+                                  <td style={num}>{it.mat ? baht(it.mat) : '-'}</td><td style={num}>{it.mat ? baht(it.qty * it.mat) : '-'}</td>
+                                  <td style={num}>{it.lab ? baht(it.qty * it.lab) : '-'}</td><td style={{ ...num, fontWeight: 600 }}>{baht(it.qty * (it.mat + it.lab))}</td>
+                                </tr>
+                              ))}
+                              {parts.length > 1 && subRow(`รวม${pt || 'อื่นๆ'}`, sumMat(zs), sumLab(zs))}
+                            </Fragment>
+                          )
+                        })}
                         {subRow(`รวม${cat} · ${f}`, sumMat(ys), sumLab(ys))}
                       </Fragment>
                     )
