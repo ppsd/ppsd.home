@@ -48,13 +48,16 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
   }
   // search = รหัสบ้านที่เลือกจาก dropdown ('' = ทุกหลัง)
   const st = (h: ApiHouse) => String(h.status || '').trim()
+  // กลุ่มของบ้านสำหรับปุ่มกรอง: ออฟฟิศ (ประเภทโครงการ) · test (บ้านทดสอบ) · ที่เหลือตามสถานะ
+  // "ทั้งหมด" = บ้านจริงเท่านั้น (ไม่รวมออฟฟิศและบ้านทดสอบ — ดูได้จากปุ่มของตัวเอง)
+  const groupOf = (h: ApiHouse) => (h.kind === 'office' ? 'office' : st(h))
+  const inFilter = (h: ApiHouse, id: string) => (id === 'all' ? !['office', 'test'].includes(groupOf(h)) : groupOf(h) === id)
   const filtered = houses.filter((h) => {
-    // "ทั้งหมด" ไม่รวมบ้านทดสอบ (status test) — ดูได้จากปุ่ม Test แยก
-    const okS = statusFilter === 'all' ? st(h) !== 'test' : st(h) === statusFilter
+    const okS = inFilter(h, statusFilter)
     const okQ = !search || h.code === search
     return okS && okQ
   })
-  const countOf = (id: string) => houses.filter((h) => (id === 'all' ? st(h) !== 'test' : st(h) === id)).length
+  const countOf = (id: string) => houses.filter((h) => inFilter(h, id)).length
   const houseOptions = houses.slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
 
   return (

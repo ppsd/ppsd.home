@@ -344,6 +344,7 @@ export const filters = [
   { id: 'after-service', label: 'After-service' },
   { id: 'เพิ่งเริ่ม', label: 'เพิ่งเริ่ม' },
   { id: 'test', label: 'Test' },
+  { id: 'office', label: '🏢 ออฟฟิศ' }, // โครงการประเภทออฟฟิศ/ค่าใช้จ่ายภายใน (ดูจาก kind ไม่ใช่สถานะ)
 ]
 
 // ---- house detail static data ----
