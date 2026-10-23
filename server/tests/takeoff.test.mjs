@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { summarizeDxf, rawItemsFromDxf, matchMaterial, matchLabor, cleanItems, cleanLabor } from '../takeoff.js'
+import { summarizeDxf, rawItemsFromDxf, matchMaterial, matchLabor, cleanItems, cleanLabor, cleanFloor } from '../takeoff.js'
 
 // แปลนสุขาภิบาลย่อ หน่วย มม. — WC/LAV/MH (block) · ท่อน้ำดี 11 ม. · ท่อน้ำทิ้ง 7.5 ม. · ห้อง 3.6x3 · hatch 1.8x3
 function sampleDxf() {
@@ -210,4 +210,13 @@ test('ไฟล์ใหญ่เกินกำหนด → ตอบ JSON ภ
   const r = await fetch(BASE + '/files?name=big.bin', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.alloc(211 * 1048576) })
   assert.equal(r.status, 413)
   assert.match((await r.json()).error, /ใหญ่เกิน/)
+})
+
+test('ชั้นของรายการ: ชื่อชั้นจาก AI เป็นรูปเดียวกัน · ผล AI เก็บชั้นไว้ (ไม่ระบุ = ทั้งหลัง) · รายการดิบจาก DXF = ทั้งหลัง', () => {
+  assert.deepEqual(['ชั้นที่ 1', '2', '2nd floor', 'ฐานราก', 'Roof', 'งานภายนอก', '', 'ชั้นลอย'].map(cleanFloor), ['ชั้น 1', 'ชั้น 2', 'ชั้น 2', 'ฐานราก/ใต้ดิน', 'หลังคา', 'ภายนอก', 'ทั้งหลัง', 'ชั้นลอย'])
+  const c = cleanItems([{ floor: 'ชั้นที่ 2', cat: 'โครงสร้าง', desc: 'เหล็ก DB12', qty: 10 }, { cat: 'โครงสร้าง', desc: 'ปูน', qty: 1 }])
+  assert.deepEqual(c.map((x) => x.floor), ['ชั้น 2', 'ทั้งหลัง'])
+  const rates = [{ id: 5, name: 'งานก่อผนังอิฐแดง', variant: '', price_min: 120, price_max: 150, unit: 'ตร.ม.' }]
+  assert.equal(cleanLabor([{ floor: '1', labor: 'งานก่อผนังอิฐแดง', qty: 50 }], rates)[0].floor, 'ชั้น 1')
+  assert.ok(rawItemsFromDxf(summarizeDxf(sampleDxf())).every((x) => x.floor === 'ทั้งหลัง'))
 })

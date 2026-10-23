@@ -5,10 +5,11 @@ import { useApp } from '../../store'
 import { exportXlsx, ExportButton } from '../../exportCsv'
 import BoqPrint from './BoqPrint'
 import BoqTakeoff from './BoqTakeoff'
+import MaterialSummaryPrint from './MaterialSummaryPrint'
 import ModalShell from '../shared/ModalShell'
 
-// ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ (จากหน้าถอดแบบ)
-export interface BoqItem { cat: string; desc: string; qty: number; unit: string; mat: number; lab: number; ref?: number; basis?: string }
+// ref = id ราคากลางวัสดุที่ผูกไว้ · basis = วิธีคิดปริมาณ · floor = ชั้น (จากหน้าถอดแบบ)
+export interface BoqItem { floor?: string; cat: string; desc: string; qty: number; unit: string; mat: number; lab: number; ref?: number; basis?: string }
 export interface Boq { id: number; no: string; house_code: string; title: string; markup_pct: number; vat_pct: number; items: BoqItem[]; date: string }
 
 export const BOQ_CATS = ['โครงสร้าง', 'สถาปัตยกรรม', 'ระบบไฟฟ้า', 'ระบบประปา-สุขาภิบาล', 'อื่นๆ']
@@ -34,6 +35,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
   const rows = houseCode ? allRows.filter((r) => r.house_code === houseCode) : allRows
   const [edit, setEdit] = useState<Boq | null>(null) // BOQ ที่กำลังแก้/สร้าง
   const [printing, setPrinting] = useState<Boq | null>(null)
+  const [summary, setSummary] = useState<Boq | null>(null) // สรุปวัสดุแยกชั้น/ประเภทงาน (PDF)
   const [takeoff, setTakeoff] = useState(false) // หน้าถอดแบบ → BOQ ร่าง
 
   const load = () => api.get<Boq[]>('/boqs').then(setRows).catch(() => setRows([]))
@@ -144,7 +146,8 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
                 <td style={{ padding: '10px 18px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                   <button onClick={() => pushToHouse(b)} title="ดันยอดรวมเข้าราคาขาย/งวดงานของบ้าน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#C0852C', border: 'none', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>→ ราคาขาย</button>
                   <button onClick={() => setEdit(b)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>แก้ไข</button>
-                  <button onClick={() => setPrinting(b)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>🖨</button>
+                  <button onClick={() => setPrinting(b)} className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }} title="พิมพ์ BOQ">🖨</button>
+                  <button onClick={() => setSummary(b)} title="สรุปวัสดุ รวมทั้งงาน + แยกชั้น/ประเภทงาน (PDF)" className="hov-f3f5f7" style={{ marginLeft: 6, fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 9px', cursor: 'pointer' }}>📄 สรุปวัสดุ</button>
                   <span style={{ marginLeft: 6, display: 'inline-block' }}><ExportButton onClick={() => doExport(b)} label="Excel" /></span>
                   <button onClick={() => remove(b.id)} style={{ marginLeft: 6, border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
                 </td>
@@ -156,6 +159,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
       {editorModal}
       {takeoff && <BoqTakeoff houseCode={houseCode} onClose={() => setTakeoff(false)}
         onCreate={(b) => { setTakeoff(false); setEdit({ id: 0, no: '', house_code: b.house_code, title: b.title, markup_pct: 20, vat_pct: 7, items: b.items, date: '' }) }} />}
+      {summary && <MaterialSummaryPrint title={summary.no + ' · ' + summary.title} houseName={houses.find((h) => h.code === summary.house_code)?.name || summary.house_code} items={summary.items} onClose={() => setSummary(null)} />}
       {printing && <BoqPrint boq={printing} houseName={houses.find((h) => h.code === printing.house_code)?.name || printing.house_code} onClose={() => setPrinting(null)} />}
     </div>
   )

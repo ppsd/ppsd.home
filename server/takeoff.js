@@ -228,11 +228,26 @@ export function summarizeDxf(text, unitOverride = 'auto') {
 // ผลถอดแบบไม่มี AI: แปลงสรุป DXF เป็นรายการดิบให้คนตั้งชื่อเอง
 export function rawItemsFromDxf(s) {
   const items = []
-  for (const b of s.blocks) items.push({ cat: catGuess(b.name + ' ' + b.layer), desc: b.name, qty: b.count, unit: 'ชิ้น', basis: `นับ Block "${b.name}" ใน Layer ${b.layer}`, confidence: 'สูง' })
-  for (const c of s.circles) items.push({ cat: catGuess(c.layer), desc: `วงกลม ø${c.diameter_m} ม. ใน Layer ${c.layer}`, qty: c.count, unit: 'ชิ้น', basis: `นับวงกลม ${c.count} วง`, confidence: 'กลาง' })
-  for (const l of s.lengths) items.push({ cat: catGuess(l.layer), desc: `เส้นใน Layer ${l.layer}`, qty: l.length_m, unit: 'ม.', basis: `รวมความยาว ${l.segments} เส้น`, confidence: 'กลาง' })
-  for (const a of s.areas) items.push({ cat: catGuess(a.layer), desc: `พื้นที่ใน Layer ${a.layer}`, qty: a.area_m2, unit: 'ตร.ม.', basis: `${a.source} ${a.count} รูป`, confidence: 'กลาง' })
+  for (const b of s.blocks) items.push({ cat: catGuess(b.name + ' ' + b.layer), desc: b.name, qty: b.count, unit: 'ชิ้น', basis: `นับ Block "${b.name}" ใน Layer ${b.layer}`, confidence: 'สูง', floor: FLOOR_ALL })
+  for (const c of s.circles) items.push({ cat: catGuess(c.layer), desc: `วงกลม ø${c.diameter_m} ม. ใน Layer ${c.layer}`, qty: c.count, unit: 'ชิ้น', basis: `นับวงกลม ${c.count} วง`, confidence: 'กลาง', floor: FLOOR_ALL })
+  for (const l of s.lengths) items.push({ cat: catGuess(l.layer), desc: `เส้นใน Layer ${l.layer}`, qty: l.length_m, unit: 'ม.', basis: `รวมความยาว ${l.segments} เส้น`, confidence: 'กลาง', floor: FLOOR_ALL })
+  for (const a of s.areas) items.push({ cat: catGuess(a.layer), desc: `พื้นที่ใน Layer ${a.layer}`, qty: a.area_m2, unit: 'ตร.ม.', basis: `${a.source} ${a.count} รูป`, confidence: 'กลาง', floor: FLOOR_ALL })
   return items
+}
+
+// ---------- ชั้น (ใช้แบ่งสรุปวัสดุ แยกชั้น × ประเภทงาน) ----------
+export const FLOOR_ALL = 'ทั้งหลัง'
+/** ชื่อชั้นจาก AI → รูปเดียวกัน เช่น "ชั้นที่ 1" / "1st floor" / "1" → "ชั้น 1" */
+export function cleanFloor(f) {
+  const t = String(f || '').trim()
+  if (!t) return FLOOR_ALL
+  const n = t.match(/^(?:ชั้น(?:ที่)?\s*)?(\d+)(?:\s*(?:st|nd|rd|th)?\s*(?:fl(?:oor)?\.?)?)?$/i)
+  if (n) return 'ชั้น ' + Number(n[1])
+  if (/ฐานราก|ใต้ดิน|เสาเข็ม|foundation/i.test(t)) return 'ฐานราก/ใต้ดิน'
+  if (/หลังคา|roof/i.test(t)) return 'หลังคา'
+  if (/ภายนอก|รอบบ้าน|site|external/i.test(t)) return 'ภายนอก'
+  if (/ทั้งหลัง|ทั้งหมด|รวม|ไม่แยก|all/i.test(t)) return FLOOR_ALL
+  return t.slice(0, 40)
 }
 
 // ---------- หมวด BOQ (ต้องตรงกับ BOQ_CATS ใน src/components/cost/BoqTab.tsx) ----------
@@ -321,12 +336,15 @@ export function takeoffPrompt({ house, rates, dxfSummary, files = [] }) {
 ${src}
 ${info ? 'ข้อมูลบ้านจากผู้ใช้ (ใช้ประกอบและตรวจสอบ): ' + info : ''}
 
-รูปแบบ: {"drawing":"แบบนี้คือแบบอะไร เช่น แปลนสุขาภิบาล","items":[{"cat":"ระบบประปา-สุขาภิบาล","desc":"ท่อ PVC ชั้น 13.5 ขนาด 1/2 นิ้ว","qty":5,"unit":"ท่อน","basis":"แนวราบ ~11 ม. + แนวดิ่ง 2 จุด x 2 ม. = 15 ม. ÷ 4 ม./ท่อน + เผื่อ 10%","confidence":"กลาง"}],"labor":[{"labor":"งานติดตั้งสุขภัณฑ์ (เหมาย่อห้อง)","qty":1,"basis":"ห้องน้ำ 1 ห้อง","confidence":"สูง"}],"notes":["ข้อสังเกตหรือสิ่งที่ต้องตรวจ"]}
+รูปแบบ: {"drawing":"แบบนี้คือแบบอะไร เช่น แปลนสุขาภิบาล","items":[{"floor":"ชั้น 1","cat":"ระบบประปา-สุขาภิบาล","desc":"ท่อ PVC ชั้น 13.5 ขนาด 1/2 นิ้ว","qty":5,"unit":"ท่อน","basis":"แนวราบ ~11 ม. + แนวดิ่ง 2 จุด x 2 ม. = 15 ม. ÷ 4 ม./ท่อน + เผื่อ 10%","confidence":"กลาง"}],"labor":[{"floor":"ชั้น 1","labor":"งานติดตั้งสุขภัณฑ์ (เหมาย่อห้อง)","qty":1,"basis":"ห้องน้ำ 1 ห้อง","confidence":"สูง"}],"notes":["ข้อสังเกตหรือสิ่งที่ต้องตรวจ"]}
 items = วัสดุเท่านั้น (ไม่รวมค่าแรง)
+floor = ชั้นที่ใช้วัสดุ/ทำงานนั้น — ต้องแยกตามชั้นเสมอ: วัสดุเดียวกันที่ใช้หลายชั้นให้แยกเป็นคนละแถวต่อชั้น (เช่น เหล็ก DB12 ชั้น 1 กับ ชั้น 2) ทั้ง items และ labor
+- ใช้ค่า: "ชั้น 1" "ชั้น 2" "ชั้น 3" ... ตามแบบ · "ฐานราก/ใต้ดิน" (เสาเข็ม ฐานราก ตอม่อ คานคอดิน) · "หลังคา" (โครงหลังคา มุงหลังคา เชิงชาย รางน้ำ) · "ภายนอก" (รั้ว ถนน ลาน บ่อพัก ถังบำบัด ท่อภายนอก) · "${FLOOR_ALL}" เฉพาะที่แยกชั้นไม่ได้จริงๆ
+- งานที่คิดเหมา/ทั้งหลัง (เช่น ค่าแรงเหมาไฟฟ้า) ใช้ "${FLOOR_ALL}" ได้
 labor = ค่าแรงแยกต่างหาก คิดตาม "ปริมาณงาน" ในหน่วยของหมวดค่าแรงนั้น ไม่ได้คิดตามจำนวนวัสดุ เช่น งานก่อผนัง = พื้นที่ผนัง ตร.ม. · งานโครงสร้าง/โครงหลังคา/มุงหลังคา = พื้นที่ ตร.ม. · งานเชิงชาย = ความยาว เมตร · งานตั้งวงกบ = จำนวนชุด · หมวดที่คิดเป็น "เหมา"/"หลัง"/"ห้อง" ให้ qty เป็นจำนวนเหมา/หลัง/ห้อง
 - labor ต้องเลือกชื่อจากรายการนี้เท่านั้น (ตัวในวงเล็บเหลี่ยมคือหน่วย ห้ามใส่ลงในชื่อ) และใส่เฉพาะงานที่มีในแบบนี้: ${laborList.join(' | ')}
 กติกา items:
-- cat ต้องเป็นหนึ่งใน: ${BOQ_CATS.join(' | ')}
+- cat = ประเภทงาน ต้องเป็นหนึ่งใน: ${BOQ_CATS.join(' | ')}
 - desc ตั้งชื่อแบบที่ร้านวัสดุก่อสร้างไทยใช้ ระบุชนิด/ขนาด/สเปกที่จำเป็น (ถ้าแบบไม่ระบุสเปก ให้ใช้สเปกที่นิยมกับบ้านพักอาศัย และบอกใน basis ว่าสมมติ)
 - qty เป็นตัวเลขล้วน หน่วยเป็นหน่วยที่ซื้อจริง (ท่อน เส้น ถุง ก้อน ชุด ตัว ตร.ม. ลบ.ม. ม.) ปัดขึ้นและเผื่อเสียหายตามความเหมาะสม
 - นับสัญลักษณ์ทุกชนิดที่เห็น (สุขภัณฑ์ ดวงไฟ ปลั๊ก สวิตช์ ประตู หน้าต่าง บ่อพัก ฯลฯ) และข้อต่อที่ต้องใช้โดยประมาณ
@@ -345,6 +363,7 @@ export function cleanItems(list) {
     unit: String(it.unit || '').trim(),
     basis: String(it.basis || '').trim(),
     confidence: ['สูง', 'กลาง', 'ต่ำ'].includes(it.confidence) ? it.confidence : 'กลาง',
+    floor: cleanFloor(it.floor),
   })).filter((it) => it.desc)
 }
 /** ค่าแรงจาก AI → ผูกกับราคากลางค่าแรง (หน่วยใช้ของหมวดค่าแรงเสมอ · ชื่อที่ไม่มีในราคากลางทิ้ง) */
@@ -358,6 +377,7 @@ export function cleanLabor(list, rates) {
       qty: Math.round(n(it.qty) * 100) / 100,
       basis: String(it.basis || '').trim(),
       confidence: ['สูง', 'กลาง', 'ต่ำ'].includes(it.confidence) ? it.confidence : 'กลาง',
+      floor: cleanFloor(it.floor),
     }
   }).filter(Boolean)
 }
