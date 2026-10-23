@@ -314,9 +314,29 @@ input::placeholder {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
+  /* เอกสารยาวหลายหน้า: หน้าแอปสูงเท่าจอ (100vh + overflow hidden) ทำให้พิมพ์ได้แค่หน้าแรก
+     → ซ่อนทุกอย่างที่ไม่ใช่เอกสาร/กล่องที่ครอบเอกสาร และให้กล่องที่ครอบยืดตามเนื้อหา ไม่ตัดทิ้ง */
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  body:has(.printdoc-backdrop) *:not(:has(.printdoc-backdrop)):not(.printdoc-backdrop):not(.printdoc-backdrop *) {
+    display: none !important;
+  }
+  *:has(.printdoc-backdrop) {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    position: static !important;
+    transform: none !important;
+  }
   .printdoc-backdrop {
-    position: absolute !important;
-    inset: 0 !important;
+    position: static !important;
+    inset: auto !important;
+    height: auto !important;
+    overflow: visible !important;
     background: #fff !important;
     padding: 0 !important;
   }
