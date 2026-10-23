@@ -34,7 +34,7 @@ export default function AcceptanceModal({ inst, houseName, onClose, onSaved }: {
   const resultColor = result === 'ผ่าน' ? '#2E7D55' : result === 'ไม่ผ่าน' ? '#C24036' : '#B7791F'
 
   return (
-    <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
+    <div className="printdoc-backdrop" data-keep-open="" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
       <div className="no-print" style={{ maxWidth: 640, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>ตรวจรับงวดงาน · งวด {inst.no}</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
