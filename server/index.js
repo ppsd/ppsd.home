@@ -2481,7 +2481,7 @@ const AI_NO_KEY = 'ยังไม่ได้ตั้งค่ากุญแ�
 // ส่งรูป/PDF + คำสั่งให้ Claude แล้วคืนข้อความตอบ (media = content block รูปหรือเอกสาร, หรือ null ถ้ามีแต่ข้อความ)
 // รุ่น Opus 5 / Sonnet 5 "คิด" ก่อนตอบและใช้ token ส่วนนั้นจาก max_tokens ด้วย → ต้องเผื่อ max_tokens ให้พอ
 // และตั้ง effort ต่ำสำหรับงานอ่านเอกสาร (ไม่งั้นคิดนานและกิน token จนไม่เหลือให้ตอบ) — Haiku 4.5 ไม่รับ effort
-async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools }) {
+async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools, timeoutMs = 180000 }) {
   if (!key) return { ok: false, error: AI_NO_KEY, code: 400 }
   const mediaArr = Array.isArray(media) ? media : media ? [media] : []
   const content = [...mediaArr, { type: 'text', text: prompt }]
@@ -2493,7 +2493,7 @@ async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = 
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(timeoutMs),
     })
     const data = await r.json().catch(() => ({}))
     if (!r.ok) return { ok: false, code: 502, error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)), model }
@@ -2501,7 +2501,7 @@ async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = 
     const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join('')
     if (!text && data.stop_reason === 'max_tokens') return { ok: false, code: 502, error: 'AI ใช้ token หมดก่อนตอบ (เอกสารยาวเกินไป) — ลองถ่ายเฉพาะส่วนรายการสินค้า', model }
     return { ok: true, text, model }
-  } catch (e) { return { ok: false, code: 502, error: 'เรียก AI ไม่สำเร็จ: ' + e.message, model } }
+  } catch (e) { return { ok: false, code: 502, error: e.name === 'TimeoutError' ? `AI ตอบไม่ทันใน ${Math.round(timeoutMs / 60000)} นาที — แบบอาจยาวเกินไป ลองเลือกเฉพาะแผ่นที่ต้องถอด` : 'เรียก AI ไม่สำเร็จ: ' + e.message, model } }
 }
 // ให้ AI อ่านตารางงวดงานจากสัญญา (PDF/รูป) → คืน JSON งวดงานให้พรีวิว
 const EXTRACT_PROMPT = `คุณเป็นผู้ช่วยกรอกข้อมูลงวดงานก่อสร้างจากสัญญา อ่าน "ตารางงวดการชำระเงิน/งวดงาน" ในเอกสารนี้ แล้วสรุปเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
@@ -5951,30 +5951,31 @@ function takeoffKind(name, mime, buf) {
   return ''
 }
 const imageMime = (name, mime) => /^image\//.test(String(mime)) ? mime : /\.png$/i.test(name) ? 'image/png' : /\.webp$/i.test(name) ? 'image/webp' : /\.gif$/i.test(name) ? 'image/gif' : 'image/jpeg'
-api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-stream', limit: '40mb' }), async (req, res) => {
+// ถอดแบบจริง: คืน [รหัส HTTP, ผล] — เรียกได้ทั้งแบบรอผล และแบบงานเบื้องหลัง (ดูด้านล่าง)
+async function takeoffCore(req) {
   // รวบรวมไฟล์ที่จะถอด → [{name, mime, buf, kind}]
   let inputs = []
   if (Buffer.isBuffer(req.body)) {
-    if (!req.body.length) return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' })
+    if (!req.body.length) return [400, { error: 'ไฟล์ไม่ถูกต้อง' }]
     inputs = [{ name: String(req.query.name || ''), mime: String(req.query.mime || ''), buf: req.body }]
   } else {
     const ids = (Array.isArray(req.body?.file_ids) ? req.body.file_ids : []).map(Number).filter(Boolean)
-    if (!ids.length) return res.status(400).json({ error: 'กรุณาเลือกไฟล์แบบอย่างน้อย 1 ไฟล์' })
+    if (!ids.length) return [400, { error: 'กรุณาเลือกไฟล์แบบอย่างน้อย 1 ไฟล์' }]
     for (const id of [...new Set(ids)].slice(0, 20)) {
       const f = db.prepare('SELECT * FROM files WHERE id=?').get(id)
       const buf = f && fileBuffer(f)
-      if (!buf) return res.status(404).json({ error: `ไม่พบไฟล์ #${id} บน server` })
+      if (!buf) return [404, { error: `ไม่พบไฟล์ #${id} บน server` }]
       inputs.push({ name: f.name, mime: f.mime || '', buf })
     }
   }
   for (const it of inputs) it.kind = takeoffKind(it.name, it.mime, it.buf)
   const bad = inputs.find((it) => !it.kind)
-  if (bad) return res.status(400).json({ error: `“${bad.name || 'ไฟล์นี้'}” ไม่ใช่ไฟล์ที่ถอดแบบได้ — รองรับ DWG, DXF, PDF หรือรูปภาพ (JPG/PNG)` })
+  if (bad) return [400, { error: `“${bad.name || 'ไฟล์นี้'}” ไม่ใช่ไฟล์ที่ถอดแบบได้ — รองรับ DWG, DXF, PDF หรือรูปภาพ (JPG/PNG)` }]
   const cadInputs = inputs.filter((it) => it.kind === 'dwg' || it.kind.startsWith('dxf'))
-  if (cadInputs.length && inputs.length > 1) return res.status(400).json({ error: 'ไฟล์ DWG/DXF ถอดได้ทีละ 1 ไฟล์ — PDF/รูปเลือกหลายไฟล์พร้อมกันได้' })
+  if (cadInputs.length && inputs.length > 1) return [400, { error: 'ไฟล์ DWG/DXF ถอดได้ทีละ 1 ไฟล์ — PDF/รูปเลือกหลายไฟล์พร้อมกันได้' }]
   const isDxf = cadInputs.length === 1
   const total = inputs.reduce((s, it) => s + it.buf.length, 0)
-  if (!isDxf && total > TAKEOFF_MAX_BYTES) return res.status(400).json({ error: `ไฟล์รวมกันใหญ่เกินไป (${(total / 1048576).toFixed(1)} MB · ส่งให้ AI ได้ไม่เกิน ${TAKEOFF_MAX_BYTES / 1048576} MB ต่อครั้ง) — เลือกน้อยไฟล์ลง หรือถอดทีละชุด` })
+  if (!isDxf && total > TAKEOFF_MAX_BYTES) return [400, { error: `ไฟล์รวมกันใหญ่เกินไป (${(total / 1048576).toFixed(1)} MB · ส่งให้ AI ได้ไม่เกิน ${TAKEOFF_MAX_BYTES / 1048576} MB ต่อครั้ง) — เลือกน้อยไฟล์ลง หรือถอดทีละชุด` }]
   const label = inputs.map((it) => it.name).join(', ')
   let house = {}
   try { house = JSON.parse(String(req.query.house || '{}')) || {} } catch { house = {} }
@@ -5985,12 +5986,14 @@ api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-strea
     // DWG / DXF แบบ binary → แปลงเป็น DXF ข้อความด้วย ODA File Converter บนเครื่อง server ก่อน
     let cad = c.buf
     if (c.kind !== 'dxf') {
-      try { cad = await takeoff.cadToDxf(c.buf, c.kind === 'dwg' ? 'dwg' : 'dxf') } catch (e) { return res.status(400).json({ error: e.message }) }
+      try { cad = await takeoff.cadToDxf(c.buf, c.kind === 'dwg' ? 'dwg' : 'dxf') } catch (e) { return [400, { error: e.message }] }
     }
+    // แบบรวมทั้งชุดในไฟล์เดียวอาจได้ DXF ใหญ่หลายร้อย MB — เกินที่อ่านเป็นข้อความได้ ให้แยกเฉพาะแผ่นที่ต้องถอด
+    if (cad.length > 400 * 1048576) return [400, { error: `แบบไฟล์นี้ใหญ่เกินไปหลังแปลงเป็น DXF (${Math.round(cad.length / 1048576)} MB) — ลองแยกเฉพาะแผ่นแปลนที่ต้องถอดเป็นไฟล์ใหม่ (WBLOCK / Save As) แล้วอัปโหลดอีกครั้ง` }]
     // DXF รุ่นใหม่เป็น UTF-8 · รุ่นเก่าภาษาไทยเป็น ANSI_874 (TIS-620)
     let text = cad.toString('utf8')
     if (text.includes('�')) { try { text = new TextDecoder('windows-874').decode(cad) } catch { /* ใช้ utf8 ต่อ */ } }
-    try { dxf = takeoff.summarizeDxf(text, String(req.query.units || 'auto')) } catch (e) { return res.status(400).json({ error: e.message }) }
+    try { dxf = takeoff.summarizeDxf(text, String(req.query.units || 'auto')) } catch (e) { return [400, { error: e.message }] }
   }
   const rates = db.prepare('SELECT * FROM labor_rates WHERE active=1').all()
 
@@ -6002,12 +6005,12 @@ api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-strea
     const media = isDxf ? null : inputs.map((it) => it.kind === 'pdf'
       ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: it.buf.toString('base64') } }
       : { type: 'image', source: { type: 'base64', media_type: imageMime(it.name, it.mime), data: it.buf.toString('base64') } })
-    const ai = await aiAsk({ media, prompt, maxTokens: 32000 })
+    const ai = await aiAsk({ media, prompt, maxTokens: 32000, timeoutMs: 600000 }) // แบบหลายหน้าอ่านนาน — ให้เวลา 10 นาที (รันเป็นงานเบื้องหลัง)
     if (!ai.ok) {
-      if (!isDxf) return res.status(ai.code || 502).json({ error: ai.error })
+      if (!isDxf) return [ai.code || 502, { error: ai.error }]
       notes.push('AI ตั้งชื่อรายการไม่สำเร็จ (' + ai.error + ') — แสดงรายการดิบตาม Block/Layer แทน')
     } else { parsed = extractJsonBlock(ai.text); usedAi = !!parsed; model = ai.model }
-  } else if (!isDxf) return res.status(400).json({ error: AI_NO_KEY + ' — หรือใช้ไฟล์ DWG/DXF (ระบบนับ/วัดให้เองได้โดยไม่ใช้ AI)' })
+  } else if (!isDxf) return [400, { error: AI_NO_KEY + ' — หรือใช้ไฟล์ DWG/DXF (ระบบนับ/วัดให้เองได้โดยไม่ใช้ AI)' }]
   else notes.push('ยังไม่ได้ตั้งค่า AI — แสดงรายการดิบตาม Block/Layer ให้ตั้งชื่อเอง')
 
   const items = parsed ? takeoff.cleanItems(parsed.items) : dxf ? takeoff.rawItemsFromDxf(dxf) : []
@@ -6021,7 +6024,31 @@ api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-strea
   const labor = parsed ? takeoff.cleanLabor(parsed.labor, rates) : []
   audit(req, 'ถอดแบบเป็น BOQ ร่าง', `${label || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
   const source = isDxf ? 'dxf' : inputs.length > 1 ? 'multi' : inputs[0].kind
-  res.json({ source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, notes, dxf })
+  return [200, { source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, notes, dxf }]
+}
+// ถอดแบบอาจใช้เวลาหลายนาที (แปลง DWG + AI อ่านหลายหน้า) — ?async=1 คืนเลขงานทันที แล้วหน้าเว็บถามผลซ้ำ
+// เลี่ยงคำขอค้างนานจนเบราว์เซอร์/proxy ตัดทิ้ง · งานเก็บในหน่วยความจำ 1 ชม. (รีสตาร์ต server = หาย)
+const takeoffJobs = new Map()
+api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-stream', limit: '210mb' }), async (req, res) => {
+  if (req.query.async !== '1') {
+    const [status, body] = await takeoffCore(req).catch((e) => [500, { error: 'ถอดแบบไม่สำเร็จ: ' + e.message }])
+    return res.status(status).json(body)
+  }
+  for (const [k, j] of takeoffJobs) if (Date.now() - j.started > 3600000) takeoffJobs.delete(k)
+  const id = randomBytes(8).toString('hex')
+  const job = { id, user: req.user.name, started: Date.now(), status: 'running', code: 0, result: null }
+  takeoffJobs.set(id, job)
+  takeoffCore(req)
+    .then(([code, body]) => Object.assign(job, { status: code === 200 ? 'done' : 'failed', code, result: body }))
+    .catch((e) => Object.assign(job, { status: 'failed', code: 500, result: { error: 'ถอดแบบไม่สำเร็จ: ' + e.message } }))
+  res.status(202).json({ job: id })
+})
+api.get('/boq-takeoff/jobs/:id', auditView, (req, res) => {
+  const j = takeoffJobs.get(String(req.params.id))
+  if (!j) return res.status(404).json({ error: 'ไม่พบงานถอดแบบนี้ (หมดอายุ หรือ server รีสตาร์ต) — กดถอดแบบใหม่' })
+  if (j.status === 'running') return res.json({ status: 'running', seconds: Math.round((Date.now() - j.started) / 1000) })
+  if (j.status === 'failed') return res.status(j.code || 500).json(j.result)
+  res.json({ status: 'done', result: j.result })
 })
 // ราคาจากอินเทอร์เน็ต (ชั่วคราว) สำหรับวัสดุที่ยังไม่มีในราคากลาง — AI ค้นเว็บร้านวัสดุก่อสร้างไทย แล้วสรุปราคาตลาดต่อหน่วยที่ขอ
 // แบ่งเป็นชุดละ 8 รายการค้นพร้อมกัน · ผลใช้กรอกในหน้าถอดแบบเท่านั้น ไม่บันทึกเข้าราคากลางเอง (คนกด "เพิ่มเข้าราคากลาง" เอง)
@@ -7156,6 +7183,15 @@ api.post('/backups/:name/restore', adminOnly, (req, res) => {
 })
 
 app.use('/api', api)
+// ข้อผิดพลาดจากตัวอ่าน body (ไฟล์ใหญ่เกิน · JSON เสีย) → ตอบเป็น JSON ภาษาไทย แทนหน้า HTML ที่หน้าเว็บอ่านไม่ออก
+app.use('/api', (err, _req, res, next) => {
+  if (res.headersSent) return next(err)
+  const status = err.status || err.statusCode || 500
+  if (status === 413) return res.status(413).json({ error: `ไฟล์ใหญ่เกินกำหนด (สูงสุด ${err.limit ? Math.round(err.limit / 1048576) + ' MB' : 'ตามที่ระบบตั้งไว้'})` })
+  if (status === 400 && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'ข้อมูลที่ส่งมาไม่ถูกต้อง' })
+  console.error('[api]', err)
+  res.status(status).json({ error: err.expose ? err.message : 'เกิดข้อผิดพลาดที่ server' })
+})
 
 // ---------- serve the built frontend (single-port production mode) ----------
 // After `npm run build`, the server also serves dist/ so the whole app runs on

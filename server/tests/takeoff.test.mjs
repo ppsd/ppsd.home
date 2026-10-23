@@ -177,3 +177,37 @@ test('API ราคาจากเว็บ: คืนราคาต่อร�
   assert.deepEqual(r.data.items.map((x) => [x.desc, x.price, x.shop, x.url]), [['ชักโครก', 4500, 'HomePro', 'https://www.homepro.co.th/p/1'], ['บ่อพัก', 0, '', '']])
   assert.equal((await call([])).status, 400)
 })
+
+test('API ถอดแบบแบบงานเบื้องหลัง (?async=1): คืนเลขงานทันที แล้วถามผลได้ · เลขงานผิด 404 · งานที่ล้มเหลวคืนข้อความ', async () => {
+  const start = async (q, body) => {
+    const r = await fetch(BASE + '/boq-takeoff?' + new URLSearchParams({ ...q, async: '1' }), { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body })
+    return { status: r.status, data: await r.json() }
+  }
+  const poll = async (id) => {
+    for (let i = 0; i < 50; i++) {
+      const r = await fetch(BASE + '/boq-takeoff/jobs/' + id, { headers: { Authorization: 'Bearer ' + token } })
+      const d = await r.json()
+      if (r.status !== 200 || d.status === 'done') return { status: r.status, data: d }
+      await new Promise((ok) => setTimeout(ok, 100))
+    }
+    throw new Error('งานไม่เสร็จ')
+  }
+  const ok = await start({ name: 'plan.pdf', mime: 'application/pdf' }, Buffer.from('%PDF-1.4 x'))
+  assert.equal(ok.status, 202)
+  const done = await poll(ok.data.job)
+  assert.equal(done.status, 200)
+  assert.equal(done.data.result.items.length, 2)
+  const bad = await start({ name: 'note.txt', mime: 'text/plain' }, Buffer.from('x'))
+  assert.equal(bad.status, 202)
+  const failed = await poll(bad.data.job)
+  assert.equal(failed.status, 400)
+  assert.match(failed.data.error, /ถอดแบบได้/)
+  const none = await fetch(BASE + '/boq-takeoff/jobs/nope', { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(none.status, 404)
+})
+
+test('ไฟล์ใหญ่เกินกำหนด → ตอบ JSON ภาษาไทย (ไม่ใช่หน้า HTML)', async () => {
+  const r = await fetch(BASE + '/files?name=big.bin', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.alloc(211 * 1048576) })
+  assert.equal(r.status, 413)
+  assert.match((await r.json()).error, /ใหญ่เกิน/)
+})

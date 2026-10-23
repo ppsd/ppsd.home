@@ -53,6 +53,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   const [units, setUnits] = useState('auto')
   const [info, setInfo] = useState({ area_m2: '', floors: '', ceiling_h: '', raised_h: '', spec: '' })
   const [busy, setBusy] = useState(false)
+  const [elapsed, setElapsed] = useState(0) // วินาทีที่งานถอดแบบรันมาแล้ว (จาก server)
   const [err, setErr] = useState('')
   const [res, setRes] = useState<Result | null>(null)
   const [rows, setRows] = useState<Row[]>([])
@@ -98,10 +99,19 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
     if (!ready) { setErr('กรุณาเลือกไฟล์แบบ'); return }
     setBusy(true); setErr(''); setRes(null)
     try {
-      const q = new URLSearchParams({ units, house: JSON.stringify(info) })
-      const r = mode === 'house'
-        ? await api.post<Result>('/boq-takeoff?' + q.toString(), { file_ids: pickedFiles.map((f) => f.id) })
-        : await api.uploadRaw<Result>('/boq-takeoff?' + new URLSearchParams({ name: file!.name, units, house: JSON.stringify(info) }).toString(), file!)
+      // รันเป็นงานเบื้องหลังที่ server (แบบหลายหน้าอาจใช้หลายนาที) แล้วถามผลทุก 3 วินาที
+      const q = new URLSearchParams({ units, house: JSON.stringify(info), async: '1' })
+      const started = mode === 'house'
+        ? await api.post<{ job: string }>('/boq-takeoff?' + q.toString(), { file_ids: pickedFiles.map((f) => f.id) })
+        : await api.uploadRaw<{ job: string }>('/boq-takeoff?' + new URLSearchParams({ name: file!.name, units, house: JSON.stringify(info), async: '1' }).toString(), file!)
+      let r: Result | null = null
+      setElapsed(0)
+      while (!r) {
+        await new Promise((ok) => setTimeout(ok, 3000))
+        const j = await api.get<{ status: 'running'; seconds: number } | { status: 'done'; result: Result }>('/boq-takeoff/jobs/' + started.job)
+        if (j.status === 'done') r = j.result
+        else setElapsed(j.seconds)
+      }
       setRes(r)
       setRows(r.items.map((it) => {
         const alts = it.mat_match && !it.mat_alts.some((a) => a.id === it.mat_match!.id) ? [it.mat_match, ...it.mat_alts] : it.mat_alts
@@ -266,7 +276,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
           </button>
         </div>
       </Section>
-      {busy && <div style={{ fontSize: 12.5, color: '#5C6770' }}>{isDxf ? 'กำลังอ่านไฟล์แบบ (ไฟล์ DWG ต้องแปลงก่อน) แล้วให้ AI ตั้งชื่อรายการ อาจใช้เวลา 30 วินาที – 2 นาที' : 'AI กำลังอ่านแบบ อาจใช้เวลา 30 วินาที – 2 นาที'}</div>}
+      {busy && <div style={{ fontSize: 12.5, color: '#5C6770' }}>{isDxf ? 'กำลังอ่านไฟล์แบบ (ไฟล์ DWG ต้องแปลงก่อน) แล้วให้ AI ตั้งชื่อรายการ' : 'AI กำลังอ่านแบบ'} · ผ่านไป {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')} นาที (แบบหลายหน้าอาจใช้ 2–8 นาที · ย่อหน้าต่างนี้ไว้ทำอย่างอื่นได้)</div>}
       {err && <div style={{ fontSize: 13, color: '#B23B30', background: '#FBE7E5', borderRadius: 8, padding: '9px 12px' }}>{err}</div>}
 
       {/* 2) ผลถอด */}

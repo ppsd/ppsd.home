@@ -20,6 +20,14 @@ export class ApiError extends Error {
   }
 }
 
+// ข้อความผิดพลาดตอนอัปโหลด — ใช้ข้อความจาก server ถ้ามี ไม่งั้นบอกสาเหตุจากรหัส HTTP (เช่น ไฟล์ใหญ่เกิน / server ตอบช้าเกิน)
+async function uploadError(res: Response) {
+  let m = ''
+  try { m = (await res.json()).error || '' } catch { /* ไม่ใช่ JSON */ }
+  if (!m) m = res.status === 413 ? 'ไฟล์ใหญ่เกินกำหนด' : res.status === 502 || res.status === 504 ? 'server ตอบช้าเกินไป — ลองใหม่อีกครั้ง' : 'อัปโหลดไม่สำเร็จ'
+  return new ApiError(res.status, `${m} (HTTP ${res.status})`)
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch('/api' + path, {
     method,
@@ -69,7 +77,7 @@ export const api = {
       headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/octet-stream' },
       body: file,
     })
-    if (!res.ok) { let m = 'อัปโหลดไม่สำเร็จ'; try { m = (await res.json()).error || m } catch { /* ignore */ } throw new ApiError(res.status, m) }
+    if (!res.ok) throw await uploadError(res)
     return res.json() as Promise<T>
   },
   // อัปโหลดไฟล์ raw ไปยัง path ที่ระบุ (แนบ mime ใน query) แล้วคืน JSON
@@ -80,7 +88,7 @@ export const api = {
       headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/octet-stream' },
       body: file,
     })
-    if (!res.ok) { let m = 'อัปโหลดไม่สำเร็จ'; try { m = (await res.json()).error || m } catch { /* ignore */ } throw new ApiError(res.status, m) }
+    if (!res.ok) throw await uploadError(res)
     return res.json() as Promise<T>
   },
   // เปิดดูไฟล์ในเบราว์เซอร์ทันที (แท็บใหม่) — ไม่บังคับดาวน์โหลด
