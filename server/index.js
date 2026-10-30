@@ -2133,7 +2133,8 @@ registerCrmService(api, crmDeps) // LINE ลูกค้า · เคสแจ�
 const CONTROL_DEFAULTS = {
   block_self_approve: true, // ห้ามอนุมัติใบขอซื้อที่ตัวเองเป็นผู้ขอ
   approvers_pr: 1, // จำนวนผู้อนุมัติใบขอซื้อ (PR) — คนเดียวพอ (1–3)
-  approvers_required: 3, // จำนวนผู้อนุมัติที่ต้องกดอนุมัติ (1–3) สำหรับ PO/ใบจ่ายเงิน/ใบจ่ายค่าใช้จ่าย
+  approvers_po: 1, // จำนวนผู้อนุมัติใบสั่งซื้อ (PO) 1–3 — ตอนนี้ใช้คนเดียว (แยกจากใบจ่ายเงิน)
+  approvers_required: 3, // จำนวนผู้อนุมัติที่ต้องกดอนุมัติ (1–3) สำหรับ ใบจ่ายเงิน/ใบจ่ายค่าใช้จ่าย
   overprice_warn_pct: 10, // เตือนเมื่อราคาต่อหน่วยสูงกว่าราคากลางเกินกี่ % (0 = ปิดการเตือน)
   receipt_price_tol_pct: 2, // ตรวจรับของ: ราคา PO กับใบส่งของต่างกันได้ไม่เกินกี่ % ถึงถือว่าตรง (กันปัดเศษ)
   two_step_above: 500000, // PR ยอด ≥ นี้ ต้องอนุมัติ 2 ชั้น (คนละคน)
@@ -2170,7 +2171,7 @@ const APPROVE_DOCS = {
 // จำนวนผู้อนุมัติที่ต้องครบ — ใบขอซื้อ (PR) แยกจากเอกสารเงิน (PO/จ่ายเงิน): PR คนเดียวพอ
 function approversRequired(docType) {
   const c = controls()
-  const n = docType === 'pr' ? (Number(c.approvers_pr) || 1) : (Number(c.approvers_required) || 3)
+  const n = docType === 'pr' ? (Number(c.approvers_pr) || 1) : docType === 'po' ? (Number(c.approvers_po) || 1) : (Number(c.approvers_required) || 3)
   return Math.max(1, Math.min(3, n))
 }
 function approvalSteps(docType, docId) { return db.prepare('SELECT * FROM doc_approvals WHERE doc_type=? AND doc_id=? ORDER BY step, id').all(docType, Number(docId)) }
