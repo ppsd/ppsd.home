@@ -2417,3 +2417,26 @@ test('กลุ่ม 1: รายงานรวมค่าช่างใน�
   assert.deepEqual(ca.data.columns, ['2029-11', '2029-12', '2030-01'])
   assert.equal(ca.data.materialByCol.length, 3)
 })
+
+test('ลบบ้าน: ลบได้เฉพาะบ้านทดสอบ (Test) · ลบงวด/ไฟล์ที่ผูกไปด้วย · มีเอกสารการเงินผูกอยู่ลบไม่ได้', async () => {
+  assert.equal((await POST('/houses', { code: 'H-REAL-DEL', name: 'บ้านจริง ห้ามลบ' })).status, 201)
+  const real = await DEL('/houses/H-REAL-DEL')
+  assert.equal(real.status, 400); assert.match(real.data.error, /บ้านทดสอบ/)
+  // บ้านทดสอบ + งวดที่เก็บเงินแล้ว (มีบัญชีอัตโนมัติ) + ไฟล์ → ลบได้ และถอนบัญชีของงวดด้วย
+  assert.equal((await POST('/houses', { code: 'H-TEST-DEL', name: 'บ้านทดสอบลบ', status: 'test' })).status, 201)
+  await POST('/houses/H-TEST-DEL/installments', { no: 1, detail: 'งวดทดสอบ', amount: 10000, side: 'customer', status: 'เก็บแล้ว' })
+  const up = await fetch(`${BASE}/files?name=a.pdf&mime=application/pdf&house=H-TEST-DEL`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF') })
+  assert.equal(up.status, 201)
+  const del = await DEL('/houses/H-TEST-DEL')
+  assert.equal(del.status, 200, JSON.stringify(del.data))
+  assert.equal(del.data.removed.installments, 1); assert.equal(del.data.removed.files, 1)
+  assert.equal((await GET('/houses')).data.some((h) => h.code === 'H-TEST-DEL'), false)
+  assert.equal((await GET('/installments')).data.some((i) => i.house_code === 'H-TEST-DEL'), false)
+  assert.equal((await GET('/files?house=H-TEST-DEL')).data.length, 0)
+  // บ้านทดสอบที่มีรายจ่ายผูกอยู่ → ลบไม่ได้
+  await POST('/houses', { code: 'H-TEST-MONEY', name: 'บ้านทดสอบมีรายจ่าย', status: 'test' })
+  await POST('/expenses', { house_code: 'H-TEST-MONEY', item: 'ของทดสอบ', amount: 500 })
+  const blocked = await DEL('/houses/H-TEST-MONEY')
+  assert.equal(blocked.status, 409); assert.match(blocked.data.error, /รายจ่าย 1/)
+  assert.equal((await DEL('/houses/NOPE-XYZ')).status, 404)
+})

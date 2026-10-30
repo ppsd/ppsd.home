@@ -533,6 +533,7 @@ interface AppCtx {
   logout: () => void
   addHouse: (b: Record<string, unknown>) => Promise<void>
   updateHouse: (id: number, b: Record<string, unknown>) => Promise<void>
+  deleteHouse: (code: string) => Promise<void>
   addInstallment: (code: string, b: Record<string, unknown>) => Promise<void>
   addIssue: (b: Record<string, unknown>) => Promise<void>
   addExpense: (b: Record<string, unknown>) => Promise<void>
@@ -764,6 +765,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updateHouse: async (id, b) => {
           await api.put('/houses/' + id, b)
           await Promise.all([reload('houses', '/houses'), reload('dashboard', '/dashboard')])
+        },
+        // ลบได้เฉพาะบ้านทดสอบ (server ตรวจซ้ำ)
+        deleteHouse: async (code) => {
+          await api.del('/houses/' + encodeURIComponent(code))
+          await Promise.all([reload('houses', '/houses'), reload('installments', '/installments'), reload('dashboard', '/dashboard')])
         },
         addInstallment: async (code, b) => {
           await api.post('/houses/' + code + '/installments', b)

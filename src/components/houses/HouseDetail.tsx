@@ -52,7 +52,7 @@ const INST_CATS = [
 ]
 
 export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHouse }: HouseDetailProps) {
-  const { data, user, reloadData, updateHouse } = useApp()
+  const { data, user, reloadData, updateHouse, deleteHouse } = useApp()
   // สถานะบ้าน (ใช้กรองหน้ารวมบ้าน) — แก้ได้ทันทีจากหัวหน้า (สิทธิ์เดียวกับแก้ข้อมูลบ้าน)
   const canEditHouse = user?.role === 'admin' || user?.role === 'accounting' || user?.role === 'site' || !!user?.isManager
   const [statusSaving, setStatusSaving] = useState(false)
@@ -63,6 +63,15 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
   }
   const [importing, setImporting] = useState(false)
   const [printing, setPrinting] = useState(false) // ใบสรุปบ้าน (ปุ่ม พิมพ์สรุป)
+  // ลบบ้านทดสอบ (สถานะ Test เท่านั้น) — ลบงวด ไฟล์ BOQ QC ฯลฯ ที่ผูกไปด้วย · มีเอกสารการเงินผูกอยู่ server จะไม่ให้ลบ
+  const [deleting, setDeleting] = useState(false)
+  const removeTestHouse = async () => {
+    if (!confirm(`ลบบ้านทดสอบ “${house.name}” (${house.code})?\n\nงวดงาน ไฟล์ BOQ ใบตรวจ QC และข้อมูลหน้างานของบ้านนี้จะถูกลบไปด้วย — กู้คืนไม่ได้`)) return
+    setDeleting(true)
+    try { await deleteHouse(house.code); onGoHouses() }
+    catch (e) { alert((e as Error).message) }
+    setDeleting(false)
+  }
   // แท็บที่มีฟอร์ม/modal (ใบสั่งงาน · จัดซื้อ · BOQ): เปิดแล้วเก็บไว้เบื้องหลัง — modal ที่ย่อค้างไว้ไม่หายตอนสลับแท็บ
   const [seenTabs, setSeenTabs] = useState<string[]>([])
   if (!seenTabs.includes(tab)) setSeenTabs([...seenTabs, tab])
@@ -170,6 +179,12 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         {house.kind === 'cm' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#C0852C', padding: '5px 13px', borderRadius: 20 }}>ควบคุมงาน (CM)</span>}
         {house.kind === 'office' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#30506A', padding: '5px 13px', borderRadius: 20 }}>🏢 ออฟฟิศ / ค่าใช้จ่ายภายใน</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          {canEditHouse && String(house.status || '').trim() === 'test' && (
+            <button onClick={removeTestHouse} disabled={deleting} title="ลบบ้านทดสอบนี้และข้อมูลที่ผูกอยู่ (งวด ไฟล์ BOQ QC ฯลฯ) — ลบได้เฉพาะบ้านสถานะ Test"
+              style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#C24036', background: '#FBEEEC', border: '1px solid #F0CBC6', borderRadius: 9, padding: '9px 14px', cursor: deleting ? 'wait' : 'pointer' }}>
+              {deleting ? 'กำลังลบ…' : '🗑 ลบบ้านทดสอบ'}
+            </button>
+          )}
           <button onClick={() => setPrinting(true)} title="พิมพ์ใบสรุปข้อมูลบ้าน การเงิน งวดงาน และปัญหาค้าง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 500, color: '#1C2730', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>🖨 พิมพ์สรุป</button>
           <button onClick={onEditHouse} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>แก้ไขข้อมูล</button>
         </div>

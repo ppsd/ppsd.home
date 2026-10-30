@@ -2422,6 +2422,40 @@ api.put('/houses/:id', canWrite, (req, res) => {
   audit(req, 'แก้ไขบ้าน', h.name)
   res.json(withProfit(db.prepare('SELECT * FROM houses WHERE id = ?').get(h.id)))
 })
+// ลบบ้าน — เฉพาะบ้านสถานะ "test" (บ้านทดสอบ) · ลบข้อมูลงานที่ผูกกับบ้านไปด้วย
+// ถ้ามีเอกสารการเงิน (PR/PO/ใบจ่าย/รายจ่าย/เงินสดย่อย/เอกสารขาย/สต๊อก/บัญชี) ผูกอยู่ → ไม่ให้ลบ กันบัญชีเพี้ยน
+const HOUSE_MONEY_TABLES = [
+  ['purchase_requests', 'ใบขอซื้อ'], ['purchase_orders', 'ใบสั่งซื้อ'], ['payments', 'ใบจ่ายเงิน'], ['expenses', 'รายจ่าย'],
+  ['petty_expenses', 'เงินสดย่อย'], ['sales_docs', 'เอกสารขาย'], ['contractor_advances', 'เงินเบิกช่าง'], ['stock_moves', 'เบิกสต๊อก'],
+  ['fixed_assets', 'ทรัพย์สิน'], ['fuel_requests', 'เบิกค่าน้ำมัน'], ['ledger', 'บัญชีแยกบ้าน'],
+]
+const HOUSE_WORK_TABLES = ['inst_acceptance', 'house_categories', 'tasks', 'issues', 'boqs', 'contractor_evals', 'contractors', 'qc_inspections',
+  'site_reports', 'site_docs', 'safety_records', 'handover_docs', 'cashflows', 'work_orders', 'doc_register', 'nps']
+api.delete('/houses/:code', canWrite, (req, res) => {
+  const h = db.prepare('SELECT * FROM houses WHERE code=?').get(req.params.code)
+  if (!h) return res.status(404).json({ error: 'ไม่พบบ้าน' })
+  if (String(h.status || '').trim() !== 'test') return res.status(400).json({ error: 'ลบได้เฉพาะบ้านทดสอบ (สถานะ Test) — บ้านจริงเปลี่ยนสถานะเป็น "ยกเลิก" แทน' })
+  const has = (t) => { try { return db.prepare(`SELECT COUNT(*) c FROM ${t} WHERE house_code=?`).get(h.code).c } catch { return 0 } }
+  const money = HOUSE_MONEY_TABLES.map(([t, label]) => [label, has(t)]).filter(([, n]) => n > 0)
+  const otherJournals = db.prepare("SELECT COUNT(*) c FROM journal_entries WHERE house_code=? AND COALESCE(source,'') != 'inst'").get(h.code).c
+  if (otherJournals) money.push(['รายการบัญชี', otherJournals])
+  if (money.length) return res.status(409).json({ error: `ลบไม่ได้ — บ้านนี้มีเอกสารการเงินผูกอยู่: ${money.map(([l, n]) => `${l} ${n}`).join(' · ')} — ลบหรือย้ายเอกสารเหล่านี้ออกก่อน`, money: Object.fromEntries(money) })
+  const files = db.prepare('SELECT path FROM files WHERE house_code=?').all(h.code)
+  const removed = {}
+  db.transaction(() => {
+    // งวดงาน: ถอนบัญชีอัตโนมัติของงวดก่อน (เหมือนลบงวดทีละงวด)
+    for (const i of db.prepare('SELECT id FROM installments WHERE house_code=?').all(h.code)) acct.removeAutoJournal('inst', i.id)
+    removed.installments = db.prepare('DELETE FROM installments WHERE house_code=?').run(h.code).changes
+    for (const t of HOUSE_WORK_TABLES) { try { const n = db.prepare(`DELETE FROM ${t} WHERE house_code=?`).run(h.code).changes; if (n) removed[t] = n } catch { /* ไม่มีตาราง/คอลัมน์ */ } }
+    try { db.prepare("UPDATE customer_contacts SET house_code='' WHERE house_code=?").run(h.code) } catch { /* ignore */ }
+    removed.files = db.prepare('DELETE FROM files WHERE house_code=?').run(h.code).changes
+    db.prepare('DELETE FROM houses WHERE id=?').run(h.id)
+  })()
+  for (const f of files) if (f.path) { try { unlinkSync(join(uploadsDir, f.path)) } catch { /* ไฟล์หายไปแล้ว */ } }
+  audit(req, 'ลบบ้านทดสอบ', `${h.code} ${h.name} · ${Object.entries(removed).filter(([, n]) => n).map(([t, n]) => `${t} ${n}`).join(', ') || 'ไม่มีข้อมูลผูก'}`)
+  notifyChange(['houses', 'installments', 'dashboard', 'notifications'])
+  res.json({ ok: true, removed })
+})
 
 api.get('/houses/:code/installments', (req, res) =>
   res.json(db.prepare('SELECT * FROM installments WHERE house_code = ? ORDER BY side DESC, no').all(req.params.code))
