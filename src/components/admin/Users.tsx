@@ -6,6 +6,7 @@ import { useApp } from '../../store'
 import type { ApiUser } from '../../store'
 import { api } from '../../api'
 import SignatureCell from '../shared/SignatureCell'
+import BackupViewer from './BackupViewer'
 
 interface AuditRow { id: number; ts: string; user: string; action: string; detail: string }
 interface ResetReq { id: number; username: string; name: string; created: string }
@@ -58,6 +59,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   }
   const [busy, setBusy] = useState(false)
   const [autoBk, setAutoBk] = useState<{ name: string; date: string }[]>([])
+  const [viewBk, setViewBk] = useState<{ name: string; date: string } | null>(null) // ดูข้อมูลในไฟล์สำรอง (อ่านอย่างเดียว)
   useEffect(() => { api.get<{ name: string; date: string }[]>('/backups').then(setAutoBk).catch(() => {}) }, [])
   const restoreAuto = async (name: string, date: string) => {
     if (!window.confirm(`กู้คืนข้อมูลจากไฟล์สำรองวันที่ ${date}?\n⚠️ ข้อมูลปัจจุบันทั้งหมดจะถูกแทนที่ด้วยชุดสำรองนี้\n(ระบบจะสำรองสถานะปัจจุบันเก็บไว้ให้อัตโนมัติก่อนกู้คืน)`)) return
@@ -259,12 +261,14 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
             {autoBk.map((b) => (
               <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px', borderTop: '1px solid #E4F0E8', fontSize: 12.5 }}>
                 <span className="num" style={{ color: '#1C2730', fontWeight: 500 }}>{b.date}</span>
-                <button onClick={() => restoreAuto(b.name, b.date)} disabled={busy} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 7, padding: '4px 12px', cursor: busy ? 'default' : 'pointer' }}>กู้คืนชุดนี้</button>
+                <button onClick={() => setViewBk(b)} title="เปิดดูข้อมูลในไฟล์สำรองนี้เทียบกับตอนนี้ (อ่านอย่างเดียว ไม่ทับข้อมูลปัจจุบัน)" className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 12px', cursor: 'pointer' }}>🔍 ดูข้อมูล</button>
+                <button onClick={() => restoreAuto(b.name, b.date)} disabled={busy} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 7, padding: '4px 12px', cursor: busy ? 'default' : 'pointer' }}>กู้คืนชุดนี้</button>
               </div>
             ))}
           </div>
         </div>
       )}
+      {viewBk && <BackupViewer name={viewBk.name} date={viewBk.date} onClose={() => setViewBk(null)} />}
 
       {/* สำรองข้อมูลนอกเครื่องอัตโนมัติ (กันเครื่องพังแล้วข้อมูลหาย) */}
       <div style={{ background: '#fff', border: '1px solid #ECDCB8', borderRadius: 12, overflow: 'hidden' }}>

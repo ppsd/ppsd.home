@@ -127,3 +127,53 @@ test('สำรองข้อมูล: ไฟล์สำรองอัตโ
   assert.equal((await api('GET', '/houses')).data.some((h) => h.code === 'H-AFTER-BAK'), false, 'กู้คืนแล้วต้องกลับไปเหมือนตอนสำรอง')
   assert.ok(readdirSync(join(tmp, 'backups')).includes('ppsd-before-restore.sqlite'), 'ต้องสำรองข้อมูลก่อนกู้คืนไว้ให้')
 })
+
+test('ดูข้อมูลในไฟล์สำรอง: เทียบกับตอนนี้ (ถูกลบ/ถูกแก้) · ไม่ทับข้อมูลปัจจุบัน · กู้คืนเฉพาะรายการที่ถูกลบ · เอกสารการเงินดูได้อย่างเดียว · ไม่ส่ง PIN', async () => {
+  // ข้อมูลก่อนสำรอง: บ้าน + งวด + ไฟล์แนบ
+  assert.equal((await api('POST', '/houses', { code: 'H-BV', name: 'บ้านดูไฟล์สำรอง' })).status, 201)
+  const inst = await api('POST', '/houses/H-BV/installments', { no: 1, detail: 'งวดที่จะลบ', amount: 5000, side: 'customer' })
+  assert.ok(inst.data?.id || inst.status < 300, JSON.stringify(inst.data))
+  const instId = (await api('GET', '/installments')).data.find((i) => i.house_code === 'H-BV').id
+  const file = await (await fetch(`${BASE}/files?name=${encodeURIComponent('สัญญา.pdf')}&mime=application/pdf&house=H-BV`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF-1.4 สัญญา') })).json()
+  assert.equal((await api('PUT', '/backup-mirror', { dir: join(tmp, 'mirror') })).status, 200)
+  const run = await api('POST', '/backup-mirror/run')
+  assert.equal(run.status, 200, JSON.stringify(run.data))
+  const name = (await api('GET', '/backups')).data[0].name
+  // หลังสำรอง: ลบงวด + ลบไฟล์ + แก้ชื่อบ้าน
+  const house = (await api('GET', '/houses')).data.find((h) => h.code === 'H-BV')
+  assert.equal((await api('PUT', '/houses/' + house.id, { name: 'บ้านดูไฟล์สำรอง (แก้แล้ว)' })).status, 200)
+  assert.equal((await api('DELETE', '/installments/' + instId)).status, 200)
+  assert.equal((await api('DELETE', '/files/' + file.id)).status, 200)
+  const base = '/backups/' + encodeURIComponent(name)
+  const tables = (await api('GET', base + '/browse')).data.tables
+  assert.ok(tables.some((t) => t.key === 'installments' && t.restore) && tables.some((t) => t.key === 'payments' && !t.restore))
+  assert.equal(tables.some((t) => t.key === 'settings' || t.key === 'users'), false, 'ตารางตั้งค่า/ผู้ใช้ (มีกุญแจ/PIN) ต้องไม่เปิดให้ดู')
+  // งวดที่ลบ → สถานะ deleted · บ้านที่แก้ชื่อ → changed (ช่อง name)
+  const del = (await api('GET', `${base}/browse/installments?status=deleted`)).data
+  assert.ok(del.rows.some((r) => r.id === instId), JSON.stringify(del))
+  const hv = (await api('GET', `${base}/browse/houses?q=H-BV`)).data.rows[0]
+  assert.equal(hv._status, 'changed')
+  const hd = (await api('GET', `${base}/browse/houses/${hv.id}`)).data
+  assert.ok(hd.changed.includes('name')); assert.equal(hd.backup.name, 'บ้านดูไฟล์สำรอง'); assert.equal(hd.current.name, 'บ้านดูไฟล์สำรอง (แก้แล้ว)')
+  // แค่เปิดดู → ข้อมูลปัจจุบันไม่เปลี่ยน
+  assert.equal((await api('GET', '/houses')).data.find((h) => h.code === 'H-BV').name, 'บ้านดูไฟล์สำรอง (แก้แล้ว)')
+  assert.equal((await api('POST', `${base}/browse/houses/${hv.id}/restore`)).status, 409, 'รายการที่ยังอยู่ ห้ามทับ')
+  // กู้งวดที่ถูกลบ → กลับมา · กู้ซ้ำไม่ได้
+  const rs = await api('POST', `${base}/browse/installments/${instId}/restore`)
+  assert.equal(rs.status, 200, JSON.stringify(rs.data))
+  assert.ok((await api('GET', '/installments')).data.some((i) => i.id === instId && i.detail === 'งวดที่จะลบ'))
+  assert.equal((await api('POST', `${base}/browse/installments/${instId}/restore`)).status, 409)
+  // กู้ไฟล์ → ตัวไฟล์กลับมาเปิดได้ · ดาวน์โหลดจากชุดสำรองได้ด้วยชื่อจริง
+  const dl = await fetch(`${BASE}${base}/file/${file.id}`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(dl.status, 200); assert.match(decodeURIComponent(dl.headers.get('content-disposition')), /สัญญา\.pdf/)
+  assert.equal((await api('POST', `${base}/browse/files/${file.id}/restore`)).status, 200)
+  const view = await fetch(`${BASE}/files/${file.id}/view`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(view.status, 200); assert.equal(Buffer.from(await view.arrayBuffer()).toString(), '%PDF-1.4 สัญญา')
+  // เอกสารการเงินกู้ทีละรายการไม่ได้ · ตารางที่ไม่อนุญาต 400 · ไม่ส่ง PIN ออกมา
+  assert.equal((await api('POST', `${base}/browse/payments/1/restore`)).status, 400)
+  assert.equal((await api('GET', `${base}/browse/settings`)).status, 400)
+  const emp = (await api('GET', `${base}/browse/employees`)).data.rows[0]
+  const empD = (await api('GET', `${base}/browse/employees/${emp.id}`)).data
+  assert.equal('pin' in empD.backup, false); assert.equal('track_token' in empD.backup, false)
+  assert.equal((await api('GET', '/backups/evil.sqlite/browse')).status, 400)
+})

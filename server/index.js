@@ -19,6 +19,7 @@ import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
 import { renderElementPng } from './render.js'
 import * as takeoff from './takeoff.js'
+import { registerBackupViewer } from './backup-viewer.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -8024,6 +8025,11 @@ setInterval(() => {
   const day = todayISO()
   if (!existsSync(join(backupDir, `ppsd-auto-${day}.sqlite`))) autoBackup()
 }, 60 * 60 * 1000)
+// ดูข้อมูลในไฟล์สำรอง (อ่านอย่างเดียว) + กู้คืนรายการที่ถูกลบทีละรายการ — ดู server/backup-viewer.js
+registerBackupViewer(api, {
+  db, Database, backupDir, uploadsDir, adminOnly, audit, notifyChange, recomputeHouse,
+  syncInstallmentJournal: (inst) => acct.syncInstallmentJournal(inst),
+})
 // list available auto-backups (admin)
 api.get('/backups', adminOnly, (_req, res) => {
   try {
