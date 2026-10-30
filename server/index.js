@@ -7984,11 +7984,17 @@ function checkDbFile(file) {
 // ไฟล์ที่ตรวจไม่ผ่านจะไม่ทับไฟล์สำรองดีของเดิม
 async function safeDbCopy(dest) {
   const tmp = dest + '.tmp'
+  const dropSidecars = (f) => { for (const s of ['-wal', '-shm', '-journal']) { try { unlinkSync(f + s) } catch { /* ไม่มี */ } } }
   try { unlinkSync(tmp) } catch { /* ไม่มี */ }
+  dropSidecars(tmp)
   await db.backup(tmp)
+  // ไฟล์สำรองเป็นโหมด WAL ตามต้นฉบับ → เปลี่ยนเป็นไฟล์เดียวจบ (ไม่มีไฟล์ -wal/-shm ห้อยท้าย ก๊อปไปไหนก็เปิดได้)
+  try { const d = new Database(tmp); d.pragma('journal_mode = DELETE'); d.close() } catch (e) { dropSidecars(tmp); try { unlinkSync(tmp) } catch { /* ignore */ } return 'เตรียมไฟล์สำรองไม่สำเร็จ (' + e.message + ')' }
   const bad = checkDbFile(tmp)
+  dropSidecars(tmp)
   if (bad) { try { unlinkSync(tmp) } catch { /* ignore */ } return bad }
   renameSync(tmp, dest)
+  dropSidecars(dest) // ไฟล์ข้างของไฟล์สำรองเดิม (ถ้ามี) — ไม่ตรงกับไฟล์ใหม่แล้ว
   return null
 }
 async function autoBackup() {

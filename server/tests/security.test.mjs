@@ -114,6 +114,7 @@ test('สำรองข้อมูล: ไฟล์สำรองอัตโ
   assert.equal(m.data.last?.ok, true, JSON.stringify(m.data.last)); assert.equal(m.data.last?.check, 'ok')
   const list = (await api('GET', '/backups')).data
   assert.ok(list.length >= 1 && list.every((b) => b.name.endsWith('.sqlite')))
+  assert.deepEqual(readdirSync(join(tmp, 'backups')).filter((f) => /-wal$|-shm$|\.tmp$/.test(f)), [], 'ไม่มีไฟล์ชั่วคราว/ไฟล์ข้างค้างในโฟลเดอร์สำรอง')
   // ดาวน์โหลดไฟล์สำรอง → เพิ่มบ้าน → กู้คืนจากไฟล์ (ส่ง binary) → บ้านที่เพิ่งเพิ่มต้องหายไป
   const bak = Buffer.from(await (await fetch(BASE + '/backup', { headers: { Authorization: 'Bearer ' + token } })).arrayBuffer())
   assert.ok(bak.length > 10000)
