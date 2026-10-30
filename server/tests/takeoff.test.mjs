@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { summarizeDxf, rawItemsFromDxf, matchMaterial, matchLabor, cleanItems, cleanLabor, cleanFloor, flattenSections, floorFromText } from '../takeoff.js'
+import { summarizeDxf, rawItemsFromDxf, matchMaterial, matchLabor, cleanItems, cleanLabor, cleanFloor, flattenSections, floorFromText, normName } from '../takeoff.js'
 
 // แปลนสุขาภิบาลย่อ หน่วย มม. — WC/LAV/MH (block) · ท่อน้ำดี 11 ม. · ท่อน้ำทิ้ง 7.5 ม. · ห้อง 3.6x3 · hatch 1.8x3
 function sampleDxf() {
@@ -305,4 +305,14 @@ test('งานถอดแบบเบื้องหลังเก็บใ�
   const again = await (await fetch(BASE + '/boq-takeoff/jobs/' + job, { headers: { Authorization: 'Bearer ' + token } })).json()
   assert.equal(again.result.items.length, d.result.items.length, 'ถามซ้ำต้องได้ผลเดิม')
   assert.equal(existsSync(join(tmp, 'takeoff-jobs', job)), false, 'ไฟล์ชั่วคราวต้องถูกลบเมื่อเสร็จ')
+})
+
+test('จับคู่ราคากลางด้วยชื่อที่จำไว้: ชื่อตรงกับชื่อเรียกอื่น = จับคู่ทันที (remembered) · ชื่อเรียกอื่นช่วยเทียบแบบหยาบ', () => {
+  const mats = [{ id: 1, name: 'คอนกรีตผสมเสร็จ CU240KS อินทรี', unit: 'คิว', central: 1730 }, { id: 2, name: 'ทรายหยาบ', unit: 'คิว', central: 450 }]
+  const aliases = [{ mp_id: 1, alias: 'คอนกรีตผสมเสร็จ 240 ksc', nkey: normName('คอนกรีตผสมเสร็จ 240 ksc'), unit: 'ลบ.ม.' }]
+  const r = matchMaterial({ desc: 'คอนกรีตผสมเสร็จ 240 ksc', unit: 'ลบ.ม.' }, mats, aliases)
+  assert.equal(r.match?.id, 1)
+  assert.equal(r.match?.remembered, true)
+  assert.equal(matchMaterial({ desc: 'คอนกรีตผสมเสร็จ 240ksc (ฐานราก)', unit: 'ลบ.ม.' }, mats, aliases).match?.id, 1)
+  assert.equal(matchMaterial({ desc: 'คอนกรีตผสมเสร็จ 240 ksc', unit: 'ลบ.ม.' }, mats, []).match?.remembered, undefined)
 })

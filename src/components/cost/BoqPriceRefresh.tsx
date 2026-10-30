@@ -18,8 +18,11 @@ export default function BoqPriceRefresh({ items, onApply, onClose }: { items: Bo
   const linked = items.filter((it) => it.ref).length
 
   useEffect(() => {
-    api.get<ApiMaterialPrice[]>('/material-prices').then((list) => {
-      const byId = new Map(list.map((m) => [m.id, m]))
+    // ?all=1 = รวมรายการที่ถูกรวมไปแล้ว → ตามไปหารายการมาตรฐาน (BOQ เก่าอ้างรหัสเดิม)
+    api.get<(ApiMaterialPrice & { merged_into?: number | null })[]>('/material-prices?all=1').then((list) => {
+      const all = new Map(list.map((m) => [m.id, m]))
+      const resolve = (id: number) => { let m = all.get(id); for (let k = 0; m?.merged_into && k < 10; k++) m = all.get(m.merged_into); return m && m.active !== 0 ? m : undefined }
+      const byId = { get: resolve }
       const ds: Diff[] = []
       let g = 0
       items.forEach((it, i) => {

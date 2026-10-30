@@ -74,3 +74,46 @@ test('นำเข้า Excel: จับคู่ด้วยรหัส · �
   assert.equal(h[0].source, 'Excel')
   assert.equal((await call('POST', '/material-prices/import/preview', { rows: [] })).status, 400)
 })
+
+test('รวมรายการซ้ำ: หากลุ่มซ้ำ (สะกดต่าง/เว้นวรรค) → รวม → ชื่อเดิมเป็นชื่อเรียกอื่น · รายการที่รวมปิดใช้งานแต่ตามรหัสเดิมเจอ · PO ชื่อเดิมนับรวม', async () => {
+  const a = (await call('POST', '/material-prices', { name: 'ปูนซีเมนต์ ตรานกอินทรีย์ ทดสอบ', unit: 'ถุง', central: 140 })).data
+  const b = (await call('POST', '/material-prices', { name: 'ปูนซีเมนต์ นกอินทรี ทดสอบ', unit: 'ถุง', central: 150 })).data
+  // ทำให้เหมือนรายการที่มาจากประวัติซื้อ (ไม่ใช่ตั้งราคาเอง) — รวมแล้วต้องยังอัปเดตจาก PO ได้
+  const Database = (await import('better-sqlite3')).default
+  const sdb = new Database(join(tmp, 'test.sqlite'))
+  sdb.prepare("UPDATE material_prices SET source='ประวัติ' WHERE id IN (?, ?)").run(a.id, b.id)
+  const dup = (await call('GET', '/material-prices/duplicates')).data
+  const g = dup.find((xs) => xs.some((m) => m.id === a.id))
+  assert.ok(g && g.some((m) => m.id === b.id), 'ต้องจับ 2 ชื่อนี้เป็นกลุ่มเดียวกัน')
+  const r = await call('POST', '/material-prices/merge', { keep_id: a.id, ids: [b.id], name: 'ปูนซีเมนต์ นกอินทรี ทดสอบ (มาตรฐาน)', central: 145, manual_price: false })
+  assert.equal(r.status, 200, JSON.stringify(r.data))
+  assert.equal(r.data.item.central, 145)
+  assert.equal(r.data.item.source, 'รวมรายการ')
+  const list = (await call('GET', '/material-prices')).data
+  assert.ok(!list.some((m) => m.id === b.id), 'รายการที่ถูกรวมต้องไม่อยู่ในรายการปกติ')
+  const allList = (await call('GET', '/material-prices?all=1')).data
+  assert.equal(allList.find((m) => m.id === b.id).merged_into, a.id)
+  // ชื่อเดิมทั้งสอง (สะกดต่างแต่ปรับแล้วเหมือนกัน) จำไว้เป็นชื่อเรียกอื่นของรายการมาตรฐาน
+  const al = (await call('GET', '/material-aliases')).data.filter((x) => x.mp_id === a.id)
+  assert.equal(al.length, 1)
+  assert.ok(['ปูนซีเมนต์ ตรานกอินทรีย์ ทดสอบ', 'ปูนซีเมนต์ นกอินทรี ทดสอบ'].includes(al[0].alias))
+  // PO ที่ใช้ชื่อเดิมทั้งสองแบบ → อัปเดตจากประวัติจริงต้องนับรวมเข้ารายการมาตรฐาน
+  const ins = sdb.prepare('INSERT INTO purchase_orders (no, items) VALUES (?, ?)')
+  ins.run('PO-T1', JSON.stringify([{ desc: 'ปูนซีเมนต์ ตรานกอินทรีย์ ทดสอบ', qty: 10, unit: 'ถุง', price: 140 }]))
+  ins.run('PO-T2', JSON.stringify([{ desc: 'ปูนซีเมนต์ นกอินทรี ทดสอบ', qty: 10, unit: 'ถุง', price: 160 }]))
+  sdb.close()
+  assert.equal((await call('POST', '/material-prices/recompute', {})).status, 200)
+  const after = (await call('GET', '/material-prices')).data.find((m) => m.id === a.id)
+  assert.deepEqual([after.po_count, after.central, after.confidence], [2, 150, 'กลาง'])
+  assert.equal((await call('POST', '/material-prices/merge', { keep_id: a.id, ids: [] })).status, 400)
+})
+
+test('จำการจับคู่จากถอดแบบ: บันทึกชื่อ → ชื่อเดียวกับรายการไม่ต้องจำ · ชื่อเดิมเลือกใหม่ = เปลี่ยนเป็นตัวล่าสุด', async () => {
+  const m1 = (await call('POST', '/material-prices', { name: 'เหล็กข้ออ้อย DB16 ทดสอบ', unit: 'เส้น', central: 300 })).data
+  const m2 = (await call('POST', '/material-prices', { name: 'เหล็กข้ออ้อย DB16 TXS ทดสอบ', unit: 'เส้น', central: 310 })).data
+  const s1 = (await call('POST', '/material-aliases', { items: [{ alias: 'เหล็ก DB16 ยาว 10 ม. (ตามแบบ)', unit: 'เส้น', mp_id: m1.id }, { alias: 'เหล็กข้ออ้อย DB16 ทดสอบ', unit: 'เส้น', mp_id: m1.id }] })).data
+  assert.equal(s1.saved, 1)
+  await call('POST', '/material-aliases', { items: [{ alias: 'เหล็ก DB16 ยาว 10 ม. (ตามแบบ)', unit: 'เส้น', mp_id: m2.id }] })
+  const al = (await call('GET', '/material-aliases')).data.filter((x) => x.alias === 'เหล็ก DB16 ยาว 10 ม. (ตามแบบ)')
+  assert.deepEqual(al.map((x) => x.mp_id), [m2.id])
+})

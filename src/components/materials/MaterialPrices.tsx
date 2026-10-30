@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../../store'
 import type { ApiMaterialPrice } from '../../store'
 import { api } from '../../api'
 import LaborRates from './LaborRates'
 import ModalShell, { KeepAlive } from '../shared/ModalShell'
 import { InlinePrice, PriceHistoryModal, ImportPricesModal, exportPricesXlsx } from './PriceTools'
+import MergePricesModal from './MergePrices'
 
 // ราคากลางวัสดุ — อ้างอิงจากประวัติสั่งซื้อจริง ใช้เตือนราคาแพงตอนทำ PR/PO
 const money = (n: number) => (n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
@@ -51,6 +52,23 @@ export default function MaterialPrices() {
   const [err, setErr] = useState('')
   const [history, setHistory] = useState<ApiMaterialPrice | null>(null) // ประวัติราคาของรายการนี้
   const [importing, setImporting] = useState(false) // นำเข้า Excel
+  // รวมรายการซ้ำ: 'auto' = ให้ระบบหากลุ่ม · [กลุ่ม] = รวมที่ติ๊กเลือกเอง
+  const [merging, setMerging] = useState<'auto' | ApiMaterialPrice[][] | null>(null)
+  const [picked, setPicked] = useState<number[]>([])
+  // ชื่อเรียกอื่นของแต่ละรายการ (จากการรวมรายการ / จำจากการถอดแบบ)
+  const [aliases, setAliases] = useState<Map<number, string[]>>(new Map())
+  // = ชื่อเรียกอื่นที่จำไว้ + ชื่อของรายการที่ถูกรวมเข้ามา
+  const loadAliases = () => Promise.all([
+    api.get<{ mp_id: number; alias: string; unit: string }[]>('/material-aliases'),
+    api.get<(ApiMaterialPrice & { merged_into?: number | null })[]>('/material-prices?all=1'),
+  ]).then(([xs, all]) => {
+    const m = new Map<number, string[]>()
+    const add = (id: number, label: string) => { const cur = m.get(id) || []; if (!cur.includes(label)) m.set(id, [...cur, label]) }
+    for (const a of xs) add(a.mp_id, a.alias + (a.unit ? ' (' + a.unit + ')' : ''))
+    for (const x of all) if (x.merged_into) add(x.merged_into, x.name + (x.unit ? ' (' + x.unit + ')' : ''))
+    setAliases(m)
+  }).catch(() => {})
+  useEffect(() => { loadAliases() }, [])
 
   const counts = useMemo(() => ({
     all: list.length,
@@ -64,6 +82,7 @@ export default function MaterialPrices() {
     .filter((m) => (conf === 'all' || m.confidence === conf) && `${m.name} ${m.unit}`.toLowerCase().includes(ql))
 
   const reload = () => app.reloadData('materialPrices', '/material-prices')
+  const afterMerge = async () => { setPicked([]); await Promise.all([reload(), loadAliases()]) }
 
   const recompute = async () => {
     if (!confirm('อัปเดตราคากลางจากประวัติการสั่งซื้อจริงในระบบ (รายการในใบสั่งซื้อ PO = ราคาที่ซื้อจริง)?\nรายการที่ตั้งราคาเองจะไม่ถูกทับ')) return
@@ -167,6 +186,8 @@ export default function MaterialPrices() {
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => exportPricesXlsx(list).catch((e) => alert('ดาวน์โหลดไม่สำเร็จ: ' + (e as Error).message))} title="ดาวน์โหลดราคากลางทั้งหมด แก้ราคาใน Excel แล้วนำเข้ากลับ" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>⬇ ดาวน์โหลด Excel</button>
             <button onClick={() => setImporting(true)} title="นำเข้าราคาที่แก้ใน Excel (ตรวจก่อนบันทึก)" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>⬆ นำเข้า Excel</button>
+            {picked.length >= 2 && <button onClick={() => setMerging([list.filter((m) => picked.includes(m.id))])} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#6B4E9E', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>รวมที่เลือก ({picked.length})</button>}
+            <button onClick={() => setMerging('auto')} title="หารายการที่ชื่อซ้ำ/สะกดต่าง แล้วรวมเป็นรายการมาตรฐาน" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#6B4E9E', background: '#EEE8F6', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>🧹 รวมรายการซ้ำ</button>
             <button onClick={recompute} disabled={busy} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#30506A', background: '#E2E9EF', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: busy ? 'default' : 'pointer' }}>↻ อัปเดตจากประวัติจริง</button>
             <button onClick={openAdd} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>+ เพิ่มรายการ</button>
           </div>
@@ -196,6 +217,7 @@ export default function MaterialPrices() {
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
             <thead>
               <tr>
+                {canEdit && <th style={{ ...th, width: 30 }} title="ติ๊ก 2 รายการขึ้นไป แล้วกด รวมที่เลือก"></th>}
                 <th style={th}>รายการวัสดุ</th>
                 <th style={{ ...th, textAlign: 'center' }}>หน่วย</th>
                 <th style={{ ...th, textAlign: 'right' }}>ราคากลาง</th>
@@ -211,9 +233,11 @@ export default function MaterialPrices() {
                 const cc = confColor(m.confidence)
                 const packGuess = packOf(m)
                 return (
-                  <tr key={m.id}>
+                  <tr key={m.id} style={{ background: picked.includes(m.id) ? '#F4F0FA' : undefined }}>
+                    {canEdit && <td style={td}><input type="checkbox" checked={picked.includes(m.id)} onChange={() => setPicked(picked.includes(m.id) ? picked.filter((x) => x !== m.id) : [...picked, m.id])} /></td>}
                     <td style={td}>
                       <div style={{ fontWeight: 500 }}>{m.name}</div>
+                      {aliases.get(m.id) && <span title={'ชื่อเรียกอื่น:\n' + aliases.get(m.id)!.join('\n')} style={{ fontSize: 10.5, color: '#2E7D55', background: '#E2F1EA', borderRadius: 6, padding: '1px 6px', marginRight: 4, cursor: 'help' }}>ชื่อเรียกอื่น {aliases.get(m.id)!.length}</span>}
                       {m.source && m.source !== 'ประวัติ' && <span style={{ fontSize: 10.5, color: '#6B4E9E', background: '#EEE8F6', borderRadius: 6, padding: '1px 6px' }}>{m.source === 'กำหนดเอง' ? 'ตั้งราคาเอง' : m.source}</span>}
                     </td>
                     <td style={{ ...td, textAlign: 'center', color: '#5C6770', whiteSpace: 'nowrap' }}>
@@ -238,7 +262,7 @@ export default function MaterialPrices() {
                   </tr>
                 )
               })}
-              {!rows.length && <tr><td colSpan={canEdit ? 8 : 7} style={{ ...td, textAlign: 'center', color: '#94A0A8', padding: 28 }}>ไม่พบรายการ</td></tr>}
+              {!rows.length && <tr><td colSpan={canEdit ? 9 : 7} style={{ ...td, textAlign: 'center', color: '#94A0A8', padding: 28 }}>ไม่พบรายการ</td></tr>}
             </tbody>
           </table>
         </div>
@@ -248,6 +272,7 @@ export default function MaterialPrices() {
     {formModal}
     {history && <PriceHistoryModal mp={history} onClose={() => setHistory(null)} />}
     {importing && <ImportPricesModal onClose={() => setImporting(false)} onDone={reload} />}
+    {merging && <MergePricesModal groups={merging === 'auto' ? undefined : merging} onClose={() => setMerging(null)} onDone={afterMerge} />}
     {laborKeep}
     </>
   )

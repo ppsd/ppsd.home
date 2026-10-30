@@ -341,7 +341,7 @@ function dice(a, b) {
   for (const [k, n] of A) inter += Math.min(n, B.get(k) || 0)
   return (2 * inter) / (Math.max(1, a.length - 1) + Math.max(1, b.length - 1))
 }
-const unitKey = (u) => String(u || '').replace(/\.$/, '').replace(/^เมตร$/, 'ม').replace(/^ตารางเมตร$/, 'ตร.ม').trim()
+export const unitKey = (u) => String(u || '').replace(/\.$/, '').replace(/^เมตร$/, 'ม').replace(/^ตารางเมตร$/, 'ตร.ม').trim()
 /** คะแนนความเหมือน 0–1 ระหว่างชื่อที่ถอดได้กับชื่อในราคากลาง (เลขขนาดต้องตรงกัน ไม่งั้นหักคะแนน) */
 export function nameScore(want, have, wantUnit, haveUnit) {
   const a = normName(want), b = normName(have)
@@ -352,14 +352,26 @@ export function nameScore(want, have, wantUnit, haveUnit) {
   if (wantUnit && haveUnit && unitKey(wantUnit) === unitKey(haveUnit)) s += 0.05
   return Math.min(1, s)
 }
-/** หาราคากลางวัสดุที่ใกล้ที่สุด → { match (ถ้ามั่นใจพอ), alts (5 อันดับ) } */
-export function matchMaterial(item, materials) {
-  const ranked = materials
-    .map((m) => ({ id: m.id, name: m.name, unit: m.unit, central: m.central, confidence: m.confidence, score: nameScore(item.desc, m.name, item.unit, m.unit) }))
-    .filter((m) => m.score >= 0.25)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map((m) => ({ ...m, score: Math.round(m.score * 100) / 100 }))
+/**
+ * หาราคากลางวัสดุที่ใกล้ที่สุด → { match (ถ้ามั่นใจพอ), alts (5 อันดับ) }
+ * aliases = ชื่อเรียกอื่น [{ mp_id, alias, nkey, unit }] — ชื่อตรงกับที่จำไว้ = จับคู่ทันที (remembered) · และใช้เทียบชื่อแบบหยาบด้วย
+ */
+export function matchMaterial(item, materials, aliases = []) {
+  const byId = new Map(materials.map((m) => [m.id, m]))
+  const pack = (m, score, extra = {}) => ({ id: m.id, name: m.name, unit: m.unit, central: m.central, confidence: m.confidence, score: Math.round(score * 100) / 100, ...extra })
+  const best = new Map()
+  const cands = [...materials.map((m) => [m, m.name]), ...aliases.filter((a) => byId.has(a.mp_id)).map((a) => [byId.get(a.mp_id), a.alias])]
+  for (const [m, name] of cands) {
+    const sc = nameScore(item.desc, name, item.unit, m.unit)
+    if (!best.has(m.id) || sc > best.get(m.id).score) best.set(m.id, { m, score: sc })
+  }
+  const ranked = [...best.values()].filter((x) => x.score >= 0.25).sort((a, b) => b.score - a.score).slice(0, 5).map((x) => pack(x.m, x.score))
+  const want = normName(item.desc)
+  const mem = aliases.find((a) => a.nkey === want && byId.has(a.mp_id) && (!a.unit || !item.unit || unitKey(a.unit) === unitKey(item.unit)))
+  if (mem) {
+    const hit = pack(byId.get(mem.mp_id), 1, { remembered: true })
+    return { match: hit, alts: [hit, ...ranked.filter((r) => r.id !== hit.id)].slice(0, 5) }
+  }
   return { match: ranked[0] && ranked[0].score >= 0.5 ? ranked[0] : null, alts: ranked }
 }
 export const laborLabel = (r) => r.name + (r.variant ? ` (${r.variant})` : '')

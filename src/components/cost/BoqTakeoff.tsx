@@ -11,7 +11,8 @@ import MaterialSummaryPrint from './MaterialSummaryPrint'
 // → คนตรวจ/แก้ทีละแถว (เลือกราคากลาง ติ๊กออก) → สร้างเป็น BOQ ร่างในฟอร์มเดิม
 // ค่าแรงแยกเป็นอีกตาราง: คิดตามปริมาณงาน (ตร.ม./เมตร/ชุด/เหมา) ตามราคากลางค่าแรง — ไม่ผูกกับจำนวนวัสดุ
 
-interface MatOpt { id: number; name: string; unit: string; central: number; confidence?: string; score?: number }
+// remembered = ชื่อนี้เคยถูกจับคู่/รวมไว้กับรายการนี้ (ระบบจำไว้)
+interface MatOpt { id: number; name: string; unit: string; central: number; confidence?: string; score?: number; remembered?: boolean }
 interface TakeoffItem { floor?: string; part?: string; sheet?: string; cat: string; desc: string; qty: number; unit: string; basis: string; confidence: string; mat_match: MatOpt | null; mat_alts: MatOpt[] }
 interface LaborItem { floor?: string; part?: string; sheet?: string; cat: string; rate_id: number; name: string; unit: string; price: number; quote: boolean; qty: number; basis: string; confidence: string }
 interface DxfSummary {
@@ -221,6 +222,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
             <option value={0}>— ไม่มีในราคากลาง (กรอกเอง) —</option>
             {r.alts.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.unit} · {baht(a.central)}</option>)}
           </select>
+          {m?.remembered && <div style={{ fontSize: 11, color: '#2E7D55', marginTop: 3 }}>🧠 ระบบจำไว้จากการจับคู่ครั้งก่อน</div>}
           {m && m.unit && r.unit && m.unit.replace(/\.$/, '') !== r.unit.replace(/\.$/, '') && <div style={{ fontSize: 11, color: '#9A6B12', marginTop: 3 }}>⚠ ราคากลางคิดต่อ “{m.unit}” แต่จำนวนเป็น “{r.unit}”</div>}
           {!r.matId && r.web && (r.web.price > 0
             ? <div style={{ fontSize: 11, color: '#1F5F8B', marginTop: 4, lineHeight: 1.4 }}>
@@ -251,6 +253,9 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   }
   const create = () => {
     const items = buildItems()
+    // จำการจับคู่: ชื่อที่ถอดได้ → ราคากลางที่เลือก (ครั้งหน้าจับคู่ให้เอง) · ไม่ต้องรอ ไม่บล็อกการสร้าง BOQ
+    const remember = used.filter((r) => r.matId).map((r) => ({ alias: r.desc, unit: r.unit, mp_id: r.matId }))
+    if (remember.length) api.post('/material-aliases', { items: remember }).catch(() => {})
     if (!items.length) { alert('ไม่มีรายการที่เลือก'); return }
     onCreate({ house_code: house, title: 'ถอดแบบ: ' + (res?.drawing || sourceLabel), items, work: res?.work || [] })
   }

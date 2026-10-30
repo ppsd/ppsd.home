@@ -544,6 +544,14 @@ db.exec(`CREATE TABLE IF NOT EXISTS material_price_history (
   old_price REAL, new_price REAL, source TEXT, by TEXT, at TEXT
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_mph_mp ON material_price_history(mp_id)')
+// รวมรายการซ้ำ: รายการที่ถูกรวมปิดใช้งาน + ชี้ไปรายการมาตรฐาน (BOQ เก่าที่อ้างรหัสเดิมยังตามไปเจอ)
+ensureColumn('material_prices', 'merged_into', 'INTEGER')
+// ชื่อเรียกอื่นของรายการมาตรฐาน — มาจาก "รวมรายการซ้ำ" หรือ "ถอดแบบ" (คนเลือกจับคู่ไว้) · nkey = ชื่อแบบตัดช่องว่าง/ตรา/สะกดต่าง
+db.exec(`CREATE TABLE IF NOT EXISTS material_aliases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mp_id INTEGER, alias TEXT, nkey TEXT, unit TEXT, source TEXT, created TEXT
+)`)
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_matalias_key ON material_aliases(nkey, unit)')
 // เติมค่าตั้งต้นจากประวัติที่บริษัทอัปโหลด (ครั้งเดียว ตอนฐานข้อมูลยังว่าง)
 if (db.prepare('SELECT COUNT(*) c FROM material_prices').get().c === 0) {
   const nkey = (n) => String(n).replace(/\s+/g, '').replace(/["“”]/g, '').toLowerCase()

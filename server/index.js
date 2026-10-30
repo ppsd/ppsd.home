@@ -4803,8 +4803,8 @@ function logPrice(mp, oldPrice, newPrice, source, by) {
   if (o === n) return
   mphStmt.run(mp.id, mp.name, mp.unit || '', o, n, source, by || 'ระบบ', nowTS())
 }
-api.get('/material-prices', canWrite, (_req, res) => // หน้างานเห็นราคากลางด้วย (ใช้เดาคำ + เตือนราคาแพงตอนคีย์ PR)
-  res.json(db.prepare('SELECT * FROM material_prices WHERE active=1 ORDER BY po_count DESC, central DESC').all()))
+api.get('/material-prices', canWrite, (req, res) => // หน้างานเห็นราคากลางด้วย (ใช้เดาคำ + เตือนราคาแพงตอนคีย์ PR) · ?all=1 = รวมรายการที่ถูกรวมแล้ว (มี merged_into)
+  res.json(db.prepare(`SELECT * FROM material_prices ${req.query.all === '1' ? 'WHERE active=1 OR merged_into IS NOT NULL' : 'WHERE active=1'} ORDER BY po_count DESC, central DESC`).all()))
 api.post('/material-prices', financeOnly, (req, res) => {
   const b = req.body || {}
   const name = String(b.name || '').trim()
@@ -4856,7 +4856,7 @@ api.post('/material-prices/import/preview', financeOnly, (req, res) => {
     if (raw === '' || !Number.isFinite(price) || price < 0) { errors.push({ row: line, name, msg: 'ราคากลางไม่ใช่ตัวเลข' }); return }
     let m = null, matchedBy = ''
     if (r.id != null && String(r.id).trim() !== '') {
-      m = byId.get(Number(r.id)); matchedBy = 'รหัส'
+      m = byId.get(Number(r.id)) || byId.get(mergedTarget(Number(r.id))); matchedBy = 'รหัส'
       if (!m) { errors.push({ row: line, name, msg: `รหัส ${r.id} ไม่มีในระบบ (อาจถูกลบไปแล้ว)` }); return }
     } else if (name) { m = byKey.get(nkeyOf(name) + '|' + unit) || null; matchedBy = m ? 'ชื่อ+หน่วย' : '' }
     if (!m) {
@@ -4897,6 +4897,91 @@ api.post('/material-prices/import/apply', financeOnly, (req, res) => {
   })()
   audit(req, 'นำเข้าราคากลางจาก Excel', `แก้ราคา ${nUpd} · เพิ่มใหม่ ${nAdd}`)
   res.json({ ok: true, updated: nUpd, added: nAdd })
+})
+// ===== ชื่อเรียกอื่น (alias) + รวมรายการซ้ำ =====
+// รายการที่ถูกรวม → ตามไปหารายการมาตรฐาน (กันวนด้วยจำกัดรอบ)
+function mergedTarget(id) {
+  let cur = id
+  for (let i = 0; i < 10; i++) {
+    const r = db.prepare('SELECT merged_into FROM material_prices WHERE id=?').get(cur)
+    if (!r || !r.merged_into) return cur
+    cur = r.merged_into
+  }
+  return cur
+}
+const activeAliases = () => db.prepare('SELECT a.* FROM material_aliases a JOIN material_prices m ON m.id=a.mp_id WHERE m.active=1').all()
+// จำชื่อเรียกอื่น — ชื่อเดียวกับรายการเองไม่ต้องจำ · ชื่อ+หน่วยเดิมเคยจำไว้กับรายการอื่น = เปลี่ยนเป็นตัวล่าสุด
+function upsertAlias(alias, unit, mpId, source) {
+  const name = String(alias || '').trim()
+  const mp = db.prepare('SELECT * FROM material_prices WHERE id=?').get(mpId)
+  if (!name || !mp) return false
+  const nk = takeoff.normName(name), u = String(unit || '').trim()
+  if (nk === takeoff.normName(mp.name)) return false
+  const ex = db.prepare('SELECT * FROM material_aliases WHERE nkey=? AND unit=?').get(nk, u)
+  if (ex) {
+    if (ex.mp_id === mpId) return false
+    db.prepare('UPDATE material_aliases SET mp_id=?, alias=?, source=?, created=? WHERE id=?').run(mpId, name, source, nowTS(), ex.id)
+    return true
+  }
+  db.prepare('INSERT INTO material_aliases (mp_id,alias,nkey,unit,source,created) VALUES (?,?,?,?,?,?)').run(mpId, name, nk, u, source, nowTS())
+  return true
+}
+api.get('/material-aliases', canWrite, (_req, res) => res.json(activeAliases()))
+// จำการจับคู่จากหน้าถอดแบบ: ชื่อที่ AI ตั้ง → รายการราคากลางที่คนเลือก (ถอดครั้งหน้าจับคู่ให้เอง)
+api.post('/material-aliases', canWrite, (req, res) => {
+  const items = (Array.isArray(req.body?.items) ? req.body.items : []).slice(0, 500)
+  let saved = 0
+  db.transaction(() => { for (const it of items) if (upsertAlias(it.alias, it.unit, mergedTarget(Number(it.mp_id)), String(it.source || 'ถอดแบบ'))) saved++ })()
+  if (saved) audit(req, 'จำชื่อวัสดุจากการถอดแบบ', `${saved} รายการ`)
+  res.json({ ok: true, saved })
+})
+api.delete('/material-aliases/:id', financeOnly, (req, res) => {
+  const a = db.prepare('SELECT * FROM material_aliases WHERE id=?').get(req.params.id)
+  db.prepare('DELETE FROM material_aliases WHERE id=?').run(req.params.id)
+  if (a) audit(req, 'ลบชื่อเรียกอื่นของวัสดุ', a.alias)
+  res.json({ ok: true })
+})
+// หากลุ่มที่น่าจะซ้ำ: ชื่อเหมือนกันหลังตัดช่องว่าง/คำว่า "ตรา"/สะกดต่าง (อินทรีย์/อินทรี, x/*, มม./มม) + หน่วยเดียวกัน
+api.get('/material-prices/duplicates', financeOnly, (_req, res) => {
+  const all = db.prepare('SELECT * FROM material_prices WHERE active=1').all()
+  const g = new Map()
+  for (const m of all) {
+    const k = takeoff.normName(m.name) + '|' + takeoff.unitKey(m.unit)
+    if (!g.has(k)) g.set(k, [])
+    g.get(k).push(m)
+  }
+  res.json([...g.values()].filter((xs) => xs.length > 1).sort((a, b) => b.length - a.length))
+})
+// รวมรายการ: เก็บ keep_id เป็นรายการมาตรฐาน · ที่เหลือ → ชื่อเรียกอื่น + ปิดใช้งาน (merged_into) · สถิติจาก PO รวมกัน
+api.post('/material-prices/merge', financeOnly, (req, res) => {
+  const b = req.body || {}
+  const keep = db.prepare('SELECT * FROM material_prices WHERE id=? AND active=1').get(Number(b.keep_id))
+  const others = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(Number))].filter((id) => id && id !== keep?.id)
+    .map((id) => db.prepare('SELECT * FROM material_prices WHERE id=? AND active=1').get(id)).filter(Boolean)
+  if (!keep || !others.length) return res.status(400).json({ error: 'เลือกรายการมาตรฐาน 1 รายการ และรายการที่จะรวมอย่างน้อย 1 รายการ' })
+  const all = [keep, ...others]
+  const name = String(b.name || '').trim() || keep.name
+  const unit = b.unit != null ? String(b.unit).trim() : keep.unit
+  const central = b.central != null && b.central !== '' && Number(b.central) >= 0 ? Math.round(Number(b.central) * 100) / 100 : keep.central
+  const po = all.reduce((x, m) => x + (m.po_count || 0), 0)
+  const qty = all.reduce((x, m) => x + (m.qty_total || 0), 0)
+  const mins = all.map((m) => m.min).filter((v) => v > 0), maxs = all.map((m) => m.max).filter((v) => v > 0)
+  const conf = po >= 4 ? 'สูง' : po >= 2 ? 'กลาง' : po >= 1 ? 'ต่ำ' : keep.confidence
+  // ราคาที่คนพิมพ์เอง = ตั้งราคาเอง (PO ไม่ทับ) · ไม่งั้นยังอัปเดตจาก PO ได้ตามปกติ
+  const source = b.manual_price || keep.source === 'กำหนดเอง' ? 'กำหนดเอง' : 'รวมรายการ'
+  db.transaction(() => {
+    db.prepare('UPDATE material_prices SET name=?, nkey=?, unit=?, central=?, min=?, max=?, po_count=?, qty_total=?, confidence=?, source=?, updated=? WHERE id=?')
+      .run(name, nkeyOf(name), unit, central, mins.length ? Math.min(...mins, central) : central, maxs.length ? Math.max(...maxs, central) : central, po, Math.round(qty * 100) / 100, conf, source, new Date().toISOString().slice(0, 10), keep.id)
+    if (name !== keep.name) upsertAlias(keep.name, keep.unit, keep.id, 'รวมรายการ') // ชื่อเดิมของรายการมาตรฐานก็จำไว้ (หลังเปลี่ยนชื่อแล้ว)
+    for (const o of others) {
+      db.prepare('UPDATE material_aliases SET mp_id=? WHERE mp_id=?').run(keep.id, o.id)
+      upsertAlias(o.name, o.unit, keep.id, 'รวมรายการ')
+      db.prepare('UPDATE material_prices SET active=0, merged_into=? WHERE id=?').run(keep.id, o.id)
+    }
+    logPrice({ ...keep, name, unit }, keep.central, central, 'รวมรายการ', req.user.name)
+  })()
+  audit(req, 'รวมราคากลางที่ซ้ำ', `${name} ← ${others.map((o) => o.name).join(' · ')}`)
+  res.json({ ok: true, item: db.prepare('SELECT * FROM material_prices WHERE id=?').get(keep.id), merged: others.length })
 })
 // แปลงราคาแพ็ค → ราคาต่อ 1 ชิ้น (ข้อมูลจาก Excel บางรายการตั้งราคามาต่อ 2–3 ชิ้น)
 // หารทุกช่องราคา (กลาง/ต่ำสุด/สูงสุด/ล่าสุด) ด้วยจำนวนชิ้น + แก้หน่วย + บันทึกที่มาไว้ในหมายเหตุ
@@ -4977,6 +5062,19 @@ function laborCompare(rate, unitPrice) {
 // อัปเดตราคากลางจากประวัติสั่งซื้อจริงในระบบ (รายการในใบสั่งซื้อ PO = ราคาที่ซื้อจริง) — เว้นรายการที่ตั้งราคาเอง
 api.post('/material-prices/recompute', financeOnly, (req, res) => {
   const pos = db.prepare('SELECT id, items FROM purchase_orders ORDER BY id').all()
+  // ชื่อใน PO → รหัสราคากลาง (ชื่อเรียกอื่นก่อน แล้วชื่อตรง) · ตามรายการที่ถูกรวมไปหารายการมาตรฐาน
+  const aliasStmt = db.prepare('SELECT mp_id FROM material_aliases WHERE nkey=? AND unit=?')
+  const rowStmt = db.prepare("SELECT id FROM material_prices WHERE nkey=? AND COALESCE(unit,'')=?")
+  // ชื่อที่สะกดต่างแต่ปรับแล้วเหมือนรายการที่มีอยู่ (ตัดช่องว่าง/ตรา/อินทรีย์→อินทรี ฯลฯ) ก็นับเข้ารายการนั้น
+  const byNorm = new Map()
+  for (const m of db.prepare('SELECT id, name, unit FROM material_prices WHERE active=1').all()) {
+    const k = takeoff.normName(m.name) + '|' + takeoff.unitKey(m.unit)
+    if (!byNorm.has(k)) byNorm.set(k, m.id)
+  }
+  const resolvePoItem = (name, unit) => {
+    const id = aliasStmt.get(takeoff.normName(name), unit)?.mp_id || rowStmt.get(nkeyOf(name), unit)?.id || byNorm.get(takeoff.normName(name) + '|' + takeoff.unitKey(unit))
+    return id ? mergedTarget(id) : null
+  }
   const g = {}
   for (const po of pos) {
     let items = []; try { items = JSON.parse(po.items || '[]') } catch { items = [] }
@@ -4984,8 +5082,9 @@ api.post('/material-prices/recompute', financeOnly, (req, res) => {
       const name = String(it.desc || '').trim(); const up = Number(it.price) || 0; const qty = Number(it.qty) || 0
       if (!name || up <= 0) continue
       const unit = String(it.unit || '').trim()
-      const k = nkeyOf(name) + '|' + unit
-      const o = g[k] = g[k] || { name, unit, prices: [], qs: 0, amts: 0, pos: new Set(), latest: up }
+      const target = resolvePoItem(name, unit)
+      const k = target ? 'id:' + target : nkeyOf(name) + '|' + unit
+      const o = g[k] = g[k] || { name, unit, target, prices: [], qs: 0, amts: 0, pos: new Set(), latest: up }
       o.prices.push(up); o.qs += qty; o.amts += qty > 0 ? qty * up : up; o.pos.add(po.id); o.latest = up
     }
   }
@@ -5003,10 +5102,10 @@ api.post('/material-prices/recompute', financeOnly, (req, res) => {
       const central = o.qs > 0 ? round(o.amts / o.qs) : round(o.prices.reduce((a, b) => a + b, 0) / o.prices.length)
       const conf = po >= 4 ? 'สูง' : po >= 2 ? 'กลาง' : 'ต่ำ'
       const nk = nkeyOf(o.name)
-      const ex = findStmt.get(nk, o.unit || '')
+      const ex = o.target ? db.prepare('SELECT * FROM material_prices WHERE id=?').get(o.target) : findStmt.get(nk, o.unit || '')
       if (ex) {
         if (ex.source === 'กำหนดเอง') continue // ไม่ทับรายการที่ผู้ใช้ตั้งราคาเอง
-        updStmt.run(o.unit || '', central, min, max, o.latest, po, round(o.qs), conf, ex.source === 'ประวัติ' ? 'ประวัติ+ระบบ' : 'ระบบ', today, ex.id); updated++
+        updStmt.run(ex.unit || o.unit || '', central, min, max, o.latest, po, round(o.qs), conf, ex.source === 'ประวัติ' ? 'ประวัติ+ระบบ' : ex.source === 'รวมรายการ' ? 'รวมรายการ' : 'ระบบ', today, ex.id); updated++
         logPrice(ex, ex.central, central, 'จาก PO', req.user.name)
       } else {
         const ins = insStmt.run(o.name, nk, o.unit || '', central, min, max, o.latest, po, round(o.qs), today, conf, today); added++
@@ -6182,8 +6281,9 @@ async function takeoffCore(spec) {
   const items = parsed ? takeoff.cleanItems(flat.items) : dxf ? takeoff.rawItemsFromDxf(dxf) : []
   if (parsed && Array.isArray(parsed.notes)) notes.push(...parsed.notes.map(String))
   const materials = db.prepare('SELECT id,name,unit,central,confidence FROM material_prices WHERE active=1').all()
+  const aliases = activeAliases()
   const out = items.map((it) => {
-    const m = takeoff.matchMaterial(it, materials)
+    const m = takeoff.matchMaterial(it, materials, aliases)
     return { ...it, mat_match: m.match, mat_alts: m.alts }
   })
   // ค่าแรงแยกจากวัสดุ: คิดตามปริมาณงาน (ตร.ม. ผนัง/พื้นที่บ้าน · เมตร · ชุด · เหมา) ตามหน่วยของราคากลางค่าแรง
