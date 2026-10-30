@@ -2,14 +2,15 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync, appendFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync, appendFileSync, rmSync, statfsSync, renameSync } from 'node:fs'
+import Database from 'better-sqlite3'
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
 import { registerCrm, crmNotifications } from './crm.js'
 import { moneySummary } from './money.js'
 import zlib from 'node:zlib'
 import { registerCrmService, registerCrmPublic, serviceNotifications, customerByLine, consumeCustomerCode, handleCustomerLineMessage, handleCustomerLineImage, onQcSaved } from './crm_service.js'
-import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
+import { login, logout, requireAuth, userFromToken, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin, verifyToken } from './security.js'
 import { randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -22,7 +23,7 @@ import * as takeoff from './takeoff.js'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // ---- crash log: เขียนสาเหตุลงไฟล์ก่อนปิดตัว (PM2/Task Scheduler จะเปิดใหม่ให้เอง — ดู SERVICE-SETUP.md) ----
-const logsDir = join(__dirname, 'data', 'logs')
+const logsDir = process.env.PPSD_DB ? join(dirname(process.env.PPSD_DB), 'logs') : join(__dirname, 'data', 'logs') // ชุดทดสอบ (PPSD_DB) เขียน log ข้างฐานข้อมูลทดสอบ
 function crashLog(kind, err) {
   try {
     mkdirSync(logsDir, { recursive: true })
@@ -30,6 +31,23 @@ function crashLog(kind, err) {
     appendFileSync(join(logsDir, `error-${day}.log`), `[${new Date().toISOString()}] ${kind}: ${err?.stack || err?.message || err}\n`)
   } catch { /* อย่าล่มซ้ำเพราะเขียน log ไม่ได้ */ }
 }
+// ---- log ทั่วไป: ข้อความจาก console เขียนลง data/logs/server-YYYY-MM-DD.log ด้วย (เดิมหายไปกับหน้าต่าง cmd) · เก็บ 90 วัน ----
+const localDay = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+function writeLog(file, line) {
+  try { mkdirSync(logsDir, { recursive: true }); appendFileSync(join(logsDir, `${file}-${localDay()}.log`), `[${new Date().toISOString()}] ${line}\n`) } catch { /* อย่าล่มเพราะเขียน log ไม่ได้ */ }
+}
+const fmtLogArg = (a) => (a instanceof Error ? a.stack || a.message : typeof a === 'string' ? a : (() => { try { return JSON.stringify(a) } catch { return String(a) } })())
+for (const [level, fn] of [['INFO', 'log'], ['WARN', 'warn'], ['ERROR', 'error']]) {
+  const orig = console[fn].bind(console)
+  console[fn] = (...args) => { orig(...args); writeLog('server', `${level} ${args.map(fmtLogArg).join(' ').slice(0, 4000)}`) }
+}
+function pruneLogs() {
+  try {
+    const cut = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)
+    for (const f of readdirSync(logsDir)) { const m = /-(\d{4}-\d{2}-\d{2})\.log$/.exec(f); if (m && m[1] < cut) unlinkSync(join(logsDir, f)) }
+  } catch { /* ยังไม่มีโฟลเดอร์ */ }
+}
+pruneLogs(); setInterval(pruneLogs, 24 * 3600000)
 process.on('uncaughtException', (err) => { crashLog('uncaughtException', err); console.error('FATAL:', err); process.exit(1) })
 process.on('unhandledRejection', (err) => { crashLog('unhandledRejection', err); console.error('unhandledRejection:', err) })
 
@@ -215,6 +233,19 @@ function syncEmployeePin(user, hashedPin) {
 
 const api = express.Router()
 
+// access log: บันทึกคำขอที่ "แก้ข้อมูล" (POST/PUT/DELETE) และคำขอที่ผิดพลาด (4xx/5xx) — ใคร · IP · อะไร · ผลลัพธ์ · เวลา
+// ไม่บันทึก body (มี PIN) · ซ่อนโทเคนในพาธ (ลิงก์ติดตาม GPS / พอร์ทัลลูกค้า)
+api.use((req, res, next) => {
+  if (req.path.startsWith('/events')) return next()
+  const t0 = Date.now()
+  res.on('finish', () => {
+    if (req.method === 'GET' && res.statusCode < 400) return
+    const path = req.path.replace(/\/(track|portal)\/[^/]+/g, '/$1/***').replace(/[0-9a-f]{24,}/gi, '***')
+    writeLog('access', `${res.statusCode} ${req.method} ${path} · ${req.user?.name || '-'} · ${clientIp(req)}${isExternalReq(req) ? ' (นอก)' : ''} · ${Date.now() - t0}ms`)
+  })
+  next()
+})
+
 // ทุก API = ข้อมูลสด ห้ามเบราว์เซอร์แคช (กด F5 แล้วเห็นข้อมูลล่าสุดเสมอ)
 api.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next() })
 // บีบอัด JSON ขนาดใหญ่ด้วย gzip (ไม่ต้องติดตั้งแพ็กเกจเพิ่ม) — ลดเวลาโหลดหน้าแรกบน LAN/ผ่านลิงก์สาธารณะหลายเท่า
@@ -280,6 +311,50 @@ api.get('/events', (req, res) => {
 })
 api.get('/events/status', (_req, res) => res.json({ clients: sseClients.size, seq: changeSeq }))
 
+// ---------- กันเดา PIN ตาม IP (ทุกช่องทาง: login + kiosk) ----------
+// นับ PIN ผิดต่อ IP ในฐานข้อมูล (รีสตาร์ตแล้วไม่ล้าง) · จากนอกออฟฟิศ (ลิงก์สาธารณะ) เข้มกว่าในออฟฟิศ
+// ในออฟฟิศเผื่อเครื่อง kiosk ที่พนักงานหลายคนใช้ร่วมกัน (IP เดียว) — พิมพ์ผิดบ้างไม่ควรถูกล็อกทั้งเครื่อง
+db.exec('CREATE TABLE IF NOT EXISTS pin_failures (ip TEXT, at INTEGER, what TEXT)')
+db.exec('CREATE INDEX IF NOT EXISTS ix_pin_failures_ip ON pin_failures(ip, at)')
+const clientIp = (req) => String(req.headers['cf-connecting-ip'] || req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '')
+const isExternalReq = (req) => /\.trycloudflare\.com$/i.test(String(req.headers.host || '')) || !!req.headers['cf-connecting-ip']
+const IP_WINDOW_MS = 15 * 60000
+const ipMaxFails = (req) => (isExternalReq(req) ? 10 : 40)
+/** IP นี้ถูกล็อกอยู่ไหม → คืนจำนวนนาทีที่เหลือ (0 = ไม่ล็อก) */
+function ipLockedMinutes(req) {
+  const r = db.prepare('SELECT COUNT(*) c, MIN(at) first FROM pin_failures WHERE ip=? AND at>?').get(clientIp(req), Date.now() - IP_WINDOW_MS)
+  return r.c >= ipMaxFails(req) ? Math.max(1, Math.ceil((r.first + IP_WINDOW_MS - Date.now()) / 60000)) : 0
+}
+function recordPinFail(req, what) {
+  const ip = clientIp(req)
+  db.prepare('INSERT INTO pin_failures (ip, at, what) VALUES (?,?,?)').run(ip, Date.now(), String(what || '').slice(0, 60))
+  if (Math.random() < 0.05) db.prepare('DELETE FROM pin_failures WHERE at < ?').run(Date.now() - 86400000) // ล้างของเก่ากว่า 1 วัน
+  // เพิ่งถึงเกณฑ์ล็อก → บันทึกประวัติไว้ตรวจย้อนหลัง
+  const n = db.prepare('SELECT COUNT(*) c FROM pin_failures WHERE ip=? AND at>?').get(ip, Date.now() - IP_WINDOW_MS).c
+  if (n === ipMaxFails(req)) {
+    audit({ user: { name: '-' } }, 'ล็อก IP: ใส่ PIN ผิดหลายครั้ง', `${ip}${isExternalReq(req) ? ' (นอกออฟฟิศ)' : ''} · ${n} ครั้งใน 15 นาที · ล่าสุด ${what}`)
+    console.warn(`[security] IP ${ip} locked — ${n} wrong PINs in 15 min (last: ${what})`)
+  }
+}
+const IP_LOCK_MSG = (m) => `ใส่ PIN ผิดหลายครั้งเกินไปจากเครื่องนี้ — ระบบล็อกชั่วคราว ลองใหม่ใน ${m} นาที`
+// รหัสอ้างอิงพนักงานสำหรับหน้า kiosk ที่เปิดจากนอกออฟฟิศโดยไม่ล็อกอิน — ไม่เปิดเผยรหัสพนักงานจริง (ซึ่งใช้เป็นชื่อผู้ใช้เข้าระบบ)
+function kioskRefKey() {
+  let k = getSetting('kiosk_ref_key', '')
+  if (!k) { k = randomBytes(24).toString('hex'); setSetting('kiosk_ref_key', k) }
+  return k
+}
+const kioskRef = (code) => 'r:' + createHmac('sha256', kioskRefKey()).update(String(code)).digest('hex').slice(0, 20)
+function kioskCodeFromRef(ref) {
+  for (const e of db.prepare('SELECT code FROM employees').all()) if (kioskRef(e.code) === ref) return e.code
+  return null
+}
+// หน้า kiosk ส่งรหัสอ้างอิง (r:…) มา → แปลงกลับเป็นรหัสพนักงานก่อนถึง endpoint (endpoint เดิมไม่ต้องรู้เรื่องนี้)
+api.use('/kiosk', (req, _res, next) => {
+  const c = req.body?.emp_code
+  if (req.method === 'POST' && typeof c === 'string' && c.startsWith('r:')) req.body.emp_code = kioskCodeFromRef(c) || '__unknown__'
+  next()
+})
+
 // ---------- auth ----------
 // brute-force guard: lock an account for a while after too many wrong PINs
 const loginAttempts = new Map() // username -> { fails, lockedUntil }
@@ -288,6 +363,8 @@ const LOCK_MS = 5 * 60 * 1000 // 5 minutes
 api.post('/login', (req, res) => {
   const { username, pin } = req.body || {}
   const key = String(username || '').toLowerCase()
+  const ipLock = ipLockedMinutes(req)
+  if (ipLock) return res.status(429).json({ error: IP_LOCK_MSG(ipLock) })
   const rec = loginAttempts.get(key) || { fails: 0, lockedUntil: 0 }
   if (rec.lockedUntil > Date.now()) {
     const mins = Math.ceil((rec.lockedUntil - Date.now()) / 60000)
@@ -295,6 +372,7 @@ api.post('/login', (req, res) => {
   }
   const result = login(username, pin)
   if (!result) {
+    recordPinFail(req, 'login ' + key.slice(0, 30))
     rec.fails += 1
     if (rec.fails >= MAX_FAILS) { rec.lockedUntil = Date.now() + LOCK_MS; rec.fails = 0 }
     loginAttempts.set(key, rec)
@@ -362,9 +440,13 @@ function distanceM(lat1, lon1, lat2, lon2) {
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
   return 2 * R * Math.asin(Math.sqrt(a))
 }
-api.get('/kiosk/employees', (_req, res) =>
+api.get('/kiosk/employees', (req, res) => {
   // แสดงพนักงานทุกคนที่ยังไม่ลาออก (COALESCE กัน status ที่เป็น NULL หลุดจากรายชื่อ)
-  res.json(db.prepare("SELECT code,name FROM employees WHERE COALESCE(status,'') != 'ลาออก' ORDER BY name").all()))
+  const rows = db.prepare("SELECT code,name FROM employees WHERE COALESCE(status,'') != 'ลาออก' ORDER BY name").all()
+  // เปิดจากนอกออฟฟิศโดยไม่ล็อกอิน → ส่งรหัสอ้างอิงแทนรหัสพนักงานจริง (ลงเวลาได้เหมือนเดิม แต่คนนอกไม่เห็นชื่อผู้ใช้)
+  const loggedIn = !!userFromToken(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''))
+  res.json(isExternalReq(req) && !loggedIn ? rows.map((r) => ({ code: kioskRef(r.code), name: r.name })) : rows)
+})
 // record a GPS point for an employee (foreman tracking). PIN-verified, public.
 function logLocation(emp, lat, lng, accuracy, note) {
   if (typeof lat !== 'number' || typeof lng !== 'number') return
@@ -374,11 +456,14 @@ function logLocation(emp, lat, lng, accuracy, note) {
 }
 // กันเดา PIN บนช่องทางสาธารณะ (kiosk ทุกตัว): ผิด 5 ครั้งต่อรหัสพนักงาน → ล็อก 5 นาที
 const kioskAttempts = new Map() // emp_code -> { fails, until }
-function kioskPinCheck(empCode, pin, emp) {
+function kioskPinCheck(empCode, pin, emp, req) {
   const key = String(empCode || '')
+  const ipLock = req ? ipLockedMinutes(req) : 0
+  if (ipLock) return { error: IP_LOCK_MSG(ipLock), code: 429 }
   const rec = kioskAttempts.get(key) || { fails: 0, until: 0 }
   if (rec.until > Date.now()) return { error: 'ใส่ PIN ผิดหลายครั้ง — ล็อกชั่วคราว ลองใหม่ใน 5 นาที', code: 429 }
   if (!emp?.pin || hashPin(pin) !== emp.pin) {
+    if (req) recordPinFail(req, 'kiosk ' + key.slice(0, 30))
     rec.fails += 1
     if (rec.fails >= 5) { rec.until = Date.now() + 5 * 60000; rec.fails = 0 }
     kioskAttempts.set(key, rec)
@@ -392,7 +477,7 @@ api.post('/kiosk/location', (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
   if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
-  const bad = kioskPinCheck(emp_code, pin, emp)
+  const bad = kioskPinCheck(emp_code, pin, emp, req)
   if (bad) return res.status(bad.code).json({ error: bad.error })
   logLocation(emp, lat, lng, accuracy, note)
   res.json({ ok: true })
@@ -418,7 +503,7 @@ api.post('/kiosk/time-adjust', (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
   if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
-  const badPin = kioskPinCheck(emp_code, pin, emp)
+  const badPin = kioskPinCheck(emp_code, pin, emp, req)
   if (badPin) return res.status(badPin.code).json({ error: badPin.error })
   const bad = timeAdjustError({ date, kind, time })
   if (bad) return res.status(400).json({ error: bad })
@@ -435,7 +520,7 @@ api.post('/kiosk/my-slip', (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
   if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว — ติดต่อฝ่ายบุคคลเพื่อขอสลิปย้อนหลัง' })
-  const bad = kioskPinCheck(emp_code, pin, emp)
+  const bad = kioskPinCheck(emp_code, pin, emp, req)
   if (bad) return res.status(bad.code).json({ error: bad.error })
   const periods = db.prepare('SELECT period FROM payroll_runs ORDER BY period DESC LIMIT 12').all().map((r) => r.period)
   if (!periods.length) return res.json({ periods: [], slip: null })
@@ -1908,7 +1993,7 @@ api.post('/kiosk/punch', (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
   if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
-  const bad = kioskPinCheck(emp_code, pin, emp)
+  const bad = kioskPinCheck(emp_code, pin, emp, req)
   if (bad) return res.status(bad.code).json({ error: bad.error })
   // geofence: เช็คอินได้เฉพาะในรัศมีออฟฟิศ (ถ้าเปิดใช้)
   if (getSetting('att_geofence', '0') === '1') {
@@ -3062,6 +3147,21 @@ function payablesCheck() {
 }
 api.get('/payables/check', financeOnly, (_req, res) => res.json(payablesCheck()))
 // สุขภาพระบบรวมจุดเดียว (แถบบนหน้าสรุป): บัญชีตรงไหม · มีอะไรค้าง · สำรองล่าสุดเมื่อไหร่
+// พื้นที่ดิสก์ที่เก็บฐานข้อมูล/ไฟล์แนบ/สำรอง — ดิสก์เต็ม = เขียนฐานข้อมูลไม่ได้ + สำรองล้มเหลวแบบเงียบ
+const DISK_WARN_GB = 10, DISK_BLOCK_GB = 2
+function diskInfo() {
+  try {
+    const s = statfsSync(dirname(dbFile))
+    const free = (s.bavail * s.bsize) / 1073741824, total = (s.blocks * s.bsize) / 1073741824
+    return { free_gb: Math.round(free * 10) / 10, total_gb: Math.round(total), used_pct: Math.round((1 - free / total) * 100), low: free < DISK_WARN_GB, critical: free < DISK_BLOCK_GB }
+  } catch { return null }
+}
+// ปฏิเสธอัปโหลดเมื่อดิสก์ใกล้เต็มจริงๆ — เก็บที่ว่างไว้ให้ฐานข้อมูลกับสำรอง
+function diskFullGuard(_req, res, next) {
+  const d = diskInfo()
+  if (d?.critical) return res.status(507).json({ error: `พื้นที่ดิสก์ของเครื่อง server เหลือ ${d.free_gb} GB — งดอัปโหลดไฟล์ชั่วคราว ให้ผู้ดูแลระบบลบไฟล์เก่า/ย้ายไฟล์สำรองออกก่อน` })
+  next()
+}
 api.get('/health', (req, res) => {
   if (!(canSeeSalary(req.user) || isManager(req.user))) return res.status(403).json({ error: 'เฉพาะฝ่ายบัญชี/ผู้จัดการ' })
   const ap = payablesCheck()
@@ -3077,6 +3177,7 @@ api.get('/health', (req, res) => {
     mirror_set: !!getSetting('backup_mirror_dir', ''), mirror_ok: mirror ? mirror.ok !== false : null,
     inst_mismatch: db.prepare(`SELECT COUNT(*) c FROM installments WHERE status IN (${MONEY_STATUSES_SRV.map(() => '?').join(',')}) AND COALESCE(paid,0) < COALESCE(amount,0)`).get(...MONEY_STATUSES_SRV).c,
     stock_low: db.prepare('SELECT COUNT(*) c FROM stock_items WHERE min_qty > 0 AND qty < min_qty').get().c,
+    disk: diskInfo(),
   })
 })
 
@@ -6573,7 +6674,7 @@ setTimeout(() => { try {
     else { db.prepare("UPDATE takeoff_jobs SET status='failed', code=500, result=?, finished=? WHERE id=?").run(JSON.stringify({ error: 'งานถอดแบบหยุดกลางคัน (server รีสตาร์ต) และรันต่อไม่ได้ — กดถอดแบบใหม่' }), Date.now(), j.id); dropTakeoffSpec(j.id) }
   }
 } catch (e) { console.error('takeoff jobs resume:', e.message) } }, 2000)
-api.post('/boq-takeoff', auditView, express.raw({ type: 'application/octet-stream', limit: '210mb' }), async (req, res) => {
+api.post('/boq-takeoff', auditView, diskFullGuard, express.raw({ type: 'application/octet-stream', limit: '210mb' }), async (req, res) => {
   const [bad, spec] = takeoffSpec(req)
   if (bad) return res.status(bad).json(spec)
   if (req.query.async !== '1') {
@@ -7323,7 +7424,7 @@ api.get('/files', (req, res) => {
 })
 // อัปโหลดไฟล์ — รองรับทั้งแบบ raw (ใหม่ · body=ไฟล์, meta ใน query)
 // และแบบ JSON+base64 (เดิม) เผื่อหน้าเว็บกับเซิร์ฟเวอร์คนละเวอร์ชัน
-api.post('/files', canWrite, express.raw({ type: 'application/octet-stream', limit: '210mb' }), (req, res) => {
+api.post('/files', canWrite, diskFullGuard, express.raw({ type: 'application/octet-stream', limit: '210mb' }), (req, res) => {
   const q = req.query || {}
   let name, mime, house, category, buf
   if (Buffer.isBuffer(req.body)) {
@@ -7361,13 +7462,19 @@ function fileBuffer(f) {
   if (f.data) return Buffer.from(String(f.data).replace(/^data:[^;]+;base64,/, ''), 'base64') // เดิม (base64 ในฐานข้อมูล)
   return null
 }
+const SAFE_INLINE_MIME = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/bmp', 'text/plain'])
 function sendStored(req, res, disposition) {
   const f = db.prepare('SELECT * FROM files WHERE id=?').get(req.params.id)
   if (!f) return res.status(404).json({ error: 'ไม่พบไฟล์' })
   const buf = fileBuffer(f)
   if (!buf) return res.status(404).json({ error: 'ไม่พบไฟล์บนดิสก์' })
-  res.setHeader('Content-Type', f.mime || 'application/octet-stream')
-  res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+  // เปิดดูในเบราว์เซอร์ได้เฉพาะชนิดที่ปลอดภัย (PDF/รูป) — html/svg/js ฯลฯ ฝังสคริปต์ขโมยการล็อกอินได้ → บังคับดาวน์โหลดเป็นไฟล์ธรรมดา
+  const mime = String(f.mime || '').toLowerCase().split(';')[0].trim()
+  const safe = SAFE_INLINE_MIME.has(mime)
+  res.setHeader('Content-Type', safe ? mime : 'application/octet-stream')
+  res.setHeader('Content-Disposition', `${safe ? disposition : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  if (!safe) res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'") // ถ้าถูกเปิดตรงๆ ก็รันสคริปต์ไม่ได้ (PDF/รูปไม่ใส่ — sandbox ทำให้ตัวดู PDF ของ Chrome เปิดไม่ได้)
   res.send(buf)
 }
 api.get('/files/:id/view', (req, res) => sendStored(req, res, 'inline'))      // เปิดดูในเบราว์เซอร์ทันที
@@ -7483,6 +7590,9 @@ api.get('/notifications', (req, res) => {
     if (req.user.role === 'admin') {
       for (const r of db.prepare("SELECT * FROM pin_reset_requests WHERE status='pending' ORDER BY id DESC").all())
         out.push({ kind: 'pinreset', icon: 'warn', title: `คำขอรีเซ็ต PIN — ${r.name || r.username}`, sub: `ผู้ใช้ ${r.username} · ยืนยันตัวตนแล้วรีเซ็ตที่หน้าผู้ใช้งาน`, page: 'users' })
+      // ดิสก์ของเครื่อง server ใกล้เต็ม
+      const d = diskInfo()
+      if (d?.low) out.push({ kind: 'disk', icon: 'warn', title: d.critical ? 'ดิสก์เครื่อง server เกือบเต็ม — งดอัปโหลดไฟล์แล้ว' : 'ดิสก์เครื่อง server ใกล้เต็ม', sub: `เหลือ ${d.free_gb} GB จาก ${d.total_gb} GB (ใช้ไป ${d.used_pct}%) · ลบไฟล์ไม่ใช้/ย้ายไฟล์สำรองออกจากเครื่อง`, page: 'users' })
     }
     // ความปลอดภัย: มีคนเข้างานวันนี้ แต่ยังไม่ได้บันทึกงานความปลอดภัย (Toolbox Talk/PPE) วันนี้
     // attendance เก็บ YYYY-MM-DD · safety_records เก็บวันที่ไทย (บางใบอาจเป็น ISO) → เทียบทั้งสองแบบ
@@ -7718,37 +7828,51 @@ function restoreFromFile(filePath) {
     return { error: 'กู้คืนไม่สำเร็จ — ไฟล์อาจเสียหาย' }
   }
 }
+// สำรองสถานะปัจจุบันไว้ก่อนกู้คืน (กันเผลอ) — ใช้ชื่อแยก ไม่ทับไฟล์สำรองรายวัน/ไฟล์ที่กำลังกู้ · สำรองไม่ได้ = ไม่กู้
+async function snapshotBeforeRestore() {
+  mkdirSync(backupDir, { recursive: true })
+  return safeDbCopy(join(backupDir, 'ppsd-before-restore.sqlite'))
+}
 // restore: replace all data from an uploaded backup file (admin only)
-api.post('/restore', adminOnly, (req, res) => {
-  const input = String(req.body?.data || '')
-  const m = /^data:[^;]*;base64,(.*)$/.exec(input)
-  const raw = m ? m[1] : input
-  if (!raw) return res.status(400).json({ error: 'ไม่พบไฟล์สำรอง' })
-  const tmp = join(__dirname, 'data', 'restore-tmp.sqlite')
+// รับไฟล์แบบ binary ตรงๆ (ฐานข้อมูลจริงหลายร้อย MB — แบบเดิมส่งเป็น base64 ใน JSON ติดเพดาน 30 MB) · แบบ JSON เดิมยังรับได้สำหรับไฟล์เล็ก
+api.post('/restore', adminOnly, express.raw({ type: 'application/octet-stream', limit: '2gb' }), async (req, res) => {
+  let buf = null
+  if (Buffer.isBuffer(req.body)) buf = req.body
+  else {
+    const input = String(req.body?.data || '')
+    const m = /^data:[^;]*;base64,(.*)$/.exec(input)
+    const raw = m ? m[1] : input
+    if (raw) buf = Buffer.from(raw, 'base64')
+  }
+  if (!buf || !buf.length) return res.status(400).json({ error: 'ไม่พบไฟล์สำรอง' })
+  const tmp = join(dirname(dbFile), 'restore-tmp.sqlite')
   try {
-    writeFileSync(tmp, Buffer.from(raw, 'base64'))
+    writeFileSync(tmp, buf)
+    const bad = checkDbFile(tmp)
+    if (bad) { try { unlinkSync(tmp) } catch { /* ignore */ } return res.status(400).json({ error: 'กู้คืนไม่ได้ — ' + bad + ' (ข้อมูลปัจจุบันไม่ถูกแตะ)' }) }
+    const snapBad = await snapshotBeforeRestore()
+    if (snapBad) { try { unlinkSync(tmp) } catch { /* ignore */ } return res.status(500).json({ error: 'สำรองข้อมูลปัจจุบันก่อนกู้คืนไม่สำเร็จ (' + snapBad + ') — ยกเลิกการกู้คืน' }) }
     const r = restoreFromFile(tmp)
     try { unlinkSync(tmp) } catch { /* ignore */ }
     if (r.error) return res.status(400).json({ error: r.error })
-    audit(req, 'กู้คืนข้อมูล', 'จากไฟล์สำรอง')
+    audit(req, 'กู้คืนข้อมูล', `จากไฟล์ที่อัปโหลด (${Math.round(buf.length / 1048576)} MB) · สำรองข้อมูลเดิมไว้ที่ ppsd-before-restore.sqlite`)
     res.json({ ok: true })
   } catch (e) {
     try { unlinkSync(tmp) } catch { /* ignore */ }
+    console.error('restore failed:', e)
     res.status(500).json({ error: 'กู้คืนไม่สำเร็จ — ไฟล์อาจเสียหาย' })
   }
 })
-// กู้คืนจากไฟล์สำรองอัตโนมัติที่มีอยู่แล้ว (คลิกเดียว ไม่ต้องหาไฟล์เอง) — สำรองปัจจุบันก่อนเสมอ
-api.post('/backups/:name/restore', adminOnly, (req, res) => {
+// กู้คืนจากไฟล์สำรองอัตโนมัติที่มีอยู่แล้ว (คลิกเดียว ไม่ต้องหาไฟล์เอง) — ตรวจไฟล์ + สำรองปัจจุบันก่อนเสมอ
+api.post('/backups/:name/restore', adminOnly, async (req, res) => {
   const name = String(req.params.name || '')
   if (!/^ppsd-auto-\d{4}-\d{2}-\d{2}\.sqlite$/.test(name)) return res.status(400).json({ error: 'ชื่อไฟล์สำรองไม่ถูกต้อง' })
   const file = join(backupDir, name)
   if (!existsSync(file)) return res.status(404).json({ error: 'ไม่พบไฟล์สำรองนี้' })
-  // สำรองสถานะปัจจุบันไว้ก่อนกู้คืน (กันเผลอ) — ใช้ชื่อแยก ไม่ทับไฟล์สำรองรายวัน/ไฟล์ที่กำลังกู้
-  try {
-    mkdirSync(backupDir, { recursive: true })
-    db.pragma('wal_checkpoint(TRUNCATE)')
-    writeFileSync(join(backupDir, 'ppsd-before-restore.sqlite'), readFileSync(dbFile))
-  } catch { /* ignore */ }
+  const bad = checkDbFile(file)
+  if (bad) return res.status(400).json({ error: `ไฟล์สำรอง ${name} ใช้ไม่ได้ — ${bad} · เลือกวันอื่น` })
+  const snapBad = await snapshotBeforeRestore().catch((e) => e.message)
+  if (snapBad) return res.status(500).json({ error: 'สำรองข้อมูลปัจจุบันก่อนกู้คืนไม่สำเร็จ (' + snapBad + ') — ยกเลิกการกู้คืน' })
   const r = restoreFromFile(file)
   if (r.error) return res.status(500).json({ error: r.error })
   audit(req, 'กู้คืนข้อมูลจากไฟล์สำรองอัตโนมัติ', name)
@@ -7845,16 +7969,43 @@ function mirrorBackup(srcFile, day) {
     })
   })
 }
+// ตรวจไฟล์ฐานข้อมูลว่าเปิดได้และไม่เสีย (PRAGMA quick_check) + เป็นฐานข้อมูล PPSD จริง → null = ผ่าน · ข้อความ = เหตุผลที่ไม่ผ่าน
+function checkDbFile(file) {
+  let d
+  try {
+    d = new Database(file, { readonly: true, fileMustExist: true })
+    const r = d.pragma('quick_check', { simple: true })
+    if (r !== 'ok') return 'ไฟล์เสียหาย (' + String(r).slice(0, 120) + ')'
+    if (!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").get()) return 'ไม่ใช่ฐานข้อมูล PPSD'
+    return null
+  } catch (e) { return 'เปิดไฟล์ไม่ได้ (' + e.message + ')' } finally { try { d?.close() } catch { /* ignore */ } }
+}
+// สำเนาฐานข้อมูลแบบปลอดภัย: ใช้ backup API ของ SQLite (ได้ข้อมูลครบทั้งที่ระบบยังทำงาน ไม่บล็อกเซิร์ฟเวอร์) → ไฟล์ชั่วคราว → ตรวจ → ค่อยแทนไฟล์จริง
+// ไฟล์ที่ตรวจไม่ผ่านจะไม่ทับไฟล์สำรองดีของเดิม
+async function safeDbCopy(dest) {
+  const tmp = dest + '.tmp'
+  try { unlinkSync(tmp) } catch { /* ไม่มี */ }
+  await db.backup(tmp)
+  const bad = checkDbFile(tmp)
+  if (bad) { try { unlinkSync(tmp) } catch { /* ignore */ } return bad }
+  renameSync(tmp, dest)
+  return null
+}
 async function autoBackup() {
   try {
     mkdirSync(backupDir, { recursive: true })
-    db.pragma('wal_checkpoint(TRUNCATE)')
     const day = todayISO() // วันตามเวลาเครื่อง (ไทย) — ไม่ใช่ UTC ที่จะข้ามวันตอน 7 โมงเช้า
     const file = join(backupDir, `ppsd-auto-${day}.sqlite`)
-    writeFileSync(file, readFileSync(dbFile))
+    const bad = await safeDbCopy(file)
+    if (bad) {
+      console.error('auto-backup: ไฟล์สำรองตรวจไม่ผ่าน —', bad)
+      setSetting('backup_last_error', JSON.stringify({ at: nowTS(), msg: 'ไฟล์สำรองตรวจไม่ผ่าน: ' + bad }))
+      setSetting('backup_last', JSON.stringify({ ...(lastBackupInfo() || {}), ok: false, check: bad, checked_at: nowTS() }))
+      return
+    }
     copyNewFiles(backupDir)
     pruneBackups(backupDir)
-    setSetting('backup_last', JSON.stringify({ day, at: nowTS(), size: statSync(file).size }))
+    setSetting('backup_last', JSON.stringify({ day, at: nowTS(), size: statSync(file).size, ok: true, check: 'ok' }))
     await mirrorBackup(file, day) // สำเนาไปนอกเครื่องด้วย (ถ้าตั้งไว้) — ทำใน process ลูก ไม่บล็อกระบบ
   } catch (e) {
     console.error('auto-backup failed:', e.message)
@@ -7870,7 +8021,7 @@ setInterval(() => {
 // list available auto-backups (admin)
 api.get('/backups', adminOnly, (_req, res) => {
   try {
-    const files = readdirSync(backupDir).filter((f) => f.startsWith('ppsd-auto-')).sort().reverse()
+    const files = readdirSync(backupDir).filter((f) => f.startsWith('ppsd-auto-') && f.endsWith('.sqlite')).sort().reverse()
     res.json(files.map((f) => ({ name: f, size: statSync(join(backupDir, f)).size, date: f.replace('ppsd-auto-', '').replace('.sqlite', '') })))
   } catch { res.json([]) }
 })
@@ -7920,7 +8071,10 @@ function buildLineDigest() {
     const last = JSON.parse(getSetting('backup_last', '') || 'null')
     const cut = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)
     if (!last || last.day < cut) L.push(`⚠️ สำรองข้อมูลล่าสุด: ${last?.day || 'ไม่เคย'} (เกิน 2 วัน)`)
+    if (last && last.ok === false) L.push(`⚠️ ไฟล์สำรองล่าสุดตรวจแล้วเสียหาย (${last.day}) — แจ้งผู้ดูแลระบบ`)
   } catch { /* ignore */ }
+  const disk = diskInfo()
+  if (disk?.low) L.push(`⚠️ ดิสก์เครื่อง server เหลือ ${disk.free_gb} GB (ใช้ไป ${disk.used_pct}%)${disk.critical ? ' — งดอัปโหลดไฟล์แล้ว' : ''}`)
   if (!L.length) L.push('✅ ไม่มีเรื่องค้างเร่งด่วนวันนี้')
   try { L.push(`💰 เงินสด+ธนาคารตามบัญชี: ${baht(acct.cashBalance())}`) } catch { /* ignore */ }
   return `📋 PPSD ERP สรุปเช้า ${todayTH()}\n\n` + L.join('\n')

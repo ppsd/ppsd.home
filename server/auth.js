@@ -26,7 +26,7 @@ export function logout() {
 }
 
 // resolve a token to a fresh user record (so role/position changes take effect)
-function userFromToken(token) {
+export function userFromToken(token) {
   const payload = verifyToken(token)
   if (!payload) return null
   const u = db.prepare('SELECT id,name,username,role,status,position,deny_mods FROM users WHERE id = ?').get(payload.id)

@@ -580,7 +580,7 @@ interface AppCtx {
   addVendor: (b: Record<string, unknown>) => Promise<void>
   updateVendor: (id: number, b: Record<string, unknown>) => Promise<void>
   downloadBackup: () => Promise<void>
-  restoreBackup: (data: string) => Promise<void>
+  restoreBackup: (file: File) => Promise<void>
   viewPayrollPeriod: (period: string) => Promise<void>
   closePayroll: (period: string) => Promise<void>
 }
@@ -955,7 +955,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await reload('vendors', '/vendors')
         },
         downloadBackup: () => api.download('/backup'),
-        restoreBackup: async (data: string) => { await api.post('/restore', { data }) },
+        // ส่งไฟล์แบบ binary ตรงๆ (ฐานข้อมูลจริงหลายร้อย MB — แบบ base64 เดิมติดเพดาน 30 MB)
+        restoreBackup: async (file: File) => { await api.uploadRaw('/restore', file) },
         viewPayrollPeriod: (period) => reloadPayroll(period),
         closePayroll: async (period) => {
           await api.post('/payroll/close', { period })

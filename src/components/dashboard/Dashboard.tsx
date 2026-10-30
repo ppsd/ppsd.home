@@ -19,7 +19,7 @@ interface DashboardProps {
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 
-interface Health { ap_ok: boolean; ap_diff: number; journal_issues: number; backup_day: string | null; backup_ok: boolean; mirror_set: boolean; mirror_ok: boolean | null; inst_mismatch: number; stock_low: number }
+interface Health { ap_ok: boolean; ap_diff: number; journal_issues: number; backup_day: string | null; backup_ok: boolean; mirror_set: boolean; mirror_ok: boolean | null; inst_mismatch: number; stock_low: number; disk?: { free_gb: number; total_gb: number; used_pct: number; low: boolean; critical: boolean } | null }
 
 export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }: DashboardProps) {
   const app = useApp()
@@ -94,6 +94,7 @@ export default function Dashboard({ onOpenHouse, onOpenHouseByName, onGoHouses }
           {health.mirror_set ? chip(health.mirror_ok, 'สำรองนอกเครื่องปกติ', 'สำรองนอกเครื่องล้มเหลว') : chip(false, '', 'ยังไม่ตั้งสำรองนอกเครื่อง')}
           {health.inst_mismatch > 0 && chip(false, '', `งวดข้อมูลแย้ง ${health.inst_mismatch} งวด`)}
           {health.stock_low > 0 && chip(false, '', `วัสดุใกล้หมด ${health.stock_low} รายการ`)}
+          {health.disk && chip(!health.disk.low, `ดิสก์เหลือ ${health.disk.free_gb} GB`, `ดิสก์ใกล้เต็ม เหลือ ${health.disk.free_gb} GB (${health.disk.used_pct}%)`)}
         </div>
       )}
 

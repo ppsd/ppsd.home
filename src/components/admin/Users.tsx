@@ -71,20 +71,18 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const doRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; e.target.value = ''
     if (!f) return
-    if (!window.confirm('กู้คืนข้อมูลจากไฟล์นี้?\n⚠️ ข้อมูลปัจจุบันทั้งหมดจะถูกแทนที่ด้วยไฟล์สำรอง\n(แนะนำให้กด "สำรองข้อมูล" ปัจจุบันเก็บไว้ก่อน)')) return
-    const r = new FileReader()
-    r.onload = async () => {
+    if (!window.confirm('กู้คืนข้อมูลจากไฟล์นี้?\n⚠️ ข้อมูลปัจจุบันทั้งหมดจะถูกแทนที่ด้วยไฟล์สำรอง\n(ระบบตรวจไฟล์ก่อน และสำรองข้อมูลปัจจุบันเก็บไว้ให้อัตโนมัติก่อนกู้คืน)')) return
+    ;(async () => {
       setBusy(true)
       try {
-        await restoreBackup(String(r.result))
+        await restoreBackup(f) // ส่งไฟล์ตรงๆ — ไฟล์ใหญ่หลายร้อย MB ก็ได้
         window.alert('กู้คืนข้อมูลสำเร็จ — ระบบจะโหลดใหม่')
         window.location.reload()
       } catch (ex) {
         window.alert((ex as Error).message || 'กู้คืนไม่สำเร็จ')
         setBusy(false)
       }
-    }
-    r.readAsDataURL(f)
+    })()
   }
   const doAddPosition = async () => {
     const name = window.prompt('ชื่อตำแหน่งงานใหม่')

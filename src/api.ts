@@ -97,7 +97,15 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, 'เปิดไฟล์ไม่สำเร็จ')
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
-    window.open(url, '_blank')
+    // เปิดในแท็บใหม่ได้เฉพาะ PDF/รูป/ข้อความ — ไฟล์อื่น (html/svg ฯลฯ) ถ้าเปิดจะรันในชื่อเว็บ ERP แล้วขโมยการล็อกอินได้ → ดาวน์โหลดแทน
+    if (/^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp)|text\/plain)/.test(blob.type)) window.open(url, '_blank')
+    else {
+      const cd = res.headers.get('Content-Disposition') || ''
+      const m = /filename\*=UTF-8''([^;]+)/i.exec(cd)
+      const a = document.createElement('a')
+      a.href = url; a.download = m ? decodeURIComponent(m[1]) : 'file'
+      document.body.appendChild(a); a.click(); a.remove()
+    }
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   },
 }
