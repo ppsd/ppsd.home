@@ -10,6 +10,9 @@ import { join } from 'node:path'
 
 const MAX_IMAGES = 10
 const RECV_TTL = 6 * 60 * 60 * 1000 // ร่างตรวจรับค้างได้ 6 ชม.
+// ยืนยันด้วยข้อความ (ไม่ส่งรูปก็ได้): ครบ / ขาด-ไม่ตรง
+const COMPLETE_RE = /^(ได้รับ)?(ของ)?ครบ(แล้ว)?(\s*(ค่ะ|ครับ|คะ|จ้า))?$|^(ได้รับครบ|รับครบ|ได้ครบ|ครบถ้วน)/
+const SHORT_RE = /^(ขาด|ไม่ครบ|ไม่ตรง|ผิด|เสีย|ชำรุด|แตก|เกิน|ได้ไม่ครบ)/
 
 export function createLineReceive(d) {
   const { db } = d
@@ -29,14 +32,16 @@ export function createLineReceive(d) {
     return { mime: f.mime || 'image/jpeg', b64: readFileSync(join(d.uploadsDir(), f.path)).toString('base64') }
   }
 
-  function startReceive(uid, po, replyToken) {
+  function startReceive(uid, po, replyToken, quick = null, u = null) {
     if (!po) return d.lineReply(replyToken, 'ไม่พบใบสั่งซื้อนี้ค่ะ — พิมพ์ เช่น "รับของ PO-69-0123" หรือ "รับของ" เพื่อดูรายการที่รอรับ')
     if (po.status === 'ยกเลิก') return d.lineReply(replyToken, `${po.no} ถูกยกเลิกแล้วค่ะ`)
     if (po.status === 'รับของแล้ว' || po.status === 'ปิดงาน') return d.lineReply(replyToken, `${po.no} รับของไปแล้วค่ะ (ถ้าใบกำกับภาษีมาทีหลัง พิมพ์ "ใบกำกับ ${po.no}")`)
     if (!poReady(po)) return d.lineReply(replyToken, `${po.no} ยังอนุมัติไม่ครบค่ะ — ให้อนุมัติ PO ก่อนจึงตรวจรับได้`)
     d.setLineCtx(uid, { kind: 'recv', po_id: po.id, files: [], stage: 'collect', ttl: RECV_TTL })
+    // "รับของ PO-69-0123 ได้รับครบ" / "… ขาด ปูน 2 ถุง" → บันทึกเลย ไม่ต้องส่งรูป
+    if (quick && u) return finalize(uid, u, { kind: 'recv', po_id: po.id, files: [] }, quick.complete, quick.note, replyToken)
     const items = d.orderItemsForPo(po).slice(0, 8).map((it, i) => `${i + 1}. ${it.desc}${it.qty ? ` ${it.qty} ${it.unit || ''}` : ''}`).join('\n')
-    return d.lineReply(replyToken, `📦 ตรวจรับ ${po.no} · ${po.vendor}\nบ้าน: ${houseName(po.house_code)}\nรายการที่สั่ง:\n${items}\n\nส่งรูป 📄 ใบส่งของ/ใบกำกับภาษี และ 📷 รูปของที่ได้รับ (ไม่เกิน ${MAX_IMAGES} รูป)\nส่งครบแล้วพิมพ์ 'ครบ' · ยกเลิกพิมพ์ 'ยกเลิก'`)
+    return d.lineReply(replyToken, `📦 ตรวจรับ ${po.no} · ${po.vendor}\nบ้าน: ${houseName(po.house_code)}\nรายการที่สั่ง:\n${items}\n\nส่งรูป 📄 ใบส่งของ/ใบกำกับภาษี และ 📷 รูปของที่ได้รับ (ไม่เกิน ${MAX_IMAGES} รูป)\nส่งครบแล้วพิมพ์ 'ครบ' · ยกเลิกพิมพ์ 'ยกเลิก'\n\nไม่สะดวกส่งรูป? พิมพ์ 'ได้รับครบ' หรือ 'ขาด …' ได้เลย (ระบบรับตาม PO — ใบกำกับส่งตามมาทีหลังได้)`)
   }
 
   // ให้ AI อ่านรูปทั้งหมด: แยกเอกสาร/รูปของ · อ่านรายการ + เลขใบกำกับ + VAT จากเอกสาร · ทักของที่ผิดชัดๆ จากรูปของ
@@ -118,7 +123,7 @@ ${orderLines}
       // ไม่มีเอกสาร: ยืนยันครบ = รับตาม PO (บันทึกว่าไม่มีใบส่งของ) · ไม่ครบ = ไม่ผ่าน
       deliveryItems = orderItems.map((o) => ({ name: o.desc, qty: o.qty, unit: o.unit, price: o.price, amount: (o.qty > 0 ? o.qty * o.price : o.price) }))
       forceResult = complete ? 'ผ่าน' : 'ไม่ผ่าน'
-      note = 'ไม่มีใบส่งของ/ใบกำกับ — หน้างานยืนยันตาม PO'
+      note = ctx.files?.length ? 'ไม่มีใบส่งของ/ใบกำกับ — หน้างานยืนยันตาม PO' : 'ไม่ส่งรูป/เอกสาร — ยืนยันด้วยข้อความ'
     } else if (!complete) forceResult = 'ไม่ผ่าน'
     const fileRec = (id) => { const f = db.prepare('SELECT id, name FROM files WHERE id=?').get(id); return f ? { id: f.id, name: f.name } : null }
     const docIds = ai.doc_files?.length ? ai.doc_files : ctx.files.filter((id) => !(ai.goods_files || []).includes(id))
@@ -163,16 +168,18 @@ ${orderLines}
   }
 
   return {
-    help: "\n\nรับของ:\n• รับของ PO-69-0123 (หรือ 'รับของ' แล้วเลือก) → ส่งรูปใบส่งของ/ใบกำกับ + รูปของ → 'ครบ' → AI เทียบกับ PO → ตอบ 'ของครบ' / 'ขาด …'\n• ใบกำกับ PO-69-0123 → ส่งรูปใบกำกับภาษีที่มาทีหลัง",
+    help: "\n\nรับของ:\n• รับของ PO-69-0123 (หรือ 'รับของ' แล้วเลือก) → ส่งรูปใบส่งของ/ใบกำกับ + รูปของ → 'ครบ' → AI เทียบกับ PO → ตอบ 'ของครบ' / 'ขาด …'\n• ไม่ส่งรูปก็ได้: 'รับของ PO-69-0123 ได้รับครบ' หรือ '… ขาด ปูน 2 ถุง'\n• ใบกำกับ PO-69-0123 → ส่งรูปใบกำกับภาษีที่มาทีหลัง",
     // คืน promise ถ้าจัดการข้อความนี้แล้ว · null = ไม่ใช่เรื่องรับของ
     handleText(uid, u, t, replyToken, ctx) {
-      const cmd = t.match(/^(?:รับของ|ตรวจรับ(?:ของ)?)\s*(PO-?\S+)?\s*$/i)
+      const cmd = t.match(/^(?:รับของ|ตรวจรับ(?:ของ)?)\s*(PO-?[\w-]+)?\s*(.*)$/i)
       if (cmd) {
         if (!canReceive(u)) return d.lineReply(replyToken, 'ตรวจรับของได้เฉพาะหน้างาน/จัดซื้อ/บัญชี/ผู้จัดการค่ะ')
-        if (cmd[1]) return startReceive(uid, findPo(cmd[1]), replyToken)
+        const tail = String(cmd[2] || '').trim()
+        const quick = COMPLETE_RE.test(tail) ? { complete: true, note: '' } : SHORT_RE.test(tail) ? { complete: false, note: tail.slice(0, 300) } : null
+        if (cmd[1]) return startReceive(uid, findPo(cmd[1]), replyToken, quick, u)
         const w = waitingPos()
         if (!w.length) return d.lineReply(replyToken, 'ตอนนี้ไม่มีใบสั่งซื้อที่อนุมัติแล้วรอรับของค่ะ')
-        if (w.length === 1) return startReceive(uid, w[0], replyToken)
+        if (w.length === 1) return startReceive(uid, w[0], replyToken, quick, u)
         d.setLineCtx(uid, { kind: 'recv_pick', ids: w.map((p) => p.id) })
         return d.lineReply(replyToken, `รับของของใบไหนคะ? ตอบตัวเลข\n${w.map((p, i) => `${i + 1}. ${p.no} ${p.vendor} · ${houseName(p.house_code)} · ${String(p.item || '').slice(0, 30)}`).join('\n')}`)
       }
@@ -193,10 +200,10 @@ ${orderLines}
       if (ctx?.kind !== 'recv') return null
       if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { d.setLineCtx(uid, null); return d.lineReply(replyToken, 'ยกเลิกร่างตรวจรับแล้วค่ะ (รูปที่ส่งมายังเก็บไว้ในไฟล์ของบ้าน)') }
       if (ctx.stage === 'collect') {
-        if (/^(ครบ|เสร็จ|ส่งครบ|ตรวจ|ตรวจเลย|ok|โอเค|ตกลง|พอ)$/i.test(t)) {
-          if (!ctx.files.length) return d.lineReply(replyToken, `ยังไม่มีรูปค่ะ — ส่งรูปใบส่งของ/ใบกำกับภาษี และรูปของที่ได้รับก่อน`)
-          return runAnalyze(uid, u, ctx, replyToken)
-        }
+        // ยังไม่ได้ส่งรูป: ยืนยันด้วยข้อความได้เลย (รับตาม PO)
+        if (!ctx.files.length && (COMPLETE_RE.test(t) || /^(ok|โอเค|ตกลง)$/i.test(t))) return finalize(uid, u, ctx, true, '', replyToken)
+        if (!ctx.files.length && SHORT_RE.test(t)) return finalize(uid, u, ctx, false, t.slice(0, 300), replyToken)
+        if (/^(ครบ|เสร็จ|ส่งครบ|ตรวจ|ตรวจเลย|ok|โอเค|ตกลง|พอ)$/i.test(t) || COMPLETE_RE.test(t)) return runAnalyze(uid, u, ctx, replyToken)
         if (t.length > 20) return null // ข้อความยาว = เรื่องอื่น (เช่น สั่งของใหม่) ให้ตัวจัดการอื่นทำต่อ
         return d.lineReply(replyToken, `ส่งรูปใบส่งของ/ใบกำกับภาษี และรูปของที่ได้รับ (ได้ ${ctx.files.length}/${MAX_IMAGES} รูปแล้ว) · ครบแล้วพิมพ์ 'ครบ' · ยกเลิกพิมพ์ 'ยกเลิก'`)
       }

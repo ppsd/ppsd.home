@@ -2527,3 +2527,27 @@ test('รับของผ่าน LINE: รับของ PO → รูป�
   assert.equal((await poOf(po3.id)).tax_invoice_no, 'IV-6810-0045')
   await PUT('/controls', { block_self_approve: true })
 })
+
+test('รับของผ่าน LINE แบบไม่ส่งรูป: "รับของ PO ได้รับครบ" = รับตาม PO ทันที · "รับของ PO" แล้ว "ขาด …" = ไม่รับ', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 700))
+  const c = await POST('/line-link/code', {}); await msg('Urecv2', c.data.code); await wait()
+  await PUT('/controls', { block_self_approve: false })
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ทรายหยาบ', qty: 2, unit: 'คิว', price: 500 }] })
+  await POST(`/approve/pr/${pr.data.id}`)
+  const mkPo = async () => { const po = await POST('/purchase-orders', { vendor: 'ร้านทราย', item: 'ทรายหยาบ', amount: 1000, pr_no: pr.data.no, house_code: 'TS-01', items: [{ desc: 'ทรายหยาบ', qty: 2, unit: 'คิว', price: 500 }] }); await POST(`/approve/po/${po.data.id}`); return po.data }
+  const poOf = async (id) => (await GET('/purchase-orders')).data.find((p) => p.id === id)
+  const a = await mkPo()
+  await msg('Urecv2', `รับของ ${a.no} ได้รับครบแล้ว`); await wait()
+  assert.equal((await poOf(a.id)).status, 'รับของแล้ว', 'พิมพ์ครบในคำสั่งเดียว → รับของเลย')
+  const ga = (await GET(`/purchase-orders/${a.id}/receipts`)).data[0]
+  assert.equal(ga.result, 'ผ่าน'); assert.match(ga.note, /ยืนยันด้วยข้อความ/)
+  assert.ok((await GET('/expenses')).data.some((e) => e.po_id === a.id), 'ต้นทุนเข้าบ้าน')
+  const b = await mkPo()
+  await msg('Urecv2', `รับของ ${b.no}`); await wait()
+  await msg('Urecv2', 'ขาด ทราย 1 คิว'); await wait()
+  assert.equal((await poOf(b.id)).status, 'รอส่งของ')
+  assert.equal((await GET(`/purchase-orders/${b.id}/receipts`)).data[0].result, 'ไม่ผ่าน')
+  await PUT('/controls', { block_self_approve: true })
+})
