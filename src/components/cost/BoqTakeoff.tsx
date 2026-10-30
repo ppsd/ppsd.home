@@ -247,7 +247,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
     })
     for (const l of usedL) {
       const rate = rates.find((x) => x.id === l.rateId)
-      items.push({ floor: l.floor, part: l.part, sheet: l.sheet, cat: l.cat, desc: 'ค่าแรง: ' + (rate ? labLabel(rate) : ''), qty: l.qty, unit: l.unit, mat: 0, lab: l.price, basis: l.basis })
+      items.push({ floor: l.floor, part: l.part, sheet: l.sheet, cat: l.cat, desc: 'ค่าแรง: ' + (rate ? labLabel(rate) : ''), qty: l.qty, unit: l.unit, mat: 0, lab: l.price, labRef: rate?.id, basis: l.basis })
     }
     return items
   }

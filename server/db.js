@@ -574,6 +574,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS labor_rates (
   unit TEXT,           -- ตร.ม. / เมตร / ชุด / บาน / ห้อง / เหมา / หลัง
   note TEXT, active INTEGER DEFAULT 1, updated TEXT
 )`)
+// ประวัติราคากลางค่าแรง — เดิม (ต่ำสุด–สูงสุด) → ใหม่ · ที่มา (แก้เอง/Excel/เพิ่มใหม่) · ใคร · เมื่อไหร่
+db.exec(`CREATE TABLE IF NOT EXISTS labor_rate_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rate_id INTEGER, label TEXT, unit TEXT,
+  old_min REAL, old_max REAL, new_min REAL, new_max REAL, source TEXT, by TEXT, at TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_lrh_rate ON labor_rate_history(rate_id)')
 ensureColumn('contractors', 'labor_rate_id', 'INTEGER') // หมวดงานที่จ้าง (อ้าง labor_rates.id)
 ensureColumn('contractors', 'qty', 'REAL')              // ปริมาณงานที่ตกลง (ตาม unit ของหมวด)
 ensureColumn('contractors', 'unit_price', 'REAL')       // ราคาตกลงต่อหน่วย

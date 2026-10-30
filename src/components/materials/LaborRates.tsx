@@ -4,6 +4,7 @@ import type { ApiLaborRate } from '../../store'
 import { laborLabel, laborPriceText } from '../../store'
 import { api } from '../../api'
 import ModalShell from '../shared/ModalShell'
+import { InlineRange, LaborHistoryModal, ImportLaborModal, exportLaborXlsx } from './LaborTools'
 
 // ราคากลางค่าแรงช่าง — ใบเทียบราคากลางของฝ่ายประเมินราคาและจัดซื้อ
 // ใช้เป็น "ราคาแนะนำ" ตอนจ้างช่างในบ้าน (แท็บ ช่าง/ผู้รับเหมา): ต้องหาถูกกว่าหรือเท่ากับราคานี้
@@ -31,6 +32,10 @@ export default function LaborRates() {
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState<Form>(emptyForm)
   const [err, setErr] = useState('')
+  const [history, setHistory] = useState<ApiLaborRate | null>(null) // ประวัติราคาของหมวดนี้
+  const [importing, setImporting] = useState(false) // นำเข้า Excel
+  // แก้ราคาในตารางทันที (ต่ำสุด–สูงสุด · 0 = เสนอราคา) → ประวัติเก็บฝั่ง server
+  const saveRange = async (r: ApiLaborRate, price_min: number, price_max: number) => { await api.put('/labor-rates/' + r.id, { price_min, price_max }); await reload() }
 
   const ql = q.trim().toLowerCase()
   const rows = useMemo(() => rates.filter((r) => `${r.name} ${r.variant} ${r.unit} ${r.note || ''}`.toLowerCase().includes(ql)), [rates, ql])
@@ -97,12 +102,13 @@ export default function LaborRates() {
                     <td style={{ ...td, fontWeight: 500 }}>{r.name}</td>
                     <td style={{ ...td, color: '#5C6770' }}>{r.variant || '–'}</td>
                     <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: quote ? '#6B4E9E' : '#1E2E3B', whiteSpace: 'nowrap' }} className="num">
-                      {quote ? 'เสนอราคา' : r.price_min === r.price_max ? r.price_max.toLocaleString('en-US') : `${r.price_min.toLocaleString('en-US')} – ${r.price_max.toLocaleString('en-US')}`}
+                      <InlineRange min={r.price_min} max={r.price_max} canEdit={canEdit} onSave={(a, b) => saveRange(r, a, b)} />
                     </td>
                     <td style={{ ...td, textAlign: 'center', color: '#5C6770', whiteSpace: 'nowrap' }}>{r.unit}</td>
                     <td style={{ ...td, color: '#5C6770' }}>{r.note && r.note !== 'เสนอราคา' ? r.note : ''}</td>
                     {canEdit && (
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <button onClick={() => setHistory(r)} title="ประวัติราคา" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: 'none', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 8px', cursor: 'pointer', marginRight: 5 }}>🕘</button>
                         <button onClick={() => openEdit(r)} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: 'none', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', marginRight: 5 }}>แก้</button>
                         <button onClick={() => remove(r)} disabled={busy} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#C24036', background: 'none', border: '1px solid #EDD3CE', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ลบ</button>
                       </td>
@@ -123,11 +129,15 @@ export default function LaborRates() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ fontSize: 12.5, color: '#94A0A8' }}>ราคาแนะนำตอนจ้างช่าง — เลือกหมวดงานในแท็บ “ช่าง / ผู้รับเหมา” ของบ้าน แล้วระบบจะเทียบราคาตกลงกับตารางนี้ให้ · ต้องหาถูกกว่าหรือเท่ากับราคากลาง</div>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาหมวดงาน / หน่วย" style={{ ...field, width: 240, marginLeft: 'auto', padding: '7px 11px' }} />
+        <button onClick={() => exportLaborXlsx(rates).catch((e) => alert('ดาวน์โหลดไม่สำเร็จ: ' + (e as Error).message))} title="ดาวน์โหลดราคากลางค่าแรง แก้ใน Excel แล้วนำเข้ากลับ" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>⬇ ดาวน์โหลด Excel</button>
+        {canEdit && <button onClick={() => setImporting(true)} title="นำเข้าราคาที่แก้ใน Excel (ตรวจก่อนบันทึก)" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>⬆ นำเข้า Excel</button>}
         {canEdit && <button onClick={() => openAdd('แยกงาน')} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>+ เพิ่มหมวดงาน</button>}
       </div>
       <Table grp="เหมายกหลัง" title="ราคาค่าแรงแบบเหมายกหลัง" />
       <Table grp="แยกงาน" title="ราคาค่าแรงแยกแต่ละงาน" />
-      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>อ้างอิง: ฝ่ายประเมินราคาและจัดซื้อ · ตัวเลขทั้งหมดรวมค่าแรง + วัสดุสิ้นเปลือง · “เสนอราคา” = ไม่มีราคากลางตายตัว ต้องขอใบเสนอราคาเทียบ</div>
+      <div style={{ fontSize: 11.5, color: '#94A0A8' }}>อ้างอิง: ฝ่ายประเมินราคาและจัดซื้อ · ตัวเลขทั้งหมดรวมค่าแรง + วัสดุสิ้นเปลือง · “เสนอราคา” = ไม่มีราคากลางตายตัว ต้องขอใบเสนอราคาเทียบ{canEdit && ' · คลิกที่ราคาเพื่อแก้ทันที (135 หรือ 120-150 · 0 = เสนอราคา) · 🕘 = ประวัติราคา'}</div>
+      {history && <LaborHistoryModal rate={history} onClose={() => setHistory(null)} />}
+      {importing && <ImportLaborModal onClose={() => setImporting(false)} onDone={reload} />}
 
       {(adding || editing) && (
         <ModalShell

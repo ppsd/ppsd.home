@@ -5022,12 +5022,90 @@ const laborBody = (b, cur = {}) => {
     note: b.note != null ? String(b.note).trim() : (cur.note || ''),
   }
 }
+// บันทึกประวัติราคากลางค่าแรง (ข้ามถ้าราคาไม่เปลี่ยน)
+const lrLabel = (r) => r.name + (r.variant ? ` (${r.variant})` : '')
+function logLabor(r, oldMin, oldMax, newMin, newMax, source, by) {
+  const c = (x) => x == null ? null : Math.round(Number(x) * 100) / 100
+  if (c(oldMin) === c(newMin) && c(oldMax) === c(newMax)) return
+  db.prepare('INSERT INTO labor_rate_history (rate_id,label,unit,old_min,old_max,new_min,new_max,source,by,at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(r.id, lrLabel(r), r.unit || '', c(oldMin), c(oldMax), c(newMin), c(newMax), source, by || 'ระบบ', nowTS())
+}
+api.get('/labor-rates/:id/history', canWrite, (req, res) =>
+  res.json(db.prepare('SELECT * FROM labor_rate_history WHERE rate_id=? ORDER BY id DESC LIMIT 100').all(req.params.id)))
+// นำเข้าราคากลางค่าแรงจาก Excel — ขั้น 1 ตรวจ: จับคู่ด้วย "รหัส" ก่อน ไม่มีรหัสเทียบชื่อ+แบบ · ราคาว่าง/0 = เสนอราคา
+const parsePrice = (v) => { const t = String(v ?? '').replace(/[,฿\s]/g, ''); if (t === '' || t === '-' || /เสนอ/.test(t)) return 0; const n = Number(t); return Number.isFinite(n) && n >= 0 ? n : NaN }
+api.post('/labor-rates/import/preview', financeOnly, (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 2000) : []
+  if (!rows.length) return res.status(400).json({ error: 'ไม่พบรายการในไฟล์ — ต้องมีคอลัมน์ "หมวดหมู่ / รายการ" และ "ราคาต่ำสุด"' })
+  const all = db.prepare('SELECT * FROM labor_rates WHERE active=1').all()
+  const byId = new Map(all.map((r) => [r.id, r]))
+  const key = (n, v) => nkeyOf(n) + '|' + nkeyOf(v)
+  const byKey = new Map(all.map((r) => [key(r.name, r.variant), r]))
+  const changes = [], added = [], errors = []
+  let unchanged = 0
+  const seen = new Set()
+  rows.forEach((x, i) => {
+    const line = Number(x.row) || i + 2
+    const name = String(x.name || '').trim(), variant = String(x.variant || '').trim(), unit = String(x.unit || '').trim()
+    if (!name && (x.id == null || String(x.id).trim() === '') && String(x.price_min ?? '').trim() === '') return
+    const min = parsePrice(x.price_min)
+    let max = String(x.price_max ?? '').trim() === '' ? min : parsePrice(x.price_max)
+    if (Number.isNaN(min) || Number.isNaN(max)) { errors.push({ row: line, name, msg: 'ราคาไม่ใช่ตัวเลข' }); return }
+    if (max < min) max = min
+    let r = null, matchedBy = ''
+    if (x.id != null && String(x.id).trim() !== '') {
+      r = byId.get(Number(x.id)); matchedBy = 'รหัส'
+      if (!r) { errors.push({ row: line, name, msg: `รหัส ${x.id} ไม่มีในระบบ` }); return }
+    } else if (name) { r = byKey.get(key(name, variant)) || null; matchedBy = r ? 'ชื่อ+แบบ' : '' }
+    if (!r) {
+      if (!name) { errors.push({ row: line, name, msg: 'ไม่มีชื่อหมวดงาน' }); return }
+      added.push({ row: line, grp: String(x.grp || '').includes('เหมา') ? 'เหมายกหลัง' : 'แยกงาน', name, variant, unit: unit || 'ตร.ม.', price_min: min, price_max: max, note: String(x.note || '').trim() }); return
+    }
+    if (seen.has(r.id)) { errors.push({ row: line, name, msg: 'รายการนี้ซ้ำกับแถวก่อนหน้าในไฟล์' }); return }
+    seen.add(r.id)
+    const newUnit = unit && unit !== String(r.unit || '').trim() ? unit : ''
+    const same = (a, b) => Math.round(a * 100) === Math.round((b || 0) * 100)
+    if (same(min, r.price_min) && same(max, r.price_max) && !newUnit) { unchanged++; return }
+    const mid = (a, b) => (a + b) / 2
+    const pct = r.price_max > 0 && max > 0 ? Math.round(((mid(min, max) - mid(r.price_min, r.price_max)) / mid(r.price_min, r.price_max)) * 1000) / 10 : null
+    changes.push({ row: line, id: r.id, label: lrLabel(r), unit: r.unit, old_min: r.price_min, old_max: r.price_max, price_min: min, price_max: max, pct, new_unit: newUnit, matched_by: matchedBy })
+  })
+  res.json({ changes, added, unchanged, errors })
+})
+// ขั้น 2 บันทึกเฉพาะที่ผู้ใช้ติ๊ก + ประวัติ "Excel"
+api.post('/labor-rates/import/apply', financeOnly, (req, res) => {
+  const changes = Array.isArray(req.body?.changes) ? req.body.changes : []
+  const added = Array.isArray(req.body?.added) ? req.body.added : []
+  const today = new Date().toISOString().slice(0, 10)
+  let nUpd = 0, nAdd = 0
+  db.transaction(() => {
+    for (const c of changes) {
+      const r = db.prepare('SELECT * FROM labor_rates WHERE id=?').get(Number(c.id))
+      const min = Number(c.price_min), max = Math.max(min, Number(c.price_max))
+      if (!r || !Number.isFinite(min) || min < 0 || !Number.isFinite(max)) continue
+      const unit = c.new_unit ? String(c.new_unit).trim() : r.unit
+      db.prepare('UPDATE labor_rates SET price_min=?, price_max=?, unit=?, updated=? WHERE id=?').run(min, max, unit, today, r.id)
+      logLabor({ ...r, unit }, r.price_min, r.price_max, min, max, 'Excel', req.user.name); nUpd++
+    }
+    for (const a of added) {
+      const v = laborBody(a)
+      if (!v.name) continue
+      if (!v.seq) v.seq = (db.prepare('SELECT COALESCE(MAX(seq),0) m FROM labor_rates WHERE grp=?').get(v.grp).m || 0) + 1
+      const info = db.prepare('INSERT INTO labor_rates (grp,seq,name,variant,price_min,price_max,unit,note,active,updated) VALUES (?,?,?,?,?,?,?,?,1,?)')
+        .run(v.grp, v.seq, v.name, v.variant, v.price_min, v.price_max, v.unit, v.note, today)
+      logLabor({ id: info.lastInsertRowid, ...v }, null, null, v.price_min, v.price_max, 'Excel', req.user.name); nAdd++
+    }
+  })()
+  audit(req, 'นำเข้าราคากลางค่าแรงจาก Excel', `แก้ราคา ${nUpd} · เพิ่มใหม่ ${nAdd}`)
+  res.json({ ok: true, updated: nUpd, added: nAdd })
+})
 api.post('/labor-rates', financeOnly, (req, res) => {
   const v = laborBody(req.body || {})
   if (!v.name) return res.status(400).json({ error: 'กรุณากรอกชื่อหมวดงาน' })
   if (!v.seq) v.seq = (db.prepare('SELECT COALESCE(MAX(seq),0) m FROM labor_rates WHERE grp=?').get(v.grp).m || 0) + 1
   const info = db.prepare('INSERT INTO labor_rates (grp,seq,name,variant,price_min,price_max,unit,note,active,updated) VALUES (?,?,?,?,?,?,?,?,1,?)')
     .run(v.grp, v.seq, v.name, v.variant, v.price_min, v.price_max, v.unit, v.note, new Date().toISOString().slice(0, 10))
+  logLabor({ id: info.lastInsertRowid, ...v }, null, null, v.price_min, v.price_max, 'เพิ่มใหม่', req.user.name)
   audit(req, 'เพิ่มราคากลางค่าแรง', `${v.name}${v.variant ? ' (' + v.variant + ')' : ''} ฿${v.price_min}–${v.price_max}/${v.unit}`)
   res.status(201).json(db.prepare('SELECT * FROM labor_rates WHERE id=?').get(info.lastInsertRowid))
 })
@@ -5038,6 +5116,7 @@ api.put('/labor-rates/:id', financeOnly, (req, res) => {
   if (!v.name) return res.status(400).json({ error: 'กรุณากรอกชื่อหมวดงาน' })
   db.prepare('UPDATE labor_rates SET grp=?, seq=?, name=?, variant=?, price_min=?, price_max=?, unit=?, note=?, updated=? WHERE id=?')
     .run(v.grp, v.seq, v.name, v.variant, v.price_min, v.price_max, v.unit, v.note, new Date().toISOString().slice(0, 10), cur.id)
+  logLabor({ ...cur, ...v }, cur.price_min, cur.price_max, v.price_min, v.price_max, 'แก้เอง', req.user.name)
   audit(req, 'แก้ราคากลางค่าแรง', `${v.name}${v.variant ? ' (' + v.variant + ')' : ''} ฿${v.price_min}–${v.price_max}/${v.unit}`)
   res.json(db.prepare('SELECT * FROM labor_rates WHERE id=?').get(cur.id))
 })

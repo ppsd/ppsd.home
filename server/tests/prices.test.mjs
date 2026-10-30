@@ -117,3 +117,29 @@ test('จำการจับคู่จากถอดแบบ: บันท
   const al = (await call('GET', '/material-aliases')).data.filter((x) => x.alias === 'เหล็ก DB16 ยาว 10 ม. (ตามแบบ)')
   assert.deepEqual(al.map((x) => x.mp_id), [m2.id])
 })
+
+test('ค่าแรง: แก้ราคาลงประวัติ · นำเข้า Excel จับคู่รหัส/ชื่อ+แบบ · ช่วงราคา · "เสนอราคา" · รายการใหม่ · มีปัญหา', async () => {
+  const r = (await call('POST', '/labor-rates', { grp: 'แยกงาน', name: 'งานทดสอบก่อผนัง', variant: 'อิฐมวลเบา', price_min: 120, price_max: 150, unit: 'ตร.ม.' })).data
+  await call('PUT', '/labor-rates/' + r.id, { price_min: 130, price_max: 160 })
+  await call('PUT', '/labor-rates/' + r.id, { note: 'แก้หมายเหตุอย่างเดียว' })
+  const h = (await call('GET', `/labor-rates/${r.id}/history`)).data
+  assert.deepEqual(h.map((x) => [x.source, x.old_min, x.old_max, x.new_min, x.new_max]), [['แก้เอง', 120, 150, 130, 160], ['เพิ่มใหม่', null, null, 120, 150]])
+  const q = (await call('POST', '/labor-rates', { grp: 'แยกงาน', name: 'งานทดสอบฉาบ', price_min: 100, price_max: 100, unit: 'ตร.ม.' })).data
+  const rows = [
+    { row: 2, id: r.id, name: 'งานทดสอบก่อผนัง', variant: 'อิฐมวลเบา', price_min: 140, price_max: '', unit: 'ตร.ม.' }, // ช่วง → ราคาเดียว 140
+    { row: 3, id: '', name: 'งานทดสอบฉาบ', variant: '', price_min: 'เสนอราคา', price_max: '', unit: 'ตร.ม.' }, // ไม่มีรหัส → ชื่อ+แบบ → เสนอราคา
+    { row: 4, id: '', grp: 'เหมายกหลัง', name: 'งานทดสอบใหม่', variant: '', price_min: 3000, price_max: 3500, unit: 'ตร.ม.' },
+    { row: 5, id: 99999, name: 'ไม่มี', price_min: 1 },
+    { row: 6, id: r.id, name: 'x', price_min: 'abc' },
+  ]
+  const p = (await call('POST', '/labor-rates/import/preview', { rows })).data
+  assert.deepEqual(p.changes.map((c) => [c.row, c.price_min, c.price_max, c.matched_by]), [[2, 140, 140, 'รหัส'], [3, 0, 0, 'ชื่อ+แบบ']])
+  assert.deepEqual(p.added.map((a) => [a.name, a.grp, a.price_min, a.price_max]), [['งานทดสอบใหม่', 'เหมายกหลัง', 3000, 3500]])
+  assert.deepEqual(p.errors.map((e) => e.row).sort(), [5, 6])
+  const ap = (await call('POST', '/labor-rates/import/apply', { changes: p.changes, added: p.added })).data
+  assert.deepEqual([ap.updated, ap.added], [2, 1])
+  const list = (await call('GET', '/labor-rates')).data
+  assert.deepEqual([list.find((x) => x.id === r.id).price_min, list.find((x) => x.id === r.id).price_max], [140, 140])
+  assert.equal(list.find((x) => x.id === q.id).price_max, 0)
+  assert.equal((await call('GET', `/labor-rates/${r.id}/history`)).data[0].source, 'Excel')
+})
