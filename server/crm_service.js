@@ -2,6 +2,7 @@
 import { db } from './db.js'
 import { isManager } from './auth.js'
 import { housesOfCustomer, qcProgressOf, hooks } from './crm.js'
+import { lt } from './line-texts.js'
 
 // ---- schema ----
 function ensureCol(table, col, type) {
@@ -109,8 +110,9 @@ function docsMessage(c, publicBase) {
   if (base && c.portal_token) t += `\n\n🔗 ดูทุกอย่างของบ้านคุณได้ที่\n${base}/portal/${c.portal_token}`
   return t
 }
+const shortName = (c) => String(c?.name || '').replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '')
 function helpMessage(c) {
-  return `สวัสดีค่ะคุณ${c.name.replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '')} 🙏 PPSD พร้อมดูแลค่ะ\n\nพิมพ์ได้เลย:\n• ความคืบหน้า — ดูว่าบ้านไปถึงไหนแล้ว (+รูปล่าสุด)\n• งวด — งวดเงินและยอดที่ชำระแล้ว\n• เอกสาร — สัญญา/ใบเสร็จ/ไฟล์บ้าน\n• แจ้งซ่อม ห้องน้ำรั่ว — แจ้งปัญหา (ส่งรูปได้) ได้เลขเคส ติดตามได้\n• เคส — สถานะเรื่องที่แจ้งไว้\n• ประกัน — รายการรับประกันและวันหมด\n• บอกต่อ — รหัสแนะนำเพื่อน\n• ติดต่อ — เบอร์/ไลน์ทีมงาน\nหรือพิมพ์ข้อความอะไรก็ได้ ทีมงานจะได้รับและติดต่อกลับค่ะ`
+  return lt('cust.help', { name: shortName(c) }) // แก้ข้อความได้ในหน้า LINE → ข้อความ
 }
 function photosOf(house, n = 3) {
   const imgs = db.prepare('SELECT images FROM qc_inspections WHERE house_code=? AND images IS NOT NULL ORDER BY id DESC LIMIT 5').all(house.code).flatMap((r) => jparse(r.images) || [])
@@ -215,7 +217,7 @@ export async function handleCustomerLineMessage(d, uid, c, text, replyToken) {
   if (ctx?.kind === 'nps_comment') {
     d.setLineCtx(uid, null)
     if (!/^(ข้าม|-|ไม่มี|skip)$/i.test(t)) { db.prepare('UPDATE nps SET comment=? WHERE id=?').run(t, ctx.nps_id); logContact(c.id, 'LINE', `ความเห็นหลังให้คะแนน: ${t}`, c.name); d.notifyChange(['crm']) }
-    return reply('ขอบคุณค่ะ 🙏 ทีมงานรับทราบแล้ว')
+    return reply(lt('cust.nps_thanks'))
   }
   if (ctx?.kind === 'ccase') {
     if (/^(ไม่มี|ไม่|ข้าม|no|ส่ง|ตกลง|ok|โอเค)$/i.test(t)) { d.setLineCtx(uid, null); return reply(finishCustomerCase(d, c, ctx, null)) }
@@ -301,7 +303,7 @@ export function runAutomations(d, force = false) {
       const hs = housesOfCustomer(c).filter((h) => h.status !== 'ส่งมอบแล้ว' && h.status !== 'after-service')
       if (!hs.length) continue
       const pics = hs.flatMap((h) => photosOf(h, 2)).slice(0, 2).map((u) => ({ type: 'image', originalContentUrl: u, previewImageUrl: u }))
-      d.linePush(c.line_uid, ['📬 อัปเดตประจำสัปดาห์จาก PPSD', ...progressMessages(c, hs).slice(0, 2), ...pics].slice(0, 5)); out.weekly++
+      d.linePush(c.line_uid, [lt('cust.weekly_title'), ...progressMessages(c, hs).slice(0, 2), ...pics].slice(0, 5)); out.weekly++
     }
   }
   // 2) เตือนงวดก่อนครบกำหนด N วัน
@@ -311,7 +313,7 @@ export function runAutomations(d, force = false) {
       const h = db.prepare('SELECT * FROM houses WHERE code=?').get(i.house_code); if (!h) continue
       const c = customersWithLine.find((x) => x.id === h.customer_id || x.name === h.customer); if (!c) continue
       if (!sentOnce('inst:' + i.id)) continue
-      d.linePush(c.line_uid, `💰 แจ้งเตือนงวดเงิน บ้าน ${h.name}\nงวด ${i.no} ${i.detail || ''} ยอด ${fmt((Number(i.amount) || 0) - (Number(i.paid) || 0))} บาท\nครบกำหนด ${thDate(i.due_iso)} (อีก ${daysBetween(today, i.due_iso)} วัน)\nชำระแล้วส่งสลิปมาที่นี่ได้เลยค่ะ ขอบคุณค่ะ 🙏`); out.inst++
+      d.linePush(c.line_uid, lt('cust.inst_reminder', { house: h.name, no: i.no, detail: i.detail || '', amount: fmt((Number(i.amount) || 0) - (Number(i.paid) || 0)), due: thDate(i.due_iso), days: daysBetween(today, i.due_iso) })); out.inst++
     }
   }
   // 3) ส่งมอบ → ขอบคุณ + ประกัน + NPS
@@ -319,7 +321,7 @@ export function runAutomations(d, force = false) {
     for (const h of db.prepare("SELECT * FROM houses WHERE status IN ('ส่งมอบแล้ว','after-service')").all()) {
       if (!sentOnce('delivered:' + h.code)) continue
       const c = customersWithLine.find((x) => x.id === h.customer_id || x.name === h.customer); if (!c) continue
-      d.linePush(c.line_uid, [`🎉 ยินดีด้วยกับบ้านใหม่ค่ะ คุณ${c.name.replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '')}\nขอบคุณที่ไว้วางใจ PPSD สร้างบ้าน ${h.name} ค่ะ`, warrantyMessage(c)])
+      d.linePush(c.line_uid, [lt('cust.new_home', { name: shortName(c), house: h.name }), warrantyMessage(c)])
       askNps(d, c, h.code, 'delivery:' + h.code, 'โดยรวมแล้วคุณพอใจกับบ้านและการทำงานของ PPSD แค่ไหนคะ? (0 = ไม่พอใจเลย ถึง 10 = ประทับใจมาก) ตอบเป็นตัวเลขได้เลยค่ะ'); out.delivery++
     }
   }
@@ -329,9 +331,9 @@ export function runAutomations(d, force = false) {
     for (const h of db.prepare("SELECT * FROM houses WHERE deliver_date IS NOT NULL AND deliver_date<>''").all()) {
       const dd = parseAnyDate(h.deliver_date); if (!dd || dd.slice(5) !== mmdd || dd.slice(0, 4) === today.slice(0, 4)) continue
       const c = customersWithLine.find((x) => x.id === h.customer_id || x.name === h.customer); if (!c || !sentOnce(`anniv:${h.code}:${today.slice(0, 4)}`)) continue
-      d.linePush(c.line_uid, `🎂 ครบรอบ ${Number(today.slice(0, 4)) - Number(dd.slice(0, 4))} ปี ที่ได้อยู่บ้าน ${h.name} แล้วนะคะ 🏡\nPPSD ขอให้ทุกวันในบ้านมีความสุขค่ะ — มีอะไรให้ดูแล พิมพ์ 'แจ้งซ่อม' ได้เสมอ`); out.anniv++
+      d.linePush(c.line_uid, lt('cust.anniversary', { years: Number(today.slice(0, 4)) - Number(dd.slice(0, 4)), house: h.name })); out.anniv++
     }
-    for (const c of customersWithLine) { if (c.birthday && String(c.birthday).slice(5) === mmdd && sentOnce(`bday:${c.id}:${today.slice(0, 4)}`)) { d.linePush(c.line_uid, `🎉 สุขสันต์วันเกิดค่ะ คุณ${c.name.replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '')} 🎂\nขอให้มีความสุขมากๆ จากทีมงาน PPSD ค่ะ`); out.bday++ } }
+    for (const c of customersWithLine) { if (c.birthday && String(c.birthday).slice(5) === mmdd && sentOnce(`bday:${c.id}:${today.slice(0, 4)}`)) { d.linePush(c.line_uid, lt('cust.birthday', { name: shortName(c) })); out.bday++ } }
   }
   // 5) ประกันใกล้หมด (30 วัน) → แจ้งลูกค้า + กระดิ่ง
   if (s.crm_auto_warranty === '1' && atHour) {

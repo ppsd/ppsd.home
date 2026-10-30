@@ -17,6 +17,7 @@ import PrintDoc from './components/shared/PrintDoc'
 import Issues from './components/site/Issues'
 import Expenses from './components/accounting/Expenses'
 import Users from './components/admin/Users'
+import LineCenter from './components/admin/LineCenter'
 import Crm from './components/sales/Crm'
 import Reports from './components/dashboard/Reports'
 import Gantt from './components/dashboard/Gantt'
@@ -46,7 +47,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users' | 'stock'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -56,7 +57,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
-  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault',
+  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line',
 }
 
 export default function App() {
@@ -357,6 +358,7 @@ export default function App() {
       case 'issues': return <Issues onAddIssue={openAddIssue} />
       case 'expenses': return <Expenses onAddExpense={openAddExpense} />
       case 'users': return <Users onAddUser={openAddUser} />
+      case 'line': return <LineCenter />
       case 'customers': return <Crm />
       case 'gantt': return <Gantt />
       case 'sales': return <Sales />

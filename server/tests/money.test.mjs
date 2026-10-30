@@ -2578,3 +2578,23 @@ test('รับของผ่าน LINE: รับด้วยข้อคว�
   assert.equal((await GET('/expenses')).data.find((e) => e.po_id === po.id).tax_invoice_no, 'IV-6810-0045', 'ภาษีซื้อเข้ารายจ่าย')
   await PUT('/controls', { block_self_approve: true })
 })
+
+test('ข้อความ LINE: แอดมินแก้ได้ · ว่าง/เท่าค่าตั้งต้น = คืนค่า · ยาวเกิน/คีย์ผิดถูกปฏิเสธ · คนอื่นแก้ไม่ได้', async () => {
+  const list = (await GET('/line-texts')).data
+  const row = list.find((r) => r.key === 'staff.help_staff')
+  assert.ok(row && row.vars.some((v) => v.name === 'name') && !row.custom)
+  const put = await PUT('/line-texts/staff.help_staff', { text: 'สวัสดี {name} ทดสอบ' })
+  assert.equal(put.status, 200); assert.equal(put.data.custom, true); assert.equal(put.data.text, 'สวัสดี {name} ทดสอบ')
+  assert.equal((await GET('/line-texts')).data.find((r) => r.key === 'staff.help_staff').text, 'สวัสดี {name} ทดสอบ')
+  assert.equal((await PUT('/line-texts/staff.help_staff', { text: row.default })).data.custom, false, 'เท่าค่าตั้งต้น = ไม่นับว่าแก้')
+  await PUT('/line-texts/staff.help_staff', { text: 'x' })
+  const reset = await PUT('/line-texts/staff.help_staff', { text: '' })
+  assert.equal(reset.data.custom, false); assert.equal(reset.data.text, row.default)
+  assert.equal((await PUT('/line-texts/staff.help_staff', { text: 'ก'.repeat(4501) })).status, 400)
+  assert.equal((await PUT('/line-texts/nope.key', { text: 'x' })).status, 400)
+  const adminToken = token
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.equal((await GET('/line-texts')).status, 403)
+  assert.equal((await PUT('/line-texts/staff.help_staff', { text: 'x' })).status, 403)
+  token = adminToken
+})

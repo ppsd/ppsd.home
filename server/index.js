@@ -21,6 +21,7 @@ import { renderElementPng } from './render.js'
 import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
+import { lt, listLineTexts, setLineText } from './line-texts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1241,7 +1242,7 @@ async function sendPoDoc(poId, byName) {
   const base = publicBaseUrl()
   const imgUrl = base ? `${base}/api/pub/doc/po/${po.id}/${img.key}.png` : ''
   const st = approvalState('po', po.id)
-  const head = `🧾 ใบสั่งซื้อ ${po.no} อนุมัติครบแล้ว (${st.approvals.map((a) => a.approver).join(', ') || byName || '-'})\nร้าน: ${po.vendor} · ยอด ${fmtMoney(po.amount)} บาท · ${po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'}${po.pr_no ? ' · อ้าง ' + po.pr_no : ''}\nสั่งของกับร้านได้เลยค่ะ พอของมาถึง พิมพ์ 'รับของ ${po.no}' ในแชทนี้ แล้วส่งรูปใบส่งของ/ใบกำกับ + รูปของที่ได้รับ`
+  const head = `🧾 ใบสั่งซื้อ ${po.no} อนุมัติครบแล้ว (${st.approvals.map((a) => a.approver).join(', ') || byName || '-'})\nร้าน: ${po.vendor} · ยอด ${fmtMoney(po.amount)} บาท · ${po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'}${po.pr_no ? ' · อ้าง ' + po.pr_no : ''}\n${lt('po.approved_next', { po_no: po.no, vendor: po.vendor })}`
   const msgs = imgUrl ? [head, { type: 'image', originalContentUrl: imgUrl, previewImageUrl: imgUrl }] : [head + '\n\n(ดูใบ PO ได้ในหน้า จัดซื้อ → ใบสั่งซื้อ)']
   let ok = 0
   for (const u of targets) { if (await linePush(u.line_uid, msgs)) ok++ }
@@ -1334,7 +1335,7 @@ async function sendPrDoc(prId, byName) {
   const base = publicBaseUrl()
   const imgUrl = base ? `${base}/api/pub/doc/pr/${pr.id}/${img.key}.png` : ''
   const st = approvalState('pr', pr.id)
-  const head = `📄 ใบขอซื้อ ${pr.no} อนุมัติครบแล้ว (${st.approvals.map((a) => a.approver).join(', ') || byName || '-'})\nบ้าน: ${pr.house || '-'} · ผู้ขอ: ${pr.by || '-'}\n${approvalLines('pr', pr).filter(([l]) => /^\d+\.$|^รายการ$|^รวม$/.test(l)).map(([l, v]) => `${l} ${v}`).join('\n')}\n\n📎 ขั้นต่อไป: ส่งรูปใบเสนอราคาของแต่ละร้านตอบกลับในแชทนี้ได้เลย (ไม่ต้องพิมพ์เลข PR) พอครบ${quoteNeeded(pr)} ร้าน AI จะเทียบราคาและร่าง PO ให้เอง`
+  const head = `📄 ใบขอซื้อ ${pr.no} อนุมัติครบแล้ว (${st.approvals.map((a) => a.approver).join(', ') || byName || '-'})\nบ้าน: ${pr.house || '-'} · ผู้ขอ: ${pr.by || '-'}\n${approvalLines('pr', pr).filter(([l]) => /^\d+\.$|^รายการ$|^รวม$/.test(l)).map(([l, v]) => `${l} ${v}`).join('\n')}\n\n${lt('pr.doc_next', { pr_no: pr.no, quotes: quoteNeeded(pr) })}`
   const msgs = imgUrl
     ? [head, { type: 'image', originalContentUrl: imgUrl, previewImageUrl: imgUrl }]
     : [head + '\n\n(ระบบสร้างรูปใบ PR ไว้แล้ว แต่ยังไม่มีลิงก์สาธารณะให้ LINE ดึงรูป — ดูใบได้ในหน้า จัดซื้อ)']
@@ -1493,18 +1494,20 @@ async function handleLineUserMessage(uid, text, replyToken) {
     if (cust) return handleCustomerLineMessage(crmDeps, uid, cust, t, replyToken)
     if (/^\d{6}$/.test(t)) {
       const linked = consumeLineLinkCode(t, uid)
-      if (linked) return lineReply(replyToken, `✅ ผูก LINE กับบัญชี "${linked.name}" แล้ว\n\nพิมพ์ 'ช่วย' เพื่อดูคำสั่งที่ใช้ได้`)
+      if (linked) return lineReply(replyToken, lt('staff.link_ok', { name: linked.name }))
       const cl = consumeCustomerCode(t, uid)
       if (cl) { setLineCtx(uid, null); return handleCustomerLineMessage(crmDeps, uid, cl, 'สวัสดี', replyToken) }
-      return lineReply(replyToken, '❌ รหัสไม่ถูกหรือหมดอายุ — พนักงาน: ขอรหัสใหม่ที่ ERP → ผู้ใช้งาน → ผูก LINE · ลูกค้า: ขอรหัสใหม่จากทีมงาน PPSD ค่ะ')
+      return lineReply(replyToken, lt('staff.code_bad'))
     }
-    return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้\n1) เข้า ERP → เมนู ผู้ใช้งาน → กด "ผูก LINE"\n2) ส่งรหัส 6 หลักที่ได้มาที่นี่')
+    return lineReply(replyToken, lt('staff.not_linked'))
   }
   const low = t.toLowerCase()
   if (/^(ช่วย|help|\?|คำสั่ง)$/i.test(t)) {
-    return lineReply(replyToken, (lineCanCommand(u)
-      ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• รออนุมัติ — เอกสารที่รอคุณอนุมัติ (กดปุ่มในการ์ดได้เลย) · อนุมัติ PR-69-0144 / ปฏิเสธ PR-69-0144 เหตุผล\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
-      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ / เปิด PR / ขอจ้าง … เช่น "เปิด PR ปูนซีเมนต์ 50 ถุง บ้านคุณพร" หรือ "ขอจ้าง ช่างทาสีเก็บงานที่ออฟฟิศ" → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ\n\nค่าน้ำมันรถ:\n• เบิกน้ำมัน 1500 บ้านคุณพร ทะเบียน กข1234 — ขอเบิกค่าน้ำมันรถ → 'ตกลง' ส่งให้ผู้บริหารอนุมัติ (จ่ายจากกองค่าน้ำมัน)` + lineReceive.help)
+    // เมนูช่วย — ข้อความแต่ละส่วนแก้ได้ในหน้า LINE → ข้อความ
+    return lineReply(replyToken, [
+      lineCanCommand(u) ? lt('staff.help_manager', { name: u.name }) : lt('staff.help_staff', { name: u.name }),
+      lt('staff.help_purchase', { checker: prChecker()?.name || 'ผู้ตรวจสอบ' }), lt('staff.help_fuel'), lt('staff.help_receive'),
+    ].filter((s) => s.trim()).join('\n\n'))
   }
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
   const ctx = getLineCtx(uid)
@@ -1901,8 +1904,10 @@ function submitLineOrder(uid, u, d, replyToken) {
     const checker = prChecker()
     setLineCtx(uid, { kind: 'srcpref', pr_id: pr.id }) // ถามช่องทางจัดซื้อต่อ
     return lineReply(replyToken, [pr.status === 'รอตรวจสอบ'
-      ? `✅ สร้างใบขอซื้อ ${pr.no} แล้ว\n${checker?.line_uid ? `📨 ส่งให้ ${checker.name} ตรวจสอบทาง LINE แล้ว` : `⚠ ${checker?.name || 'ผู้ตรวจสอบ'} ยังไม่ผูก LINE — ใบรออยู่ในระบบ ให้ตรวจในเว็บ`} — ผ่านแล้วระบบจะออก PR ส่งขออนุมัติ และแจ้งคุณกลับมาที่นี่ค่ะ`
-      : `✅ สร้างใบขอซื้อ ${pr.no} แล้ว — ส่งขออนุมัติให้ผู้บริหารทาง LINE แล้วค่ะ`,
+      ? (checker?.line_uid
+        ? lt('pr.created_checker', { pr_no: pr.no, checker: checker.name })
+        : `✅ สร้างใบขอซื้อ ${pr.no} แล้ว\n⚠ ${checker?.name || 'ผู้ตรวจสอบ'} ยังไม่ผูก LINE — ใบรออยู่ในระบบ ให้ตรวจในเว็บ — ผ่านแล้วระบบจะออก PR ส่งขออนุมัติ และแจ้งคุณกลับมาที่นี่ค่ะ`)
+      : lt('pr.created_approver', { pr_no: pr.no }),
       `🛍 จะให้จัดซื้อสั่งจากที่ไหนดีคะ? ตอบตัวเลข\n1 ร้านค้าในระบบ\n2 ออนไลน์ — AI ค้นทุกร้านออนไลน์ เลือกที่ดีที่สุด 3 ร้าน ส่งลิงก์ให้จัดซื้อ\n3 ทั้งสองอย่าง\n(ไม่ตอบ = ร้านค้าในระบบ · ส่งรูปใบ PR ให้จัดซื้อทุกกรณี)`])
   } catch (e) { return lineReply(replyToken, '❌ สร้างใบขอซื้อไม่สำเร็จ: ' + (e.msg || e.message)) }
 }
@@ -8156,9 +8161,9 @@ function buildLineDigest() {
   } catch { /* ignore */ }
   const disk = diskInfo()
   if (disk?.low) L.push(`⚠️ ดิสก์เครื่อง server เหลือ ${disk.free_gb} GB (ใช้ไป ${disk.used_pct}%)${disk.critical ? ' — งดอัปโหลดไฟล์แล้ว' : ''}`)
-  if (!L.length) L.push('✅ ไม่มีเรื่องค้างเร่งด่วนวันนี้')
+  if (!L.length) L.push(lt('digest.empty'))
   try { L.push(`💰 เงินสด+ธนาคารตามบัญชี: ${baht(acct.cashBalance())}`) } catch { /* ignore */ }
-  return `📋 PPSD ERP สรุปเช้า ${todayTH()}\n\n` + L.join('\n')
+  return lt('digest.title', { date: todayTH() }) + '\n\n' + L.join('\n')
 }
 async function sendLine(text) {
   const token = getSetting('line_token', ''), to = getSetting('line_to', '')
@@ -8314,6 +8319,26 @@ api.post('/restart', adminOnly, (req, res) => {
   audit(req, 'สั่งรีสตาร์ทเซิร์ฟเวอร์จากหน้าเว็บ', serverVersion().stale ? 'โค้ดใหม่กว่า process' : '')
   res.json({ ok: true, pm2: !!process.env.pm_id })
   setTimeout(() => process.exit(0), 400)
+})
+// ---- ข้อความ LINE ที่แอดมินแก้ได้ (server/line-texts.js) ----
+api.get('/line-texts', adminOnly, (_req, res) => res.json(listLineTexts()))
+api.put('/line-texts/:key', adminOnly, (req, res) => {
+  const err = setLineText(req.params.key, req.body?.text)
+  if (err) return res.status(400).json({ error: err })
+  const row = listLineTexts().find((x) => x.key === req.params.key)
+  audit(req, row.custom ? 'แก้ข้อความ LINE' : 'คืนค่าข้อความ LINE ตั้งต้น', `${row.group} · ${row.label}`)
+  res.json(row)
+})
+// ส่งข้อความตัวอย่าง (ค่าตัวอย่างในช่อง) เข้า LINE ของแอดมินเอง — ดูหน้าตาจริงก่อนใช้
+api.post('/line-texts/:key/test', adminOnly, async (req, res) => {
+  const row = listLineTexts().find((x) => x.key === req.params.key)
+  if (!row) return res.status(404).json({ error: 'ไม่พบข้อความนี้' })
+  const uid = db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid
+  if (!uid) return res.status(400).json({ error: 'บัญชีของคุณยังไม่ได้ผูก LINE — ผูกก่อนจึงส่งทดสอบได้' })
+  const text = typeof req.body?.text === 'string' ? req.body.text : row.text
+  const sample = Object.fromEntries(row.vars.map((v) => [v.name, v.sample]))
+  const ok = await linePush(uid, '🧪 ทดสอบข้อความ: ' + row.label + '\n────────\n' + text.replace(/\{(\w+)\}/g, (m, k) => (k in sample ? sample[k] : m)))
+  res.status(ok ? 200 : 502).json(ok ? { ok: true } : { error: 'ส่ง LINE ไม่สำเร็จ — ' + (lineLastError?.reason || 'ตรวจ token') })
 })
 api.get('/tunnel', adminOnly, async (_req, res) => { await refreshLineWebhookActive(); res.json(tunnelInfo()) })
 api.put('/tunnel', adminOnly, async (req, res) => {

@@ -58,7 +58,7 @@ export default function Sidebar({ activePage, onNavigate, onClose, collapsed = f
   const canCeo = isCeoUser(user)  // สรุป QC ผู้บริหาร / สั่งงานด้วยเสียง: CEO + ผู้ดูแลระบบ
   const canVault = !!user?.vaultAllowed // คลังรหัสผ่าน: CEO + รายชื่อที่ CEO กำหนด (server ตัดสิน)
   const denied = deniedPages(user?.role === 'admin' ? [] : user?.deny_mods) // โมดูลที่แอดมินปิดสำหรับบัญชีนี้
-  const visible = (item?: NavDef) => !!item && !denied.has(item.id) && (!item.gate || (item.gate === 'finance' ? canFinance : item.gate === 'hr' ? canHr : item.gate === 'pms' ? canPms : item.gate === 'ceo' ? canCeo : item.gate === 'vault' ? canVault : canManager))
+  const visible = (item?: NavDef) => !!item && !denied.has(item.id) && (!item.gate || (item.gate === 'finance' ? canFinance : item.gate === 'hr' ? canHr : item.gate === 'pms' ? canPms : item.gate === 'ceo' ? canCeo : item.gate === 'vault' ? canVault : item.gate === 'admin' ? user?.role === 'admin' : canManager))
   const byId = Object.fromEntries(nav.map((n) => [n.id, n]))
 
   // แผนกไหนมีเมนูที่มองเห็นได้บ้าง
