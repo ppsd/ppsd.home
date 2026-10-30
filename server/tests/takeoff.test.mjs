@@ -316,3 +316,17 @@ test('จับคู่ราคากลางด้วยชื่อที�
   assert.equal(matchMaterial({ desc: 'คอนกรีตผสมเสร็จ 240ksc (ฐานราก)', unit: 'ลบ.ม.' }, mats, aliases).match?.id, 1)
   assert.equal(matchMaterial({ desc: 'คอนกรีตผสมเสร็จ 240 ksc', unit: 'ลบ.ม.' }, mats, []).match?.remembered, undefined)
 })
+
+test('จำผลถอดแบบ: ไฟล์+ข้อมูลบ้านเดิม = ใช้ผลเดิม (cached) · ข้อมูลบ้านต่าง = อ่านใหม่ · ?fresh=1 = บังคับอ่านใหม่', async () => {
+  const body = Buffer.from('%PDF-1.4 cache-test ' + Date.now())
+  const first = await upload({ name: 'c.pdf', mime: 'application/pdf', house: JSON.stringify({ area_m2: 99 }) }, body)
+  assert.equal(first.status, 200)
+  assert.equal(first.data.cached, null)
+  const again = await upload({ name: 'c.pdf', mime: 'application/pdf', house: JSON.stringify({ area_m2: 99 }) }, body)
+  assert.ok(again.data.cached?.at, 'ไฟล์เดิมต้องใช้ผลเดิม')
+  assert.equal(again.data.items.length, first.data.items.length)
+  const other = await upload({ name: 'c.pdf', mime: 'application/pdf', house: JSON.stringify({ area_m2: 120 }) }, body)
+  assert.equal(other.data.cached, null, 'ข้อมูลบ้านเปลี่ยน = อ่านใหม่')
+  const fresh = await upload({ name: 'c.pdf', mime: 'application/pdf', house: JSON.stringify({ area_m2: 99 }), fresh: '1' }, body)
+  assert.equal(fresh.data.cached, null, 'fresh=1 ต้องไม่ใช้ผลเดิม')
+})

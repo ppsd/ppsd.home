@@ -11,7 +11,7 @@ import zlib from 'node:zlib'
 import { registerCrmService, registerCrmPublic, serviceNotifications, customerByLine, consumeCustomerCode, handleCustomerLineMessage, handleCustomerLineImage, onQcSaved } from './crm_service.js'
 import { login, logout, requireAuth, requireRole, requireManager, isManager, requireSalary, canSeeSalary, effectivePosition } from './auth.js'
 import { hashPin, verifyPin, verifyToken } from './security.js'
-import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
+import { randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
@@ -1055,7 +1055,7 @@ async function aiCompareQuotes(pr, user) {
   else {
     if (!aiKey()) throw { code: 400, msg: AI_NO_KEY }
     const media = files.slice(0, 10).map((f) => { const m = String(f.image).match(/^data:(image\/[\w+.-]+);base64,(.+)$/); return m ? { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } } : null }).filter(Boolean)
-    const ai = await aiAsk({ media, prompt: COMPARE_PROMPT(pr) })
+    const ai = await aiAsk({ feature: 'เทียบใบเสนอราคา', media, prompt: COMPARE_PROMPT(pr) })
     if (!ai.ok) throw { code: ai.code || 502, msg: ai.error }
     text = ai.text
   }
@@ -1178,7 +1178,7 @@ ${want}
 ค้นหลายคำค้นต่อรายการถ้าจำเป็น (ชื่อสินค้า + ร้าน) แล้วตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น:
 {"items":[{"desc":"ชื่อรายการตามที่ขอ","offers":[{"rank":1,"shop":"ชื่อร้าน/แพลตฟอร์ม","name":"ชื่อสินค้าตามหน้าร้าน","price":0,"unit":"หน่วย","url":"ลิงก์หน้าสินค้า","note":"ค่าส่ง/โปร/สต๊อก/ทำไมถึงแนะนำ"}],"not_found":false}],"summary":"สรุปสั้นๆ ว่าร้านไหนคุ้มสุดโดยรวม"}
 กติกา: price เป็นตัวเลขบาทต่อหน่วยไม่มีคอมม่า (ไม่รู้ = 0) · url ต้องเป็นลิงก์จริงจากผลค้น · ถ้าหาไม่เจอจริงๆ ให้ not_found=true และ offers=[] · เรียง rank 1 = ดีที่สุด`
-    const ai = await aiAsk({ prompt, maxTokens: 8000, model: process.env.PPSD_AI_SEARCH_MODEL || 'claude-sonnet-5', tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.min(20, list.length * 3 + 2) }] })
+    const ai = await aiAsk({ feature: 'หาของออนไลน์', by: byUser?.name || '', prompt, maxTokens: 8000, model: process.env.PPSD_AI_SEARCH_MODEL || 'claude-sonnet-5', tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.min(20, list.length * 3 + 2) }] })
     if (!ai.ok) throw { code: ai.code || 502, msg: ai.error }
     parsed = extractJsonBlock(ai.text)
   }
@@ -1755,7 +1755,7 @@ ${houses.map((h) => `${h.code}|${h.name}|${h.kind === 'office' ? 'ออฟฟ�
 - task: (intent=work) สรุปงานที่ต้องทำสั้นๆ
 - due_iso: วันกำหนด YYYY-MM-DD จาก วันนี้/พรุ่งนี้/มะรืน/ศุกร์นี้/15 ก.ย. ฯลฯ · ไม่มี = ""
 - urgent: true ถ้ามี ด่วน/เร่ง/รีบ/ทันที`
-  const ai = await aiAsk({ prompt, maxTokens: 1200, model: AI_PARSE_MODEL })
+  const ai = await aiAsk({ feature: 'อ่านข้อความแชท', prompt, maxTokens: 1200, model: AI_PARSE_MODEL })
   if (!ai.ok) { console.error('[ai-parse]', ai.error); return null }
   const parsed = extractJsonBlock(ai.text)
   return parsed ? normalizeAiParse(parsed, sender) : null
@@ -2503,7 +2503,28 @@ const AI_NO_KEY = 'ยังไม่ได้ตั้งค่ากุญแ�
 // ส่งรูป/PDF + คำสั่งให้ Claude แล้วคืนข้อความตอบ (media = content block รูปหรือเอกสาร, หรือ null ถ้ามีแต่ข้อความ)
 // รุ่น Opus 5 / Sonnet 5 "คิด" ก่อนตอบและใช้ token ส่วนนั้นจาก max_tokens ด้วย → ต้องเผื่อ max_tokens ให้พอ
 // และตั้ง effort ต่ำสำหรับงานอ่านเอกสาร (ไม่งั้นคิดนานและกิน token จนไม่เหลือให้ตอบ) — Haiku 4.5 ไม่รับ effort
-async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools, timeoutMs = 180000 }) {
+// ราคาประกาศต่อ 1 ล้าน token (USD) [input, output] — cache อ่าน = 0.1× input · cache เขียน = 1.25× input · ค้นเว็บ $10 / 1,000 ครั้ง
+// ใช้ประมาณค่าใช้จ่ายเท่านั้น (บิลจริงดูที่ console.anthropic.com) · รุ่นที่ไม่อยู่ในตาราง = ใช้ราคา Opus
+const AI_PRICES = {
+  'claude-fable-5-1': [10, 50], 'claude-fable-5': [10, 50], 'claude-opus-5-5': [4, 20], 'claude-opus-5': [5, 25], 'claude-opus-4-8': [5, 25], 'claude-opus-4-7': [5, 25],
+  'claude-opus-4-6': [5, 25], 'claude-sonnet-5-5': [2, 10], 'claude-sonnet-5': [2, 10], 'claude-sonnet-4-6': [3, 15], 'claude-haiku-5-5': [0.1, 0.5], 'claude-haiku-4-5': [1, 5],
+}
+function aiCostUsd(model, u = {}) {
+  const [pi, po] = AI_PRICES[model] || AI_PRICES[Object.keys(AI_PRICES).find((k) => String(model).startsWith(k)) || ''] || [5, 25]
+  const tok = (n) => Number(n) || 0
+  const cost = (tok(u.input_tokens) * pi + tok(u.cache_read_input_tokens) * pi * 0.1 + tok(u.cache_creation_input_tokens) * pi * 1.25 + tok(u.output_tokens) * po) / 1e6
+    + tok(u.server_tool_use?.web_search_requests) * 0.01
+  return Math.round(cost * 10000) / 10000
+}
+function logAiUsage(feature, model, by, ok, u = {}) {
+  try {
+    const cost = aiCostUsd(model, u)
+    db.prepare('INSERT INTO ai_usage (at,feature,model,by,ok,input_tokens,output_tokens,cache_read,cache_write,web_searches,cost_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(nowTS(), feature || 'อื่นๆ', model, by || 'ระบบ', ok ? 1 : 0, u.input_tokens || 0, u.output_tokens || 0, u.cache_read_input_tokens || 0, u.cache_creation_input_tokens || 0, u.server_tool_use?.web_search_requests || 0, cost)
+    return cost
+  } catch { return 0 }
+}
+async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools, timeoutMs = 180000, feature = 'อื่นๆ', by = '' }) {
   if (!key) return { ok: false, error: AI_NO_KEY, code: 400 }
   const mediaArr = Array.isArray(media) ? media : media ? [media] : []
   const content = [...mediaArr, { type: 'text', text: prompt }]
@@ -2518,11 +2539,13 @@ async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = 
       signal: AbortSignal.timeout(timeoutMs),
     })
     const data = await r.json().catch(() => ({}))
+    // บันทึกการใช้ทุกครั้งที่มี usage (รวมกรณี AI ตอบไม่ครบ/ปฏิเสธ — token ถูกคิดเงินแล้ว)
+    const cost = data?.usage ? logAiUsage(feature, model, by, r.ok && data.stop_reason !== 'refusal', data.usage) : 0
     if (!r.ok) return { ok: false, code: 502, error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)), model }
     if (data.stop_reason === 'refusal') return { ok: false, code: 502, error: 'AI ปฏิเสธคำขอนี้ (' + (data.stop_details?.category || 'refusal') + ')', model }
     const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join('')
     if (!text && data.stop_reason === 'max_tokens') return { ok: false, code: 502, error: 'AI ใช้ token หมดก่อนตอบ (เอกสารยาวเกินไป) — ลองถ่ายเฉพาะส่วนรายการสินค้า', model }
-    return { ok: true, text, model }
+    return { ok: true, text, model, cost_usd: cost, usage: data.usage }
   } catch (e) { return { ok: false, code: 502, error: e.name === 'TimeoutError' ? `AI ตอบไม่ทันใน ${Math.round(timeoutMs / 60000)} นาที — แบบอาจยาวเกินไป ลองเลือกเฉพาะแผ่นที่ต้องถอด` : 'เรียก AI ไม่สำเร็จ: ' + e.message, model } }
 }
 // ให้ AI อ่านตารางงวดงานจากสัญญา (PDF/รูป) → คืน JSON งวดงานให้พรีวิว
@@ -2549,7 +2572,7 @@ api.post('/houses/:code/installments/extract', canWrite, express.raw({ type: 'ap
   const media = mime.includes('pdf')
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
     : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
-  const ai = await aiAsk({ media, prompt: EXTRACT_PROMPT })
+  const ai = await aiAsk({ feature: 'อ่านงวดงานจากสัญญา', by: req.user?.name, media, prompt: EXTRACT_PROMPT })
   if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error })
   const parsed = extractJsonBlock(ai.text)
   const items = (parsed?.installments || parsed || []).map((it, i) => ({ no: Number(it.no) || i + 1, detail: String(it.detail || ''), amount: Number(String(it.amount).toString().replace(/,/g, '')) || 0, side: it.side === 'contractor' ? 'contractor' : 'customer', due_iso: /^\d{4}-\d{2}-\d{2}$/.test(String(it.due_iso || '')) ? it.due_iso : '' }))
@@ -2582,7 +2605,7 @@ api.post('/sales-docs/extract', canWrite, express.raw({ type: 'application/octet
       ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
       : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
     const hint = (wantType || wantVat) ? `\nผู้ใช้ระบุแล้ว: ${wantType ? 'doc_type=' + wantType : ''} ${wantVat ? 'vat_mode=' + wantVat : ''} — ให้ใช้ค่านี้ ไม่ต้องเดาจากเอกสาร` : ''
-    const ai = await aiAsk({ media, prompt: SALES_EXTRACT_PROMPT + hint })
+    const ai = await aiAsk({ feature: 'อ่านเอกสารขาย', by: req.user?.name, media, prompt: SALES_EXTRACT_PROMPT + hint })
     if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error })
     parsed = extractJsonBlock(ai.text) || {}
   }
@@ -2590,6 +2613,18 @@ api.post('/sales-docs/extract', canWrite, express.raw({ type: 'application/octet
   const out = { doc_type: wantType || (['quote', 'invoice', 'receipt'].includes(parsed?.doc_type) ? parsed.doc_type : 'quote'), customer: String(parsed?.customer || '').trim(), date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed?.date || '')) ? parsed.date : '', items, vat_mode: wantVat || (['none', 'excl', 'incl'].includes(parsed?.vat_mode) ? parsed.vat_mode : 'excl'), total: Number(String(parsed?.total ?? 0).replace(/,/g, '')) || 0, note: String(parsed?.note || '') }
   audit(req, 'AI อ่านใบเก่าเป็นเอกสารขาย', `${out.customer || '-'} ${items.length} รายการ`)
   res.json(out)
+})
+// สรุปค่าใช้จ่าย AI: เดือนนี้ · แยกฟีเจอร์ · 6 เดือนล่าสุด · รายการล่าสุด (ประมาณจากราคาประกาศ)
+api.get('/ai-usage', financeOnly, (_req, res) => {
+  const month = nowTS().slice(0, 7)
+  const sum = (where, ...args) => db.prepare(`SELECT COUNT(*) calls, COALESCE(SUM(cost_usd),0) cost, COALESCE(SUM(input_tokens),0) input, COALESCE(SUM(output_tokens),0) output, COALESCE(SUM(web_searches),0) searches FROM ai_usage ${where}`).get(...args)
+  res.json({
+    month, this_month: sum('WHERE substr(at,1,7)=?', month), all_time: sum(''),
+    by_feature: db.prepare('SELECT feature, COUNT(*) calls, SUM(cost_usd) cost FROM ai_usage WHERE substr(at,1,7)=? GROUP BY feature ORDER BY cost DESC').all(month),
+    by_month: db.prepare('SELECT substr(at,1,7) month, COUNT(*) calls, SUM(cost_usd) cost FROM ai_usage GROUP BY month ORDER BY month DESC LIMIT 6').all(),
+    recent: db.prepare('SELECT * FROM ai_usage ORDER BY id DESC LIMIT 50').all(),
+    cache: db.prepare('SELECT COUNT(*) files, COALESCE(SUM(hits),0) hits, COALESCE(SUM(hits * cost_usd),0) saved FROM takeoff_cache').get(),
+  })
 })
 // ตั้งค่ากุญแจ AI (admin) — เก็บใน settings · เลือกรุ่นได้ · ปุ่มทดสอบยิงคำถามสั้นๆ เช็คว่ากุญแจใช้ได้จริง
 api.get('/ai-settings', adminOnly, (_req, res) => res.json({ hasKey: !!aiKey(), model: aiModel(), models: AI_MODELS, fromEnv: !getSetting('ai_api_key', '') && !!process.env.ANTHROPIC_API_KEY }))
@@ -2601,7 +2636,7 @@ api.post('/ai-settings', adminOnly, (req, res) => {
 })
 api.post('/ai-settings/test', adminOnly, async (_req, res) => {
   const t0 = Date.now()
-  const ai = await aiAsk({ media: null, prompt: 'ตอบสั้นๆ คำเดียวว่า "พร้อมใช้งาน"', maxTokens: 400 })
+  const ai = await aiAsk({ feature: 'ทดสอบกุญแจ AI', media: null, prompt: 'ตอบสั้นๆ คำเดียวว่า "พร้อมใช้งาน"', maxTokens: 400 })
   if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error, model: ai.model })
   res.json({ ok: true, model: ai.model, reply: String(ai.text || '').trim().slice(0, 80), ms: Date.now() - t0 })
 })
@@ -4458,7 +4493,7 @@ api.post('/purchase-orders/:id/extract-receipt', canWrite, express.raw({ type: '
   const media = mime.includes('pdf')
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
     : { type: 'image', source: { type: 'base64', media_type: mime.startsWith('image/') ? mime : 'image/jpeg', data: b64 } }
-  const ai = await aiAsk({ media, prompt: RECEIPT_PROMPT })
+  const ai = await aiAsk({ feature: 'อ่านใบส่งของ', by: req.user?.name, media, prompt: RECEIPT_PROMPT })
   if (!ai.ok) return res.status(ai.code || 502).json({ error: ai.error })
   const parsed = extractJsonBlock(ai.text)
   const items = (parsed?.items || parsed || []).map((it) => {
@@ -4795,6 +4830,21 @@ api.post('/approve/:docType/:docId', requireManager, (req, res) => { try { res.j
 api.post('/reject/:docType/:docId', requireManager, (req, res) => { try { res.json(doReject(req.params.docType, req.params.docId, req)) } catch (e) { res.status(e.code || 400).json({ error: e.msg || e.message }) } })
 // ===== ราคากลางวัสดุ (Material Standard Prices) — อ้างอิงจากประวัติสั่งซื้อจริง =====
 const nkeyOf = (n) => String(n || '').replace(/\s+/g, '').replace(/["“”]/g, '').toLowerCase()
+// ความเชื่อมั่นของราคากลาง: จำนวนครั้งที่ซื้อ (≥4 สูง · 2–3 กลาง · 1 ต่ำ) แล้วลดลง 1 ขั้นถ้าราคาแกว่งเกิน 15% ของราคากลาง
+function confOf(po, min, max, central) {
+  let c = po >= 4 ? 2 : po >= 2 ? 1 : 0
+  if (central > 0 && max > min && (max - min) / central > 0.15) c = Math.max(0, c - 1)
+  return ['ต่ำ', 'กลาง', 'สูง'][c]
+}
+const STALE_DAYS = 180 // ราคาที่ไม่ได้ยืนยันเกินนี้ = "ราคาเก่า"
+const isoToday = () => new Date().toISOString().slice(0, 10)
+// วันที่ราคา: price_date → วันที่ซื้อล่าสุด (last_date รูปแบบไทย) → วันที่แก้ไขในระบบ
+function priceAge(m) {
+  const d = m.price_date || parseThaiDate(m.last_date || '') || m.updated || ''
+  if (!/^\d{4}-\d{2}-\d{2}/.test(d)) return { price_date: '', price_age_days: null, stale: false }
+  const days = Math.floor((Date.now() - new Date(d.slice(0, 10)).getTime()) / 86400000)
+  return { price_date: d.slice(0, 10), price_age_days: days, stale: days > STALE_DAYS }
+}
 // บันทึกประวัติราคากลาง (ข้ามถ้าราคาไม่เปลี่ยน)
 const mphStmt = db.prepare('INSERT INTO material_price_history (mp_id,name,unit,old_price,new_price,source,by,at) VALUES (?,?,?,?,?,?,?,?)')
 function logPrice(mp, oldPrice, newPrice, source, by) {
@@ -4804,7 +4854,7 @@ function logPrice(mp, oldPrice, newPrice, source, by) {
   mphStmt.run(mp.id, mp.name, mp.unit || '', o, n, source, by || 'ระบบ', nowTS())
 }
 api.get('/material-prices', canWrite, (req, res) => // หน้างานเห็นราคากลางด้วย (ใช้เดาคำ + เตือนราคาแพงตอนคีย์ PR) · ?all=1 = รวมรายการที่ถูกรวมแล้ว (มี merged_into)
-  res.json(db.prepare(`SELECT * FROM material_prices ${req.query.all === '1' ? 'WHERE active=1 OR merged_into IS NOT NULL' : 'WHERE active=1'} ORDER BY po_count DESC, central DESC`).all()))
+  res.json(db.prepare(`SELECT * FROM material_prices ${req.query.all === '1' ? 'WHERE active=1 OR merged_into IS NOT NULL' : 'WHERE active=1'} ORDER BY po_count DESC, central DESC`).all().map((m) => ({ ...m, ...priceAge(m) }))))
 api.post('/material-prices', financeOnly, (req, res) => {
   const b = req.body || {}
   const name = String(b.name || '').trim()
@@ -4814,6 +4864,7 @@ api.post('/material-prices', financeOnly, (req, res) => {
   const info = db.prepare(`INSERT INTO material_prices (name,nkey,unit,central,min,max,latest,po_count,qty_total,last_date,confidence,source,note,active,updated)
     VALUES (?,?,?,?,?,?,?,0,0,?,?,'กำหนดเอง',?,1,?)`)
     .run(name, nkeyOf(name), String(b.unit || ''), central, Number(b.min) || central, Number(b.max) || central, Number(b.latest) || central, todayTH(), String(b.confidence || 'กำหนดเอง'), String(b.note || ''), today)
+  db.prepare('UPDATE material_prices SET price_date=? WHERE id=?').run(isoToday(), info.lastInsertRowid)
   const added = db.prepare('SELECT * FROM material_prices WHERE id=?').get(info.lastInsertRowid)
   logPrice(added, null, central, 'เพิ่มใหม่', req.user.name)
   audit(req, 'เพิ่มราคากลางวัสดุ', `${name} ฿${central}`)
@@ -4827,6 +4878,7 @@ api.put('/material-prices/:id', financeOnly, (req, res) => {
   const num = (k, d) => (b[k] != null && b[k] !== '' ? Number(b[k]) : d)
   const central = num('central', cur.central)
   const priceChanged = Math.round(central * 100) !== Math.round((cur.central || 0) * 100)
+  if (priceChanged) db.prepare('UPDATE material_prices SET price_date=? WHERE id=?').run(isoToday(), cur.id)
   db.prepare('UPDATE material_prices SET name=?, nkey=?, unit=?, central=?, min=?, max=?, latest=?, confidence=?, note=?, active=?, source=?, updated=? WHERE id=?')
     .run(name, nkeyOf(name), b.unit != null ? String(b.unit) : cur.unit, central, num('min', cur.min), num('max', cur.max), num('latest', cur.latest),
       b.confidence != null ? String(b.confidence) : cur.confidence, b.note != null ? String(b.note) : cur.note, b.active != null ? (b.active ? 1 : 0) : cur.active, priceChanged ? 'กำหนดเอง' : cur.source, new Date().toISOString().slice(0, 10), req.params.id)
@@ -4884,7 +4936,7 @@ api.post('/material-prices/import/apply', financeOnly, (req, res) => {
       const price = Number(c.central)
       if (!m || !Number.isFinite(price) || price < 0) continue
       const unit = c.new_unit ? String(c.new_unit).trim() : m.unit
-      db.prepare("UPDATE material_prices SET central=?, unit=?, source='กำหนดเอง', updated=? WHERE id=?").run(price, unit, today, m.id)
+      db.prepare("UPDATE material_prices SET central=?, unit=?, source='กำหนดเอง', updated=?, price_date=? WHERE id=?").run(price, unit, today, today, m.id)
       logPrice({ ...m, unit }, m.central, price, 'Excel', req.user.name); nUpd++
     }
     for (const a of added) {
@@ -4892,6 +4944,7 @@ api.post('/material-prices/import/apply', financeOnly, (req, res) => {
       if (!name || !Number.isFinite(price) || price < 0) continue
       const info = db.prepare(`INSERT INTO material_prices (name,nkey,unit,central,min,max,latest,po_count,qty_total,last_date,confidence,source,note,active,updated)
         VALUES (?,?,?,?,?,?,?,0,0,?,'กำหนดเอง','กำหนดเอง',?,1,?)`).run(name, nkeyOf(name), String(a.unit || ''), price, price, price, price, todayTH(), String(a.note || 'นำเข้าจาก Excel'), today)
+      db.prepare('UPDATE material_prices SET price_date=? WHERE id=?').run(today, info.lastInsertRowid)
       logPrice({ id: info.lastInsertRowid, name, unit: a.unit }, null, price, 'Excel', req.user.name); nAdd++
     }
   })()
@@ -4926,6 +4979,13 @@ function upsertAlias(alias, unit, mpId, source) {
   db.prepare('INSERT INTO material_aliases (mp_id,alias,nkey,unit,source,created) VALUES (?,?,?,?,?,?)').run(mpId, name, nk, u, source, nowTS())
   return true
 }
+db.transaction(() => {
+  const upd = db.prepare('UPDATE material_prices SET confidence=? WHERE id=?')
+  for (const m of db.prepare("SELECT id, po_count, min, max, central, confidence FROM material_prices WHERE po_count > 0 AND COALESCE(source,'') <> 'กำหนดเอง'").all()) {
+    const c = confOf(m.po_count, m.min, m.max, m.central)
+    if (c !== m.confidence) upd.run(c, m.id)
+  }
+})()
 api.get('/material-aliases', canWrite, (_req, res) => res.json(activeAliases()))
 // จำการจับคู่จากหน้าถอดแบบ: ชื่อที่ AI ตั้ง → รายการราคากลางที่คนเลือก (ถอดครั้งหน้าจับคู่ให้เอง)
 api.post('/material-aliases', canWrite, (req, res) => {
@@ -4966,7 +5026,9 @@ api.post('/material-prices/merge', financeOnly, (req, res) => {
   const po = all.reduce((x, m) => x + (m.po_count || 0), 0)
   const qty = all.reduce((x, m) => x + (m.qty_total || 0), 0)
   const mins = all.map((m) => m.min).filter((v) => v > 0), maxs = all.map((m) => m.max).filter((v) => v > 0)
-  const conf = po >= 4 ? 'สูง' : po >= 2 ? 'กลาง' : po >= 1 ? 'ต่ำ' : keep.confidence
+  const conf = po >= 1 ? confOf(po, mins.length ? Math.min(...mins, central) : central, maxs.length ? Math.max(...maxs, central) : central, central) : keep.confidence
+  // วันที่ราคาหลังรวม: พิมพ์ราคาเอง = วันนี้ · ไม่งั้น = วันที่ล่าสุดของรายการที่รวม
+  const priceDate = b.manual_price ? isoToday() : all.map((m) => priceAge(m).price_date).filter(Boolean).sort().pop() || null
   // ราคาที่คนพิมพ์เอง = ตั้งราคาเอง (PO ไม่ทับ) · ไม่งั้นยังอัปเดตจาก PO ได้ตามปกติ
   const source = b.manual_price || keep.source === 'กำหนดเอง' ? 'กำหนดเอง' : 'รวมรายการ'
   db.transaction(() => {
@@ -4978,6 +5040,7 @@ api.post('/material-prices/merge', financeOnly, (req, res) => {
       upsertAlias(o.name, o.unit, keep.id, 'รวมรายการ')
       db.prepare('UPDATE material_prices SET active=0, merged_into=? WHERE id=?').run(keep.id, o.id)
     }
+    db.prepare('UPDATE material_prices SET price_date=? WHERE id=?').run(priceDate, keep.id)
     logPrice({ ...keep, name, unit }, keep.central, central, 'รวมรายการ', req.user.name)
   })()
   audit(req, 'รวมราคากลางที่ซ้ำ', `${name} ← ${others.map((o) => o.name).join(' · ')}`)
@@ -5140,7 +5203,7 @@ function laborCompare(rate, unitPrice) {
 }
 // อัปเดตราคากลางจากประวัติสั่งซื้อจริงในระบบ (รายการในใบสั่งซื้อ PO = ราคาที่ซื้อจริง) — เว้นรายการที่ตั้งราคาเอง
 api.post('/material-prices/recompute', financeOnly, (req, res) => {
-  const pos = db.prepare('SELECT id, items FROM purchase_orders ORDER BY id').all()
+  const pos = db.prepare('SELECT id, items, date FROM purchase_orders ORDER BY id').all()
   // ชื่อใน PO → รหัสราคากลาง (ชื่อเรียกอื่นก่อน แล้วชื่อตรง) · ตามรายการที่ถูกรวมไปหารายการมาตรฐาน
   const aliasStmt = db.prepare('SELECT mp_id FROM material_aliases WHERE nkey=? AND unit=?')
   const rowStmt = db.prepare("SELECT id FROM material_prices WHERE nkey=? AND COALESCE(unit,'')=?")
@@ -5157,6 +5220,7 @@ api.post('/material-prices/recompute', financeOnly, (req, res) => {
   const g = {}
   for (const po of pos) {
     let items = []; try { items = JSON.parse(po.items || '[]') } catch { items = [] }
+    const poDate = parseThaiDate(po.date || '') || ''
     for (const it of items) {
       const name = String(it.desc || '').trim(); const up = Number(it.price) || 0; const qty = Number(it.qty) || 0
       if (!name || up <= 0) continue
@@ -5165,6 +5229,7 @@ api.post('/material-prices/recompute', financeOnly, (req, res) => {
       const k = target ? 'id:' + target : nkeyOf(name) + '|' + unit
       const o = g[k] = g[k] || { name, unit, target, prices: [], qs: 0, amts: 0, pos: new Set(), latest: up }
       o.prices.push(up); o.qs += qty; o.amts += qty > 0 ? qty * up : up; o.pos.add(po.id); o.latest = up
+      if (poDate && (!o.date || poDate > o.date)) o.date = poDate
     }
   }
   const today = new Date().toISOString().slice(0, 10)
@@ -5179,15 +5244,17 @@ api.post('/material-prices/recompute', financeOnly, (req, res) => {
       const min = Math.min(...o.prices), max = Math.max(...o.prices)
       const po = o.pos.size
       const central = o.qs > 0 ? round(o.amts / o.qs) : round(o.prices.reduce((a, b) => a + b, 0) / o.prices.length)
-      const conf = po >= 4 ? 'สูง' : po >= 2 ? 'กลาง' : 'ต่ำ'
+      const conf = confOf(po, min, max, central)
       const nk = nkeyOf(o.name)
       const ex = o.target ? db.prepare('SELECT * FROM material_prices WHERE id=?').get(o.target) : findStmt.get(nk, o.unit || '')
       if (ex) {
         if (ex.source === 'กำหนดเอง') continue // ไม่ทับรายการที่ผู้ใช้ตั้งราคาเอง
+        if (o.date) db.prepare('UPDATE material_prices SET price_date=? WHERE id=?').run(o.date, ex.id)
         updStmt.run(ex.unit || o.unit || '', central, min, max, o.latest, po, round(o.qs), conf, ex.source === 'ประวัติ' ? 'ประวัติ+ระบบ' : ex.source === 'รวมรายการ' ? 'รวมรายการ' : 'ระบบ', today, ex.id); updated++
         logPrice(ex, ex.central, central, 'จาก PO', req.user.name)
       } else {
         const ins = insStmt.run(o.name, nk, o.unit || '', central, min, max, o.latest, po, round(o.qs), today, conf, today); added++
+        if (o.date) db.prepare('UPDATE material_prices SET price_date=? WHERE id=?').run(o.date, ins.lastInsertRowid)
         logPrice({ id: ins.lastInsertRowid, name: o.name, unit: o.unit }, null, central, 'จาก PO', req.user.name)
       }
     }
@@ -6307,7 +6374,7 @@ function takeoffSpec(req) {
   }
   let house = {}
   try { house = JSON.parse(String(req.query.house || '{}')) || {} } catch { house = {} }
-  return [0, { inputs, house, units: String(req.query.units || 'auto'), user: { id: req.user?.id || null, name: req.user?.name || '-' } }]
+  return [0, { inputs, house, units: String(req.query.units || 'auto'), fresh: req.query.fresh === '1', user: { id: req.user?.id || null, name: req.user?.name || '-' } }]
 }
 // ถอดแบบจริง: คืน [รหัส HTTP, ผล] — เรียกได้ทั้งแบบรอผล และแบบงานเบื้องหลัง (ดูด้านล่าง)
 async function takeoffCore(spec) {
@@ -6339,19 +6406,33 @@ async function takeoffCore(spec) {
   }
   const rates = db.prepare('SELECT * FROM labor_rates WHERE active=1').all()
 
-  let parsed = null, usedAi = false, model = ''
+  let parsed = null, usedAi = false, model = '', cached = null, costUsd = 0
   const notes = []
-  if (process.env.PPSD_AI_MOCK_TAKEOFF) { parsed = JSON.parse(process.env.PPSD_AI_MOCK_TAKEOFF); usedAi = true } // ทดสอบ: ผลจำลอง
+  // ไฟล์เดียวกัน + ข้อมูลบ้าน/หน่วยเดียวกัน = ใช้ผล AI เดิม (ประหยัดค่า AI · ไม่ต้องรอ) · ?fresh=1 = บังคับอ่านใหม่
+  const cacheKey = createHash('sha256').update(JSON.stringify({ files: inputs.map((it) => createHash('sha256').update(it.buf).digest('hex')), house: house || {}, units: spec.units || 'auto' })).digest('hex')
+  const hit = !spec.fresh ? db.prepare('SELECT * FROM takeoff_cache WHERE key=?').get(cacheKey) : null
+  if (hit) {
+    parsed = JSON.parse(hit.parsed); usedAi = true; model = hit.model
+    cached = { at: hit.created, cost_usd: hit.cost_usd }
+    db.prepare('UPDATE takeoff_cache SET hits=hits+1 WHERE key=?').run(cacheKey)
+    notes.push(`ใช้ผลถอดแบบเดิมของไฟล์นี้ (${hit.created}) — ไม่ได้เรียก AI ซ้ำ · ถ้าต้องการให้ AI อ่านใหม่ กด "ถอดใหม่ด้วย AI"`)
+  } else if (process.env.PPSD_AI_MOCK_TAKEOFF) { // ทดสอบ: ผลจำลอง (ผ่านการจำผลเหมือนของจริง)
+    parsed = JSON.parse(process.env.PPSD_AI_MOCK_TAKEOFF); usedAi = true; model = 'mock'
+    db.prepare('INSERT OR REPLACE INTO takeoff_cache (key,label,model,parsed,cost_usd,created,hits) VALUES (?,?,?,?,?,?,0)').run(cacheKey, label.slice(0, 300), model, JSON.stringify(parsed), 0, nowTS())
+  }
   else if (aiKey()) {
     const prompt = takeoff.takeoffPrompt({ house, rates, dxfSummary: dxf, files: isDxf ? [] : inputs.map((it) => it.name) })
     const media = isDxf ? null : inputs.map((it) => it.kind === 'pdf'
       ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: it.buf.toString('base64') } }
       : { type: 'image', source: { type: 'base64', media_type: imageMime(it.name, it.mime), data: it.buf.toString('base64') } })
-    const ai = await aiAsk({ media, prompt, maxTokens: 48000, timeoutMs: 600000 }) // แบบหลายหน้าอ่านนาน — ให้เวลา 10 นาที (รันเป็นงานเบื้องหลัง)
+    const ai = await aiAsk({ feature: 'ถอดแบบ', by: spec.user?.name, media, prompt, maxTokens: 48000, timeoutMs: 600000 }) // แบบหลายหน้าอ่านนาน — ให้เวลา 10 นาที (รันเป็นงานเบื้องหลัง)
     if (!ai.ok) {
       if (!isDxf) return [ai.code || 502, { error: ai.error }]
       notes.push('AI ตั้งชื่อรายการไม่สำเร็จ (' + ai.error + ') — แสดงรายการดิบตาม Block/Layer แทน')
-    } else { parsed = extractJsonBlock(ai.text); usedAi = !!parsed; model = ai.model }
+    } else {
+      parsed = extractJsonBlock(ai.text); usedAi = !!parsed; model = ai.model; costUsd = ai.cost_usd || 0
+      if (parsed) db.prepare('INSERT OR REPLACE INTO takeoff_cache (key,label,model,parsed,cost_usd,created,hits) VALUES (?,?,?,?,?,?,0)').run(cacheKey, label.slice(0, 300), model, JSON.stringify(parsed), costUsd, nowTS())
+    }
   } else if (!isDxf) return [400, { error: AI_NO_KEY + ' — หรือใช้ไฟล์ DWG/DXF (ระบบนับ/วัดให้เองได้โดยไม่ใช้ AI)' }]
   else notes.push('ยังไม่ได้ตั้งค่า AI — แสดงรายการดิบตาม Block/Layer ให้ตั้งชื่อเอง')
 
@@ -6369,7 +6450,7 @@ async function takeoffCore(spec) {
   const labor = parsed ? takeoff.cleanLabor(flat.labor, rates) : []
   audit({ user: spec.user }, 'ถอดแบบเป็น BOQ ร่าง', `${label || '-'} · วัสดุ ${out.length} · ค่าแรง ${labor.length}${usedAi ? ' (AI)' : ''}`)
   const source = isDxf ? 'dxf' : inputs.length > 1 ? 'multi' : inputs[0].kind
-  return [200, { source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, work: flat.work, notes, dxf }]
+  return [200, { source, files: inputs.map((it) => it.name), ai: usedAi, model, drawing: String(parsed?.drawing || ''), items: out, labor, work: flat.work, notes, dxf, cached, cost_usd: costUsd }]
 }
 // ถอดแบบอาจใช้เวลาหลายนาที (แปลง DWG + AI อ่านหลายหน้า) — ?async=1 คืนเลขงานทันที แล้วหน้าเว็บถามผลซ้ำ
 // เลี่ยงคำขอค้างนานจนเบราว์เซอร์/proxy ตัดทิ้ง
@@ -6383,7 +6464,7 @@ function saveTakeoffSpec(id, spec) {
   const dir = takeoffJobDir(id)
   mkdirSync(dir, { recursive: true })
   spec.inputs.forEach((it, i) => writeFileSync(join(dir, `${i}.bin`), it.buf))
-  writeFileSync(join(dir, 'spec.json'), JSON.stringify({ inputs: spec.inputs.map((it) => ({ name: it.name, mime: it.mime })), house: spec.house, units: spec.units, user: spec.user }))
+  writeFileSync(join(dir, 'spec.json'), JSON.stringify({ inputs: spec.inputs.map((it) => ({ name: it.name, mime: it.mime })), house: spec.house, units: spec.units, fresh: !!spec.fresh, user: spec.user }))
 }
 function loadTakeoffSpec(id) {
   try {
@@ -6451,7 +6532,7 @@ ${want}
 ต่อรายการ ให้ดูราคาจากหลายร้าน (2–3 ร้านถ้าหาได้) แล้วสรุปเป็นราคากลางต่อ "หน่วยที่ขอ" (ถ้าร้านขายคนละหน่วย ให้แปลงเป็นหน่วยที่ขอ เช่น ราคาต่อกล่อง ÷ จำนวนชิ้น และบอกวิธีแปลงใน note) ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น:
 {"items":[{"no":1,"price":0,"unit":"หน่วยที่ขอ","low":0,"high":0,"shop":"ร้านที่ใช้อ้างอิงหลัก","url":"ลิงก์หน้าสินค้าจริงจากผลค้น","sources":2,"note":"สินค้าที่เทียบ/สเปก/วิธีแปลงหน่วย"}]}
 กติกา: price = ราคากลาง (ค่ากลางของราคาที่พบ) บาทต่อหน่วยที่ขอ ตัวเลขไม่มีคอมม่า · low/high = ต่ำสุด/สูงสุดที่พบ · sources = จำนวนร้านที่เห็นราคา · ถ้าหาไม่เจอหรือไม่แน่ใจสเปกให้ price=0 และบอกเหตุผลใน note · ห้ามเดาราคาโดยไม่มีผลค้นรองรับ`
-    const ai = await aiAsk({ prompt, maxTokens: 8000, model: process.env.PPSD_AI_SEARCH_MODEL || 'claude-sonnet-5', tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.min(16, batch.length * 2 + 2) }] })
+    const ai = await aiAsk({ feature: 'หาราคาจากเว็บ', by: req.user?.name, prompt, maxTokens: 8000, model: process.env.PPSD_AI_SEARCH_MODEL || 'claude-sonnet-5', tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.min(16, batch.length * 2 + 2) }] })
     if (!ai.ok) throw { code: ai.code || 502, msg: ai.error }
     return extractJsonBlock(ai.text) || {}
   }

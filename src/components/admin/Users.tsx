@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { roles, permissionMatrix, type Role } from '../../erpData'
+import AiUsage from './AiUsage'
 import { MODULES } from '../../data'
 import { useApp } from '../../store'
 import type { ApiUser } from '../../store'
@@ -435,6 +436,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <button onClick={testAi} disabled={aiBusy || !aiCfg.hasKey} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#6B4E9E', background: '#fff', border: '1px solid #D9D2EA', borderRadius: 8, padding: '9px 15px', cursor: aiCfg.hasKey ? 'pointer' : 'default', opacity: aiCfg.hasKey ? 1 : 0.5 }}>{aiBusy ? 'กำลังทดสอบ…' : '🧪 ทดสอบ'}</button>
             </div>
             {aiMsg && <div style={{ fontSize: 12, marginTop: 10, color: aiMsg.ok ? '#2E7D55' : '#C24036' }}>{aiMsg.text}</div>}
+            <AiUsage />
           </div>
         </div>
       )}

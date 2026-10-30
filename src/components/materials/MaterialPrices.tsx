@@ -44,7 +44,7 @@ export default function MaterialPrices() {
   const [laborSeen, setLaborSeen] = useState(false)
   if (tab === 'labor' && !laborSeen) setLaborSeen(true)
   const [q, setQ] = useState('')
-  const [conf, setConf] = useState<'all' | 'สูง' | 'กลาง' | 'ต่ำ'>('all')
+  const [conf, setConf] = useState<'all' | 'สูง' | 'กลาง' | 'ต่ำ' | 'เก่า'>('all') // เก่า = ราคาไม่ได้ยืนยันเกิน 6 เดือน
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState<ApiMaterialPrice | null>(null)
   const [adding, setAdding] = useState(false)
@@ -75,11 +75,12 @@ export default function MaterialPrices() {
     สูง: list.filter((m) => m.confidence === 'สูง').length,
     กลาง: list.filter((m) => m.confidence === 'กลาง').length,
     ต่ำ: list.filter((m) => m.confidence === 'ต่ำ').length,
+    เก่า: list.filter((m) => m.stale).length,
   }), [list])
 
   const ql = q.trim().toLowerCase()
   const rows = list
-    .filter((m) => (conf === 'all' || m.confidence === conf) && `${m.name} ${m.unit}`.toLowerCase().includes(ql))
+    .filter((m) => (conf === 'all' || (conf === 'เก่า' ? m.stale : m.confidence === conf)) && `${m.name} ${m.unit}`.toLowerCase().includes(ql))
 
   const reload = () => app.reloadData('materialPrices', '/material-prices')
   const afterMerge = async () => { setPicked([]); await Promise.all([reload(), loadAliases()]) }
@@ -202,7 +203,7 @@ export default function MaterialPrices() {
 
       {/* ตัวกรองความเชื่อมั่น */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        {([['all', 'ทั้งหมด'], ['สูง', 'เชื่อมั่นสูง'], ['กลาง', 'ปานกลาง'], ['ต่ำ', 'ซื้อครั้งเดียว']] as const).map(([id, label]) => (
+        {([['all', 'ทั้งหมด'], ['สูง', 'เชื่อมั่นสูง'], ['กลาง', 'ปานกลาง'], ['ต่ำ', 'ซื้อครั้งเดียว'], ['เก่า', '⏳ ราคาเก่า']] as const).map(([id, label]) => (
           <button key={id} onClick={() => setConf(id)}
             style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, border: 'none', borderRadius: 20, padding: '6px 13px', cursor: 'pointer', color: conf === id ? '#fff' : '#5C6770', background: conf === id ? '#30506A' : '#EDF1F4' }}>
             {label} <span style={{ opacity: 0.8 }}>{counts[id]}</span>
@@ -244,12 +245,14 @@ export default function MaterialPrices() {
                       {m.unit || '–'}
                       {packGuess != null && <div style={{ fontSize: 10, fontWeight: 700, color: '#B7791F', background: '#F6ECD6', borderRadius: 6, padding: '1px 6px', marginTop: 2 }}>ราคาต่อ {packGuess} ชิ้น?</div>}
                     </td>
-                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#1E2E3B', whiteSpace: 'nowrap' }} className="num"><InlinePrice value={m.central} canEdit={canEdit} onSave={(v) => savePrice(m, v)} />{m.updated && <div style={{ fontSize: 10.5, fontWeight: 400, color: '#94A0A8' }}>{m.updated}</div>}</td>
+                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#1E2E3B', whiteSpace: 'nowrap' }} className="num"><InlinePrice value={m.central} canEdit={canEdit} onSave={(v) => savePrice(m, v)} />{m.stale
+                        ? <div title={'ราคานี้ยืนยันล่าสุด ' + (m.price_date || '-') + ' — ควรเช็คราคาใหม่ก่อนใช้ทำ BOQ'} style={{ fontSize: 10.5, fontWeight: 600, color: '#B7791F' }}>⏳ ราคาเก่า {Math.floor((m.price_age_days || 0) / 30)} เดือน</div>
+                        : m.price_date && <div style={{ fontSize: 10.5, fontWeight: 400, color: '#94A0A8' }}>{m.price_date}</div>}</td>
                     <td style={{ ...td, textAlign: 'right', color: '#5C6770', whiteSpace: 'nowrap' }} className="num">{money(m.min)}–{money(m.max)}</td>
                     <td style={{ ...td, textAlign: 'right', color: '#5C6770' }} className="num">{money(m.latest)}</td>
                     <td style={{ ...td, textAlign: 'center', color: '#5C6770' }} className="num">{m.po_count || '–'}</td>
                     <td style={{ ...td, textAlign: 'center' }}>
-                      <span style={{ fontSize: 11.5, fontWeight: 600, color: cc.c, background: cc.bg, borderRadius: 20, padding: '2px 10px', whiteSpace: 'nowrap' }}>{m.confidence}</span>
+                      <span title={`ซื้อ ${m.po_count || 0} ครั้ง${m.central > 0 && m.max > m.min ? ` · ราคาแกว่ง ${Math.round(((m.max - m.min) / m.central) * 100)}%` : ''} · สูง = ซื้อ ≥4 ครั้ง · กลาง = 2–3 · ต่ำ = 1 · ราคาแกว่งเกิน 15% ลดลง 1 ขั้น`} style={{ fontSize: 11.5, fontWeight: 600, color: cc.c, background: cc.bg, borderRadius: 20, padding: '2px 10px', whiteSpace: 'nowrap', cursor: 'help' }}>{m.confidence}</span>
                     </td>
                     {canEdit && (
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>

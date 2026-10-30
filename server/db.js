@@ -546,6 +546,19 @@ db.exec(`CREATE TABLE IF NOT EXISTS material_price_history (
 db.exec('CREATE INDEX IF NOT EXISTS idx_mph_mp ON material_price_history(mp_id)')
 // รวมรายการซ้ำ: รายการที่ถูกรวมปิดใช้งาน + ชี้ไปรายการมาตรฐาน (BOQ เก่าที่อ้างรหัสเดิมยังตามไปเจอ)
 ensureColumn('material_prices', 'merged_into', 'INTEGER')
+// วันที่ราคานี้ "ยืนยันล่าสุด" (YYYY-MM-DD): แก้เอง/นำเข้า/รวมรายการ = วันนั้น · อัปเดตจาก PO = วันที่ PO ล่าสุด — ใช้เตือนราคาเก่า
+ensureColumn('material_prices', 'price_date', 'TEXT')
+// จำผลถอดแบบของไฟล์เดิม (ไฟล์+ข้อมูลบ้านเหมือนเดิม = ไม่เรียก AI ซ้ำ)
+db.exec(`CREATE TABLE IF NOT EXISTS takeoff_cache (
+  key TEXT PRIMARY KEY, label TEXT, model TEXT, parsed TEXT, cost_usd REAL, created TEXT, hits INTEGER DEFAULT 0
+)`)
+// ค่าใช้จ่าย AI ทุกครั้งที่เรียก — token · ค้นเว็บ · ประมาณค่าใช้จ่าย (USD ตามราคาประกาศ)
+db.exec(`CREATE TABLE IF NOT EXISTS ai_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT, feature TEXT, model TEXT, by TEXT, ok INTEGER,
+  input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, cache_write INTEGER, web_searches INTEGER, cost_usd REAL
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_at ON ai_usage(at)')
 // ชื่อเรียกอื่นของรายการมาตรฐาน — มาจาก "รวมรายการซ้ำ" หรือ "ถอดแบบ" (คนเลือกจับคู่ไว้) · nkey = ชื่อแบบตัดช่องว่าง/ตรา/สะกดต่าง
 db.exec(`CREATE TABLE IF NOT EXISTS material_aliases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

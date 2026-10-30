@@ -143,3 +143,29 @@ test('ค่าแรง: แก้ราคาลงประวัติ · �
   assert.equal(list.find((x) => x.id === q.id).price_max, 0)
   assert.equal((await call('GET', `/labor-rates/${r.id}/history`)).data[0].source, 'Excel')
 })
+
+test('ราคาเก่า + ความเชื่อมั่น: รายการใหม่ = วันที่วันนี้ ไม่เก่า · ยืนยันเกิน 6 เดือน = ราคาเก่า · PO ราคาแกว่งเกิน 15% ลดความเชื่อมั่น 1 ขั้น · สรุปค่าใช้จ่าย AI', async () => {
+  const m = (await call('POST', '/material-prices', { name: 'ท่อทดสอบราคาเก่า', unit: 'ท่อน', central: 100 })).data
+  let row = (await call('GET', '/material-prices')).data.find((x) => x.id === m.id)
+  assert.equal(row.price_date, new Date().toISOString().slice(0, 10))
+  assert.equal(row.stale, false)
+  const Database = (await import('better-sqlite3')).default
+  const sdb = new Database(join(tmp, 'test.sqlite'))
+  sdb.prepare("UPDATE material_prices SET price_date='2025-01-01' WHERE id=?").run(m.id)
+  // PO 4 ใบ ราคาแกว่ง 100–150 → ซื้อ 4 ครั้ง (สูง) แต่แกว่งเกิน 15% → กลาง
+  const ins = sdb.prepare('INSERT INTO purchase_orders (no, date, items) VALUES (?, ?, ?)')
+  ;[100, 150, 120, 130].forEach((p, i) => ins.run('PO-S' + i, '1' + i + ' ต.ค. 69', JSON.stringify([{ desc: 'สายไฟทดสอบแกว่ง', qty: 1, unit: 'ม้วน', price: p }])))
+  sdb.prepare("INSERT INTO ai_usage (at,feature,model,by,ok,input_tokens,output_tokens,cache_read,cache_write,web_searches,cost_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .run(new Date().toISOString().slice(0, 10) + ' 10:00:00', 'ถอดแบบ', 'claude-opus-5', 'tester', 1, 100000, 20000, 0, 0, 0, 1)
+  sdb.close()
+  row = (await call('GET', '/material-prices')).data.find((x) => x.id === m.id)
+  assert.equal(row.stale, true)
+  assert.ok(row.price_age_days > 180)
+  await call('POST', '/material-prices/recompute', {})
+  const wire = (await call('GET', '/material-prices')).data.find((x) => x.name === 'สายไฟทดสอบแกว่ง')
+  assert.deepEqual([wire.po_count, wire.confidence], [4, 'กลาง'])
+  assert.equal(wire.price_date, '2026-10-13')
+  const u = (await call('GET', '/ai-usage')).data
+  assert.ok(u.this_month.calls >= 1 && u.this_month.cost >= 1)
+  assert.ok(u.by_feature.some((f) => f.feature === 'ถอดแบบ'))
+})

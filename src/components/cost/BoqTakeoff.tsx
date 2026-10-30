@@ -22,7 +22,8 @@ interface DxfSummary {
   areas: { layer: string; area_m2: number; count: number; source: string }[]
   circles: { layer: string; diameter_m: number; count: number }[]
 }
-interface Result { source: 'dxf' | 'pdf' | 'image' | 'multi'; files?: string[]; ai: boolean; model: string; drawing: string; items: TakeoffItem[]; labor: LaborItem[]; work?: WorkSec[]; notes: string[]; dxf: DxfSummary | null }
+// cached = ใช้ผล AI เดิมของไฟล์เดียวกัน (ไม่เสียค่า AI ซ้ำ) · cost_usd = ค่า AI ประมาณของครั้งนี้
+interface Result { cached?: { at: string; cost_usd: number } | null; cost_usd?: number; source: 'dxf' | 'pdf' | 'image' | 'multi'; files?: string[]; ai: boolean; model: string; drawing: string; items: TakeoffItem[]; labor: LaborItem[]; work?: WorkSec[]; notes: string[]; dxf: DxfSummary | null }
 interface LaborRate { id: number; name: string; variant: string; price_min: number; price_max: number; unit: string }
 interface WebPrice { price: number; low: number; high: number; shop: string; url: string; sources: number; note: string }
 // web = ราคาจากอินเทอร์เน็ต (ชั่วคราว) สำหรับวัสดุที่ยังไม่มีในราคากลาง
@@ -100,15 +101,17 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
   const isDxf = mode === 'house' ? pickedFiles.some((f) => fileKind(f.name) === 'cad') : !!file && fileKind(file.name) === 'cad' // DWG ถูกแปลงเป็น DXF ที่ server
   const ready = mode === 'house' ? pickedFiles.length > 0 : !!file
   const sourceLabel = mode === 'house' ? (pickedFiles.length ? pickedFiles.map((f) => f.name).join(', ') : 'ยังไม่ได้เลือกไฟล์') : file ? file.name : 'ยังไม่ได้เลือกไฟล์'
-  const run = async () => {
+  // fresh = บังคับให้ AI อ่านใหม่ (ไม่ใช้ผลเดิมของไฟล์เดียวกัน)
+  const run = async (fresh = false) => {
     if (!ready) { setErr('กรุณาเลือกไฟล์แบบ'); return }
     setBusy(true); setErr(''); setRes(null)
     try {
       // รันเป็นงานเบื้องหลังที่ server (แบบหลายหน้าอาจใช้หลายนาที) แล้วถามผลทุก 3 วินาที
-      const q = new URLSearchParams({ units, house: JSON.stringify(info), async: '1' })
+      const extra: Record<string, string> = fresh ? { fresh: '1' } : {}
+      const q = new URLSearchParams({ units, house: JSON.stringify(info), async: '1', ...extra })
       const started = mode === 'house'
         ? await api.post<{ job: string }>('/boq-takeoff?' + q.toString(), { file_ids: pickedFiles.map((f) => f.id) })
-        : await api.uploadRaw<{ job: string }>('/boq-takeoff?' + new URLSearchParams({ name: file!.name, units, house: JSON.stringify(info), async: '1' }).toString(), file!)
+        : await api.uploadRaw<{ job: string }>('/boq-takeoff?' + new URLSearchParams({ name: file!.name, units, house: JSON.stringify(info), async: '1', ...extra }).toString(), file!)
       let r: Result | null = null
       setElapsed(0)
       let offline = 0 // ถามผลไม่ได้ติดกันกี่ครั้ง (server กำลังรีสตาร์ต — งานรันต่อเองที่ server)
@@ -302,7 +305,7 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
               <option value="auto">อ่านจากไฟล์</option><option value="mm">มิลลิเมตร</option><option value="cm">เซนติเมตร</option><option value="m">เมตร</option>
             </select>
           </div>
-          <button onClick={run} disabled={busy || !ready} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: busy || !ready ? '#9AABB8' : '#C0852C', border: 'none', borderRadius: 9, padding: '9px 14px', cursor: busy || !ready ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+          <button onClick={() => run()} disabled={busy || !ready} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: busy || !ready ? '#9AABB8' : '#C0852C', border: 'none', borderRadius: 9, padding: '9px 14px', cursor: busy || !ready ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
             {busy ? 'กำลังถอดแบบ…' : res ? 'ถอดใหม่' : 'ถอดแบบ'}
           </button>
         </div>
@@ -315,6 +318,12 @@ export default function BoqTakeoff({ houseCode, onClose, onCreate }: {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 12.5, color: '#5C6770' }}>
           <span style={{ fontWeight: 600, color: '#1C2730' }}>{res.drawing || ({ dxf: 'ไฟล์ DWG/DXF', pdf: 'ไฟล์ PDF', image: 'รูปภาพ', multi: `แบบ ${res.files?.length || ''} ไฟล์` })[res.source]}</span>
           <span>· {res.ai ? `AI ช่วยตั้งชื่อ${res.model ? ' (' + res.model + ')' : ''}` : 'ไม่ได้ใช้ AI'}</span>
+          {res.cached
+            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', borderRadius: 6, padding: '2px 8px' }}>♻ ใช้ผลเดิมของไฟล์นี้ ({res.cached.at}) · ไม่เสียค่า AI</span>
+                <button onClick={() => { if (confirm('ให้ AI อ่านแบบใหม่ทั้งหมด? (มีค่าใช้จ่าย AI)')) run(true) }} disabled={busy} className="hov-f3f5f7" style={{ ...chip, fontSize: 11.5, padding: '2px 9px' }}>ถอดใหม่ด้วย AI</button>
+              </span>
+            : res.cost_usd ? <span title="ประมาณจากราคาประกาศของ Anthropic — บิลจริงดูที่ console.anthropic.com">· ค่า AI ครั้งนี้ ~${res.cost_usd.toFixed(2)}</span> : null}
           <button onClick={() => count ? setPrinting(true) : alert('ไม่มีรายการที่เลือก')} className="hov-f3f5f7" style={{ ...chip, marginLeft: 'auto', fontWeight: 600 }}>📄 สรุปวัสดุ (PDF)</button>
           {res.dxf && <button onClick={() => setShowRaw(!showRaw)} className="hov-f3f5f7" style={{ marginLeft: 8, fontFamily: 'inherit', fontSize: 12, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>{showRaw ? 'ซ่อน' : 'ดู'}ข้อมูลดิบจาก DXF</button>}
         </div>

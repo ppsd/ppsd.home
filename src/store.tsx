@@ -247,6 +247,10 @@ export interface ApiMaterialPrice {
   note?: string
   active?: number
   updated?: string
+  // วันที่ราคายืนยันล่าสุด · อายุราคา (วัน) · เกิน 6 เดือน = ราคาเก่า (คิดฝั่ง server)
+  price_date?: string
+  price_age_days?: number | null
+  stale?: boolean
 }
 // ราคากลางค่าแรงช่าง — ใช้เป็นราคาแนะนำตอนจ้างช่าง (price_max = 0 → เสนอราคา ไม่มีราคากลาง)
 export interface ApiLaborRate {
