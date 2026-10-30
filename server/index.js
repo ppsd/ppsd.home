@@ -4551,6 +4551,34 @@ api.post('/purchase-orders/:id/status', financeOnly, (req, res) => {
   res.json(poRow(po))
 })
 
+// ลบใบสั่งซื้อ (แอดมิน) — เช่น PO ทดสอบ / ออกซ้ำ · อนุมัติแล้วก็ลบได้ (การอนุมัติยังไม่สร้างรายการเงิน)
+// รับของแล้ว → ถอนรายจ่าย + รายการบัญชีที่เกิดตอนรับของก่อน · มีใบจ่ายเงินผูกอยู่ → ไม่ให้ลบ (ต้องลบ/ปฏิเสธใบจ่ายก่อน)
+// มีของเข้าสต๊อกจากใบนี้แล้วถูกเบิกไปใช้ → ไม่ให้ลบ (ยอดสต๊อกจะติดลบ) · ใบขอซื้อ (PR) ยังอยู่ ออก PO ใหม่ได้
+api.delete('/purchase-orders/:id', adminOnly, (req, res) => {
+  const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id)
+  if (!po) return res.status(404).json({ error: 'ไม่พบใบสั่งซื้อ' })
+  const pays = db.prepare("SELECT no FROM payments WHERE po_id=? AND COALESCE(status,'') != 'ปฏิเสธ'").all(po.id)
+  if (pays.length) return res.status(409).json({ error: `ลบไม่ได้ — มีใบจ่ายเงินชำระ ${po.no} อยู่ (${pays.map((p) => p.no).join(', ')}) ให้ลบ/ปฏิเสธใบจ่ายเงินก่อน` })
+  const stockIn = db.prepare("SELECT m.item_id, m.qty, i.qty now, i.name FROM stock_moves m JOIN stock_items i ON i.id=m.item_id WHERE m.po_id=? AND m.kind='in'").all(po.id)
+  const short = stockIn.find((m) => (m.now || 0) < (m.qty || 0))
+  if (short) return res.status(409).json({ error: `ลบไม่ได้ — ${short.name} ที่รับเข้าสต๊อกจาก ${po.no} ถูกเบิกไปใช้แล้ว (คงเหลือ ${short.now} น้อยกว่าที่รับเข้า ${short.qty})` })
+  const exp = db.prepare('SELECT * FROM expenses WHERE po_id=?').get(po.id)
+  try {
+    db.transaction(() => {
+      if (exp) { acct.removeAutoJournal('exp', exp.id); db.prepare('DELETE FROM expenses WHERE id=?').run(exp.id) }
+      for (const m of stockIn) db.prepare('UPDATE stock_items SET qty = qty - ?, updated=? WHERE id=?').run(m.qty, todayTH(), m.item_id)
+      db.prepare('DELETE FROM stock_moves WHERE po_id=?').run(po.id)
+      db.prepare('DELETE FROM goods_receipts WHERE po_id=?').run(po.id)
+      db.prepare("DELETE FROM doc_approvals WHERE doc_type='po' AND doc_id=?").run(po.id)
+      db.prepare('DELETE FROM purchase_orders WHERE id=?').run(po.id)
+    })()
+  } catch (e) { return res.status(400).json({ error: 'ลบไม่สำเร็จ — ' + e.message }) }
+  if (po.house_code) recomputeHouse(po.house_code)
+  audit(req, 'ลบใบสั่งซื้อ', `${po.no} · ${po.vendor} · ${fmtMoney(po.amount)} · ${po.status}${exp ? ' · ถอนรายจ่าย/บัญชีที่รับของแล้ว' : ''}${stockIn.length ? ' · ถอนสต๊อก ' + stockIn.length + ' รายการ' : ''}${po.pr_no ? ' · อ้าง ' + po.pr_no : ''}`)
+  notifyChange(['purchaseOrders', 'expenses', 'houses', 'dashboard', 'notifications'])
+  res.json({ ok: true, removed_expense: !!exp })
+})
+
 // ===== ตรวจรับของ: เทียบ PO กับใบส่งของ (Goods Receipt) =====
 // จับคู่ชื่อสินค้าแบบยืดหยุ่น (เว้นวรรค/สะกดต่างเล็กน้อยก็จับได้)
 function grNameKey(n) { return String(n || '').replace(/\s+/g, '').replace(/["“”#]/g, '').toLowerCase() }

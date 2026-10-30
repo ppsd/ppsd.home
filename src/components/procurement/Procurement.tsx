@@ -213,6 +213,12 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
   const [docReceive, setDocReceive] = useState<ApiPO | null>(null)
   const { data, user, addPr, addPO, setPOStatus, addPayment, addVendor, updateVendor, reloadData } = useApp()
   const isAdmin = user?.role === 'admin'
+  // ลบ PO (แอดมิน) — อนุมัติแล้วก็ลบได้ · รับของแล้ว server ถอนรายจ่าย/บัญชีให้ · มีใบจ่ายเงินผูกอยู่ลบไม่ได้
+  const deletePo = async (r: { id: number; no: string; vendor: string; amount: number; status: string }) => {
+    const received = r.status === 'รับของแล้ว' || r.status === 'ปิดงาน'
+    if (!confirm(`ลบใบสั่งซื้อ ${r.no} (${r.vendor} · ${r.amount.toLocaleString()} บาท)?\n${received ? '\n⚠️ ใบนี้รับของแล้ว — รายจ่ายและรายการบัญชีที่เกิดตอนรับของจะถูกถอนออกด้วย\n' : ''}\nใบขอซื้อ (PR) ยังอยู่ ออก PO ใหม่ได้ · ลบแล้วกู้คืนไม่ได้`)) return
+    try { await api.del('/purchase-orders/' + r.id); await Promise.all([reloadData('purchaseOrders', '/purchase-orders'), reloadData('expenses', '/expenses'), reloadData('houses', '/houses')]) } catch (e) { alert((e as Error).message) }
+  }
   // ขั้นตอนจัดซื้อ: ใครเป็นผู้ตรวจสอบใบขอซื้อ (ตั้งที่หน้า ผู้ใช้งาน) — ผู้ตรวจสอบ/บัญชี/แอดมิน กด "ตรวจแล้ว ออก PR" ได้
   const [flow, setFlow] = useState<{ checker: { id: number; name: string; line: boolean } | null } | null>(null)
   useEffect(() => { api.get<{ checker: { id: number; name: string; line: boolean } | null }>('/procurement/flow').then(setFlow).catch(() => {}) }, [])
@@ -778,6 +784,7 @@ export default function Procurement({ houseCode }: { houseCode?: string }) {
                           : null}
                       {r.status !== 'ยกเลิก' && <button onClick={() => setDocReceive(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#2E7D55', background: '#fff', border: '1px solid #B5DDC8', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>📦 ตรวจรับของ</button>}
                       <button onClick={() => openPoDoc(r)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>🖨 พิมพ์ PO</button>
+                      {isAdmin && <button onClick={() => deletePo(r)} title="ลบใบสั่งซื้อ (แอดมิน) — เช่น PO ทดสอบ/ออกซ้ำ · รับของแล้วจะถอนรายจ่ายและบัญชีให้ · มีใบจ่ายเงินผูกอยู่ลบไม่ได้" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 500, color: '#C24036', background: '#fff', border: '1px solid #F0CBC6', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>🗑</button>}
                     </div>
                   </td>
                 </tr>
