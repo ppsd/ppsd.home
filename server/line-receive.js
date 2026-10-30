@@ -35,7 +35,12 @@ export function createLineReceive(d) {
   function startReceive(uid, po, replyToken, quick = null, u = null) {
     if (!po) return d.lineReply(replyToken, 'ไม่พบใบสั่งซื้อนี้ค่ะ — พิมพ์ เช่น "รับของ PO-69-0123" หรือ "รับของ" เพื่อดูรายการที่รอรับ')
     if (po.status === 'ยกเลิก') return d.lineReply(replyToken, `${po.no} ถูกยกเลิกแล้วค่ะ`)
-    if (po.status === 'รับของแล้ว' || po.status === 'ปิดงาน') return d.lineReply(replyToken, `${po.no} รับของไปแล้วค่ะ (ถ้าใบกำกับภาษีมาทีหลัง พิมพ์ "ใบกำกับ ${po.no}")`)
+    if (po.status === 'รับของแล้ว' || po.status === 'ปิดงาน') {
+      if (quick) return d.lineReply(replyToken, `${po.no} รับของไปแล้วค่ะ`)
+      // รับของไปแล้ว (เช่น ยืนยันด้วยข้อความ) → ส่งรูปตามมาทีหลังได้: แนบเข้าใบตรวจรับเดิม ไม่เปลี่ยนสถานะ
+      d.setLineCtx(uid, { kind: 'recv_add', po_id: po.id, files: [], ttl: RECV_TTL })
+      return d.lineReply(replyToken, `${po.no} รับของไปแล้วค่ะ — ส่งรูปใบส่งของ/ใบกำกับภาษี/รูปของเพิ่มได้ (แนบเข้าใบตรวจรับเดิม ไม่เปลี่ยนสถานะ)\nส่งครบแล้วพิมพ์ 'ครบ' · ยกเลิกพิมพ์ 'ยกเลิก'`)
+    }
     if (!poReady(po)) return d.lineReply(replyToken, `${po.no} ยังอนุมัติไม่ครบค่ะ — ให้อนุมัติ PO ก่อนจึงตรวจรับได้`)
     d.setLineCtx(uid, { kind: 'recv', po_id: po.id, files: [], stage: 'collect', ttl: RECV_TTL })
     // "รับของ PO-69-0123 ได้รับครบ" / "… ขาด ปูน 2 ถุง" → บันทึกเลย ไม่ต้องส่งรูป
@@ -149,6 +154,51 @@ ${orderLines}
   }
 
   // ใบกำกับภาษีมาทีหลัง → อ่านเลขใบกำกับ/VAT → เติมให้ PO (+ รายจ่าย/ภาษีซื้อถ้ารับของแล้ว)
+  // รูปที่ส่งตามมาหลังรับของแล้ว → แนบเข้าใบตรวจรับล่าสุด · เติมเลขใบกำกับ/VAT ถ้า PO ยังไม่มี · เอกสารไม่ตรง PO = เตือนจัดซื้อ (ไม่เปลี่ยนสถานะ)
+  async function attachLater(uid, u, ctx, replyToken) {
+    const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(ctx.po_id)
+    d.setLineCtx(uid, null)
+    if (!po) return d.lineReply(replyToken, 'ไม่พบใบสั่งซื้อแล้วค่ะ')
+    await d.lineReply(replyToken, `🔎 กำลังแนบรูป ${ctx.files.length} รูปเข้า ${po.no} และให้ AI อ่านเอกสาร — สักครู่ค่ะ`)
+    const ai = await analyze(po, ctx.files, u.name)
+    const ok = !ai.error && !ai.no_ai
+    const fileRec = (id) => { const f = db.prepare('SELECT id, name FROM files WHERE id=?').get(id); return f ? { id: f.id, name: f.name } : null }
+    const goods = ok ? ai.goods_files || [] : []
+    const docs = ok && ai.doc_files?.length ? ai.doc_files : ctx.files.filter((id) => !goods.includes(id))
+    const L = [`📎 แนบรูปเข้า ${po.no} แล้ว ${ctx.files.length} รูป${ok ? ` (เอกสาร ${docs.length} · รูปของ ${goods.length})` : ''}`]
+    const gr = db.prepare('SELECT * FROM goods_receipts WHERE po_id=? ORDER BY id DESC').get(po.id)
+    if (gr) {
+      const parse = (s) => { try { return JSON.parse(s || '[]') || [] } catch { return [] } }
+      db.prepare('UPDATE goods_receipts SET files=?, photos=? WHERE id=?').run(
+        JSON.stringify([...parse(gr.files), ...docs.map(fileRec).filter(Boolean)]), JSON.stringify([...parse(gr.photos), ...goods.map(fileRec).filter(Boolean)]), gr.id)
+    } else L.push('(PO นี้รับของจากหน้าเว็บโดยไม่มีใบตรวจรับ — รูปเก็บไว้ในไฟล์ของบ้าน)')
+    if (!ok) L.push(ai.no_ai ? '⚠️ ยังไม่ได้ตั้งค่า AI — อ่านเลขใบกำกับให้ไม่ได้' : '⚠️ AI อ่านเอกสารไม่สำเร็จ: ' + ai.error)
+    else {
+      if (ai.tax_invoice_no) {
+        if (!po.tax_invoice_no || po.tax_invoice_no === ai.tax_invoice_no) {
+          db.prepare('UPDATE purchase_orders SET tax_invoice_no=? WHERE id=?').run(ai.tax_invoice_no, po.id)
+          if (ai.vat > 0 && ai.vat < (Number(po.amount) || Infinity)) db.prepare('UPDATE purchase_orders SET vat_amount=? WHERE id=?').run(ai.vat, po.id)
+          if (gr) db.prepare('UPDATE goods_receipts SET tax_invoice_no=?, vat_amount=? WHERE id=?').run(ai.tax_invoice_no, ai.vat || 0, gr.id)
+          d.syncPoExpense(db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(po.id))
+          L.push(`🧾 ใบกำกับ ${ai.tax_invoice_no}${ai.vat ? ` · VAT ${d.fmtMoney(ai.vat)}` : ''} → เข้ารายงานภาษีซื้อแล้ว`)
+        } else L.push(`⚠️ เลขใบกำกับในรูป (${ai.tax_invoice_no}) ไม่ตรงกับที่บันทึกไว้ (${po.tax_invoice_no}) — ไม่ได้เปลี่ยน ให้บัญชีตรวจในหน้าเว็บ`)
+      } else if (!po.tax_invoice_no) L.push("ยังไม่พบเลขใบกำกับภาษีในรูป — ได้ใบกำกับแล้วพิมพ์ 'ใบกำกับ " + po.no + "' แล้วส่งรูป")
+      if (ai.items.length) {
+        const det = d.matchReceipt(d.orderItemsForPo(po), ai.items, po)
+        if (det.result === 'ผ่าน') L.push('📄 เอกสารตรงกับ PO')
+        else {
+          const bad = det.lines.filter((l) => !l.pass).slice(0, 5).map((l) => `✗ ${l.desc}${l.nameOk ? ` — PO ${l.qty || '-'} / เอกสาร ${l.d_qty ?? '-'}` : ' — ไม่พบในเอกสาร'}`)
+          L.push('⚠️ เอกสารไม่ตรงกับ PO (รับของไปแล้ว — แจ้งจัดซื้อให้ตรวจ)', ...bad, ...det.extras.slice(0, 3).map((x) => `+ เกินจาก PO: ${x.name} ${x.qty || ''}`))
+          const warn = `⚠️ ${po.no} (${po.vendor}) รับของไปแล้ว แต่เอกสารที่ ${u.name} ส่งตามมาไม่ตรงกับ PO\n${bad.join('\n')}\nตรวจในหน้าเว็บ: จัดซื้อ → ใบสั่งซื้อ → ตรวจรับของ`
+          for (const x of d.docRecipients()) if (x.line_uid && x.line_uid !== uid) d.linePush(x.line_uid, warn)
+        }
+      }
+      for (const c of ai.concerns || []) L.push(`⚠️ จากรูปของ: ${c}`)
+    }
+    d.audit({ user: u }, 'แนบรูปตรวจรับย้อนหลัง (LINE)', `${po.no} · ${ctx.files.length} รูป${ok && ai.tax_invoice_no ? ' · ใบกำกับ ' + ai.tax_invoice_no : ''}`)
+    return d.linePush(uid, L.join('\n'))
+  }
+
   async function readTaxInvoice(uid, u, ctx, fileId, replyToken) {
     const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(ctx.po_id)
     d.setLineCtx(uid, null)
@@ -197,6 +247,16 @@ ${orderLines}
         return startReceive(uid, db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(id), replyToken)
       }
       if (ctx?.kind === 'taxinv' && /^(ยกเลิก|cancel)$/i.test(t)) { d.setLineCtx(uid, null); return d.lineReply(replyToken, 'ยกเลิกแล้วค่ะ') }
+      // ส่งรูปตามมาหลังรับของแล้ว
+      if (ctx?.kind === 'recv_add') {
+        if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { d.setLineCtx(uid, null); return d.lineReply(replyToken, 'ยกเลิกแล้วค่ะ (รูปที่ส่งมายังเก็บไว้ในไฟล์ของบ้าน)') }
+        if (/^(ครบ|เสร็จ|ส่งครบ|พอ|ok|โอเค|ตกลง)$/i.test(t) || COMPLETE_RE.test(t)) {
+          if (!ctx.files.length) return d.lineReply(replyToken, 'ยังไม่มีรูปค่ะ — ส่งรูปก่อน แล้วพิมพ์ "ครบ"')
+          return attachLater(uid, u, ctx, replyToken)
+        }
+        if (t.length > 20) return null
+        return d.lineReply(replyToken, `ส่งรูปเพิ่มได้ (ได้ ${ctx.files.length}/${MAX_IMAGES} รูปแล้ว) · ครบแล้วพิมพ์ 'ครบ' · ยกเลิกพิมพ์ 'ยกเลิก'`)
+      }
       if (ctx?.kind !== 'recv') return null
       if (/^(ยกเลิก|cancel|ทิ้ง)$/i.test(t)) { d.setLineCtx(uid, null); return d.lineReply(replyToken, 'ยกเลิกร่างตรวจรับแล้วค่ะ (รูปที่ส่งมายังเก็บไว้ในไฟล์ของบ้าน)') }
       if (ctx.stage === 'collect') {
@@ -219,6 +279,14 @@ ${orderLines}
         const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(ctx.po_id)
         const f = d.saveImageFile(img, { house_code: po?.house_code || '', name: `ใบกำกับ-${po?.no || ''}-${Date.now()}.jpg`, category: 'ใบกำกับภาษี/ใบส่งของ', uploader: u.name })
         return readTaxInvoice(uid, u, ctx, f.id, replyToken)
+      }
+      if (ctx?.kind === 'recv_add') {
+        if (ctx.files.length >= MAX_IMAGES) return d.lineReply(replyToken, `ครบ ${MAX_IMAGES} รูปแล้วค่ะ — พิมพ์ 'ครบ'`)
+        const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(ctx.po_id)
+        const f = d.saveImageFile(img, { house_code: po?.house_code || '', name: `ตรวจรับ-${po?.no || ''}-เพิ่ม-${ctx.files.length + 1}.jpg`, category: 'ตรวจรับของ', uploader: u.name })
+        const next = { ...ctx, files: [...ctx.files, f.id], ttl: RECV_TTL }
+        d.setLineCtx(uid, next)
+        return d.lineReply(replyToken, `📷 รับรูปที่ ${next.files.length} แล้วค่ะ · ส่งเพิ่มได้ หรือพิมพ์ 'ครบ'`)
       }
       if (ctx?.kind !== 'recv') return null
       if (ctx.files.length >= MAX_IMAGES) return d.lineReply(replyToken, `ครบ ${MAX_IMAGES} รูปแล้วค่ะ — พิมพ์ 'ครบ' เพื่อให้ AI ตรวจ`)

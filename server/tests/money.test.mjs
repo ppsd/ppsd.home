@@ -2551,3 +2551,30 @@ test('รับของผ่าน LINE แบบไม่ส่งรูป: 
   assert.equal((await GET(`/purchase-orders/${b.id}/receipts`)).data[0].result, 'ไม่ผ่าน')
   await PUT('/controls', { block_self_approve: true })
 })
+
+test('รับของผ่าน LINE: รับด้วยข้อความไปแล้ว → ส่งรูปตามมาทีหลัง = แนบเข้าใบตรวจรับเดิม + เติมใบกำกับ/VAT · สถานะไม่เปลี่ยน', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
+  const wait = () => new Promise((r) => setTimeout(r, 700))
+  const c = await POST('/line-link/code', {}); await msg('Urecv3', c.data.code); await wait()
+  await PUT('/controls', { block_self_approve: false })
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ปูนซีเมนต์', qty: 10, unit: 'ถุง', price: 130 }] })
+  await POST(`/approve/pr/${pr.data.id}`)
+  const po = (await POST('/purchase-orders', { vendor: 'ร้านรับของ', item: 'ปูนซีเมนต์', amount: 1300, pr_no: pr.data.no, house_code: 'TS-01', items: [{ desc: 'ปูนซีเมนต์', qty: 10, unit: 'ถุง', price: 130 }] })).data
+  await POST(`/approve/po/${po.id}`)
+  await msg('Urecv3', `รับของ ${po.no} ได้รับครบ`); await wait()
+  const poOf = async () => (await GET('/purchase-orders')).data.find((p) => p.id === po.id)
+  assert.equal((await poOf()).status, 'รับของแล้ว'); assert.ok(!(await poOf()).tax_invoice_no)
+  // ส่งรูปตามมา
+  await msg('Urecv3', `รับของ ${po.no}`); await wait()
+  await img('Urecv3', 'x1'); await wait(); await img('Urecv3', 'x2'); await wait()
+  await msg('Urecv3', 'ครบ'); await wait()
+  const p = await poOf()
+  assert.equal(p.status, 'รับของแล้ว', 'สถานะไม่เปลี่ยน'); assert.equal(p.tax_invoice_no, 'IV-6810-0045')
+  const grs = (await GET(`/purchase-orders/${po.id}/receipts`)).data
+  assert.equal(grs.length, 1, 'ไม่สร้างใบตรวจรับใหม่')
+  assert.equal(grs[0].files.length, 1); assert.equal(JSON.parse(grs[0].photos).length, 1); assert.equal(grs[0].tax_invoice_no, 'IV-6810-0045')
+  assert.equal((await GET('/expenses')).data.find((e) => e.po_id === po.id).tax_invoice_no, 'IV-6810-0045', 'ภาษีซื้อเข้ารายจ่าย')
+  await PUT('/controls', { block_self_approve: true })
+})
