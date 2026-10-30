@@ -14,7 +14,7 @@ export default function BoqPrint({ boq, houseName, onClose }: { boq: Boq; houseN
   return (
     <div className="printdoc-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,40,.5)', zIndex: 60, overflow: 'auto', padding: '24px 16px' }}>
       <div className="no-print" style={{ maxWidth: 880, margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>{boq.no}</div>
+        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>{boq.no} R{boq.rev || 1}</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
           <button onClick={() => window.print()} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>🖨 พิมพ์</button>
           <button onClick={onClose} style={{ fontFamily: 'inherit', fontSize: 13.5, fontWeight: 500, color: '#1C2730', background: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>ปิด</button>
@@ -29,7 +29,7 @@ export default function BoqPrint({ boq, houseName, onClose }: { boq: Boq; houseN
             <div style={{ fontSize: 15, fontWeight: 700, color: '#1E2E3B' }}>รายการประมาณราคาก่อสร้าง (BILL OF QUANTITY)</div>
             <div style={{ fontSize: 11.5, color: '#5C6770' }}>{boq.title} · {houseName || boq.house_code}</div>
           </div>
-          <div style={{ textAlign: 'right' }}><div className="num" style={{ fontSize: 12, color: '#5C6770', fontFamily: 'monospace' }}>{boq.no}</div><div style={{ fontSize: 11.5, color: '#5C6770' }}>{boq.date}</div></div>
+          <div style={{ textAlign: 'right' }}><div className="num" style={{ fontSize: 12, color: '#5C6770', fontFamily: 'monospace' }}>{boq.no} · ฉบับ R{boq.rev || 1}{boq.locked ? ' (ฉบับเซ็นสัญญา)' : ''}</div>{boq.rev_note ? <div style={{ fontSize: 11, color: '#5C6770' }}>{boq.rev_note}</div> : null}<div style={{ fontSize: 11.5, color: '#5C6770' }}>{boq.date}</div></div>
         </div>
 
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>

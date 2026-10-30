@@ -6287,7 +6287,14 @@ api.delete('/acceptances/:id', canWrite, (req, res) => { db.prepare('DELETE FROM
 
 // ---------- เฟส 4: BOQ / Cash Flow / บัญชีรับ-จ่าย (เห็น/แก้ได้ admin/บัญชี/ผู้จัดการ) ----------
 // BOQ (ตีราคา)
-const boqRow = (r) => r ? { ...r, items: jparse(r.items) || [], work: jparse(r.work) || [] } : r
+const boqRow = (r) => r ? { ...r, items: jparse(r.items) || [], work: jparse(r.work) || [], rev: r.rev || 1, root_id: r.root_id || null, locked: r.locked ? 1 : 0 } : r
+const BOQ_LOCKED = 'BOQ ฉบับนี้ล็อกแล้ว (ฉบับเซ็นสัญญา) — แก้ไม่ได้ ให้สร้างฉบับใหม่แทน'
+// ฉบับถัดไปของชุดเดียวกัน: เลขเดิม · rev = สูงสุด + 1
+function nextBoqRev(base) {
+  const root = base.root_id || base.id
+  const max = db.prepare('SELECT MAX(COALESCE(rev,1)) m FROM boqs WHERE id=? OR root_id=?').get(root, root).m || 1
+  return { root, rev: max + 1, no: db.prepare('SELECT no FROM boqs WHERE id=?').get(root)?.no || base.no }
+}
 api.get('/boqs', auditView, (req, res) => {
   const hc = req.query.house_code
   const rows = hc ? db.prepare('SELECT * FROM boqs WHERE house_code=? ORDER BY id DESC').all(hc) : db.prepare('SELECT * FROM boqs ORDER BY id DESC').all()
@@ -6295,22 +6302,63 @@ api.get('/boqs', auditView, (req, res) => {
 })
 api.post('/boqs', auditView, (req, res) => {
   const b = req.body || {}
-  const seq = seqAfter('boqs')
-  const no = `BOQ-${docYear()}-${String(seq).padStart(3, '0')}`
+  // revise_of = สร้างเป็นฉบับใหม่ของ BOQ เดิม (เช่น ถอดแบบใหม่หลังแก้แบบ) — ใช้เลขเดิม
+  const base = b.revise_of ? db.prepare('SELECT * FROM boqs WHERE id=?').get(Number(b.revise_of)) : null
+  if (b.revise_of && !base) return res.status(404).json({ error: 'ไม่พบ BOQ ที่จะสร้างฉบับใหม่' })
+  const nr = base ? nextBoqRev(base) : null
+  const seq = seqAfter('boqs', 'root_id IS NULL') // ฉบับที่ 2 ขึ้นไปไม่นับเป็นเลขใหม่
+  const no = nr ? nr.no : `BOQ-${docYear()}-${String(seq).padStart(3, '0')}`
   const info = db.prepare('INSERT INTO boqs (no,house_code,title,markup_pct,vat_pct,items,work,by,date,created) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(no, b.house_code || '', b.title || 'ประมาณราคาก่อสร้าง', Number(b.markup_pct) || 0, Number(b.vat_pct) || 0, JSON.stringify(b.items || []), JSON.stringify(Array.isArray(b.work) ? b.work : []), req.user.name, todayTH(), todayTH())
-  audit(req, 'สร้าง BOQ', no)
+  db.prepare('UPDATE boqs SET root_id=?, rev=?, rev_note=? WHERE id=?').run(nr ? nr.root : null, nr ? nr.rev : 1, String(b.rev_note || '').slice(0, 200), info.lastInsertRowid)
+  audit(req, nr ? 'สร้าง BOQ ฉบับใหม่' : 'สร้าง BOQ', nr ? `${no} R${nr.rev}` : no)
   res.status(201).json(boqRow(db.prepare('SELECT * FROM boqs WHERE id=?').get(info.lastInsertRowid)))
 })
 api.put('/boqs/:id', auditView, (req, res) => {
   const d = db.prepare('SELECT * FROM boqs WHERE id=?').get(req.params.id)
   if (!d) return res.status(404).json({ error: 'ไม่พบ BOQ' })
+  if (d.locked) return res.status(409).json({ error: BOQ_LOCKED })
   const b = req.body || {}
+  if (b.rev_note != null) db.prepare('UPDATE boqs SET rev_note=? WHERE id=?').run(String(b.rev_note).slice(0, 200), d.id)
   db.prepare('UPDATE boqs SET house_code=?, title=?, markup_pct=?, vat_pct=?, items=?, work=? WHERE id=?')
     .run(b.house_code ?? d.house_code, b.title ?? d.title, b.markup_pct != null ? Number(b.markup_pct) : d.markup_pct, b.vat_pct != null ? Number(b.vat_pct) : d.vat_pct, b.items ? JSON.stringify(b.items) : d.items, Array.isArray(b.work) ? JSON.stringify(b.work) : d.work, d.id)
   res.json(boqRow(db.prepare('SELECT * FROM boqs WHERE id=?').get(d.id)))
 })
-api.delete('/boqs/:id', auditView, (req, res) => { db.prepare('DELETE FROM boqs WHERE id=?').run(req.params.id); res.json({ ok: true }) })
+api.delete('/boqs/:id', auditView, (req, res) => {
+  const d = db.prepare('SELECT * FROM boqs WHERE id=?').get(req.params.id)
+  if (d?.locked) return res.status(409).json({ error: 'BOQ ฉบับนี้ล็อกแล้ว (ฉบับเซ็นสัญญา) — ลบไม่ได้' })
+  db.prepare('DELETE FROM boqs WHERE id=?').run(req.params.id)
+  // ลบฉบับแรกของชุด → ฉบับที่เหลือเลื่อนให้ฉบับเก่าสุดเป็นฉบับแรก (ยังอยู่ชุดเดียวกัน)
+  if (d && !d.root_id) {
+    const rest = db.prepare('SELECT id FROM boqs WHERE root_id=? ORDER BY rev, id').all(d.id)
+    if (rest.length) {
+      db.prepare('UPDATE boqs SET root_id=NULL WHERE id=?').run(rest[0].id)
+      db.prepare('UPDATE boqs SET root_id=? WHERE root_id=?').run(rest[0].id, d.id)
+    }
+  }
+  if (d) audit(req, 'ลบ BOQ', `${d.no} R${d.rev || 1}`)
+  res.json({ ok: true })
+})
+// สร้างฉบับใหม่จากฉบับนี้ (คัดลอกรายการทั้งหมด) — ใช้ตอนแก้รายการ/ราคาโดยไม่ได้ถอดแบบใหม่
+api.post('/boqs/:id/revise', auditView, (req, res) => {
+  const d = db.prepare('SELECT * FROM boqs WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบ BOQ' })
+  const nr = nextBoqRev(d)
+  const info = db.prepare('INSERT INTO boqs (no,house_code,title,markup_pct,vat_pct,items,work,by,date,created,root_id,rev,rev_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(nr.no, d.house_code, d.title, d.markup_pct, d.vat_pct, d.items, d.work, req.user.name, todayTH(), todayTH(), nr.root, nr.rev, String(req.body?.note || `แก้จากฉบับ R${d.rev || 1}`).slice(0, 200))
+  audit(req, 'สร้าง BOQ ฉบับใหม่', `${nr.no} R${nr.rev} (จาก R${d.rev || 1})`)
+  res.status(201).json(boqRow(db.prepare('SELECT * FROM boqs WHERE id=?').get(info.lastInsertRowid)))
+})
+// ล็อก/ปลดล็อกฉบับ (ฉบับเซ็นสัญญา) — ปลดล็อกได้เฉพาะแอดมิน
+api.post('/boqs/:id/lock', auditView, (req, res) => {
+  const d = db.prepare('SELECT * FROM boqs WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบ BOQ' })
+  const lock = req.body?.locked !== false
+  if (!lock && req.user.role !== 'admin') return res.status(403).json({ error: 'ปลดล็อกฉบับเซ็นสัญญาได้เฉพาะแอดมิน' })
+  db.prepare('UPDATE boqs SET locked=?, locked_at=?, locked_by=? WHERE id=?').run(lock ? 1 : 0, lock ? nowTS() : null, lock ? req.user.name : null, d.id)
+  audit(req, lock ? 'ล็อก BOQ (ฉบับเซ็นสัญญา)' : 'ปลดล็อก BOQ', `${d.no} R${d.rev || 1}`)
+  res.json(boqRow(db.prepare('SELECT * FROM boqs WHERE id=?').get(d.id)))
+})
 // grand total ของ BOQ (คิดฝั่ง server เพื่อกันแก้ตัวเลขจากหน้าเว็บ)
 function boqGrand(d) {
   const items = jparse(d.items) || []
@@ -6331,13 +6379,13 @@ api.post('/boqs/:id/push-to-house', auditView, (req, res) => {
     // สร้างงวดงานลูกค้า 1 งวด = ยอดรวม BOQ (ตั้งราคาขายไปในตัว)
     const nextNo = (db.prepare("SELECT COALESCE(MAX(no),0) m FROM installments WHERE house_code=? AND side='customer'").get(d.house_code).m) + 1
     db.prepare("INSERT INTO installments (house_code,no,detail,days,due,amount,paid,status,side,category) VALUES (?,?,?,?,?,?,0,'รอเก็บเงิน','customer','house')")
-      .run(d.house_code, nextNo, `ตามประมาณราคา ${d.no}`, '', '', grand)
+      .run(d.house_code, nextNo, `ตามประมาณราคา ${d.no}${(d.rev || 1) > 1 ? ' R' + d.rev : ''}`, '', '', grand)
   } else {
     // ตั้งราคาขาย "ตัวบ้าน" ฝั่งลูกค้า = ยอดรวม BOQ
     db.prepare('UPDATE houses SET house_customer=? WHERE code=?').run(grand, d.house_code)
   }
   recomputeHouse(d.house_code)
-  audit(req, 'ดัน BOQ เข้าราคาขาย', `${d.no} → ${h.name} (${grand.toLocaleString()})`)
+  audit(req, 'ดัน BOQ เข้าราคาขาย', `${d.no} R${d.rev || 1} → ${h.name} (${grand.toLocaleString()})`)
   res.json({ ok: true, grand, house: withProfit(db.prepare('SELECT * FROM houses WHERE code=?').get(d.house_code)) })
 })
 // ถอดแบบ → BOQ ร่าง: รับไฟล์แบบ (DWG / DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ (query) → รายการวัสดุ + ราคากลางที่จับคู่ได้ และค่าแรงตามปริมาณงาน ให้คนตรวจก่อนสร้าง BOQ

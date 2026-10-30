@@ -429,6 +429,14 @@ db.exec(`CREATE TABLE IF NOT EXISTS boqs (
   items TEXT, by TEXT, date TEXT, created TEXT
 )`)
 ensureColumn('boqs', 'work', 'TEXT') // ปริมาณงานต่อหมวด (ชั้น × ประเภทงาน × ส่วนงาน) จากการถอดแบบ — JSON
+// ฉบับของ BOQ: root_id = id ของฉบับแรก (ฉบับแรกเป็น NULL) · rev = เลขฉบับ (R1, R2 …) · ใช้เลขเอกสารเดียวกันทั้งชุด
+ensureColumn('boqs', 'root_id', 'INTEGER')
+ensureColumn('boqs', 'rev', 'INTEGER')
+ensureColumn('boqs', 'rev_note', 'TEXT')     // ฉบับนี้เปลี่ยนอะไร เช่น "แก้แบบ R2 ตามลูกค้า"
+// ล็อกฉบับที่เซ็นสัญญา — แก้/ลบไม่ได้ ใช้เป็นฐานเทียบตลอดโครงการ (ปลดล็อกได้เฉพาะแอดมิน)
+ensureColumn('boqs', 'locked', 'INTEGER')
+ensureColumn('boqs', 'locked_at', 'TEXT')
+ensureColumn('boqs', 'locked_by', 'TEXT')
 db.exec(`CREATE TABLE IF NOT EXISTS cashflows (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   no TEXT, house_code TEXT, title TEXT, opening INTEGER, months TEXT, rows TEXT, by TEXT, date TEXT, created TEXT
