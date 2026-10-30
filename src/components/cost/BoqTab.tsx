@@ -5,6 +5,7 @@ import { useApp } from '../../store'
 import { ExportButton } from '../../exportCsv'
 import BoqPrint from './BoqPrint'
 import BoqTakeoff from './BoqTakeoff'
+import BoqPriceRefresh from './BoqPriceRefresh'
 import MaterialSummaryPrint from './MaterialSummaryPrint'
 import type { WorkSec } from './boqFloors'
 import { exportMaterialSummaryXlsx } from './materialSummaryData'
@@ -40,6 +41,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
   const [printing, setPrinting] = useState<Boq | null>(null)
   const [summary, setSummary] = useState<Boq | null>(null) // สรุปวัสดุแยกชั้น/ประเภทงาน (PDF)
   const [takeoff, setTakeoff] = useState(false) // หน้าถอดแบบ → BOQ ร่าง
+  const [refresh, setRefresh] = useState(false) // เทียบ/อัปเดตเป็นราคากลางล่าสุด
 
   const load = () => api.get<Boq[]>('/boqs').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
@@ -80,6 +82,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
     const t = boqTotals(edit)
     return (
       <ModalShell title={edit.id ? `แก้ไข BOQ ${edit.no}` : 'สร้าง BOQ / ประมาณราคา'} sub="ค่าวัสดุ + ค่าแรง ต่อรายการ → บวกค่าดำเนินการ/กำไร และ VAT" width={1100} closeOnBackdrop={false} onClose={() => setEdit(null)}
+        headerActions={<button onClick={() => setRefresh(true)} title="เทียบราคาในแถวที่ผูกราคากลาง กับราคากลางล่าสุด" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '6px 11px', cursor: 'pointer', marginRight: 6 }}>↻ อัปเดตราคากลางล่าสุด</button>}
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#F7F9FB' }}
         footer={<>
           <button onClick={() => setEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
@@ -168,6 +171,7 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
         </table>
       </div>
       {editorModal}
+      {refresh && edit && <BoqPriceRefresh items={edit.items} onApply={(items) => setEdit((e) => e ? { ...e, items } : e)} onClose={() => setRefresh(false)} />}
       {takeoff && <BoqTakeoff houseCode={houseCode} onClose={() => setTakeoff(false)}
         onCreate={(b) => { setTakeoff(false); setEdit({ id: 0, no: '', house_code: b.house_code, title: b.title, markup_pct: 20, vat_pct: 7, items: b.items, work: b.work, date: '' }) }} />}
       {summary && <MaterialSummaryPrint title={summary.no + ' · ' + summary.title} houseName={houses.find((h) => h.code === summary.house_code)?.name || summary.house_code} items={summary.items} work={summary.work} onClose={() => setSummary(null)} />}

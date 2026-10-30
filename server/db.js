@@ -537,6 +537,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS material_prices (
   updated TEXT
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_matprice_nkey ON material_prices(nkey)')
+// ประวัติราคากลาง — ทุกครั้งที่ราคาเปลี่ยน: เดิม → ใหม่ · มาจากไหน (แก้เอง/Excel/PO/เพิ่มใหม่/÷ ต่อชิ้น) · ใคร · เมื่อไหร่
+db.exec(`CREATE TABLE IF NOT EXISTS material_price_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mp_id INTEGER, name TEXT, unit TEXT,
+  old_price REAL, new_price REAL, source TEXT, by TEXT, at TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_mph_mp ON material_price_history(mp_id)')
 // เติมค่าตั้งต้นจากประวัติที่บริษัทอัปโหลด (ครั้งเดียว ตอนฐานข้อมูลยังว่าง)
 if (db.prepare('SELECT COUNT(*) c FROM material_prices').get().c === 0) {
   const nkey = (n) => String(n).replace(/\s+/g, '').replace(/["“”]/g, '').toLowerCase()

@@ -4,6 +4,7 @@ import type { ApiMaterialPrice } from '../../store'
 import { api } from '../../api'
 import LaborRates from './LaborRates'
 import ModalShell, { KeepAlive } from '../shared/ModalShell'
+import { InlinePrice, PriceHistoryModal, ImportPricesModal, exportPricesXlsx } from './PriceTools'
 
 // ราคากลางวัสดุ — อ้างอิงจากประวัติสั่งซื้อจริง ใช้เตือนราคาแพงตอนทำ PR/PO
 const money = (n: number) => (n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
@@ -48,6 +49,8 @@ export default function MaterialPrices() {
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState<Form>(emptyForm)
   const [err, setErr] = useState('')
+  const [history, setHistory] = useState<ApiMaterialPrice | null>(null) // ประวัติราคาของรายการนี้
+  const [importing, setImporting] = useState(false) // นำเข้า Excel
 
   const counts = useMemo(() => ({
     all: list.length,
@@ -108,6 +111,9 @@ export default function MaterialPrices() {
   }
   const suspected = useMemo(() => list.filter((m) => packOf(m) != null).length, [list])
 
+  // แก้ราคากลางในตารางทันที → เป็น "ตั้งราคาเอง" + เก็บประวัติ (ฝั่ง server)
+  const savePrice = async (m: ApiMaterialPrice, central: number) => { await api.put('/material-prices/' + m.id, { central }); await reload() }
+
   const remove = async (m: ApiMaterialPrice) => {
     if (!confirm(`ลบราคากลาง "${m.name}" ?`)) return
     setBusy(true)
@@ -159,6 +165,8 @@ export default function MaterialPrices() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{tabBtn('material', 'วัสดุ')}{tabBtn('labor', 'ค่าแรงช่าง')}</div>
         {canEdit && (
           <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => exportPricesXlsx(list).catch((e) => alert('ดาวน์โหลดไม่สำเร็จ: ' + (e as Error).message))} title="ดาวน์โหลดราคากลางทั้งหมด แก้ราคาใน Excel แล้วนำเข้ากลับ" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>⬇ ดาวน์โหลด Excel</button>
+            <button onClick={() => setImporting(true)} title="นำเข้าราคาที่แก้ใน Excel (ตรวจก่อนบันทึก)" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>⬆ นำเข้า Excel</button>
             <button onClick={recompute} disabled={busy} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#30506A', background: '#E2E9EF', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: busy ? 'default' : 'pointer' }}>↻ อัปเดตจากประวัติจริง</button>
             <button onClick={openAdd} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 15px', cursor: 'pointer' }}>+ เพิ่มรายการ</button>
           </div>
@@ -212,7 +220,7 @@ export default function MaterialPrices() {
                       {m.unit || '–'}
                       {packGuess != null && <div style={{ fontSize: 10, fontWeight: 700, color: '#B7791F', background: '#F6ECD6', borderRadius: 6, padding: '1px 6px', marginTop: 2 }}>ราคาต่อ {packGuess} ชิ้น?</div>}
                     </td>
-                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#1E2E3B' }} className="num">฿{money(m.central)}</td>
+                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#1E2E3B', whiteSpace: 'nowrap' }} className="num"><InlinePrice value={m.central} canEdit={canEdit} onSave={(v) => savePrice(m, v)} />{m.updated && <div style={{ fontSize: 10.5, fontWeight: 400, color: '#94A0A8' }}>{m.updated}</div>}</td>
                     <td style={{ ...td, textAlign: 'right', color: '#5C6770', whiteSpace: 'nowrap' }} className="num">{money(m.min)}–{money(m.max)}</td>
                     <td style={{ ...td, textAlign: 'right', color: '#5C6770' }} className="num">{money(m.latest)}</td>
                     <td style={{ ...td, textAlign: 'center', color: '#5C6770' }} className="num">{m.po_count || '–'}</td>
@@ -222,6 +230,7 @@ export default function MaterialPrices() {
                     {canEdit && (
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <button onClick={() => perPiece(m)} title="ราคานี้เป็นราคาต่อหลายชิ้น? หารให้เป็นราคาต่อ 1 ชิ้น" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: packGuess != null ? 700 : 400, color: '#B7791F', background: packGuess != null ? '#F6ECD6' : 'none', border: '1px solid #ECDCB8', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', marginRight: 5 }}>÷ ต่อชิ้น</button>
+                        <button onClick={() => setHistory(m)} title="ประวัติราคา" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: 'none', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 8px', cursor: 'pointer', marginRight: 5 }}>🕘</button>
                         <button onClick={() => openEdit(m)} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: 'none', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer', marginRight: 5 }}>แก้</button>
                         <button onClick={() => remove(m)} style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#C24036', background: 'none', border: '1px solid #EDD3CE', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ลบ</button>
                       </td>
@@ -234,9 +243,11 @@ export default function MaterialPrices() {
           </table>
         </div>
       </div>
-      <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 8 }}>แสดง {rows.length} จาก {list.length} รายการ · ราคากลาง = ราคาเฉลี่ยถ่วงน้ำหนักตามปริมาณที่ซื้อจริง</div>
+      <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 8 }}>แสดง {rows.length} จาก {list.length} รายการ · ราคากลาง = ราคาเฉลี่ยถ่วงน้ำหนักตามปริมาณที่ซื้อจริง{canEdit && ' · คลิกที่ราคากลางเพื่อแก้ได้ทันที (Enter บันทึก · Esc ยกเลิก) · 🕘 = ประวัติราคา'}</div>
     </div>
     {formModal}
+    {history && <PriceHistoryModal mp={history} onClose={() => setHistory(null)} />}
+    {importing && <ImportPricesModal onClose={() => setImporting(false)} onDone={reload} />}
     {laborKeep}
     </>
   )
