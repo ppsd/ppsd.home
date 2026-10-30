@@ -41,6 +41,8 @@ before(async () => {
   child = spawn(process.execPath, [join(serverDir, 'index.js')], {
     env: {
       ...process.env, PORT: String(PORT), PPSD_DB: join(tmp, 'test.sqlite'), PPSD_NO_TUNNEL: '1',
+      // AI อ่านใบส่งของ/ใบกำกับตอนตรวจรับผ่าน LINE (ผลจำลอง: รูป 1 = ใบกำกับ · รูป 2 = รูปของ)
+      PPSD_AI_MOCK_RECEIPT_LINE: JSON.stringify({ doc_images: [1], goods_images: [2], doc_types: ['ใบกำกับภาษี'], vendor: 'ร้านรับของ', tax_invoice_no: 'IV-6810-0045', items: [{ name: 'ปูนซีเมนต์', qty: 10, unit: 'ถุง', price: 130, amount: 1300 }], vat: 85.05, total: 1300, goods_concerns: [] }),
       PPSD_CHROME: process.env.PPSD_CHROME || '/opt/pw-browsers/chromium', // สร้างรูปใบ PR (เทสต์ข้ามถ้าไม่มี Chrome)
       PPSD_AUTOCOMPARE_MS: '400', // เทียบราคาอัตโนมัติหลังรูปสุดท้าย (จริง 60 วิ)
       PPSD_AI_MOCK_SALES: JSON.stringify({ doc_type: 'quote', customer: 'คุณสมศรี ใจดี', date: '2025-03-01', items: [{ desc: 'งานโครงสร้าง', qty: 1, unit: 'งาน', price: 1500000 }, { desc: 'งานหลังคา', qty: 1, unit: 'งาน', price: 350000 }], vat_mode: 'none', total: 1850000, note: 'ใบเก่าบ้านอื่น' }),
@@ -2473,5 +2475,55 @@ test('ลบ PO (แอดมิน): อนุมัติแล้วลบไ
   const blocked = await DEL(`/purchase-orders/${po2.data.id}`)
   assert.equal(blocked.status, 409); assert.match(blocked.data.error, /ใบจ่ายเงิน/)
   assert.equal((await DEL('/purchase-orders/999999')).status, 404)
+  await PUT('/controls', { block_self_approve: true })
+})
+
+test('รับของผ่าน LINE: รับของ PO → รูปใบกำกับ+รูปของ → ครบ → AI เทียบ PO → ของครบ = รับของแล้ว + ใบกำกับ/VAT · ขาด = ไม่รับ → ผู้จัดการกดยอมรับ · ใบกำกับมาทีหลัง', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const img = (uid, id) => hook(uid, { type: 'message', message: { type: 'image', id, contentProvider: { type: 'external', originalContentUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } } })
+  const postback = (uid, data) => hook(uid, { type: 'postback', postback: { data } })
+  const wait = () => new Promise((r) => setTimeout(r, 700))
+  const c = await POST('/line-link/code', {}); await msg('Urecv', c.data.code); await wait()
+  await PUT('/controls', { block_self_approve: false })
+  const pr = await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ปูนซีเมนต์', qty: 10, unit: 'ถุง', price: 130 }] })
+  await POST(`/approve/pr/${pr.data.id}`)
+  const mkPo = async () => {
+    const po = await POST('/purchase-orders', { vendor: 'ร้านรับของ', item: 'ปูนซีเมนต์', amount: 1300, pr_no: pr.data.no, house_code: 'TS-01', items: [{ desc: 'ปูนซีเมนต์', qty: 10, unit: 'ถุง', price: 130 }] })
+    assert.equal(po.status, 201, JSON.stringify(po.data))
+    await POST(`/approve/po/${po.data.id}`)
+    return po.data
+  }
+  const poOf = async (id) => (await GET('/purchase-orders')).data.find((p) => p.id === id)
+  // 1) ของครบ → รับของแล้ว · ใบกำกับ + VAT จากเอกสาร · รายจ่ายเข้าบ้าน · รูปเก็บเป็นไฟล์ของบ้าน
+  const po1 = await mkPo()
+  await msg('Urecv', `รับของ ${po1.no}`); await wait()
+  await img('Urecv', 'm1'); await wait(); await img('Urecv', 'm2'); await wait()
+  await msg('Urecv', 'ครบ'); await wait()
+  assert.equal((await poOf(po1.id)).status, 'รอส่งของ', 'AI ตรวจแล้วแต่ยังไม่ยืนยัน → ยังไม่รับ')
+  await msg('Urecv', 'ของครบ'); await wait()
+  const p1 = await poOf(po1.id)
+  assert.equal(p1.status, 'รับของแล้ว'); assert.equal(p1.tax_invoice_no, 'IV-6810-0045'); assert.equal(p1.vat_amount, 85.05)
+  const exp = (await GET('/expenses')).data.find((e) => e.po_id === po1.id)
+  assert.ok(exp && exp.tax_invoice_no === 'IV-6810-0045', 'รายจ่ายต้องได้เลขใบกำกับ')
+  const gr1 = (await GET(`/purchase-orders/${po1.id}/receipts`)).data[0]
+  assert.equal(gr1.source, 'line'); assert.equal(gr1.result, 'ผ่าน'); assert.equal(gr1.files.length, 1); assert.equal(JSON.parse(gr1.photos).length, 1)
+  assert.ok((await GET('/files?house=TS-01')).data.filter((f) => f.category === 'ตรวจรับของ').length >= 2, 'รูปต้องเก็บเป็นไฟล์ของบ้าน')
+  // 2) ขาด → ไม่ผ่าน (PO ยังรอส่งของ) → ผู้จัดการกด "ยอมรับตามที่ได้" → รับของแล้ว
+  const po2 = await mkPo()
+  await msg('Urecv', `รับของ ${po2.no}`); await wait()
+  await img('Urecv', 'm3'); await wait(); await img('Urecv', 'm4'); await wait()
+  await msg('Urecv', 'ครบ'); await wait()
+  await msg('Urecv', 'ขาด ปูน 2 ถุง'); await wait()
+  assert.equal((await poOf(po2.id)).status, 'รอส่งของ', 'ของขาด → ยังไม่รับของ')
+  const gr2 = (await GET(`/purchase-orders/${po2.id}/receipts`)).data[0]
+  assert.equal(gr2.result, 'ไม่ผ่าน'); assert.match(gr2.note, /ขาด ปูน 2 ถุง/)
+  await postback('Urecv', `gr:${gr2.id}:accept`); await wait()
+  assert.equal((await poOf(po2.id)).status, 'รับของแล้ว', 'ผู้จัดการยอมรับตามที่ได้ → รับของแล้ว')
+  // 3) ใบกำกับมาทีหลัง → เติมให้ PO
+  const po3 = await mkPo()
+  await msg('Urecv', `ใบกำกับ ${po3.no}`); await wait()
+  await img('Urecv', 'm5'); await wait()
+  assert.equal((await poOf(po3.id)).tax_invoice_no, 'IV-6810-0045')
   await PUT('/controls', { block_self_approve: true })
 })

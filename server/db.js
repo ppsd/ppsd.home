@@ -664,6 +664,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS goods_receipts (
   by TEXT, date TEXT, ts TEXT
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_gr_po ON goods_receipts(po_id)')
+// ตรวจรับผ่าน LINE: เลขใบกำกับ/VAT ที่ AI อ่านได้ · ช่องทาง (web/line) · ข้อความยืนยันจากหน้างาน · รูปของที่ได้รับ (id ไฟล์)
+for (const [c, t] of [['tax_invoice_no', 'TEXT'], ['vat_amount', 'REAL'], ['source', 'TEXT'], ['site_note', 'TEXT'], ['photos', 'TEXT']]) ensureColumn('goods_receipts', c, t)
 
 // ===== เฟส 4: สินทรัพย์ถาวร + ค่าเสื่อมราคา =====
 db.exec(`CREATE TABLE IF NOT EXISTS fixed_assets (

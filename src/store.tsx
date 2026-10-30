@@ -623,6 +623,10 @@ async function tryGet<T>(path: string, fallback: T): Promise<T> {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [data, setData] = useState<AppData>(EMPTY)
+  // ค่า data ล่าสุดเสมอ — ใช้ในตัวฟังอัปเดตสด (SSE) ที่สร้างครั้งเดียวตอนล็อกอิน (ถ้าอ่าน data ตรงๆ จะได้ค่าว่างตอนเริ่ม
+  // ทำให้ PR/PO/ใบจ่ายเงิน/ร้านค้า ที่เริ่มต้นเป็น null ไม่ถูกโหลดใหม่เลย → ต้องกด F5 เอง)
+  const dataRef = useRef<AppData>(EMPTY)
+  dataRef.current = data
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
 
@@ -684,7 +688,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     liveRef.current.es = es
     const flush = () => {
       const keys = [...liveRef.current.pending]; liveRef.current.pending.clear(); liveRef.current.timer = null
-      for (const k of keys) { const path = LIVE_RELOAD[k]; if (path && (data as unknown as Record<string, unknown>)[k] !== null) reload(k as keyof AppData, path).catch(() => {}) }
+      for (const k of keys) { const path = LIVE_RELOAD[k]; if (path && (dataRef.current as unknown as Record<string, unknown>)[k] !== null) reload(k as keyof AppData, path).catch(() => {}) }
       // ตำแหน่ง/สิทธิ์ของฉันอาจถูกแก้จาก HR หรือผู้ใช้งาน → โหลดข้อมูลผู้ใช้ใหม่ให้เมนูเปลี่ยนทันที ไม่ต้องล็อกอินซ้ำ
       if (keys.includes('users') || keys.includes('employees')) api.get<SessionUser>('/me').then(setUser).catch(() => {})
       window.dispatchEvent(new CustomEvent('ppsd:changed', { detail: keys }))
@@ -740,7 +744,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // mutations: perform the write, then refresh the affected dataset
   async function reload<K extends keyof AppData>(key: K, path: string) {
-    const next = await tryGet<AppData[K]>(path, data[key])
+    const next = await tryGet<AppData[K]>(path, dataRef.current[key])
     setData((d) => ({ ...d, [key]: next }))
   }
   async function reloadPayroll(period?: string) {

@@ -20,6 +20,7 @@ import { createTunnelManager } from './tunnel.js'
 import { renderElementPng } from './render.js'
 import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
+import { createLineReceive } from './line-receive.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -280,7 +281,7 @@ const CHANGE_MAP = [
   [/^\/(employees|kiosk|attendance|payroll|ot)/, ['employees', 'attendance', 'kioskEmployees', 'ot', 'timeAdjustments']],
   [/^\/(time-adjustments|leaves)/, ['timeAdjustments', 'leaves', 'attendance', 'notifications']],
   [/^\/(users|line-link|positions)/, ['users', 'employees']],
-  [/^\/line\/webhook/, ['prs', 'purchaseOrders', 'workOrders', 'notifications', 'users']],
+  [/^\/line\/webhook/, ['prs', 'purchaseOrders', 'payments', 'expenses', 'workOrders', 'notifications', 'users']],
   [/^\/vendors/, ['vendors']],
   [/^\/(material-prices|labor-rates)/, ['materialPrices', 'laborRates']],
   [/^\/stock/, ['stock']],
@@ -918,6 +919,8 @@ async function useOnlineOffer(hit, u, uid, replyToken) {
 async function handleLinePostback(uid, data, replyToken) {
   const u = userByLine(uid)
   if (!u) return lineReply(replyToken, lineUserDisabled(uid) ? LINE_DISABLED_MSG : 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ')
+  const grPb = lineReceive.handlePostback(uid, u, data, replyToken) // ปุ่ม "ยอมรับตามที่ได้" ของผลตรวจรับ
+  if (grPb) return grPb
   const m = String(data || '').match(/^apv:(pr|po|payment|expense):(\d+):(approve|hold|reject)$/)
   if (m) return lineApprovalAction(u, m[1], Number(m[2]), m[3], '', replyToken)
   // การ์ดขอเบิกค่าน้ำมัน: อนุมัติ = จ่ายจากกองน้ำมันทันที · ปฏิเสธ = ถามเหตุผลก่อน
@@ -1238,7 +1241,7 @@ async function sendPoDoc(poId, byName) {
   const base = publicBaseUrl()
   const imgUrl = base ? `${base}/api/pub/doc/po/${po.id}/${img.key}.png` : ''
   const st = approvalState('po', po.id)
-  const head = `🧾 ใบสั่งซื้อ ${po.no} อนุมัติครบแล้ว (${st.approvals.map((a) => a.approver).join(', ') || byName || '-'})\nร้าน: ${po.vendor} · ยอด ${fmtMoney(po.amount)} บาท · ${po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'}${po.pr_no ? ' · อ้าง ' + po.pr_no : ''}\nสั่งของกับร้านได้เลยค่ะ พอของมาให้ตรวจรับในระบบ (ถ่ายใบส่งของให้ AI อ่านได้)`
+  const head = `🧾 ใบสั่งซื้อ ${po.no} อนุมัติครบแล้ว (${st.approvals.map((a) => a.approver).join(', ') || byName || '-'})\nร้าน: ${po.vendor} · ยอด ${fmtMoney(po.amount)} บาท · ${po.payment_type === 'credit' ? `เครดิต ${po.credit_days || 0} วัน` : 'เงินสด'}${po.pr_no ? ' · อ้าง ' + po.pr_no : ''}\nสั่งของกับร้านได้เลยค่ะ พอของมาถึง พิมพ์ 'รับของ ${po.no}' ในแชทนี้ แล้วส่งรูปใบส่งของ/ใบกำกับ + รูปของที่ได้รับ`
   const msgs = imgUrl ? [head, { type: 'image', originalContentUrl: imgUrl, previewImageUrl: imgUrl }] : [head + '\n\n(ดูใบ PO ได้ในหน้า จัดซื้อ → ใบสั่งซื้อ)']
   let ok = 0
   for (const u of targets) { if (await linePush(u.line_uid, msgs)) ok++ }
@@ -1501,10 +1504,13 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (/^(ช่วย|help|\?|คำสั่ง)$/i.test(t)) {
     return lineReply(replyToken, (lineCanCommand(u)
       ? `คำสั่งสำหรับผู้บริหาร (${u.name}):\n• พิมพ์คำสั่งงาน เช่น "ให้สมชายไปเช็คหลังคาบ้านคุณพร ด่วน พรุ่งนี้" → ระบบทำร่าง → ตอบ 'ตกลง'\n• สรุป — สรุปเรื่องค้างวันนี้\n• รออนุมัติ — เอกสารที่รอคุณอนุมัติ (กดปุ่มในการ์ดได้เลย) · อนุมัติ PR-69-0144 / ปฏิเสธ PR-69-0144 เหตุผล\n• งานด่วน — งานด่วนที่ยังไม่รับทราบ\n• งาน — งานของฉัน\n• รับ — รับทราบงานล่าสุดที่สั่งถึงฉัน`
-      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ / เปิด PR / ขอจ้าง … เช่น "เปิด PR ปูนซีเมนต์ 50 ถุง บ้านคุณพร" หรือ "ขอจ้าง ช่างทาสีเก็บงานที่ออฟฟิศ" → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ\n\nค่าน้ำมันรถ:\n• เบิกน้ำมัน 1500 บ้านคุณพร ทะเบียน กข1234 — ขอเบิกค่าน้ำมันรถ → 'ตกลง' ส่งให้ผู้บริหารอนุมัติ (จ่ายจากกองค่าน้ำมัน)`)
+      : `คำสั่ง (${u.name}):\n• งาน — งานที่สั่งถึงฉัน\n• รับ — รับทราบงานล่าสุด\n• รับ WO-69-012 — รับทราบใบที่ระบุ`) + `\n\nจัดซื้อ:\n• สั่งของ / เปิด PR / ขอจ้าง … เช่น "เปิด PR ปูนซีเมนต์ 50 ถุง บ้านคุณพร" หรือ "ขอจ้าง ช่างทาสีเก็บงานที่ออฟฟิศ" → ร่างใบขอซื้อ → 'ตกลง' ส่งให้${prChecker()?.name || 'ผู้ตรวจสอบ'}ตรวจก่อนออก PR (แนบรูปสินค้าได้)\n• ใบเสนอราคา PR-69-0012 แล้วส่งรูปใบเสนอราคาแต่ละร้าน → พิมพ์ 'เทียบราคา' ให้ AI สรุปร้านที่คุ้มสุด\n• ออก PO PR-69-0012 — ออกใบสั่งซื้อจากร้านที่เลือก + ส่งขออนุมัติ\n\nค่าน้ำมันรถ:\n• เบิกน้ำมัน 1500 บ้านคุณพร ทะเบียน กข1234 — ขอเบิกค่าน้ำมันรถ → 'ตกลง' ส่งให้ผู้บริหารอนุมัติ (จ่ายจากกองค่าน้ำมัน)` + lineReceive.help)
   }
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
   const ctx = getLineCtx(uid)
+  // ตรวจรับของ / ใบกำกับภาษีมาทีหลัง (server/line-receive.js)
+  const recv = lineReceive.handleText(uid, u, t, replyToken, ctx)
+  if (recv) return recv
   // คำตอบช่องทางจัดซื้อหลังสร้างใบ (1/2/3) — ตอบอย่างอื่น = ข้าม (ค่าเริ่มต้นร้านค้าในระบบ)
   if (ctx?.kind === 'srcpref') {
     setLineCtx(uid, null)
@@ -1912,6 +1918,8 @@ async function handleLineUserImage(uid, message, replyToken) {
   const img = await lineFetchImage(message)
   if (!img) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง')
   const ctx = getLineCtx(uid)
+  const recvImg = lineReceive.handleImage(uid, u, img, replyToken, ctx) // รูปใบส่งของ/ใบกำกับ/รูปของ ระหว่างตรวจรับ
+  if (recvImg) return recvImg
   if (ctx?.kind === 'order') {
     if (orderFilesOf(uid).length >= 3) return lineReply(replyToken, "แนบได้สูงสุด 3 รูปค่ะ — พิมพ์ 'ครบ' เพื่อดูสรุป")
     db.prepare('INSERT INTO line_order_files (uid,image,created) VALUES (?,?,?)').run(uid, img, todayTH())
@@ -1986,7 +1994,7 @@ api.post('/line/webhook', async (req, res) => {
       }
     }
     setSetting('line_seen', JSON.stringify(seen.slice(0, 20)))
-    notifyChange(['prs', 'purchaseOrders', 'workOrders', 'notifications', 'users'])
+    notifyChange(['prs', 'purchaseOrders', 'payments', 'expenses', 'workOrders', 'notifications', 'users'])
   } catch (e) { console.error('line webhook:', e.message) }
 })
 api.post('/kiosk/punch', (req, res) => {
@@ -4680,15 +4688,25 @@ api.post('/purchase-orders/:id/receive', canWrite, (req, res) => {
   if (controls().enforce_approval_flow && !approvalState('po', po.id).done)
     return res.status(409).json({ error: `ตรวจรับของไม่ได้ — ใบสั่งซื้อ ${po.no} ยังไม่ได้รับอนุมัติครบ (ให้อนุมัติ PO ก่อน)` })
   const b = req.body || {}
-  const orderItems = orderItemsForPo(po)
   const deliveryItems = Array.isArray(b.delivery_items) ? b.delivery_items : []
   if (!deliveryItems.length) return res.status(400).json({ error: 'ยังไม่มีรายการในใบส่งของ — อัปโหลดรูปให้ AI อ่าน หรือกรอกเอง' })
+  const r = recordGoodsReceipt(po, { deliveryItems, files: Array.isArray(b.files) ? b.files : [], note: String(b.note || ''), byName: req.user.name, source: 'web' })
+  audit(req, 'ตรวจรับของ', `${po.no} → ${r.detail.result}`)
+  res.status(201).json({ result: r.detail.result, detail: r.detail, receipt_id: r.receipt_id, po: poRow(r.po) })
+})
+// บันทึกผลตรวจรับ (ใช้ทั้งเว็บและ LINE) — เทียบ PO กับใบส่งของ → ผ่าน = รับของแล้ว (ต้นทุนเข้าบ้าน/ลงบัญชี/เข้าสต๊อก)
+// forceResult: 'ไม่ผ่าน' = หน้างานแจ้งของขาด/ไม่ตรง (เอกสารตรงก็ไม่ผ่าน) · 'ผ่าน' = ยืนยันรับตาม PO (กรณีไม่มีเอกสาร)
+// ext: เลขใบกำกับ/VAT ที่อ่านได้ → อัปเดต PO ก่อน แล้วรายจ่าย/ภาษีซื้อจะได้ค่าตามเอกสารจริง
+function recordGoodsReceipt(po, { deliveryItems, files = [], note = '', byName, source = 'web', forceResult = null, ext = {} }) {
+  const orderItems = orderItemsForPo(po)
   const detail = matchReceipt(orderItems, deliveryItems, po)
-  const files = Array.isArray(b.files) ? b.files : []
-  const now = new Date()
-  const info = db.prepare(`INSERT INTO goods_receipts (po_id,po_no,files,order_items,delivery_items,result,detail,note,by,date,ts)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(po.id, po.no, JSON.stringify(files), JSON.stringify(orderItems), JSON.stringify(deliveryItems), detail.result, JSON.stringify(detail), String(b.note || ''), req.user.name, todayTH(), now.toISOString())
+  if (forceResult) detail.result = forceResult
+  if (ext.tax_invoice_no) db.prepare('UPDATE purchase_orders SET tax_invoice_no=? WHERE id=?').run(String(ext.tax_invoice_no).slice(0, 60), po.id)
+  if (Number(ext.vat_amount) > 0 && Number(ext.vat_amount) < (Number(po.amount) || Infinity)) db.prepare('UPDATE purchase_orders SET vat_amount=? WHERE id=?').run(Number(ext.vat_amount), po.id)
+  const info = db.prepare(`INSERT INTO goods_receipts (po_id,po_no,files,order_items,delivery_items,result,detail,note,by,date,ts,tax_invoice_no,vat_amount,source,site_note,photos)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(po.id, po.no, JSON.stringify(files), JSON.stringify(orderItems), JSON.stringify(deliveryItems), detail.result, JSON.stringify(detail), note, byName, todayTH(), new Date().toISOString(),
+      ext.tax_invoice_no || '', Number(ext.vat_amount) || 0, source, ext.site_note || '', JSON.stringify(ext.photos || []))
   // ผ่าน → รับของแล้ว (ต้นทุนไหลเข้าบ้าน) · ไม่ผ่าน → คงสถานะรอส่งของ ให้กลับไปตรวจ
   const prevStatus = po.status
   db.prepare('UPDATE purchase_orders SET gr_status=?, gr_date=? WHERE id=?').run(detail.result, todayTH(), po.id)
@@ -4699,11 +4717,11 @@ api.post('/purchase-orders/:id/receive', canWrite, (req, res) => {
   syncPoExpense(po2)
   // PO ไม่ผูกบ้าน = ซื้อเข้าสต๊อกกลาง → รับเข้าอัตโนมัติ (ครั้งแรกที่ผ่านเท่านั้น กันรับซ้ำ)
   if (detail.result === 'ผ่าน' && prevStatus !== 'รับของแล้ว' && prevStatus !== 'ปิดงาน') {
-    try { stockInFromPo(po2, deliveryItems, req.user.name) } catch (e) { console.error('stock-in:', e.message) }
+    try { stockInFromPo(po2, deliveryItems, byName) } catch (e) { console.error('stock-in:', e.message) }
   }
-  audit(req, 'ตรวจรับของ', `${po.no} → ${detail.result}`)
-  res.status(201).json({ result: detail.result, detail, receipt_id: info.lastInsertRowid, po: poRow(po2) })
-})
+  notifyChange(['purchaseOrders', 'expenses', 'houses', 'dashboard', 'notifications'])
+  return { detail, receipt_id: info.lastInsertRowid, po: po2 }
+}
 
 api.get('/purchase-orders/:id/receipts', financeOnly, (req, res) =>
   res.json(db.prepare('SELECT * FROM goods_receipts WHERE po_id=? ORDER BY id DESC').all(req.params.id)
@@ -4714,8 +4732,13 @@ api.post('/goods-receipts/:id/override', requireManager, (req, res) => {
   const gr = db.prepare('SELECT * FROM goods_receipts WHERE id=?').get(req.params.id)
   if (!gr) return res.status(404).json({ error: 'ไม่พบใบตรวจรับ' })
   const result = req.body?.result === 'ผ่าน' ? 'ผ่าน' : 'ไม่ผ่าน'
-  db.prepare('UPDATE goods_receipts SET result=?, overridden=1, override_by=?, note=? WHERE id=?')
-    .run(result, req.user.name, String(req.body?.note || gr.note || ''), gr.id)
+  const po2 = overrideGoodsReceipt(gr, result, req.user.name, String(req.body?.note || gr.note || ''))
+  audit(req, 'ปรับผลตรวจรับของ (override)', `${gr.po_no} → ${result}`)
+  res.json({ ok: true, result, po: poRow(po2) })
+})
+// ผู้จัดการตัดสินผลตรวจรับ (ใช้ทั้งเว็บและปุ่มใน LINE) — "ผ่าน" = ยอมรับตามที่ได้ → รับของแล้ว ต้นทุนเข้าบ้าน
+function overrideGoodsReceipt(gr, result, byName, note) {
+  db.prepare('UPDATE goods_receipts SET result=?, overridden=1, override_by=?, note=? WHERE id=?').run(result, byName, note, gr.id)
   db.prepare('UPDATE purchase_orders SET gr_status=?, gr_date=? WHERE id=?').run(result, todayTH(), gr.po_id)
   const poCur = db.prepare('SELECT status FROM purchase_orders WHERE id=?').get(gr.po_id)
   if (result === 'ผ่าน') db.prepare("UPDATE purchase_orders SET status='รับของแล้ว' WHERE id=?").run(gr.po_id)
@@ -4724,10 +4747,26 @@ api.post('/goods-receipts/:id/override', requireManager, (req, res) => {
   syncPoExpense(po2)
   // override เป็น "ผ่าน" ก็ต้องรับของเข้าสต๊อกเหมือนตรวจผ่านปกติ (PO ไม่ผูกบ้าน · กันรับซ้ำใน stockInFromPo)
   if (result === 'ผ่าน') {
-    try { stockInFromPo(po2, jparse(gr.delivery_items) || [], req.user.name) } catch (e) { console.error('stock-in(override):', e.message) }
+    try { stockInFromPo(po2, jparse(gr.delivery_items) || [], byName) } catch (e) { console.error('stock-in(override):', e.message) }
   }
-  audit(req, 'ปรับผลตรวจรับของ (override)', `${gr.po_no} → ${result}`)
-  res.json({ ok: true, result, po: poRow(po2) })
+  notifyChange(['purchaseOrders', 'expenses', 'houses', 'dashboard', 'notifications'])
+  return po2
+}
+// เก็บรูปจากแชท (data URL) เป็นไฟล์แนบของบ้าน → { id, name }
+function saveImageFile(dataUrl, { house_code = '', name = 'image.jpg', category = '', uploader = '' } = {}) {
+  const m = /^data:([^;]+);base64,(.*)$/.exec(String(dataUrl || ''))
+  const mime = m ? m[1] : 'image/jpeg'
+  const buf = Buffer.from(m ? m[2] : '', 'base64')
+  const info = db.prepare('INSERT INTO files (house_code,name,mime,size,category,uploaded,uploader) VALUES (?,?,?,?,?,?,?)').run(house_code, name, mime, buf.length, category, todayTH(), uploader)
+  const id = info.lastInsertRowid
+  writeFileSync(join(uploadsDir, String(id)), buf)
+  db.prepare('UPDATE files SET path=? WHERE id=?').run(String(id), id)
+  return { id, name }
+}
+// ตรวจรับของผ่าน LINE (ใบส่งของ/ใบกำกับ + รูปของ → AI เทียบ PO → หน้างานยืนยัน) — ดู server/line-receive.js
+const lineReceive = createLineReceive({
+  db, uploadsDir: () => uploadsDir, lineReply, linePush, setLineCtx, aiAsk, aiKey, extractJsonBlock, approvalState, controls, isManager,
+  orderItemsForPo, matchReceipt, recordGoodsReceipt, overrideGoodsReceipt, syncPoExpense, saveImageFile, docRecipients, lineApprovers, audit, fmtMoney,
 })
 
 // ล้างข้อมูลจัดซื้อทั้งหมด (PR/PO) — เริ่มใช้ระบบใหม่ (ผู้ดูแลเท่านั้น) · ไม่แตะราคากลางวัสดุ/ผู้ขาย/รายจ่ายที่ไม่ได้มาจาก PO
@@ -7443,7 +7482,8 @@ api.post('/sales-docs/:id/convert', canWrite, (req, res) => {
 
 
 // เก็บไฟล์แนบลงดิสก์จริง (แทน base64 ในฐานข้อมูล) — รองรับไฟล์ใหญ่/จำนวนมาก
-const uploadsDir = join(__dirname, 'data', 'files')
+// ชุดทดสอบ (PPSD_DB) ต้องเก็บไฟล์แนบข้างฐานข้อมูลทดสอบ — เดิมเขียนลง data/files ของจริง ทำให้ไฟล์ id ชนกันทับไฟล์ลูกค้าจริง
+const uploadsDir = process.env.PPSD_DB ? join(dirname(dbFile), 'files') : join(__dirname, 'data', 'files')
 mkdirSync(uploadsDir, { recursive: true })
 const FILE_COLS = 'id,house_code,name,mime,size,category,uploaded,uploader'
 api.get('/files', (req, res) => {
