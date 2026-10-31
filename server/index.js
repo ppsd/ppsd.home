@@ -599,7 +599,7 @@ function noteLineHeld(to, msg) {
   let held = []
   try { held = JSON.parse(getSetting('line_test_held', '[]')) || [] } catch { /* ignore */ }
   const who = db.prepare('SELECT name FROM users WHERE line_uid=?').get(to)?.name || db.prepare('SELECT name FROM customers WHERE line_uid=?').get(to)?.name || (String(to).startsWith('C') ? 'กลุ่ม LINE' : String(to).slice(0, 10) + '…')
-  const text = typeof msg === 'string' ? msg : (msg?.altText || msg?.text || '[การ์ด]')
+  const text = (Array.isArray(msg) ? msg : [msg]).map((m) => (typeof m === 'string' ? m : m?.altText ? '[การ์ด] ' + m.altText : m?.text || '[การ์ด]')).join(' · ')
   held.unshift({ at: nowTS(), to: who, text: String(text).slice(0, 160) })
   setSetting('line_test_held', JSON.stringify(held.slice(0, 30)))
 }
@@ -610,8 +610,20 @@ function lineAllowed(to, msg) {
   try { noteLineHeld(to, msg) } catch { /* ignore */ }
   return false
 }
+// โหมดทดสอบ: ส่งสำเนาข้อความที่ระงับให้คนทดสอบดู (ข้อความเดียวกันถึงหลายคน → ส่งสำเนาครั้งเดียวใน 60 วิ)
+const lineCopySeen = new Map()
+function lineTestCopy(to, msg) {
+  const t = lineTestUser()
+  if (!t?.line_uid) return
+  const key = JSON.stringify(msg), now = Date.now()
+  for (const [k, at] of lineCopySeen) if (now - at > 60000) lineCopySeen.delete(k)
+  if (lineCopySeen.has(key)) return
+  lineCopySeen.set(key, now)
+  const who = db.prepare('SELECT name FROM users WHERE line_uid=?').get(to)?.name || (() => { try { return db.prepare('SELECT name FROM customers WHERE line_uid=?').get(to)?.name } catch { return '' } })() || (String(to).startsWith('C') ? 'กลุ่ม LINE' : 'ผู้รับอื่น')
+  linePush(t.line_uid, [`🧪 สำเนา (โหมดทดสอบ) — ปกติส่งถึง: ${who}`, ...lineMessages(msg).slice(0, 4)])
+}
 async function linePush(to, msg) {
-  if (to && !lineAllowed(to, msg)) return true // โหมดทดสอบ: ทำเหมือนส่งแล้ว (ไม่ให้ขึ้นเตือนส่งไม่สำเร็จ)
+  if (to && !lineAllowed(to, msg)) { lineTestCopy(to, msg); return true } // โหมดทดสอบ: ระงับ + ส่งสำเนาให้คนทดสอบ (ไม่ให้ขึ้นเตือนส่งไม่สำเร็จ)
   const token = getSetting('line_token', '')
   if (!token || !to) { if (!token) lineLastError = { at: nowTS(), to: '', status: 0, reason: 'ยังไม่ได้ตั้ง LINE token' }; return false }
   try {
@@ -747,7 +759,7 @@ function approvalFlex(docType, doc) {
 // ผู้อนุมัติที่ผูก LINE (CEO/แอดมิน + ผู้จัดการ) — ไม่ส่งให้คนที่เป็นผู้ขอเอง
 function lineApprovers(excludeName) {
   return db.prepare("SELECT id, name, role, position, line_uid FROM users WHERE line_uid IS NOT NULL AND status='ใช้งาน'").all()
-    .filter((u) => lineCanCommand(u) && u.name !== excludeName)
+    .filter((u) => lineCanCommand(u) && (u.name !== excludeName || u.id === lineTestUser()?.id)) // โหมดทดสอบ: คนทดสอบได้การ์ดของใบตัวเองด้วย
 }
 async function notifyApprovers(docType, docId, requesterName) {
   try {
