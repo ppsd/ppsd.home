@@ -2598,3 +2598,24 @@ test('ข้อความ LINE: แอดมินแก้ได้ · ว่
   assert.equal((await PUT('/line-texts/staff.help_staff', { text: 'x' })).status, 403)
   token = adminToken
 })
+
+test('โหมดทดสอบ LINE: เปิดแล้วบอทไม่ทำคำสั่งของคนอื่น + จดข้อความที่ระงับ · ปิดแล้วกลับมาปกติ', async () => {
+  const hook = (uid, text) => api('POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r1', source: { type: 'user', userId: uid }, message: { type: 'text', text } }] })
+  const wait = () => new Promise((r) => setTimeout(r, 300))
+  const me = (await GET('/me')).data
+  await POST('/users', { name: 'ทดสอบโหมด LINE', username: 'lntest', pin: '6262', role: 'site' })
+  const u = (await GET('/users')).data.find((x) => x.username === 'lntest')
+  assert.equal((await PUT('/line-settings', { test_only: 999999 })).status, 400)
+  assert.equal((await PUT('/line-settings', { test_only: me.id })).status, 200)
+  let cfg = (await GET('/line-settings')).data
+  assert.equal(cfg.test_only, me.id); assert.deepEqual(cfg.test_held, [])
+  const c = await POST('/line-link/code', { user_id: u.id })
+  await hook('Ulntest', c.data.code); await wait()
+  assert.ok(!(await GET('/users')).data.find((x) => x.id === u.id).line_uid, 'โหมดทดสอบ: คนอื่นผูก/สั่งงานไม่ได้')
+  cfg = (await GET('/line-settings')).data
+  assert.ok(cfg.test_held.some((h) => h.text.includes('โหมดทดสอบไม่ตอบ')), 'จดไว้ว่ามีคนทักมา')
+  await PUT('/line-settings', { test_only: null })
+  assert.equal((await GET('/line-settings')).data.test_only, null)
+  await hook('Ulntest', c.data.code); await wait()
+  assert.equal((await GET('/users')).data.find((x) => x.id === u.id).line_uid, 'Ulntest', 'ปิดโหมดแล้วผูกได้ตามปกติ')
+})

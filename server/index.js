@@ -590,7 +590,28 @@ function noteLineError(to, status, body) {
   try { setSetting('line_last_error', JSON.stringify(lineLastError)) } catch { /* ignore */ }
   console.error('[line push]', status, String(body || '').slice(0, 200))
 }
+// ---- โหมดทดสอบ LINE: บอทส่ง/ตอบเฉพาะคนที่เลือกคนเดียว — ข้อความถึงคนอื่น/กลุ่ม/ลูกค้าถูกระงับ (จดไว้ให้ดูว่าจะส่งถึงใคร) ----
+function lineTestUser() {
+  const id = Number(getSetting('line_test_only', '')) || 0
+  return id ? db.prepare('SELECT id, name, line_uid FROM users WHERE id=?').get(id) || null : null
+}
+function noteLineHeld(to, msg) {
+  let held = []
+  try { held = JSON.parse(getSetting('line_test_held', '[]')) || [] } catch { /* ignore */ }
+  const who = db.prepare('SELECT name FROM users WHERE line_uid=?').get(to)?.name || db.prepare('SELECT name FROM customers WHERE line_uid=?').get(to)?.name || (String(to).startsWith('C') ? 'กลุ่ม LINE' : String(to).slice(0, 10) + '…')
+  const text = typeof msg === 'string' ? msg : (msg?.altText || msg?.text || '[การ์ด]')
+  held.unshift({ at: nowTS(), to: who, text: String(text).slice(0, 160) })
+  setSetting('line_test_held', JSON.stringify(held.slice(0, 30)))
+}
+// true = ส่งได้ · false = ระงับไว้ (โหมดทดสอบ และไม่ใช่คนที่เลือก)
+function lineAllowed(to, msg) {
+  const t = lineTestUser()
+  if (!t || (t.line_uid && to === t.line_uid)) return true
+  try { noteLineHeld(to, msg) } catch { /* ignore */ }
+  return false
+}
 async function linePush(to, msg) {
+  if (to && !lineAllowed(to, msg)) return true // โหมดทดสอบ: ทำเหมือนส่งแล้ว (ไม่ให้ขึ้นเตือนส่งไม่สำเร็จ)
   const token = getSetting('line_token', '')
   if (!token || !to) { if (!token) lineLastError = { at: nowTS(), to: '', status: 0, reason: 'ยังไม่ได้ตั้ง LINE token' }; return false }
   try {
@@ -1984,6 +2005,12 @@ api.post('/line/webhook', async (req, res) => {
       const src = ev.source || {}
       const type = src.type, id = src.groupId || src.roomId || src.userId
       if (!type || !id) continue
+      // โหมดทดสอบ: ไม่ตอบ/ไม่ทำคำสั่งของคนอื่น (ยกเว้นคนที่เลือก) — กลุ่มยังจำ ID ไว้ได้แต่ไม่ตอบ
+      const tst = lineTestUser()
+      if (tst && !(type === 'user' && tst.line_uid && id === tst.line_uid)) {
+        if (type === 'user' && ev.type === 'message') noteLineHeld(id, '(ทักบอทมา — โหมดทดสอบไม่ตอบ) ' + String(ev.message?.text || ev.message?.type || ''))
+        if (type === 'user') continue
+      }
       const text = ev.type === 'message' && ev.message?.type === 'text' ? String(ev.message.text || '').trim() : ''
       // แชทส่วนตัวกับบอท = ผูกบัญชี / สั่งงาน / รับงาน
       if (type === 'user' && text) { await handleLineUserMessage(id, text, ev.replyToken); continue }
@@ -1993,7 +2020,7 @@ api.post('/line/webhook', async (req, res) => {
       seen = seen.filter((s) => s.id !== id)
       seen.unshift({ type, id, name, at: nowTS(), event: ev.type })
       // บอทเพิ่งถูกเชิญเข้ากลุ่ม (หรือมีคนพิมพ์ id ในกลุ่ม) → ตอบ ID กลับในกลุ่ม ให้ก็อปจากมือถือได้เลย
-      if (token && ev.replyToken && (ev.type === 'join' || /^(id|ไอดี|group ?id)$/i.test(text))) {
+      if (token && ev.replyToken && !tst && (ev.type === 'join' || /^(id|ไอดี|group ?id)$/i.test(text))) {
         const label = type === 'group' ? 'Group ID' : 'Room ID'
         lineReply(ev.replyToken, `สวัสดีค่ะ บอท PPSD ERP พร้อมส่งสรุปเช้าแล้ว\n${label}:\n${id}\n\nนำ ID นี้ไปวางที่ ผู้ใช้งาน → แจ้งเตือน LINE (หรือกดเลือกจากรายการ "กลุ่มที่บอทเห็น")`)
       }
@@ -8166,7 +8193,11 @@ function buildLineDigest() {
   return lt('digest.title', { date: todayTH() }) + '\n\n' + L.join('\n')
 }
 async function sendLine(text) {
-  const token = getSetting('line_token', ''), to = getSetting('line_to', '')
+  const token = getSetting('line_token', ''), t = lineTestUser()
+  // โหมดทดสอบ: สรุปเช้าส่งเข้า LINE คนที่เลือกแทนกลุ่ม
+  const to = t ? t.line_uid : getSetting('line_to', '')
+  if (t && !to) throw new Error(`โหมดทดสอบ: ${t.name} ยังไม่ได้ผูก LINE`)
+  if (t) text = '🧪 [โหมดทดสอบ — ปกติส่งเข้ากลุ่ม]\n' + text
   if (!token || !to) throw new Error('ยังไม่ได้ตั้งค่า LINE (token / ID ผู้รับ)')
   const res = await fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
@@ -8197,6 +8228,8 @@ api.get('/line-settings', adminOnly, (_req, res) => res.json({
   seen: lineSeen(), // กลุ่ม/คนที่บอทเคยเห็นผ่าน webhook → กดเลือกเป็นผู้รับได้
   secret_set: !!getSetting('line_secret', ''), // Channel secret ไว้ตรวจลายเซ็น webhook (กันคนอื่นยิงคำสั่งปลอม)
   linked: db.prepare('SELECT COUNT(*) c FROM users WHERE line_uid IS NOT NULL').get().c,
+  test_only: Number(getSetting('line_test_only', '')) || null, // โหมดทดสอบ: ส่งเฉพาะผู้ใช้ id นี้
+  test_held: (() => { try { return JSON.parse(getSetting('line_test_held', '[]')) } catch { return [] } })(),
 }))
 // ผูก LINE ของฉัน: ขอรหัส 6 หลัก → ส่งให้บอทในแชทส่วนตัว → บอทผูกให้ (อายุ 10 นาที)
 api.post('/line-link/code', requireAuth, (req, res) => {
@@ -8223,6 +8256,14 @@ api.put('/line-settings', adminOnly, (req, res) => {
   if (b.to !== undefined) setSetting('line_to', String(b.to || '').trim())
   if (b.secret !== undefined) setSetting('line_secret', String(b.secret || '').trim())
   if (b.hour !== undefined) { const hv = Number(b.hour); setSetting('line_hour', String(Number.isFinite(hv) ? Math.max(0, Math.min(23, hv)) : 8)) }
+  if (b.test_only !== undefined) {
+    const id = Number(b.test_only) || 0
+    if (id && !db.prepare('SELECT 1 FROM users WHERE id=?').get(id)) return res.status(400).json({ error: 'ไม่พบผู้ใช้' })
+    setSetting('line_test_only', id ? String(id) : '')
+    if (id) setSetting('line_test_held', '[]')
+    audit(req, id ? 'เปิดโหมดทดสอบ LINE' : 'ปิดโหมดทดสอบ LINE', id ? 'ส่งเฉพาะ ' + (lineTestUser()?.name || id) : 'ส่งทุกคนตามปกติ')
+    return res.json({ ok: true })
+  }
   audit(req, 'ตั้งค่าแจ้งเตือน LINE', getSetting('line_to', '') || '(ปิด)')
   res.json({ ok: true })
 })
@@ -8321,17 +8362,18 @@ api.post('/restart', adminOnly, (req, res) => {
   setTimeout(() => process.exit(0), 400)
 })
 // ---- ข้อความ LINE ที่แอดมินแก้ได้ (server/line-texts.js) ----
-api.get('/line-texts', adminOnly, (_req, res) => res.json(listLineTexts()))
+const lineTextSamples = () => ({ checker: prChecker()?.name }) // ตัวอย่างช่อง {checker} = ผู้ตรวจสอบที่ตั้งไว้จริง
+api.get('/line-texts', adminOnly, (_req, res) => res.json(listLineTexts(lineTextSamples())))
 api.put('/line-texts/:key', adminOnly, (req, res) => {
   const err = setLineText(req.params.key, req.body?.text)
   if (err) return res.status(400).json({ error: err })
-  const row = listLineTexts().find((x) => x.key === req.params.key)
+  const row = listLineTexts(lineTextSamples()).find((x) => x.key === req.params.key)
   audit(req, row.custom ? 'แก้ข้อความ LINE' : 'คืนค่าข้อความ LINE ตั้งต้น', `${row.group} · ${row.label}`)
   res.json(row)
 })
 // ส่งข้อความตัวอย่าง (ค่าตัวอย่างในช่อง) เข้า LINE ของแอดมินเอง — ดูหน้าตาจริงก่อนใช้
 api.post('/line-texts/:key/test', adminOnly, async (req, res) => {
-  const row = listLineTexts().find((x) => x.key === req.params.key)
+  const row = listLineTexts(lineTextSamples()).find((x) => x.key === req.params.key)
   if (!row) return res.status(404).json({ error: 'ไม่พบข้อความนี้' })
   const uid = db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid
   if (!uid) return res.status(400).json({ error: 'บัญชีของคุณยังไม่ได้ผูก LINE — ผูกก่อนจึงส่งทดสอบได้' })

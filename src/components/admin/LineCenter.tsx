@@ -16,7 +16,7 @@ export default function LineCenter() {
   const pickTab = (t: Tab) => { setTab(t); try { localStorage.setItem('ppsd_line_tab', t) } catch { /* ignore */ } }
   // แจ้งเตือน LINE
   interface LineSeen { type: string; id: string; name: string; at: string; event: string }
-  interface LineCfg { token_set: boolean; to: string; hour: number; last_sent: string; status: { at: string; ok: boolean; msg?: string } | null; seen?: LineSeen[]; secret_set?: boolean; linked?: number }
+  interface LineCfg { token_set: boolean; to: string; hour: number; last_sent: string; status: { at: string; ok: boolean; msg?: string } | null; seen?: LineSeen[]; secret_set?: boolean; linked?: number; test_only?: number | null; test_held?: { at: string; to: string; text: string }[] }
   const [lineHelp, setLineHelp] = useState(false)
   const [lineCfg, setLineCfg] = useState<LineCfg | null>(null)
   const [lineToken, setLineToken] = useState('')
@@ -99,6 +99,7 @@ export default function LineCenter() {
           <button key={k} onClick={() => pickTab(k)} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: tab === k ? 700 : 500, color: tab === k ? '#fff' : '#2E7D55', background: tab === k ? '#2E7D55' : '#fff', border: '1px solid ' + (tab === k ? '#2E7D55' : '#CDE3D6'), borderRadius: 9, padding: '8px 14px', cursor: 'pointer' }}>{label}</button>
         ))}
       </div>
+      <TestMode cfg={lineCfg} users={users} reload={loadLine} />
       {tab === 'connect' && (
         <>
           {/* แจ้งเตือน LINE — สรุปเรื่องค้างส่งเข้ากลุ่มบริหารทุกเช้า */}
@@ -295,6 +296,54 @@ function LinkedPeople({ users, onCode, onUnlink }: { users: ApiUser[]; onCode: (
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// โหมดทดสอบ: บอทส่ง/ตอบเฉพาะคนที่เลือก — ข้อความถึงคนอื่น/กลุ่ม/ลูกค้าถูกระงับไว้ (แสดงรายการว่าจะส่งถึงใคร)
+function TestMode({ cfg, users, reload }: { cfg: { test_only?: number | null; test_held?: { at: string; to: string; text: string }[] } | null; users: ApiUser[]; reload: () => void }) {
+  const linked = users.filter((u) => u.line_uid && u.status !== 'ปิดใช้งาน')
+  const [pick, setPick] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const on = cfg?.test_only ? users.find((u) => u.id === cfg.test_only) : null
+  const set = async (id: number) => {
+    if (id && !window.confirm(`เปิดโหมดทดสอบ: บอทจะส่ง/ตอบเฉพาะ ${users.find((u) => u.id === id)?.name} คนเดียว
+ข้อความถึงคนอื่น กลุ่ม และลูกค้า จะถูกระงับ (ไม่ส่งย้อนหลัง)`)) return
+    setBusy(true)
+    try { await api.put('/line-settings', { test_only: id || null }); reload() } catch (e) { window.alert((e as Error).message) }
+    setBusy(false)
+  }
+  if (!cfg) return null
+  if (!on) return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, padding: '8px 14px' }}>
+      🧪 โหมดทดสอบ: <b style={{ color: '#2E7D55' }}>ปิด</b> (ส่งทุกคนตามปกติ) · เปิดให้ส่งเฉพาะ
+      <select value={pick} onChange={(e) => setPick(Number(e.target.value))} style={{ fontFamily: 'inherit', fontSize: 12.5, padding: '4px 8px', borderRadius: 7, border: '1px solid #D2DAE1' }}>
+        <option value={0}>— เลือกคน (ที่ผูก LINE แล้ว) —</option>
+        {linked.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+      </select>
+      <button disabled={!pick || busy} onClick={() => set(pick)} style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: pick ? '#B7791F' : '#D9C6A0', border: 'none', borderRadius: 7, padding: '5px 12px', cursor: pick ? 'pointer' : 'default' }}>เปิดโหมดทดสอบ</button>
+    </div>
+  )
+  const held = cfg.test_held || []
+  return (
+    <div style={{ background: '#FFF8EC', border: '1px solid #ECDCB8', borderRadius: 12, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: '#B7791F' }}>🧪 โหมดทดสอบเปิดอยู่ — บอทส่ง/ตอบเฉพาะ {on.name}</span>
+        {!on.line_uid && <span style={{ fontSize: 12, color: '#C24036' }}>⚠ คนนี้ยังไม่ได้ผูก LINE</span>}
+        <button disabled={busy} onClick={() => set(0)} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>ปิดโหมดทดสอบ (ส่งทุกคนตามปกติ)</button>
+      </div>
+      <div style={{ fontSize: 12, color: '#5C6770' }}>ข้อความถึงคนอื่น กลุ่ม และลูกค้าถูกระงับ ไม่ส่งย้อนหลังเมื่อปิดโหมด · คนอื่นทักบอทมา บอทจะไม่ตอบ · สรุปเช้าส่งเข้า LINE {on.name} แทนกลุ่ม</div>
+      <details>
+        <summary style={{ fontSize: 12.5, cursor: 'pointer', color: '#30506A' }}>ข้อความที่ถูกระงับ ({held.length}{held.length >= 30 ? '+' : ''}) <button onClick={(e) => { e.preventDefault(); reload() }} style={{ fontFamily: 'inherit', fontSize: 11, border: '1px solid #D2DAE1', background: '#fff', borderRadius: 6, padding: '1px 7px', cursor: 'pointer', marginLeft: 6 }}>รีเฟรช</button></summary>
+        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
+          {held.length === 0 && <div style={{ fontSize: 12, color: '#94A0A8' }}>ยังไม่มี</div>}
+          {held.map((h, i) => (
+            <div key={i} style={{ fontSize: 12, background: '#fff', border: '1px solid #EEE3CC', borderRadius: 7, padding: '5px 9px' }}>
+              <span style={{ color: '#94A0A8' }}>{h.at}</span> → <b>{h.to}</b>: <span style={{ color: '#5C6770' }}>{h.text}</span>
+            </div>
+          ))}
+        </div>
+      </details>
     </div>
   )
 }
