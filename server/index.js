@@ -1848,6 +1848,52 @@ function materialPriceFor(desc) {
   const rows = db.prepare('SELECT name, nkey, unit, central FROM material_prices WHERE active=1 AND central>0 ORDER BY po_count DESC').all()
   return rows.find((r) => r.nkey === k) || rows.find((r) => k.includes(r.nkey) || r.nkey.includes(k)) || null
 }
+// ราคากลางค่าแรง (labor_rates) สำหรับใบขอจ้าง — จับชื่องานจากข้อความ (ตัดคำ งาน/ช่าง/ค่าแรง/จ้าง ออกก่อนเทียบ)
+// ราคาประเมิน = ราคาสูงสุดของช่วง (ตั้งงบเผื่อ) · ราคากลาง 0 = ต้องให้ช่างเสนอราคา
+const laborCore = (s) => nkeyOf(s).replace(/\(.*?\)/g, '').replace(/ขอจ้าง|ค่าแรง|จ้าง|ช่าง|งาน/g, '')
+function lcsLen(a, b) {
+  let best = 0
+  const prev = new Array(b.length + 1).fill(0)
+  for (let i = 1; i <= a.length; i++) {
+    let diag = 0
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j]
+      prev[j] = a[i - 1] === b[j - 1] ? diag + 1 : 0
+      if (prev[j] > best) best = prev[j]
+      diag = tmp
+    }
+  }
+  return best
+}
+// hire = ข้อความเป็นการจ้าง (ขอจ้าง/ช่าง/ค่าแรง) → จับแบบหลวมได้ · ไม่ใช่ → ต้องมีชื่องานครบทั้งคำ (กัน "อิฐแดง 1000 ก้อน" ไปจับ "งานก่อผนังอิฐแดง")
+function laborRateFor(desc, hire) {
+  const k = laborCore(desc)
+  if (k.length < 3) return null
+  let hit = null, score = 0
+  for (const r of db.prepare('SELECT * FROM labor_rates WHERE active=1 ORDER BY seq, id').all()) {
+    const n = laborCore(r.name)
+    if (!n) continue
+    // ชื่องานอยู่ในข้อความทั้งคำ = ตรงสุด · ไม่งั้นใช้ส่วนที่ตรงกันยาวสุด (อย่างน้อย 4 ตัวอักษร)
+    let s = k.includes(n) ? 100 + n.length : !hire ? 0 : n.includes(k) ? 100 + k.length : lcsLen(k, n)
+    if (r.variant && nkeyOf(desc).includes(nkeyOf(r.variant))) s += 5
+    if (s > score) { score = s; hit = r }
+  }
+  if (!hit || score < 4) return null
+  const label = hit.name + (hit.variant ? ` (${hit.variant})` : '')
+  const price = Number(hit.price_max) || Number(hit.price_min) || 0
+  const range = hit.price_min && hit.price_max && hit.price_min !== hit.price_max ? `${fmtMoney(hit.price_min)}–${fmtMoney(hit.price_max)}` : price ? fmtMoney(price) : ''
+  return { label, unit: hit.unit || '', price, range }
+}
+// ราคาประเมินของรายการในใบขอซื้อ/ขอจ้าง: ค่าแรงกลางก่อน (กัน "ก่อผนังอิฐแดง" ไปจับราคา "อิฐแดง") แล้วค่อยราคากลางวัสดุ
+const HIRE_RE = /จ้าง|ค่าแรง|ช่าง/
+function estimateOrderItem(desc, qty, unit, hire) {
+  const lr = laborRateFor(desc, hire || HIRE_RE.test(desc))
+  if (lr) return { desc, qty, unit: unit || lr.unit, price: lr.price, est: lr.price > 0, src: 'labor', rate_label: lr.label, range: lr.range, rate_unit: lr.unit, quote_needed: !lr.price }
+  const mp = materialPriceFor(desc)
+  return { desc, qty, unit: unit || (mp?.unit || ''), price: mp ? mp.central : 0, est: !!mp }
+}
+// ค่าแรงคิดต่อหน่วย (ตร.ม./เมตร) แต่ยังไม่ใส่จำนวน → ยังคิดยอดไม่ได้ (ไม่เอาราคาต่อหน่วยไปเป็นยอดใบ)
+const orderItemPrice = (it) => (it.src === 'labor' && !(it.qty > 0) && it.rate_unit && it.rate_unit !== 'เหมา' ? 0 : it.price)
 function parseOrderText(text) {
   let t = String(text || '').replace(ORDER_CMD_RE, '').replace(/^(?:สั่ง)\s*/i, '').replace(/^(?:ให้|ว่า|:)\s*/, '').trim()
   const h = matchHouseInText(t); t = h.text
@@ -1862,14 +1908,23 @@ function parseOrderText(text) {
     else { m = part.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*$/); if (m) { desc = m[1]; qty = Number(m[2].replace(',', '')) } else desc = part }
     desc = desc.replace(/\s+/g, ' ').trim()
     if (!desc) continue
-    const mp = materialPriceFor(desc)
-    items.push({ desc, qty, unit: unit || (mp?.unit || ''), price: mp ? mp.central : 0, est: !!mp })
+    items.push(estimateOrderItem(desc, qty, unit, HIRE_RE.test(text)))
   }
   return { items, house_code: h.code, house_name: h.name }
 }
 function orderSummary(d) {
-  const lines = d.items.map((it, i) => `${i + 1}. ${it.desc}${it.qty ? ' ' + it.qty + ' ' + (it.unit || '') : ''}${it.price ? ` (ราคากลาง ${fmtMoney(it.price)}${it.qty ? ' → ' + fmtMoney(it.qty * it.price) : ''})` : ''}`)
-  const total = d.items.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : it.price), 0)
+  const lines = d.items.map((it, i) => {
+    const head = `${i + 1}. ${it.desc}${it.qty ? ' ' + it.qty + ' ' + (it.unit || '') : ''}`
+    if (it.src === 'labor') { // ใบขอจ้าง: บอกว่าจับกับราคากลางค่าแรงรายการไหน
+      if (it.quote_needed) return `${head}
+   ↳ ค่าแรงกลาง: ${it.rate_label} — ต้องให้ช่างเสนอราคา`
+      const need = !it.qty && it.rate_unit && it.rate_unit !== 'เหมา' ? ` · ใส่จำนวน (${it.rate_unit}) เพื่อคิดยอด` : ''
+      return `${head}
+   ↳ ค่าแรงกลาง: ${it.rate_label} ${it.range}/${it.rate_unit || 'หน่วย'} (ใช้ ${fmtMoney(it.price)}${it.qty ? ' → ' + fmtMoney(it.qty * it.price) : ''})${need}`
+    }
+    return `${head}${it.price ? ` (ราคากลาง ${fmtMoney(it.price)}${it.qty ? ' → ' + fmtMoney(it.qty * it.price) : ''})` : ''}`
+  })
+  const total = d.items.reduce((s, it) => s + (it.qty > 0 ? it.qty * it.price : orderItemPrice(it)), 0)
   const checker = prChecker()
   return `🛒 ร่างใบขอซื้อ${d.by_ai ? ' (AI อ่านรายการให้ — ตรวจดูก่อนนะคะ)' : ''}\nบ้าน: ${d.house_name || 'ไม่ระบุ'}${d.category_label ? ' · หมวด ' + d.category_label : ''}\n${lines.join('\n')}${d.photo_count ? `\n📷 รูปสินค้าแนบ ${d.photo_count} รูป` : ''}${total ? `\nรวมประมาณ ${fmtMoney(total)} บาท (ราคากลาง — จัดซื้อปรับตามใบเสนอราคาจริง)` : ''}\n\nถูกต้องไหมคะ? ตอบ 'ตกลง' เพื่อส่งให้${checker ? checker.name + ' ตรวจสอบ' : 'ผู้บริหารอนุมัติ'} · พิมพ์รายการใหม่ทั้งหมดเพื่อแก้ · 'ยกเลิก' เพื่อทิ้ง`
 }
@@ -1954,7 +2009,7 @@ function normalizeAiParse(p, sender) {
 async function parseOrderSmart(text, sender, pre) {
   const ai = pre || await aiParseLine(text, sender)
   if (ai && ai.items.length) {
-    const items = ai.items.map((it) => { const mp = materialPriceFor(it.desc); return { desc: it.desc, qty: it.qty, unit: it.unit || mp?.unit || '', price: mp ? mp.central : 0, est: !!mp } })
+    const items = ai.items.map((it) => estimateOrderItem(it.desc, it.qty, it.unit, HIRE_RE.test(text)))
     return { items, house_code: ai.house_code, house_name: ai.house_name, category: ai.category || '', category_label: ai.category_label || '', by_ai: true }
   }
   return { ...parseOrderText(text), by_ai: false }
@@ -1976,7 +2031,7 @@ const clearOrderFiles = (uid) => db.prepare('DELETE FROM line_order_files WHERE 
 function submitLineOrder(uid, u, d, replyToken) {
   try {
     const images = orderFilesOf(uid).slice(0, 3).map((f) => f.image)
-    const pr = createPurchaseRequest({ house: d.house_name, house_code: d.house_code, category: d.category || '', items: d.items.map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: it.price })), images }, u)
+    const pr = createPurchaseRequest({ house: d.house_name, house_code: d.house_code, category: d.category || '', items: d.items.map((it) => ({ desc: it.desc, qty: it.qty, unit: it.unit, price: orderItemPrice(it) })), images }, u)
     clearOrderFiles(uid)
     setLineCtx(uid, null)
     audit({ user: u }, 'สั่งของผ่าน LINE', `${pr.no} · ${pr.item}`)

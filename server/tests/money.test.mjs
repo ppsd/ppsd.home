@@ -2652,3 +2652,24 @@ test('LINE: พิมพ์ราคาร้านแทนส่งรูป�
   assert.ok(po, 'ต้องออก PO'); assert.equal(po.vendor, 'ร้านทรายบี'); assert.equal(po.amount, 1650)
   await PUT('/controls', { block_self_approve: true })
 })
+
+test('ใบขอจ้างทาง LINE: จับราคากลางค่าแรง (ใช้ราคาสูงสุด × จำนวน) · ราคากลาง 0 = รอเสนอราคา · สั่งวัสดุไม่ไปจับค่าแรง', async () => {
+  const hook = (uid, text) => api('POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r1', source: { type: 'user', userId: uid }, message: { type: 'text', text } }] })
+  const wait = () => new Promise((r) => setTimeout(r, 400))
+  const c = await POST('/line-link/code', {}); await hook('Uhire', c.data.code); await wait()
+  const order = async (text) => {
+    await hook('Uhire', text); await wait()
+    await hook('Uhire', 'ไม่มี'); await wait()   // ไม่มีรูป
+    await hook('Uhire', 'ตกลง'); await wait()
+  }
+  const prOf = async (desc) => (await GET('/purchase-requests')).data.filter((p) => String(p.item || '').includes(desc)).sort((a, b) => b.id - a.id)[0]
+  await order('ขอจ้าง ก่อผนังอิฐแดง 80 ตร.ม. บ้านเทสต์')
+  const a = await prOf('ก่อผนังอิฐแดง')
+  assert.ok(a, 'ต้องได้ใบขอจ้าง'); assert.equal(a.amount, 80 * 150, 'ค่าแรงกลางก่อผนัง 120–150 → ใช้ 150 × 80')
+  await order('ขอจ้าง ช่างทาสีเก็บงาน บ้านเทสต์')
+  const b = await prOf('ทาสีเก็บงาน')
+  assert.ok(b); assert.equal(b.amount, 0, 'งานทาสีราคากลาง 0 = รอช่างเสนอราคา')
+  await order('สั่งของ อิฐแดง 1000 ก้อน บ้านเทสต์')
+  const m = await prOf('อิฐแดง 1000') || (await GET('/purchase-requests')).data.sort((x, y) => y.id - x.id)[0]
+  assert.notEqual(m.amount, 1000 * 150, 'สั่งวัสดุอิฐแดงต้องไม่ไปจับค่าแรงก่อผนัง')
+})
