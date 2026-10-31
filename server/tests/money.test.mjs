@@ -2632,3 +2632,23 @@ test('โหมดทดสอบ LINE: คนทดสอบอนุมัต�
   const b = await mk()
   assert.equal((await POST(`/approve/pr/${b.id}`)).status, 403, 'ปิดโหมดแล้วห้ามเหมือนเดิม')
 })
+
+test('LINE: พิมพ์ราคาร้านแทนส่งรูปใบเสนอราคา → เลือกร้านในการ์ด → ออก PO ร้านนั้น · พิมพ์ร้านเดิมซ้ำ = แก้ราคา', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const wait = () => new Promise((r) => setTimeout(r, 400))
+  const c = await POST('/line-link/code', {}); await msg('Uquote', c.data.code); await wait()
+  await PUT('/controls', { block_self_approve: false })
+  const pr = (await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ทรายหยาบ', qty: 3, unit: 'คิว', price: 500 }] })).data
+  await POST(`/approve/pr/${pr.id}`)
+  await msg('Uquote', `ราคา ร้านทรายเอ 1,800 ${pr.no}`); await wait()
+  await msg('Uquote', 'ราคา ร้านทรายบี 1700 บาท'); await wait()   // ใช้บริบทใบเดิม
+  await msg('Uquote', 'ราคา ร้านทรายบี 1650'); await wait()       // แก้ราคาร้านเดิม
+  const qs = (await GET(`/purchase-requests/${pr.id}/quotes`)).data
+  assert.equal(qs.length, 2, 'ร้านเดิมพิมพ์ซ้ำต้องไม่เพิ่มแถว')
+  const b = qs.find((q) => q.vendor === 'ร้านทรายบี'); assert.equal(b.price, 1650)
+  await hook('Uquote', { type: 'postback', postback: { data: `po:${pr.id}:${b.id}` } }); await wait()
+  const po = (await GET('/purchase-orders')).data.find((p) => p.pr_no === pr.no)
+  assert.ok(po, 'ต้องออก PO'); assert.equal(po.vendor, 'ร้านทรายบี'); assert.equal(po.amount, 1650)
+  await PUT('/controls', { block_self_approve: true })
+})

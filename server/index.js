@@ -1212,7 +1212,7 @@ async function aiCompareQuotes(pr, user) {
 function compareMessages(pr, r) {
   const approved = approvalState('pr', pr.id).done
   const lines = r.quotes.map((q) => `${q.recommended ? '⭐' : '•'} ${q.vendor}: ${fmtMoney(Math.round(q.total))} บาท${q.terms ? ' · ' + q.terms : ''}${q.missing?.length ? ' · ขาด ' + q.missing.join(', ') : ''}`)
-  const text = `🤖 ผลเทียบราคา ${pr.no} (${r.files} รูป)\n${lines.join('\n')}\n\n⭐ คุ้มสุด: ${r.best_vendor}\n${r.reason || ''}${r.summary ? '\n\n' + r.summary : ''}`
+  const text = `🤖 ผลเทียบราคา ${pr.no}${r.files ? ` (${r.files} รูป)` : ' (จากราคาที่พิมพ์)'}\n${lines.join('\n')}\n\n⭐ คุ้มสุด: ${r.best_vendor}\n${r.reason || ''}${r.summary ? '\n\n' + r.summary : ''}`
   const btn = (q) => ({ type: 'button', style: q.recommended ? 'primary' : 'secondary', color: q.recommended ? '#C0852C' : undefined, height: 'sm', action: { type: 'postback', label: `ออก PO ${q.vendor}`.slice(0, 20), data: `po:${pr.id}:${q.id}`, displayText: `ออก PO ${pr.no} ร้าน ${q.vendor}` } })
   const flex = { type: 'flex', altText: `เลือกร้านเพื่อออก PO ${pr.no}`, contents: { type: 'bubble', size: 'mega',
     header: { type: 'box', layout: 'vertical', backgroundColor: '#C0852C', paddingAll: '14px', contents: [{ type: 'text', text: `ออกใบสั่งซื้อจาก ${pr.no}`, color: '#FFFFFF', weight: 'bold', size: 'md' }, { type: 'text', text: approved ? 'ขั้นตอนที่ 5 · เลือกร้านแล้วระบบออก PO + ส่งขออนุมัติให้' : '⚠ PR ยังรออนุมัติ — อนุมัติ PR ก่อนถึงออก PO ได้', color: '#FBF1DF', size: 'xs', wrap: true }] },
@@ -1624,6 +1624,27 @@ async function handleLineUserMessage(uid, text, replyToken) {
     const po = pr.po_no || db.prepare('SELECT no, vendor FROM purchase_orders WHERE pr_no=? AND status<>? ORDER BY id DESC').get(pr.no, 'ยกเลิก')
     return lineReply(replyToken, `📌 ตอนนี้คุยเรื่อง ${pr.no} (${String(pr.item || '').slice(0, 50)}) · สถานะ ${pr.status}${po ? ` · มี PO ${po.no || po} แล้ว` : ''}\n${n ? `มีรูปใบเสนอราคา ${n} รูป — พิมพ์ 'เทียบราคา' หรือ 'เอาร้านนี้'` : 'ยังไม่มีรูปใบเสนอราคา — ส่งรูปมาได้เลย'}${onlineOptionsHint(pr) ? '\n' + onlineOptionsHint(pr) : ''}`)
   }
+  // พิมพ์ใบเสนอราคาแทนส่งรูป: "ราคา ไทวัสดุ 12,500" (ระบุ PR-… ท้ายได้) → บันทึกเป็นใบเทียบราคา + ส่งการ์ดเลือกร้านออก PO (ถูกสุดเป็น ⭐)
+  const tq = t.match(/^(?:ราคา|เสนอราคา|ใบเสนอราคา)\s+(.+?)\s+([\d,]+(?:\.\d+)?)\s*(?:บาท|฿)?(?:\s+(PR-?[\w-]+))?$/i)
+  if (tq && !/^PR-?/i.test(tq[1])) {
+    const pr = tq[3] ? findPrByNo(tq[3]) : (ctx?.kind === 'quote' ? db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id) : null)
+    if (!pr) return lineReply(replyToken, 'ยังไม่รู้ว่าเป็นราคาของใบขอซื้อไหนค่ะ — พิมพ์เลขใบต่อท้าย เช่น "ราคา ไทวัสดุ 12500 PR-69-0012"')
+    if (!canRunPurchasing(u) && pr.by !== u.name) return lineReply(replyToken, 'ใส่ราคาได้เฉพาะผู้ขอ/จัดซื้อ/บัญชี/ผู้บริหารค่ะ')
+    const vendor = tq[1].trim().slice(0, 80), price = Math.round(Number(tq[2].replace(/,/g, '')))
+    if (!(price > 0)) return lineReply(replyToken, 'ยอดเงินไม่ถูกต้องค่ะ')
+    const items = jparse(pr.items) || []
+    db.prepare('DELETE FROM pr_quotes WHERE pr_id=? AND vendor=? AND ai=0 AND chosen=0').run(pr.id, vendor) // พิมพ์ร้านเดิมซ้ำ = แก้ราคา
+    db.prepare('INSERT INTO pr_quotes (pr_id,vendor,price,terms,note,chosen,ai,items,recommended,reason) VALUES (?,?,?,?,?,0,0,?,0,?)')
+      .run(pr.id, vendor, price, '', `พิมพ์ราคาทาง LINE โดย ${u.name}`, JSON.stringify(items.length === 1 ? [{ name: items[0].desc, qty: items[0].qty || 1, unit: items[0].unit || '', price: Math.round(price / (items[0].qty || 1)), amount: price }] : []), '')
+    audit({ user: u }, 'ใส่ราคาร้านทาง LINE', `${pr.no} · ${vendor} ${fmtMoney(price)}`)
+    setLineCtx(uid, { kind: 'quote', pr_id: pr.id, ttl: 48 * 60 * 60 * 1000 })
+    notifyChange(['prs'])
+    const r = compareResultFromDb(pr)
+    const min = Math.min(...r.quotes.map((q) => q.total))
+    r.quotes = r.quotes.map((q) => ({ ...q, recommended: q.total === min ? 1 : 0 })).sort((a, b) => a.total - b.total)
+    r.best_vendor = r.quotes[0].vendor; r.reason = 'ราคารวมต่ำสุดจากที่พิมพ์มา'; r.summary = `พิมพ์ร้านเพิ่มได้ เช่น "ราคา ร้านB 13000" · ต้องการอย่างน้อย ${quoteNeeded(pr)} ร้านตามเกณฑ์ (มีแล้ว ${r.quotes.length})`
+    return lineReply(replyToken, compareMessages(pr, r))
+  }
   // ส่งต่อลิงก์/ชื่อสินค้าจากผล AI หาร้าน + "เอาร้านนี้" หรือ "เอาร้านที่ 2" → ใช้ตัวเลือกออนไลน์นั้นออก PO (หาให้ข้ามใบได้ ไม่ต้องอยู่ในบริบทใบเดียวกัน)
   if (/ร้านนี้|เอาร้าน|ใช้ร้าน|เลือกร้าน|สั่งร้าน|เอาอันนี้|อันนี้|ลิงก์นี้|ลิ้งนี้|https?:\/\//i.test(t) && !ORDER_CMD_RE.test(t)) {
     const hit = findOnlineOfferInText(t, ctx?.kind === 'quote' ? ctx.pr_id : 0) || pickOnlineOfferByNumber(t, ctx)
@@ -1648,7 +1669,8 @@ async function handleLineUserMessage(uid, text, replyToken) {
   if (/^(เทียบราคา|เทียบ|compare)$/i.test(t) || (ctx?.kind === 'quote' && /ร้านนี้|เอาร้าน|ใช้ร้าน|เลือกร้าน|เทียบ|ออก\s*po|สั่งเลย|สั่งร้าน/i.test(t) && !ORDER_CMD_RE.test(t))) {
     const pr = ctx?.kind === 'quote' ? db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(ctx.pr_id) : null
     if (!pr) return lineReply(replyToken, 'ยังไม่รู้ว่าเทียบราคาของใบขอซื้อไหนค่ะ — พิมพ์ เช่น "เทียบราคา PR-69-0012"')
-    if (!quoteFilesOf(pr.id).length) return lineReply(replyToken, `ยังไม่มีรูปใบเสนอราคาของ ${pr.no} ค่ะ ส่งรูปมาก่อนนะคะ${onlineOptionsHint(pr) ? '\n' + onlineOptionsHint(pr) : ''}`)
+    if (!quoteFilesOf(pr.id).length && compareResultFromDb(pr)) return lineReply(replyToken, compareMessages(pr, compareResultFromDb(pr))) // ไม่มีรูป แต่พิมพ์ราคาไว้ → ส่งการ์ดเลือกร้าน
+    if (!quoteFilesOf(pr.id).length) return lineReply(replyToken, `ยังไม่มีรูปใบเสนอราคาของ ${pr.no} ค่ะ ส่งรูปมา หรือพิมพ์ราคาเอง เช่น "ราคา ไทวัสดุ 12500"${onlineOptionsHint(pr) ? '\n' + onlineOptionsHint(pr) : ''}`)
     clearTimeout(autoCompareTimers.get(pr.id))
     try {
       const r = await aiCompareQuotes(pr, u)
