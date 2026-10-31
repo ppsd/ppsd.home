@@ -2248,14 +2248,15 @@ function doApprove(docType, docId, req) {
   if (st.done) throw { code: 409, msg: 'อนุมัติครบแล้ว' }
   if (docType === 'pr' && doc.status === 'รอตรวจสอบ') throw { code: 409, msg: `ใบขอซื้อ ${doc.no} ยังรอผู้ตรวจสอบ (${prChecker()?.name || '-'}) ตรวจก่อนออก PR` }
   if (docType === 'pr' && doc.status === 'ส่งกลับแก้ไข') throw { code: 409, msg: `ใบขอซื้อ ${doc.no} ถูกส่งกลับให้แก้ไขแล้ว (สร้างใบใหม่)` }
-  if (ctrl.block_self_approve && cfg.requester && doc[cfg.requester] && doc[cfg.requester] === me.name) throw { code: 403, msg: 'ห้ามอนุมัติเอกสารที่ตัวเองเป็นผู้ขอ/ผู้จัดทำ (แยกหน้าที่)' }
+  const testSelf = lineTestUser()?.id === req.user.id // โหมดทดสอบ LINE: คนทดสอบอนุมัติใบตัวเองได้ (ทดสอบครบสายคนเดียว)
+  if (ctrl.block_self_approve && !testSelf && cfg.requester && doc[cfg.requester] && doc[cfg.requester] === me.name) throw { code: 403, msg: 'ห้ามอนุมัติเอกสารที่ตัวเองเป็นผู้ขอ/ผู้จัดทำ (แยกหน้าที่)' }
   if (st.approvals.some((a) => a.approver === me.name)) throw { code: 403, msg: 'คุณอนุมัติเอกสารนี้ไปแล้ว — แต่ละขั้นต้องเป็นคนละคน' }
   const step = st.approvals.length + 1
   db.prepare('INSERT INTO doc_approvals (doc_type,doc_id,step,decision,approver,approver_sig,role,note,date,ts) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(docType, Number(docId), step, 'approve', me.name, me.signature || null, me.role || '', req.body?.note || '', todayTH(), nowTS())
   const now = approvalState(docType, docId)
   setDocStatus(docType, docId, now.done ? 'อนุมัติ' : 'รออนุมัติ')
-  audit(req, `อนุมัติ ${cfg.label} (ขั้น ${step}/${now.required})`, doc.no || String(docId))
+  audit(req, `อนุมัติ ${cfg.label} (ขั้น ${step}/${now.required})${testSelf && doc[cfg.requester] === me.name ? ' [โหมดทดสอบ: อนุมัติใบตัวเอง]' : ''}`, doc.no || String(docId))
   // PR อนุมัติครบ → ออกเป็นใบ (รูป) ส่งเข้า LINE ของผู้รับที่ตั้งไว้ (ทำเบื้องหลัง ไม่หน่วงการอนุมัติ)
   if (docType === 'pr' && now.done) setImmediate(() => sendPrDoc(docId, me.name).catch((e) => console.error('[pr-doc]', e.message)))
   // PO อนุมัติครบ → รูปใบสั่งซื้อเข้า LINE จัดซื้อ/ผู้ขอ

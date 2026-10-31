@@ -2619,3 +2619,16 @@ test('โหมดทดสอบ LINE: เปิดแล้วบอทไม�
   await hook('Ulntest', c.data.code); await wait()
   assert.equal((await GET('/users')).data.find((x) => x.id === u.id).line_uid, 'Ulntest', 'ปิดโหมดแล้วผูกได้ตามปกติ')
 })
+
+test('โหมดทดสอบ LINE: คนทดสอบอนุมัติใบที่ตัวเองขอได้ · ปิดโหมดแล้วกลับมาห้ามเหมือนเดิม', async () => {
+  const me = (await GET('/me')).data
+  await PUT('/controls', { block_self_approve: true })
+  const mk = async () => (await POST('/purchase-requests', { house: 'บ้านเทสต์', items: [{ desc: 'ทราย', qty: 1, unit: 'คิว', price: 500 }] })).data
+  const a = await mk()
+  assert.equal((await POST(`/approve/pr/${a.id}`)).status, 403, 'ปกติห้ามอนุมัติใบตัวเอง')
+  await PUT('/line-settings', { test_only: me.id })
+  assert.equal((await POST(`/approve/pr/${a.id}`)).status, 200, 'โหมดทดสอบ: อนุมัติใบตัวเองได้')
+  await PUT('/line-settings', { test_only: null })
+  const b = await mk()
+  assert.equal((await POST(`/approve/pr/${b.id}`)).status, 403, 'ปิดโหมดแล้วห้ามเหมือนเดิม')
+})

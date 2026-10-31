@@ -332,7 +332,7 @@ function TestMode({ cfg, users, reload }: { cfg: { test_only?: number | null; te
         {!on.line_uid && <span style={{ fontSize: 12, color: '#C24036' }}>⚠ คนนี้ยังไม่ได้ผูก LINE</span>}
         <button disabled={busy} onClick={() => set(0)} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>ปิดโหมดทดสอบ (ส่งทุกคนตามปกติ)</button>
       </div>
-      <div style={{ fontSize: 12, color: '#5C6770' }}>ข้อความถึงคนอื่น กลุ่ม และลูกค้าถูกระงับ (ส่งสำเนาให้ {on.name} ดูแทน) ไม่ส่งย้อนหลังเมื่อปิดโหมด · คนอื่นทักบอทมา บอทจะไม่ตอบ · สรุปเช้าส่งเข้า LINE {on.name} แทนกลุ่ม</div>
+      <div style={{ fontSize: 12, color: '#5C6770' }}>ข้อความถึงคนอื่น กลุ่ม และลูกค้าถูกระงับ (ส่งสำเนาให้ {on.name} ดูแทน) ไม่ส่งย้อนหลังเมื่อปิดโหมด · คนอื่นทักบอทมา บอทจะไม่ตอบ · {on.name} อนุมัติใบที่ตัวเองขอได้ · สรุปเช้าส่งเข้า LINE {on.name} แทนกลุ่ม</div>
       <details>
         <summary style={{ fontSize: 12.5, cursor: 'pointer', color: '#30506A' }}>ข้อความที่ถูกระงับ ({held.length}{held.length >= 30 ? '+' : ''}) <button onClick={(e) => { e.preventDefault(); reload() }} style={{ fontFamily: 'inherit', fontSize: 11, border: '1px solid #D2DAE1', background: '#fff', borderRadius: 6, padding: '1px 7px', cursor: 'pointer', marginLeft: 6 }}>รีเฟรช</button></summary>
         <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
