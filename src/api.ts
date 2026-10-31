@@ -28,6 +28,22 @@ async function uploadError(res: Response) {
   return new ApiError(res.status, `${m} (HTTP ${res.status})`)
 }
 
+// ชื่อไฟล์จาก Content-Disposition (รองรับ filename*=UTF-8'' ภาษาไทย และ filename="...")
+function fileNameOf(res: Response, fallback: string) {
+  const cd = res.headers.get('Content-Disposition') || ''
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd)
+  if (star) { try { return decodeURIComponent(star[1]) } catch { /* ชื่อเพี้ยน */ } }
+  return /filename="?([^";]+)"?/i.exec(cd)?.[1] || fallback
+}
+// บันทึก blob เป็นไฟล์ (ใช้ <a download> — คืน URL ทีหลัง ไม่งั้นบางเบราว์เซอร์ได้ไฟล์ว่าง)
+function saveBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = name
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch('/api' + path, {
     method,
@@ -59,15 +75,7 @@ export const api = {
   download: async (p: string) => {
     const res = await fetch('/api' + p, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
     if (!res.ok) throw new ApiError(res.status, 'ดาวน์โหลดไม่สำเร็จ')
-    const blob = await res.blob()
-    const cd = res.headers.get('Content-Disposition') || ''
-    const name = /filename="?([^"]+)"?/.exec(cd)?.[1] || 'download.txt'
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = name
-    a.click()
-    URL.revokeObjectURL(url)
+    saveBlob(await res.blob(), fileNameOf(res, 'download'))
   },
   // อัปโหลดไฟล์แบบ raw (ไม่แปลง base64) — ส่งไฟล์ตรงๆ ใน body พร้อม meta ใน query
   uploadFile: async <T>(file: File, meta: { house?: string; category?: string }) => {
@@ -96,16 +104,16 @@ export const api = {
     const res = await fetch('/api' + p, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
     if (!res.ok) throw new ApiError(res.status, 'เปิดไฟล์ไม่สำเร็จ')
     const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
+    const name = fileNameOf(res, 'file')
     // เปิดในแท็บใหม่ได้เฉพาะ PDF/รูป/ข้อความ — ไฟล์อื่น (html/svg ฯลฯ) ถ้าเปิดจะรันในชื่อเว็บ ERP แล้วขโมยการล็อกอินได้ → ดาวน์โหลดแทน
-    if (/^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp)|text\/plain)/.test(blob.type)) window.open(url, '_blank')
-    else {
-      const cd = res.headers.get('Content-Disposition') || ''
-      const m = /filename\*=UTF-8''([^;]+)/i.exec(cd)
-      const a = document.createElement('a')
-      a.href = url; a.download = m ? decodeURIComponent(m[1]) : 'file'
-      document.body.appendChild(a); a.click(); a.remove()
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
+    // มือถือ/เบราว์เซอร์ที่ไม่มีตัวดู PDF: เปิด blob ในแท็บใหม่แล้วได้ไฟล์ .txt ว่าง (Chrome Android) → ดาวน์โหลดพร้อมชื่อไฟล์แทน
+    const isPdf = blob.type === 'application/pdf'
+    const noPdfViewer = navigator.pdfViewerEnabled === false || /Android|iPhone|iPad|iPod|Line\//i.test(navigator.userAgent)
+    if (/^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp)|text\/plain)/.test(blob.type) && !(isPdf && noPdfViewer)) {
+      const url = URL.createObjectURL(blob)
+      const w = window.open(url, '_blank')
+      if (!w) { URL.revokeObjectURL(url); saveBlob(blob, name); return } // ป๊อปอัปถูกบล็อก
+      setTimeout(() => URL.revokeObjectURL(url), 30 * 60000) // เผื่อกดบันทึกจากตัวดู PDF ทีหลัง (ถ้าคืนเร็ว ไฟล์ที่บันทึกจะว่าง)
+    } else saveBlob(blob, name)
   },
 }
