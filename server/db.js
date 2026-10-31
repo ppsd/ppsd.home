@@ -567,6 +567,17 @@ db.exec(`CREATE TABLE IF NOT EXISTS ai_usage (
   input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, cache_write INTEGER, web_searches INTEGER, cost_usd REAL
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_at ON ai_usage(at)')
+// ตรวจเอกสาร (AI): แบบมาตรฐานส่วนกลาง (ทุกแผนกใช้/แก้ได้) + ประวัติการตรวจ — ดู server/doc-review.js
+db.exec(`CREATE TABLE IF NOT EXISTS doc_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT, dept TEXT, rules TEXT, ref_text TEXT, created_by TEXT, created TEXT, updated_by TEXT, updated TEXT
+)`)
+db.exec(`CREATE TABLE IF NOT EXISTS doc_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT, by TEXT, by_id INTEGER, source TEXT, name TEXT, mime TEXT, size INTEGER, file_path TEXT,
+  template_id INTEGER, template_name TEXT, text TEXT, status TEXT, error TEXT, summary TEXT, issues TEXT, model TEXT, cost_usd REAL, done_at TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_doc_reviews_by ON doc_reviews(by_id, id)')
 // ชื่อเรียกอื่นของรายการมาตรฐาน — มาจาก "รวมรายการซ้ำ" หรือ "ถอดแบบ" (คนเลือกจับคู่ไว้) · nkey = ชื่อแบบตัดช่องว่าง/ตรา/สะกดต่าง
 db.exec(`CREATE TABLE IF NOT EXISTS material_aliases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

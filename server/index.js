@@ -21,6 +21,7 @@ import { renderElementPng } from './render.js'
 import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
+import { createDocReview } from './doc-review.js'
 import { lt, listLineTexts, setLineText } from './line-texts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -1163,6 +1164,27 @@ async function lineFetchImage(message) {
     return `data:${mime.startsWith('image/') ? mime : 'image/jpeg'};base64,${buf.toString('base64')}`
   } catch (e) { console.error('lineFetchImage:', e.message); return null }
 }
+// ไฟล์ที่ส่งมาทางแชท LINE (Word/PDF) → { buf, mime, name } · ใหญ่เกิน/ดาวน์โหลดไม่ได้ = null
+async function lineFetchFile(message) {
+  try {
+    const token = getSetting('line_token', '')
+    if (!token || !message?.id) return null
+    const r = await fetch(`https://api-data.line.me/v2/bot/message/${message.id}/content`, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(60000) })
+    if (!r.ok) return null
+    const buf = Buffer.from(await r.arrayBuffer())
+    if (!buf.length || buf.length > 30 * 1024 * 1024) return null
+    return { buf, mime: String(r.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim(), name: String(message.fileName || 'เอกสาร') }
+  } catch (e) { console.error('lineFetchFile:', e.message); return null }
+}
+// ไฟล์ที่พนักงานส่งมาในแชท = ส่งตรวจเอกสาร (server/doc-review.js)
+async function handleLineUserFile(uid, message, replyToken) {
+  const u = userByLine(uid)
+  if (!u) return lineReply(replyToken, lineUserDisabled(uid) ? LINE_DISABLED_MSG : 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ — ขอรหัส 6 หลักที่ ERP (ไอคอน 💬 มุมขวาบน) แล้วส่งมาที่นี่')
+  if (Number(message.fileSize) > 30 * 1024 * 1024) return lineReply(replyToken, 'ไฟล์ใหญ่เกิน 30 MB ค่ะ')
+  const f = await lineFetchFile(message)
+  if (!f) return lineReply(replyToken, 'ดาวน์โหลดไฟล์ไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง')
+  return docReview.handleFile(uid, u, f, replyToken, getLineCtx(uid))
+}
 const quoteFilesOf = (prId) => db.prepare('SELECT id, pr_id, by, source, created FROM pr_quote_files WHERE pr_id=? ORDER BY id').all(prId)
 // AI อ่านรูปใบเสนอราคาทุกใบของ PR → บันทึกเป็นใบเทียบราคา (pr_quotes, ai=1) + เลือกร้านที่คุ้มสุดให้ (ถ้ายังไม่มีคนเลือกเอง)
 const COMPARE_PROMPT = (pr) => {
@@ -1539,7 +1561,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
     // เมนูช่วย — ข้อความแต่ละส่วนแก้ได้ในหน้า LINE → ข้อความ
     return lineReply(replyToken, [
       lineCanCommand(u) ? lt('staff.help_manager', { name: u.name }) : lt('staff.help_staff', { name: u.name }),
-      lt('staff.help_purchase', { checker: prChecker()?.name || 'ผู้ตรวจสอบ' }), lt('staff.help_fuel'), lt('staff.help_receive'),
+      lt('staff.help_purchase', { checker: prChecker()?.name || 'ผู้ตรวจสอบ' }), lt('staff.help_fuel'), lt('staff.help_receive'), lt('staff.help_docreview'),
     ].filter((s) => s.trim()).join('\n\n'))
   }
   // ---- ขั้นตอนจัดซื้อผ่าน LINE: เหตุผลส่งกลับ / ใบเสนอราคา PR-… / เทียบราคา / ออก PO ----
@@ -1547,6 +1569,8 @@ async function handleLineUserMessage(uid, text, replyToken) {
   // ตรวจรับของ / ใบกำกับภาษีมาทีหลัง (server/line-receive.js)
   const recv = lineReceive.handleText(uid, u, t, replyToken, ctx)
   if (recv) return recv
+  const drv = docReview.handleText(uid, u, t, replyToken, ctx) // ตรวจเอกสาร (server/doc-review.js)
+  if (drv) return drv
   // คำตอบช่องทางจัดซื้อหลังสร้างใบ (1/2/3) — ตอบอย่างอื่น = ข้าม (ค่าเริ่มต้นร้านค้าในระบบ)
   if (ctx?.kind === 'srcpref') {
     setLineCtx(uid, null)
@@ -1980,6 +2004,8 @@ async function handleLineUserImage(uid, message, replyToken) {
   const ctx = getLineCtx(uid)
   const recvImg = lineReceive.handleImage(uid, u, img, replyToken, ctx) // รูปใบส่งของ/ใบกำกับ/รูปของ ระหว่างตรวจรับ
   if (recvImg) return recvImg
+  const drvImg = docReview.handleImage(uid, u, img, replyToken, ctx) // รูปเอกสารที่ส่งมาให้ตรวจ
+  if (drvImg) return drvImg
   if (ctx?.kind === 'order') {
     if (orderFilesOf(uid).length >= 3) return lineReply(replyToken, "แนบได้สูงสุด 3 รูปค่ะ — พิมพ์ 'ครบ' เพื่อดูสรุป")
     db.prepare('INSERT INTO line_order_files (uid,image,created) VALUES (?,?,?)').run(uid, img, todayTH())
@@ -2049,6 +2075,7 @@ api.post('/line/webhook', async (req, res) => {
       // แชทส่วนตัวกับบอท = ผูกบัญชี / สั่งงาน / รับงาน
       if (type === 'user' && text) { await handleLineUserMessage(id, text, ev.replyToken); continue }
       if (type === 'user' && ev.type === 'message' && ev.message?.type === 'image') { await handleLineUserImage(id, ev.message, ev.replyToken); continue }
+      if (type === 'user' && ev.type === 'message' && ev.message?.type === 'file') { await handleLineUserFile(id, ev.message, ev.replyToken); continue }
       if (type === 'user' && ev.type === 'postback') { await handleLinePostback(id, ev.postback?.data, ev.replyToken); continue }
       const name = await lineSourceName(type, id, token)
       seen = seen.filter((s) => s.id !== id)
@@ -2720,13 +2747,13 @@ function logAiUsage(feature, model, by, ok, u = {}) {
     return cost
   } catch { return 0 }
 }
-async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools, timeoutMs = 180000, feature = 'อื่นๆ', by = '' }) {
+async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools, timeoutMs = 180000, feature = 'อื่นๆ', by = '', effort = 'low' }) {
   if (!key) return { ok: false, error: AI_NO_KEY, code: 400 }
   const mediaArr = Array.isArray(media) ? media : media ? [media] : []
   const content = [...mediaArr, { type: 'text', text: prompt }]
   const body = { model, max_tokens: maxTokens, messages: [{ role: 'user', content }] }
   if (Array.isArray(tools) && tools.length) body.tools = tools // เช่น web_search (AI ค้นเว็บเอง)
-  if (!/haiku/.test(model)) body.output_config = { effort: 'low' }
+  if (!/haiku/.test(model)) body.output_config = { effort }
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -4835,6 +4862,9 @@ const lineReceive = createLineReceive({
   db, uploadsDir: () => uploadsDir, lineReply, linePush, setLineCtx, aiAsk, aiKey, extractJsonBlock, approvalState, controls, isManager,
   orderItemsForPo, matchReceipt, recordGoodsReceipt, overrideGoodsReceipt, syncPoExpense, saveImageFile, docRecipients, lineApprovers, audit, fmtMoney,
 })
+// ตรวจเอกสารด้วย AI (แบบมาตรฐานส่วนกลาง + ส่งเอกสารตรวจ ทั้งเว็บและ LINE) — ดู server/doc-review.js
+const docReview = createDocReview({ db, uploadsDir: () => uploadsDir, lineReply, linePush, setLineCtx, aiAsk, aiKey, AI_NO_KEY, extractJsonBlock, isManager, audit, nowTS, publicBaseUrl })
+docReview.register(api, { canWrite })
 
 // ล้างข้อมูลจัดซื้อทั้งหมด (PR/PO) — เริ่มใช้ระบบใหม่ (ผู้ดูแลเท่านั้น) · ไม่แตะราคากลางวัสดุ/ผู้ขาย/รายจ่ายที่ไม่ได้มาจาก PO
 api.post('/procurement/clear', adminOnly, (req, res) => {

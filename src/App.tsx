@@ -37,6 +37,7 @@ import Accounting from './components/accounting/Accounting'
 import Pms from './components/hr/Pms'
 import Vault from './components/admin/Vault'
 import CeoVoice from './components/dashboard/CeoVoice'
+import DocReview from './components/docreview/DocReview'
 import Login from './Login'
 import { useApp } from './store'
 import { titles, OFFICE_CATS, HOUSE_STATUSES, type ModalDef } from './data'
@@ -47,7 +48,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users' | 'stock'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -57,7 +58,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
-  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line',
+  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line', docreview: 'docreview',
 }
 
 export default function App() {
@@ -378,6 +379,7 @@ export default function App() {
       case 'accounting': return <Accounting />
       case 'pms': return <Pms />
       case 'ceovoice': return <CeoVoice />
+      case 'docreview': return <DocReview />
       default: return null
     }
   }

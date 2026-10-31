@@ -370,3 +370,7 @@ input::placeholder {
     padding: 10mm !important;
   }
 }
+
+/* ตรวจเอกสาร: จอแคบ = เรียงเป็นคอลัมน์เดียว */
+@media (max-width: 900px) { .docrev-grid { grid-template-columns: 1fr !important; } }
+@media (max-width: 1280px) { .docrev-split { grid-template-columns: 1fr !important; } .docrev-doc { border-right: none !important; border-bottom: 1px solid #EEF1F4; max-height: 340px !important; } }
