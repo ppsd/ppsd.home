@@ -8356,6 +8356,7 @@ function registerLineWebhookWithRetry(url) {
 const tunnel = createTunnelManager({
   port: process.env.PORT || 3001,
   appDir: join(__dirname, '..'),
+  stateFile: join(process.env.PPSD_DB ? dirname(process.env.PPSD_DB) : join(__dirname, 'data'), 'tunnel-proc.json'),
   onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhookWithRetry(url) },
   onStatus: (st) => setSetting('tunnel_state', JSON.stringify(st)),
 })
@@ -8441,7 +8442,6 @@ api.post('/tunnel/register-webhook', adminOnly, async (req, res) => {
   const ok = await registerLineWebhook(url)
   res.status(ok ? 200 : 400).json(tunnelInfo())
 })
-if (getSetting('tunnel_auto', '0') === '1' && !process.env.PPSD_NO_TUNNEL) tunnel.start().catch((e) => console.error('tunnel start:', e.message))
 try { const n = syncEmployeeAccounts(); if (n) console.log(`[accounts] สร้างบัญชี (ปิดใช้งาน) ให้พนักงานที่ยังไม่มี ${n} คน`) } catch (e) { console.error('sync accounts:', e.message) }
 
 api.post('/backup-mirror/run', adminOnly, async (req, res) => {
@@ -8453,7 +8453,15 @@ api.post('/backup-mirror/run', adminOnly, async (req, res) => {
 
 const PORT = process.env.PORT || 3001
 // bind to 0.0.0.0 so other devices on the network can reach it
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', (err) => {
+  // Express 5 ส่ง error (เช่น พอร์ตไม่ว่าง) มาที่ callback นี้แทนการล่ม — ถ้าไม่เช็ค ตัวที่ได้พอร์ตไม่ได้จะค้างรัน
+  // งานตั้งเวลา/สรุปเช้า/ลิงก์สาธารณะซ้ำ และแย่งตั้ง Webhook LINE (เช่น เปิด start.bat ซ้อนกับ run-server.bat)
+  if (err) {
+    console.error(err.code === 'EADDRINUSE' ? `[!] พอร์ต ${PORT} มีเซิร์ฟเวอร์ ERP ทำงานอยู่แล้ว — ตัวนี้ปิดตัว (ไม่ต้องเปิดซ้ำ)` : 'listen: ' + err.message)
+    process.exit(err.code === 'EADDRINUSE' ? 3 : 1) // 3 = มีตัวอื่นรันอยู่ (run-server.bat รอนานขึ้นก่อนลองใหม่)
+  }
+  // เปิดลิงก์สาธารณะหลังได้พอร์ตแล้วเท่านั้น
+  if (getSetting('tunnel_auto', '0') === '1' && !process.env.PPSD_NO_TUNNEL) tunnel.start().catch((e) => console.error('tunnel start:', e.message))
   console.log(`\nPPSD ERP — เปิดใช้งานแล้ว`)
   console.log(`  เครื่องนี้:      http://localhost:${PORT}`)
   for (const u of lanUrls(PORT)) console.log(`  มือถือ/เครื่องอื่น: ${u}`)

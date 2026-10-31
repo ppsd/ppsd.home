@@ -14,6 +14,7 @@ server/data/*.key
 server/data/backups/
 server/data/files/
 cloudflared.exe
+server/data/tunnel-proc.*
 server/data/logs/
 server/data/*.env
 server/data/takeoff-jobs/

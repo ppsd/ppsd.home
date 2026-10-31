@@ -31,6 +31,12 @@ echo   Stop:     press Ctrl+C or close this window
 echo ============================================
 echo.
 node server\index.js
+if errorlevel 3 if not errorlevel 4 (
+  echo.
+  echo [i] Another ERP server is already running on port 3001 - standing by, retry in 60 seconds.
+  timeout /t 60 >nul
+  goto loop
+)
 echo.
 echo [!] Server stopped - restarting in 5 seconds (press Ctrl+C to quit).
 timeout /t 5 >nul
