@@ -644,6 +644,17 @@ function custRedirect(to, msg) {
   if (r.line_uid === to) return null
   return { to: r.line_uid, msg: [`📨 [ตรวจก่อนส่งลูกค้า] ข้อความนี้ปกติส่งถึงลูกค้า: ${c.name} — ยังไม่ถึงลูกค้า`, ...lineMessages(msg).slice(0, 4)] }
 }
+// ช่วงตรวจ: ลูกค้าทักบอทมาเอง → คำตอบของบอทไม่ถึงลูกค้า แต่ส่งให้ผู้ตรวจดูแทน (ข้อมูลที่ลูกค้าแจ้ง เช่น เปิดเคส ยังบันทึกเข้าระบบตามปกติ)
+function custDeps(uid, cust, incoming) {
+  if (!Number(getSetting('cust_redirect_user', ''))) return crmDeps
+  const r = custRedirectUser()
+  return { ...crmDeps, lineReply: async (tok, msg) => {
+    if (!r?.line_uid) { noteLineError(uid, 0, 'ตั้งให้ตรวจข้อความลูกค้าก่อน แต่ผู้ตรวจยังไม่ผูก LINE — ไม่ได้ตอบลูกค้า'); return false }
+    if (r.line_uid === uid) return lineReply(tok, msg) // ผู้ตรวจทดลองเป็นลูกค้าเอง
+    return linePush(r.line_uid, [`💬 [ตรวจก่อนตอบลูกค้า] ลูกค้า ${cust?.name || ''} ทักบอทมา: "${String(incoming || '').slice(0, 200)}"
+บอทจะตอบว่า (ยังไม่ส่งถึงลูกค้า):`, ...lineMessages(msg).slice(0, 4)])
+  } }
+}
 async function linePush(to, msg) {
   const red = custRedirect(to, msg)
   if (red?.drop) { noteLineError(to, 0, 'ตั้งให้ส่งข้อความลูกค้าไปตรวจก่อน แต่ผู้ตรวจยังไม่ผูก LINE'); return false }
@@ -1572,14 +1583,14 @@ async function handleLineUserMessage(uid, text, replyToken) {
     if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
     // ลูกค้า (CRM) ที่ผูก LINE แล้ว → บอทฝั่งลูกค้า
     const cust = customerByLine(uid)
-    if (cust) return handleCustomerLineMessage(crmDeps, uid, cust, t, replyToken)
+    if (cust) return handleCustomerLineMessage(custDeps(uid, cust, t), uid, cust, t, replyToken)
     const con = conBot.byLine(uid) // ช่าง/ผู้รับเหมา ที่ผูก LINE แล้ว (server/contractor-line.js)
     if (con && !/^\d{6}$/.test(t)) return conBot.handleText(uid, con, t, replyToken)
     if (/^\d{6}$/.test(t)) {
       const linked = consumeLineLinkCode(t, uid)
       if (linked) return lineReply(replyToken, lt('staff.link_ok', { name: linked.name }))
       const cl = consumeCustomerCode(t, uid)
-      if (cl) { setLineCtx(uid, null); return handleCustomerLineMessage(crmDeps, uid, cl, 'สวัสดี', replyToken) }
+      if (cl) { setLineCtx(uid, null); return handleCustomerLineMessage(custDeps(uid, cl, '(ส่งรหัสผูก LINE)'), uid, cl, 'สวัสดี', replyToken) }
       const cn = conBot.consumeCode(t, uid)
       if (cn?.blocked) return lineReply(replyToken, conBot.TEST_BLOCK_MSG) // ช่วงทดสอบ: ช่างจริงยังผูกไม่ได้
       if (cn) { setLineCtx(uid, null); return lineReply(replyToken, lt('con.link_ok', { name: cn.name })) }
@@ -2097,7 +2108,7 @@ async function handleLineUserImage(uid, message, replyToken) {
   if (!u) {
     if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
     const cust = customerByLine(uid)
-    if (cust) { const cimg = await lineFetchImage(message); if (!cimg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return handleCustomerLineImage(crmDeps, uid, cust, cimg, replyToken) }
+    if (cust) { const cimg = await lineFetchImage(message); if (!cimg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return handleCustomerLineImage(custDeps(uid, cust, '[ส่งรูป]'), uid, cust, cimg, replyToken) }
     const con = conBot.byLine(uid) // ช่างส่งรูปงาน
     if (con) { const pimg = await lineFetchImage(message); if (!pimg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return conBot.handleImage(uid, con, pimg, replyToken) }
     return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ — ขอรหัส 6 หลักที่ ERP (ไอคอน 💬 มุมขวาบน) แล้วส่งมาที่นี่')

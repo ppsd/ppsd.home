@@ -146,3 +146,20 @@ test('ช่วงทดสอบ: บอทช่างใช้ได้เฉ
   assert.equal((await A('GET', '/contractor-line')).data.linked.length, 0)
   await A('PUT', '/center/line-test', { con_test_user: 0, cust_redirect_user: 0 })
 })
+
+test('ช่วงตรวจข้อความลูกค้า: ลูกค้าทักบอทมาเอง → ไม่ถึงลูกค้า แต่เรื่องที่ลูกค้าแจ้งยังบันทึกเข้าระบบ', async () => {
+  const CUST = 'U' + 'k'.repeat(32)
+  const me = (await A('GET', '/center/line-test')).data.users.find((u) => u.name === 'ธวัช วรรณสุข')
+  assert.equal((await A('PUT', '/center/line-test', { cust_redirect_user: me.id })).status, 200)
+  const c = await A('POST', '/customers', { name: 'คุณดี', phone: '0800000000' })
+  assert.ok(c.status < 300, JSON.stringify(c.data))
+  const cid = c.data.id ?? c.data?.customer?.id
+  const code = (await A('POST', `/crm/customers/${cid}/line-code`)).data.code
+  const lineAs = async (text) => { await api(null, 'POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r' + Math.random(), source: { type: 'user', userId: CUST }, message: { type: 'text', text } }] }); await wait(200) }
+  await lineAs(code)
+  await lineAs('แจ้งซ่อม ก๊อกน้ำรั่วห้องครัว')
+  await lineAs('ส่ง')
+  const issues = (await A('GET', '/issues')).data
+  assert.ok(issues.some((i) => String(i.title).includes('ก๊อกน้ำรั่ว')), 'เคสที่ลูกค้าแจ้งต้องยังเข้าระบบ')
+  await A('PUT', '/center/line-test', { cust_redirect_user: 0 })
+})
