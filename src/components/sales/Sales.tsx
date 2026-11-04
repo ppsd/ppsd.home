@@ -7,6 +7,7 @@ import type { ApiSalesDoc, SalesItem } from '../../store'
 import { baht } from '../../data'
 import SalesDocPrint from './SalesDocPrint'
 import ModalShell from '../shared/ModalShell'
+import InstallmentPlanPicker from '../shared/InstallmentPlanPicker'
 
 const th: React.CSSProperties = { padding: '9px 14px', fontWeight: 600, color: '#5C6770', fontSize: 12 }
 const td: React.CSSProperties = { padding: '11px 14px' }
@@ -30,13 +31,18 @@ export default function Sales() {
     try { const doc = await deriveSalesDoc(d.id, to); window.alert(`ออก${label} ${doc.no} แล้ว`) }
     catch (e) { window.alert((e as Error).message || 'ทำรายการไม่สำเร็จ') }
   }
-  const signContract = async (d: ApiSalesDoc) => {
-    const name = window.prompt(`เซ็นสัญญาจากใบเสนอราคา ${d.no}\nระบบจะสร้างบ้าน + งวดงานลูกค้า (ตามแผนมาตรฐาน) ให้อัตโนมัติ\n\nตั้งชื่อบ้าน:`, `บ้าน ${d.customer}`)
-    if (name == null) return
+  // เซ็นสัญญา: ตั้งชื่อบ้าน + เลือกแผนงวดมาตรฐาน (ชั้นเดียว / 2 ชั้น / 3 ชั้น) → สร้างบ้าน + งวดงานลูกค้า
+  const [signing, setSigning] = useState<{ doc: ApiSalesDoc; name: string; plan: string } | null>(null)
+  const [signBusy, setSignBusy] = useState(false)
+  const signContract = (d: ApiSalesDoc) => setSigning({ doc: d, name: `บ้าน ${d.customer}`, plan: '' })
+  const confirmSign = async () => {
+    if (!signing) return
+    setSignBusy(true)
     try {
-      await convertQuote(d.id, name.trim())
-      window.alert(`สร้างโครงการ "${name.trim() || 'บ้าน ' + d.customer}" + งวดงานลูกค้าแล้ว — ดูได้ที่เมนู "บ้าน"`)
-    } catch (e) { window.alert((e as Error).message || 'ทำรายการไม่สำเร็จ') }
+      await convertQuote(signing.doc.id, signing.name.trim(), signing.plan)
+      window.alert(`สร้างโครงการ "${signing.name.trim() || 'บ้าน ' + signing.doc.customer}" + งวดงานลูกค้าแล้ว — ดูได้ที่เมนู "บ้าน"`)
+      setSigning(null)
+    } catch (e) { window.alert((e as Error).message || 'ทำรายการไม่สำเร็จ') } finally { setSignBusy(false) }
   }
   const [adding, setAdding] = useState(false)
   const [query, setQuery] = useState('')
@@ -109,6 +115,21 @@ export default function Sales() {
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ค้นหาเลขที่/ลูกค้า/สถานะ" style={{ ...field, padding: '8px 11px', fontSize: 12.5, width: 220 }} />
         <button onClick={() => setAdding((v) => !v)} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '10px 16px', cursor: 'pointer' }}>+ สร้างเอกสาร</button>
       </div>
+
+      {signing && (
+        <ModalShell title={<>เซ็นสัญญา — {signing.doc.no}</>} sub={`${signing.doc.customer} · ยอดสัญญา ${baht(signing.doc.total || 0)} — ระบบจะสร้างบ้าน + งวดงานลูกค้าตามแผนมาตรฐานของบริษัท`} width={760} closeOnBackdrop={false} onClose={() => setSigning(null)}
+          footer={<>
+            <button onClick={() => setSigning(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button onClick={confirmSign} disabled={signBusy || !signing.plan} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{signBusy ? 'กำลังสร้าง…' : '✓ เซ็นสัญญา + สร้างงวด'}</button>
+          </>}>
+          <label style={{ ...lbl, marginBottom: 12 }}>ชื่อบ้าน
+            <input style={field} value={signing.name} onChange={(e) => setSigning({ ...signing, name: e.target.value })} />
+          </label>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>แผนงวดชำระค่าก่อสร้าง</div>
+          <InstallmentPlanPicker total={signing.doc.total || 0} value={signing.plan} onChange={(plan) => setSigning((s) => s && { ...s, plan })} />
+          <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 8 }}>ตามเอกสาร "การชำระค่าก่อสร้างบ้านแบบหล่อในที่" · แก้ยอด/รายละเอียดแต่ละงวดได้ภายหลังในหน้าบ้าน</div>
+        </ModalShell>
+      )}
 
       {adding && (
         <ModalShell title="สร้างเอกสารขาย" sub="ใบเสนอราคา / ใบแจ้งหนี้ / ใบเสร็จรับเงิน — บันทึกแล้วเปิดหน้าพิมพ์ให้ทันที" width={880} closeOnBackdrop={false} onClose={() => setAdding(false)}

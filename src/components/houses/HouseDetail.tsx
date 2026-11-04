@@ -461,7 +461,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         </div>
       </div>
 
-      {importing && <ImportInstallments houseCode={house.code} houseName={house.name} onClose={() => setImporting(false)} onDone={() => { reloadData('installments', '/installments'); reloadData('houses', '/houses') }} />}
+      {importing && <ImportInstallments houseCode={house.code} houseName={house.name} houseValue={house.house_customer || house.value || 0} onClose={() => setImporting(false)} onDone={() => { reloadData('installments', '/installments'); reloadData('houses', '/houses') }} />}
     </div>
   )
 }

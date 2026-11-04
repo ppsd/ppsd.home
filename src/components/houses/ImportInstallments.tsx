@@ -3,6 +3,7 @@ import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
+import InstallmentPlanPicker, { buildPlanRows, useInstallmentPlans } from '../shared/InstallmentPlanPicker'
 
 // นำเข้างวดงานเป็นชุด — อัปโหลดสัญญา (AI อ่านให้) หรือวางจาก Excel/ข้อความ
 interface Row { no: number; detail: string; amount: number; side: 'customer' | 'contractor'; due_iso?: string }
@@ -82,8 +83,19 @@ function parsePaste(text: string, side: 'customer' | 'contractor'): Row[] {
   return lines.map((ln, i) => ({ no: i + 1, detail: cleanDetail(ln), amount: extractAmount(ln), side })).filter((r) => r.detail || r.amount > 0)
 }
 
-export default function ImportInstallments({ houseCode, houseName, onClose, onDone }: { houseCode: string; houseName: string; onClose: () => void; onDone: () => void }) {
-  const [src, setSrc] = useState<'file' | 'paste'>('file')
+export default function ImportInstallments({ houseCode, houseName, houseValue = 0, onClose, onDone }: { houseCode: string; houseName: string; houseValue?: number; onClose: () => void; onDone: () => void }) {
+  const [src, setSrc] = useState<'std' | 'file' | 'paste'>('file')
+  // งวดมาตรฐานของบริษัท: เลือกแบบบ้าน + ยอดสัญญา → แตกเป็นงวดให้ตรวจก่อนบันทึก
+  const plans = useInstallmentPlans()
+  const [planKey, setPlanKey] = useState('')
+  const [stdTotal, setStdTotal] = useState(houseValue ? String(Math.round(houseValue)) : '')
+  const stdAmount = Number(String(stdTotal).replace(/,/g, '')) || 0
+  const useStd = () => {
+    const p = plans.find((x) => x.key === planKey)
+    if (!p || stdAmount <= 0) { setErr('ใส่ยอดสัญญา (ค่าก่อสร้างตัวบ้าน) ก่อน'); return }
+    setErr(''); setSide('customer')
+    setRows(buildPlanRows(p, stdAmount).map((r) => ({ no: r.no, detail: r.detail, amount: r.amount, side: 'customer' as const })))
+  }
   const [side, setSide] = useState<'customer' | 'contractor'>('customer')
   const [rows, setRows] = useState<Row[]>([])
   const [paste, setPaste] = useState('')
@@ -147,11 +159,23 @@ export default function ImportInstallments({ houseCode, houseName, onClose, onDo
 
           {/* แหล่งข้อมูล */}
           <div style={{ display: 'flex', gap: 2, background: '#F1F4F6', borderRadius: 9, padding: 4, marginBottom: 14, width: 'fit-content' }}>
-            {([['file', '📄 อัปโหลดสัญญา (AI อ่านให้)'], ['paste', '📋 วางจาก Excel / Word']] as const).map(([v, l]) => (
+            {([['std', '📐 งวดมาตรฐานบริษัท'], ['file', '📄 อัปโหลดสัญญา (AI อ่านให้)'], ['paste', '📋 วางจาก Excel / Word']] as const).map(([v, l]) => (
               <div key={v} onClick={() => setSrc(v)} style={{ fontSize: 12.5, fontWeight: src === v ? 600 : 500, color: src === v ? '#fff' : '#5C6770', background: src === v ? '#30506A' : 'transparent', padding: '6px 14px', borderRadius: 7, cursor: 'pointer' }}>{l}</div>
             ))}
           </div>
 
+          {src === 'std' && (
+            <div style={{ border: '1px solid #E1E5EA', borderRadius: 12, padding: 16, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12.5, color: '#5C6770' }}>ยอดสัญญาค่าก่อสร้าง (บาท):</span>
+                <input value={stdTotal} onChange={(e) => setStdTotal(e.target.value)} placeholder="เช่น 3500000" style={{ ...field, width: 160, textAlign: 'right' }} />
+                <span className="num" style={{ fontSize: 12, color: '#94A0A8' }}>{stdAmount > 0 ? baht(stdAmount) : ''}</span>
+              </div>
+              <InstallmentPlanPicker total={stdAmount} value={planKey} onChange={setPlanKey} preview={false} />
+              <div style={{ fontSize: 11.5, color: '#94A0A8', margin: '8px 0' }}>ตามเอกสาร "การชำระค่าก่อสร้างบ้านแบบหล่อในที่" — งวดของลูกค้า แบ่งตาม % ของยอดสัญญา งวดสุดท้ายรับเศษ</div>
+              <button onClick={useStd} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer' }}>แตกเป็นงวดงาน →</button>
+            </div>
+          )}
           {src === 'file' && (
             <div style={{ border: '2px dashed #C9D3DB', borderRadius: 12, padding: 24, textAlign: 'center', marginBottom: 14 }}>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '10px 18px', cursor: 'pointer' }}>

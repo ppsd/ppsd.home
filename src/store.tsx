@@ -564,7 +564,7 @@ interface AppCtx {
   updateTask: (id: number, b: Record<string, unknown>) => Promise<void>
   addSalesDoc: (b: Record<string, unknown>) => Promise<ApiSalesDoc>
   deriveSalesDoc: (id: number, to: 'invoice' | 'receipt') => Promise<ApiSalesDoc>
-  convertQuote: (id: number, name: string) => Promise<void>
+  convertQuote: (id: number, name: string, plan?: string) => Promise<void>
   refreshNotifications: () => Promise<void>
   reloadData: (key: keyof AppData, path: string) => Promise<void>
   addLeave: (b: Record<string, unknown>) => Promise<void>
@@ -890,8 +890,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await reload('salesDocs', '/sales-docs')
           return doc
         },
-        convertQuote: async (id, name) => {
-          await api.post('/sales-docs/' + id + '/convert', { name })
+        convertQuote: async (id, name, plan) => {
+          await api.post('/sales-docs/' + id + '/convert', { name, plan })
           await Promise.all([reload('salesDocs', '/sales-docs'), reload('houses', '/houses'), reload('installments', '/installments'), reload('dashboard', '/dashboard')])
         },
         refreshNotifications: () => reload('notifications', '/notifications'),

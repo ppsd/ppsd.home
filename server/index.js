@@ -27,6 +27,7 @@ import { lt, listLineTexts, setLineText } from './line-texts.js'
 import { createCenter, FIELD_LABEL as CENTER_FIELD_LABEL } from './center.js'
 import { createContractorBot } from './contractor-line.js'
 import { createSearch } from './search.js'
+import { planByKey, pickPlan, buildPlanRows, plansForClient } from './installment-plans.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -7931,16 +7932,8 @@ api.post('/sales-docs', canWrite, (req, res) => {
     .run(kind, no, customer, todayTH(), todayISO(), JSON.stringify(list), subtotal, vat, sm.total, kind === 'receipt' ? 'ชำระแล้ว' : 'รออนุมัติ', house_code || '', vm, attachId)
   res.status(201).json(db.prepare('SELECT * FROM sales_docs WHERE id=?').get(info.lastInsertRowid))
 })
-// standard customer payment milestones (% of contract) used when signing a quote
-const SIGN_MILESTONES = [
-  { detail: 'งวดเซ็นสัญญา / มัดจำ', pct: 10 },
-  { detail: 'งวดฐานราก / ตอกเสาเข็ม', pct: 15 },
-  { detail: 'งวดงานโครงสร้าง', pct: 20 },
-  { detail: 'งวดก่อผนัง / มุงหลังคา', pct: 20 },
-  { detail: 'งวดงานระบบ / ฝ้า-ฝา', pct: 15 },
-  { detail: 'งวดเก็บงานสี / สุขภัณฑ์', pct: 15 },
-  { detail: 'งวดส่งมอบบ้าน', pct: 5 },
-]
+// แผนงวดลูกค้ามาตรฐาน 5 แบบ (ชั้นเดียว / 2 ชั้น 3 ช่วงราคา / 3 ชั้น) อยู่ใน installment-plans.js — ตามเอกสารบริษัท
+api.get('/installment-plans', (req, res) => res.json({ plans: plansForClient() }))
 // เซ็นสัญญา: เปลี่ยนใบเสนอราคาเป็นโครงการบ้าน + สร้างงวดงานลูกค้าตามแผนมาตรฐาน
 // ต่อสายเอกสารขาย: ใบเสนอราคา → ใบแจ้งหนี้ → ใบเสร็จรับเงิน (สำเนารายการ + อ้างอิงใบต้นทาง)
 // ลบเอกสารขาย (บัญชี/ผู้ดูแลระบบ) — ใบที่ถูกออกใบต่อไปแล้ว (มีใบอ้างอิงถึง) หรือเซ็นสัญญาแล้ว ลบไม่ได้
@@ -7986,18 +7979,13 @@ api.post('/sales-docs/:id/convert', canWrite, (req, res) => {
   const code = newHouseCode()
   db.prepare('INSERT INTO houses (code,name,project,customer,value,pct,collected,remain,status) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(code, name, project, doc.customer, total, 0, 0, total, 'เพิ่งเริ่ม')
-  // build the customer installment plan (last งวด absorbs rounding)
+  // งวดลูกค้าตามแผนมาตรฐานของบริษัท — เลือกแผนเอง (plan) หรือให้ระบบเลือกจากจำนวนชั้น + ราคา (งวดสุดท้ายรับเศษ)
+  const plan = planByKey(req.body?.plan) || pickPlan(req.body?.floors, total)
   const ins = db.prepare('INSERT INTO installments (house_code,no,detail,days,due,ontime,amount,status,side,category,paid) VALUES (?,?,?,?,?,?,?,?,?,?,0)')
-  let acc = 0
-  SIGN_MILESTONES.forEach((m, i) => {
-    const last = i === SIGN_MILESTONES.length - 1
-    const amt = last ? total - acc : Math.round((total * m.pct) / 100)
-    acc += amt
-    ins.run(code, i + 1, m.detail, '-', 'กำหนดใหม่', '-', amt, 'รอเก็บเงิน', 'customer', 'house')
-  })
+  for (const r of buildPlanRows(plan, total)) ins.run(code, r.no, `${r.detail} (${r.pct}%)`, '-', 'กำหนดใหม่', '-', r.amount, 'รอเก็บเงิน', 'customer', 'house')
   recomputeHouse(code)
   db.prepare("UPDATE sales_docs SET status='เซ็นสัญญาแล้ว', house_code=? WHERE id=?").run(code, doc.id)
-  audit(req, 'เซ็นสัญญา/สร้างโครงการ', `${doc.no} → ${name}`)
+  audit(req, 'เซ็นสัญญา/สร้างโครงการ', `${doc.no} → ${name} · งวดแบบ${plan.label}`)
   res.json({ ok: true, house: withProfit(db.prepare('SELECT * FROM houses WHERE code=?').get(code)) })
 })
 
