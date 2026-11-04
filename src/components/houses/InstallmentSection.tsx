@@ -184,6 +184,7 @@ export default function InstallmentSection({
                 </td>
                 <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                   <span style={{ fontSize: 11, fontWeight: 600, color: s.c, background: s.bg, padding: '2px 10px', borderRadius: 20 }}>{r.status}</span>
+                  {!isCustomer && r.claim_status && (r.paid || 0) < r.amount && <span title={r.claim_status === 'อนุมัติเบิก' ? 'ช่างขอเบิกทาง LINE และแอดมิน/ผู้จัดการอนุมัติแล้ว — กดจ่ายได้เลยไม่ต้องขออนุมัติซ้ำ' : 'ช่างขอเบิกทาง LINE — รออนุมัติที่หน้า ความเคลื่อนไหวบ้าน'} style={{ marginLeft: 4, fontSize: 10, fontWeight: 600, color: r.claim_status === 'อนุมัติเบิก' ? '#2E7D55' : '#B7791F', background: r.claim_status === 'อนุมัติเบิก' ? '#E2F1EA' : '#FDF3E1', padding: '1px 7px', borderRadius: 20 }}>{r.claim_status === 'อนุมัติเบิก' ? 'อนุมัติเบิกแล้ว' : 'ช่างขอเบิก'}</span>}
                   {isCustomer && r.ontime && r.ontime !== '-' && <span style={{ marginLeft: 4, fontSize: 10, fontWeight: 600, color: o.c, background: o.bg, padding: '1px 7px', borderRadius: 20 }}>{r.ontime}</span>}
                 </td>
                 <td style={{ padding: '10px 18px', textAlign: 'center' }}>

@@ -6,10 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
+import { LinkCodeBox, useLinkedContractors } from './ContractorLineLink'
 
 interface FeedPart { text: string; lines: string[] }
 interface FeedItem { id: number; min_id: number; ts: string; user: string; house_code: string; house_name: string; cats: string[]; flag: boolean; approval: { id: number; status: string } | null; parts: FeedPart[] }
-interface Req { id: number; ts: string; kind: string; house_code: string; house_name: string; title: string; lines: string[]; requested_by: string; requested_by_id: number; status: string; decided_by?: string; decided_at?: string; reason?: string; result?: string }
+interface Req { files?: number[]; id: number; ts: string; kind: string; house_code: string; house_name: string; title: string; lines: string[]; requested_by: string; requested_by_id: number; status: string; decided_by?: string; decided_at?: string; reason?: string; result?: string }
 interface Gate { key: string; label: string; group: string; on: boolean }
 interface Unread { unread: number; last_seen?: number; pending: number; canApprove: boolean; canCustomer: boolean }
 
@@ -28,13 +29,14 @@ const STATUS_COLOR: Record<string, string> = { 'รออนุมัติ': C.
 
 export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number) => void }) {
   const { user, data } = useApp()
-  const [tab, setTab] = useState<'feed' | 'approvals' | 'gates'>('feed')
+  const [tab, setTab] = useState<'feed' | 'approvals' | 'gates' | 'cline'>('feed')
+  const [linked, reloadLinked] = useLinkedContractors() // null = ไม่มีสิทธิ์จัดการช่าง LINE
   const [info, setInfo] = useState<Unread>({ unread: 0, pending: 0, canApprove: false, canCustomer: false })
   const [compose, setCompose] = useState<{ house: string; text: string; kind: 'update' | 'notice' } | null>(null)
   const loadInfo = useCallback(() => api.get<Unread>('/center/unread').then(setInfo).catch(() => {}), [])
   useEffect(() => { loadInfo() }, [loadInfo])
 
-  const tabs: [typeof tab, string][] = [['feed', 'ความเคลื่อนไหว'], ['approvals', `รออนุมัติ${info.pending ? ` (${info.pending})` : ''}`], ...(user?.role === 'admin' ? [['gates', 'ตั้งค่าการอนุมัติ'] as [typeof tab, string]] : [])]
+  const tabs: [typeof tab, string][] = [['feed', 'ความเคลื่อนไหว'], ['approvals', `รออนุมัติ${info.pending ? ` (${info.pending})` : ''}`], ...(linked ? [['cline', `ช่าง LINE (${linked.length})`] as [typeof tab, string]] : []), ...(user?.role === 'admin' ? [['gates', 'ตั้งค่าการอนุมัติ'] as [typeof tab, string]] : [])]
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -52,6 +54,7 @@ export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number
       {tab === 'feed' && <Feed canCustomer={info.canCustomer} onCompose={setCompose} onSeen={loadInfo} onOpenHouse={(code) => { const h = data.houses.find((x) => x.code === code); if (h && onOpenHouse) onOpenHouse(h.id) }} />}
       {tab === 'approvals' && <Approvals canApprove={info.canApprove} onChanged={loadInfo} />}
       {tab === 'gates' && <Gates />}
+      {tab === 'cline' && linked && <ContractorLine linked={linked} reload={reloadLinked} />}
       {compose && <ComposeModal init={compose} onClose={() => setCompose(null)} />}
     </div>
   )
@@ -278,6 +281,7 @@ function Approvals({ canApprove, onChanged }: { canApprove: boolean; onChanged: 
             </div>
             <div style={{ fontSize: 13, color: C.ink, margin: '6px 0' }}>{r.lines.map((l, i) => <div key={i}>· {l}</div>)}</div>
             <div style={{ fontSize: 12.5, color: C.sub }}>ขอโดย {r.requested_by} · {thDay(r.ts)} {hhmm(r.ts)}{r.decided_by ? ` · ${r.status}โดย ${r.decided_by} ${r.decided_at ? thDay(r.decided_at) + ' ' + hhmm(r.decided_at) : ''}` : ''}</div>
+            {!!r.files?.length && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>{r.files.map((fid, i) => <button key={fid} style={chip(false)} onClick={() => api.openFile(`/files/${fid}/view`).catch((e) => alert((e as Error).message))}>📷 รูป {i + 1}</button>)}</div>}
             {r.reason && <div style={{ fontSize: 12.5, color: r.status === 'ตีกลับ' ? C.red : C.sub, marginTop: 3 }}>เหตุผล/หมายเหตุ: {r.reason}</div>}
             {r.result && r.status === 'รออนุมัติ' && <div style={{ fontSize: 12.5, color: C.red, marginTop: 3 }}>{r.result}</div>}
             {r.status === 'รออนุมัติ' && (canApprove || r.requested_by_id === user?.id) && (
@@ -322,6 +326,45 @@ function Gates() {
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <button style={btn(true)} onClick={save}>บันทึก</button>
         <span style={{ fontSize: 13, color: saved.includes('✔') ? C.green : C.red }}>{saved}</span>
+      </div>
+    </div>
+  )
+}
+
+// ---------------- ช่าง/ผู้รับเหมาที่ผูก LINE ----------------
+function ContractorLine({ linked, reload }: { linked: import('./ContractorLineLink').LinkedContractor[]; reload: () => void }) {
+  const { data } = useApp()
+  const [name, setName] = useState('')
+  const [issuing, setIssuing] = useState('')
+  const names = useMemo(() => [...new Set((data.vendors || []).filter((v) => (v as { kind?: string }).kind === 'ผู้รับเหมา').map((v) => v.name))], [data.vendors])
+  const off = async (c: { id: number; name: string }) => {
+    if (!confirm(`ยกเลิกการผูก LINE ของ ${c.name}?
+ช่างจะใช้บอทไม่ได้จนกว่าจะออกรหัสใหม่ (ใช้เมื่อเลิกจ้าง/เปลี่ยนเครื่อง)`)) return
+    try { await api.post(`/contractor-line/${c.id}/disable`); reload() } catch (e) { alert((e as Error).message) }
+  }
+  return (
+    <div>
+      <div style={{ ...card, padding: 14, marginBottom: 12 }}>
+        <div style={{ fontSize: 13.5, color: C.ink, fontWeight: 600, marginBottom: 6 }}>ออกรหัสผูก LINE ให้ช่าง</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>พิมพ์ชื่อช่างให้ <b>ตรงกับชื่อในแท็บ “ช่าง / ผู้รับเหมา” ของบ้าน</b> (ช่างจะเห็นเฉพาะบ้านที่ชื่อนี้ถูกจ้าง) · หรือกด “🔗 ผูก LINE” ที่แท็บช่างของบ้านก็ได้</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input list="con-names" value={name} onChange={(e) => setName(e.target.value)} placeholder="ชื่อช่าง/ผู้รับเหมา" style={{ flex: 1, fontFamily: 'inherit', fontSize: 13.5, padding: '8px 10px', borderRadius: 8, border: '1px solid #D2DAE1' }} />
+          <datalist id="con-names">{names.map((n) => <option key={n} value={n} />)}</datalist>
+          <button style={btn(true)} disabled={!name.trim()} onClick={() => setIssuing(name.trim())}>ออกรหัส</button>
+        </div>
+      </div>
+      {issuing && <div style={{ ...card, overflow: 'hidden', marginBottom: 12 }}><LinkCodeBox key={issuing} name={issuing} onClose={() => { setIssuing(''); reload() }} /></div>}
+      <div style={{ ...card, overflow: 'hidden' }}>
+        {!linked.length && <div style={{ padding: 24, textAlign: 'center', color: C.sub, fontSize: 13.5 }}>ยังไม่มีช่างที่ผูก LINE</div>}
+        {linked.map((c, i) => (
+          <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 14px', borderTop: i ? `1px solid ${C.line}` : 'none' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>{c.name}</div>
+              <div style={{ fontSize: 12.5, color: C.sub }}>{c.houses.length ? 'บ้าน: ' + c.houses.join(', ') : '⚠ ยังไม่พบบ้านที่ช่างชื่อนี้ถูกจ้าง'} · ผูกเมื่อ {thDay(c.linked_at)} (ออกรหัสโดย {c.linked_by})</div>
+            </div>
+            <button style={{ ...btn(), color: C.red, borderColor: '#E8B7B2' }} onClick={() => off(c)}>ยกเลิกการผูก</button>
+          </div>
+        ))}
       </div>
     </div>
   )

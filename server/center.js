@@ -14,11 +14,11 @@ const TABLE_LABEL = {
   handover_docs: 'ส่งมอบบ้าน', purchase_requests: 'ใบขอซื้อ', purchase_orders: 'ใบสั่งซื้อ', goods_receipts: 'ตรวจรับของ',
   payments: 'ใบจ่ายเงิน', expenses: 'รายจ่าย', petty_expenses: 'เงินสดย่อย', sales_docs: 'เอกสารขาย', stock_moves: 'เบิกสต๊อก',
   files: 'ไฟล์', boqs: 'BOQ', house_categories: 'หมวดงวด', fuel_requests: 'เบิกค่าน้ำมัน', doc_register: 'ทะเบียนเอกสาร',
-  change_requests: 'คำขออนุมัติ', customer_updates: 'อัปเดตลูกค้า', cashflows: 'กระแสเงินสด', nps: 'ความพึงพอใจลูกค้า',
+  change_requests: 'คำขออนุมัติ', customer_updates: 'อัปเดตลูกค้า', contractor_reports: 'รายงานจากช่าง (LINE)', cashflows: 'กระแสเงินสด', nps: 'ความพึงพอใจลูกค้า',
 }
 const CATS = {
   money: ['installments', 'house_contracts', 'house_money_log', 'contractors', 'contractor_advances', 'payments', 'expenses', 'petty_expenses', 'purchase_requests', 'purchase_orders', 'goods_receipts', 'sales_docs', 'fuel_requests', 'cashflows'],
-  site: ['site_reports', 'qc_inspections', 'work_orders', 'site_docs', 'issues', 'safety_records', 'tasks', 'inst_acceptance', 'handover_docs', 'stock_moves', 'contractor_evals'],
+  site: ['site_reports', 'qc_inspections', 'work_orders', 'site_docs', 'issues', 'safety_records', 'tasks', 'inst_acceptance', 'handover_docs', 'stock_moves', 'contractor_evals', 'contractor_reports'],
   info: ['houses', 'files', 'boqs', 'house_categories', 'doc_register', 'nps'],
   approval: ['change_requests'],
   customer: ['customer_updates'],
@@ -106,6 +106,20 @@ export function createCenter(d) {
       return res.status(202).json({ pending: true, request_id: id, message: msg })
     }
   }
+
+  // ---- คำขอจากช่องทางอื่น (เช่น บอท LINE ช่าง) — ไม่ผ่าน API ของหน้าเว็บ ----
+  const decidedHooks = {}
+  /** ลงทะเบียนรายการที่ทำเมื่ออนุมัติ: handler(req,res) แบบเดียวกับ API · onDecided(cr, 'อนุมัติ'|'ตีกลับ'|'ยกเลิก', reason) */
+  function registerOp(op, handler, onDecided) { handlers[op] = handler; if (onDecided) decidedHooks[op] = onDecided }
+  /** ส่งคำขอเข้าคิวรออนุมัติ → คืนเลขคำขอ */
+  function submit({ kind, op, house_code = '', title, lines = [], params = {}, body = {}, by, by_id = null }) {
+    const info = db.prepare('INSERT INTO change_requests (ts,kind,op,house_code,title,lines,params,body,requested_by,requested_by_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(d.nowTS(), kind, op, house_code, title, JSON.stringify(lines), JSON.stringify(params), JSON.stringify(body), by, by_id, 'รออนุมัติ')
+    const id = info.lastInsertRowid
+    pushApprovers(`📝 คำขอรออนุมัติ #${id}\n${title}${house_code ? `\nบ้าน: ${houseName(house_code)}` : ''}\n${lines.slice(0, 6).map((l) => '• ' + l).join('\n')}\nโดย ${by}\n— เปิด ERP → ความเคลื่อนไหวบ้าน → รออนุมัติ`, by)
+    return id
+  }
+  const fireDecided = (cr, status, reason) => { try { decidedHooks[cr.op]?.(cr, status, reason) } catch (e) { console.error('decided hook:', e.message) } }
 
   // ทำรายการที่อนุมัติแล้วจริง: เรียก handler เดิมในนามผู้ขอ
   function apply(cr) {
@@ -222,7 +236,7 @@ export function createCenter(d) {
     return { house: h, list }
   }
 
-  const rowOut = (r) => ({ ...r, lines: jparse(r.lines) || [], house_name: houseName(r.house_code), body: undefined, params: undefined })
+  const rowOut = (r) => ({ ...r, lines: jparse(r.lines) || [], house_name: houseName(r.house_code), files: (jparse(r.body) || {}).files || [], body: undefined, params: undefined })
 
   function register(api) {
     api.get('/center/feed', (req, res) => {
@@ -262,6 +276,7 @@ export function createCenter(d) {
       db.prepare("UPDATE change_requests SET status='อนุมัติ', decided_by=?, decided_at=?, reason=?, result='ทำรายการแล้ว' WHERE id=?").run(req.user.name, d.nowTS(), String(req.body?.note || '').slice(0, 300), cr.id)
       d.audit(req, 'อนุมัติคำขอ', `#${cr.id} ${cr.title}`)
       pushUser(cr.requested_by, `✅ คำขอ #${cr.id} ได้รับอนุมัติแล้วโดย ${req.user.name}\n${cr.title}`)
+      fireDecided(cr, 'อนุมัติ', String(req.body?.note || ''))
       res.json({ ok: true })
     })
     api.post('/approvals/:id/reject', (req, res) => {
@@ -274,6 +289,7 @@ export function createCenter(d) {
       if (!own && !reason) return res.status(400).json({ error: 'กรุณาบอกเหตุผลที่ตีกลับ' })
       db.prepare('UPDATE change_requests SET status=?, decided_by=?, decided_at=?, reason=? WHERE id=?').run(own && !canApprove(req.user) ? 'ยกเลิก' : 'ตีกลับ', req.user.name, d.nowTS(), reason || 'ผู้ขอยกเลิกเอง', cr.id)
       d.audit(req, own ? 'ยกเลิกคำขอ' : 'ตีกลับคำขอ', `#${cr.id} ${cr.title}${reason ? ' · ' + reason : ''}`)
+      fireDecided(cr, own && !canApprove(req.user) ? 'ยกเลิก' : 'ตีกลับ', reason)
       if (!own) pushUser(cr.requested_by, `↩️ คำขอ #${cr.id} ถูกตีกลับโดย ${req.user.name}\n${cr.title}\nเหตุผล: ${reason}`)
       res.json({ ok: true })
     })
@@ -329,5 +345,5 @@ export function createCenter(d) {
     return out
   }
 
-  return { gated, register, notificationsFor, canApprove }
+  return { gated, register, notificationsFor, canApprove, submit, registerOp }
 }

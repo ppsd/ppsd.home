@@ -25,6 +25,7 @@ import { createLineReceive } from './line-receive.js'
 import { createDocReview } from './doc-review.js'
 import { lt, listLineTexts, setLineText } from './line-texts.js'
 import { createCenter, FIELD_LABEL as CENTER_FIELD_LABEL } from './center.js'
+import { createContractorBot } from './contractor-line.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1551,11 +1552,16 @@ async function handleLineUserMessage(uid, text, replyToken) {
     // ลูกค้า (CRM) ที่ผูก LINE แล้ว → บอทฝั่งลูกค้า
     const cust = customerByLine(uid)
     if (cust) return handleCustomerLineMessage(crmDeps, uid, cust, t, replyToken)
+    const con = conBot.byLine(uid) // ช่าง/ผู้รับเหมา ที่ผูก LINE แล้ว (server/contractor-line.js)
+    if (con && !/^\d{6}$/.test(t)) return conBot.handleText(uid, con, t, replyToken)
     if (/^\d{6}$/.test(t)) {
       const linked = consumeLineLinkCode(t, uid)
       if (linked) return lineReply(replyToken, lt('staff.link_ok', { name: linked.name }))
       const cl = consumeCustomerCode(t, uid)
       if (cl) { setLineCtx(uid, null); return handleCustomerLineMessage(crmDeps, uid, cl, 'สวัสดี', replyToken) }
+      const cn = conBot.consumeCode(t, uid)
+      if (cn) { setLineCtx(uid, null); return lineReply(replyToken, lt('con.link_ok', { name: cn.name })) }
+      if (con) return conBot.handleText(uid, con, t, replyToken)
       return lineReply(replyToken, lt('staff.code_bad'))
     }
     return lineReply(replyToken, lt('staff.not_linked'))
@@ -2068,6 +2074,8 @@ async function handleLineUserImage(uid, message, replyToken) {
     if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
     const cust = customerByLine(uid)
     if (cust) { const cimg = await lineFetchImage(message); if (!cimg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return handleCustomerLineImage(crmDeps, uid, cust, cimg, replyToken) }
+    const con = conBot.byLine(uid) // ช่างส่งรูปงาน
+    if (con) { const pimg = await lineFetchImage(message); if (!pimg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return conBot.handleImage(uid, con, pimg, replyToken) }
     return lineReply(replyToken, 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ — ขอรหัส 6 หลักที่ ERP (ไอคอน 💬 มุมขวาบน) แล้วส่งมาที่นี่')
   }
   const img = await lineFetchImage(message)
@@ -2302,6 +2310,9 @@ registerCrmService(api, crmDeps) // LINE ลูกค้า · เคสแจ�
 // ===== ศูนย์กลางงานบ้าน (center.js): ความเคลื่อนไหวบ้าน · คิวรออนุมัติ (เพิ่ม-ลดงาน/แก้ยอดเงิน) · ส่งอัปเดตลูกค้า =====
 const center = createCenter({ db, isManager, audit, nowTS, todayTH, linePush, lineUidOfName, getSetting, setSetting, setHistoryUser, effectivePosition })
 center.register(api)
+// บอท LINE ช่าง/ผู้รับเหมา (contractor-line.js) — ทุกเรื่องที่ช่างส่งเข้าคิวรออนุมัติของ center
+const conBot = createContractorBot({ db, center, audit, nowTS, todayTH, isManager, linePush, lineReply, setLineCtx, getLineCtx, saveImageFile, setHistoryUser })
+conBot.register(api)
 const nMoney = (v) => Number(String(v ?? 0).replace(/,/g, '')) || 0
 const sideTH = (s) => (s === 'contractor' ? 'ฝั่งช่าง' : 'ฝั่งลูกค้า')
 const houseLabel = (code) => db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code
@@ -2341,10 +2352,12 @@ const GATE_CHECK = {
   instPay(req) {
     const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id); if (!inst || inst.side !== 'contractor') return null
     const add = nMoney(req.body?.amount); if (!add) return null
+    if (inst.claim_status === 'อนุมัติเบิก' && add > 0 && add <= (inst.amount || 0) - (inst.paid || 0)) return null // อนุมัติเบิกแล้ว (ช่างขอทาง LINE)
     return { house_code: inst.house_code, title: `${add > 0 ? 'จ่ายเงินช่าง' : 'ถอนยอดจ่ายช่าง'} งวด ${inst.no} บ้าน ${houseLabel(inst.house_code)}`, lines: [`${inst.contractor || ''} · ${inst.detail || ''}`, `ยอด ${baht(add)} (งวดนี้ ${baht(inst.amount)} · จ่ายแล้ว ${baht(inst.paid)})`] }
   },
   instCollectContractor(req) { // ปุ่ม "จ่ายครบ" ของงวดช่าง → ใช้เรื่อง "จ่ายเงินช่าง"
     const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id); if (!inst || inst.side !== 'contractor') return null
+    if (inst.claim_status === 'อนุมัติเบิก' && !req.body?.uncollect) return null // อนุมัติเบิกแล้ว (ช่างขอทาง LINE)
     return { house_code: inst.house_code, title: `${req.body?.uncollect ? 'ยกเลิกการจ่ายช่าง' : 'จ่ายเงินช่างเต็มงวด'} งวด ${inst.no} บ้าน ${houseLabel(inst.house_code)}`, lines: [`${inst.contractor || ''} · ${inst.detail || ''}`, `ยอด ${baht(inst.amount)}`] }
   },
   instCollectCustomer(req) {

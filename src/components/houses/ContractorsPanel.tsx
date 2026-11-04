@@ -5,6 +5,7 @@ import type { ApiLaborRate } from '../../store'
 import { laborLabel, laborPriceText } from '../../store'
 import { useLaborRates } from '../materials/LaborRates'
 import MoneyInput from '../shared/MoneyInput'
+import { LinkCodeBox, useLinkedContractors } from './ContractorLineLink'
 
 interface Contractor {
   id: number; house_code: string; name: string; role: string; type: string; advance: number; deducted: number; paid: number; note: string
@@ -249,6 +250,8 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
   const [busy, setBusy] = useState(false)
   const [evalFor, setEvalFor] = useState<number | null>(null)
   const [advFor, setAdvFor] = useState<number | null>(null)
+  const [linkFor, setLinkFor] = useState<number | null>(null) // แถวที่กำลังออกรหัสผูก LINE ให้ช่าง
+  const [linked] = useLinkedContractors() // null = ไม่มีสิทธิ์ (ซ่อนปุ่ม)
   const { rates } = useLaborRates()
   const registry = useContractorRegistry()
   const rateOf = useMemo(() => new Map(rates.map((r) => [r.id, r])), [rates])
@@ -310,7 +313,7 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
         if (editId === c.id) return <HireForm key={c.id} f={f} setF={setF} rates={rates} registry={registry} err={err} busy={busy} onCancel={cancel} onSave={submit} editing />
         return (
           <div key={c.id} style={{ border: '1px solid #E1E5EA', borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', background: '#F7F9FB', borderBottom: '1px solid #EEF1F4' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '13px 16px', background: '#F7F9FB', borderBottom: '1px solid #EEF1F4' }}>
               <div style={{ width: 38, height: 38, borderRadius: 9, background: '#30506A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 15 }}>{c.name[0]}</div>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}</div>
@@ -326,10 +329,14 @@ export default function ContractorsPanel({ houseCode }: { houseCode: string }) {
               {c.eval_grade && (() => { const g = gradeColor(c.eval_grade); return <span title={`คะแนนเฉลี่ย ${c.eval_avg?.toFixed(2)}/5`} style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: g.c, background: g.bg, padding: '4px 10px', borderRadius: 20 }}>★ {c.eval_avg?.toFixed(1)} · {c.eval_grade}</span> })()}
               <span style={{ marginLeft: c.eval_grade ? 0 : 'auto', fontSize: 11.5, fontWeight: 600, color: c.type === 'เหมารวม' ? '#30506A' : '#C0852C', background: c.type === 'เหมารวม' ? '#E2E9EF' : '#F6ECD6', padding: '4px 11px', borderRadius: 20 }}>{c.type}</span>
               <button onClick={() => setAdvFor(advFor === c.id ? null : c.id)} className="hov-f3f5f7" title="ค่าของที่บริษัทออกให้ก่อน แล้วหักจากงวด" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#C0852C', background: '#fff', border: '1px solid #EAD9B6', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ค่าของออกให้ก่อน</button>
+              {linked && (linked.some((x) => x.name === c.name)
+                ? <span title='ช่างคนนี้ผูก LINE แล้ว — รายงานงาน/แจ้งปัญหา/ขอเบิกงวดทางแชทได้' style={{ fontSize: 11, fontWeight: 600, color: '#2E7D55', background: '#E2F1EA', padding: '4px 10px', borderRadius: 20 }}>LINE ✓</span>
+                : <button onClick={() => setLinkFor(linkFor === c.id ? null : c.id)} className='hov-f3f5f7' title='ออกรหัส 6 หลักให้ช่างผูก LINE บอท PPSD' style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#2E7D55', background: '#fff', border: '1px solid #BFDCC9', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>🔗 ผูก LINE</button>)}
               <button onClick={() => setEvalFor(evalFor === c.id ? null : c.id)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>ประเมิน</button>
               <button onClick={() => openEdit(c)} className="hov-f3f5f7" title="แก้ชื่อ / หมวดงาน / ราคาตกลง" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 500, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>✎ แก้ไข</button>
               <button onClick={() => remove(c)} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 14 }}>✕</button>
             </div>
+            {linkFor === c.id && <LinkCodeBox name={c.name} vendorId={c.vendor_id} onClose={() => setLinkFor(null)} />}
             {contractTotal > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 12, color: overContract ? '#C24036' : '#5C6770', background: overContract ? '#FBEEEC' : '#FFF', borderBottom: '1px solid #F1F4F6' }}>
                 <span>ยอดตกลงจ้าง <b className="num" style={{ color: '#1C2730' }}>{baht(contractTotal)}</b></span>

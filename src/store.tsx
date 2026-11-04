@@ -59,6 +59,7 @@ export interface ApiInstallment {
   side?: string
   category?: string
   contractor?: string
+  claim_status?: string | null // ช่างขอเบิกทาง LINE: ขอเบิก / อนุมัติเบิก
   house?: string
   project?: string
 }
