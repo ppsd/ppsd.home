@@ -26,6 +26,7 @@ import BoqTab from '../cost/BoqTab'
 import ImportInstallments from './ImportInstallments'
 import { KeepAlive } from '../shared/ModalShell'
 import HouseSummaryPrint from './HouseSummaryPrint'
+import { HouseHistoryTab, HouseFilePrint } from './HouseFile'
 
 function Cell({ label, value, color, sub, br, bb }: { label: string; value: string; color: string; sub?: string; br?: boolean; bb?: boolean }) {
   return (
@@ -64,6 +65,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
   }
   const [importing, setImporting] = useState(false)
   const [printing, setPrinting] = useState(false) // ใบสรุปบ้าน (ปุ่ม พิมพ์สรุป)
+  const [printingFile, setPrintingFile] = useState(false) // แฟ้มบ้าน (ทุกเอกสารทุกแผนก)
   // ลบบ้านทดสอบ (สถานะ Test เท่านั้น) — ลบงวด ไฟล์ BOQ QC ฯลฯ ที่ผูกไปด้วย · มีเอกสารการเงินผูกอยู่ server จะไม่ให้ลบ
   const [deleting, setDeleting] = useState(false)
   const removeTestHouse = async () => {
@@ -136,6 +138,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
   const otherCost = expTotal + payTotal // ค่าใช้จ่ายย่อยจริงทั้งหมดของบ้าน
 
   const detailTabsDef = [
+    { id: 'history', label: '🗂 ประวัติทั้งหมด', count: '' },
     { id: 'installments', label: 'งวดงาน', count: String(houseInst.length) },
     { id: 'workorders', label: 'ใบสั่งงาน', count: '' },
     { id: 'contractors', label: 'ช่าง / ผู้รับเหมา', count: '' },
@@ -189,10 +192,12 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
             </button>
           )}
           <button onClick={() => setPrinting(true)} title="พิมพ์ใบสรุปข้อมูลบ้าน การเงิน งวดงาน และปัญหาค้าง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 500, color: '#1C2730', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>🖨 พิมพ์สรุป</button>
+          <button onClick={() => setPrintingFile(true)} title="พิมพ์/บันทึก PDF ทั้งแฟ้ม: เอกสารทุกแผนกของบ้านนี้ (งวด จัดซื้อ รายจ่าย บัญชี QC ปัญหา ส่งมอบ ฯลฯ) — เก็บเป็นหลักฐานตอนปิดงาน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 500, color: '#1C2730', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>🗂 พิมพ์แฟ้มบ้าน</button>
           <button onClick={onEditHouse} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>แก้ไขข้อมูล</button>
         </div>
       </div>
 
+      {printingFile && <HouseFilePrint houseCode={house.code} onClose={() => setPrintingFile(false)} />}
       {printing && <HouseSummaryPrint house={house} installments={houseInst} expenses={houseExp} issues={houseIssues} otherCost={otherCost} canSeeProfit={canSeeProfit} onClose={() => setPrinting(false)} />}
 
       {/* ข้อมูลสัญญา/ผู้เกี่ยวข้อง (CM) */}
@@ -308,6 +313,8 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
               )
             })}
           </div>
+
+          {tab === 'history' && <HouseHistoryTab houseCode={house.code} onSetTab={onSetTab} />}
 
           {/* TAB: งวดงาน — หมวดมาตรฐาน + หัวข้อใหญ่ที่เพิ่มเอง × 2 ฝั่ง (ลูกค้า/ช่าง) */}
           {tab === 'installments' && (

@@ -35,6 +35,7 @@ const joinSub = (...parts) => parts.filter((x) => x != null && String(x).trim() 
 // ---- แหล่งข้อมูลที่ค้นได้ ----
 // mod = โมดูลที่ถูกปิดรายคนได้ (deny_mods) · allow = สิทธิ์ตามบทบาท (ตรงกับ GET ของหน้าต้นทาง)
 // cols = คอลัมน์ที่ใช้ค้น (t = ตารางหลัก, h = บ้านที่ผูก) · page = หน้าที่จะพาไป
+// cost = ยอดเงินฝั่งช่าง/ต้นทุน → ซ่อนยอดจากคนที่ไม่ใช่ผู้จัดการ (เหมือนหน้าบ้าน/ใบพิมพ์สรุป)
 const ALL = () => true
 const WRITER = (u) => ['admin', 'accounting', 'site'].includes(u.role)
 const FINANCE = (u) => ['admin', 'accounting'].includes(u.role)
@@ -45,18 +46,18 @@ const SOURCES = [
     cols: ['t.code', 't.name', 't.project', 't.customer', 't.contract_no', 't.site_location', 't.manager', 't.owner', 't.design', 't.engineer', 't.supervisor'],
     date: (r) => r.start_date,
     map: (r) => ({ title: r.name, sub: joinSub(r.code, r.customer && 'ลูกค้า ' + r.customer, r.project, r.status, r.contract_no && 'สัญญา ' + r.contract_no), house_code: r.code, house_name: r.name, house_id: r.id }) },
-  { key: 'installment', label: 'งวดงาน', dept: 'site', table: 'installments', allow: ALL, page: 'house',
+  { key: 'installment', label: 'งวดงาน', dept: 'site', table: 'installments', allow: ALL, page: 'house', cost: (r) => r.side === 'contractor',
     cols: ['t.detail', 't.contractor', 't.category', 't.amount'],
     date: (r) => r.due_iso || r.due,
     map: (r) => ({ title: `งวดที่ ${r.no ?? ''} ${r.detail || ''}`.trim(), sub: joinSub(r.side === 'contractor' ? 'งวดจ่ายช่าง' : 'งวดเก็บลูกค้า', r.contractor, r.status), amount: r.amount }) },
-  { key: 'contractor', label: 'ช่าง / ผู้รับเหมาในบ้าน', dept: 'site', table: 'contractors', allow: ALL, page: 'house',
+  { key: 'contractor', label: 'ช่าง / ผู้รับเหมาในบ้าน', dept: 'site', table: 'contractors', allow: ALL, page: 'house', cost: () => true,
     cols: ['t.name', 't.role', 't.type', 't.note', 't.price_note'],
     map: (r) => ({ title: r.name, sub: joinSub(r.role, r.type), amount: r.contract_total || null }) },
-  { key: 'contract', label: 'สัญญา (ลูกค้า/ช่าง)', dept: 'site', table: 'house_contracts', allow: ALL, page: 'house',
+  { key: 'contract', label: 'สัญญา (ลูกค้า/ช่าง)', dept: 'site', table: 'house_contracts', allow: ALL, page: 'house', cost: (r) => r.side === 'contractor',
     cols: ['t.party', 't.no', 't.title', 't.kind', 't.note', 't.amount'],
     date: (r) => r.sign_date || r.created,
     map: (r) => ({ title: r.title || r.kind || 'สัญญา', sub: joinSub(r.no, r.party, r.side === 'contractor' ? 'ฝั่งช่าง' : r.side === 'customer' ? 'ฝั่งลูกค้า' : r.side), amount: r.amount }) },
-  { key: 'moneylog', label: 'เงินเข้า-ออกของบ้าน', dept: 'finance', table: 'house_money_log', allow: ALL, page: 'house',
+  { key: 'moneylog', label: 'เงินเข้า-ออกของบ้าน', dept: 'finance', table: 'house_money_log', allow: ALL, page: 'house', cost: (r) => r.side === 'contractor',
     cols: ['t.party', 't.inst_detail', 't.ref_no', 't.note', 't.method', 't.amount'],
     date: (r) => r.date_iso || r.created,
     map: (r) => ({ title: `${r.side === 'contractor' ? 'จ่ายช่าง' : 'รับจากลูกค้า'} ${r.inst_detail || ''}`.trim(), sub: joinSub(r.party, r.method, r.ref_no && 'อ้างอิง ' + r.ref_no), amount: r.amount }) },
@@ -80,7 +81,7 @@ const SOURCES = [
     cols: ['t.no', 't.title', 't.kind'],
     date: (r) => r.date || r.created,
     map: (r) => ({ title: joinSub(r.no, r.title), sub: joinSub(r.kind, r.status) }) },
-  { key: 'report', label: 'รายงานจากช่าง (LINE)', dept: 'site', table: 'contractor_reports', allow: ALL, page: 'center',
+  { key: 'report', label: 'รายงานจากช่าง (LINE)', dept: 'site', table: 'contractor_reports', allow: ALL, page: 'center', cost: () => true,
     cols: ['t.contractor', 't.text', 't.kind'],
     date: (r) => r.ts,
     map: (r) => ({ title: short(r.text, 80) || r.kind, sub: joinSub(r.contractor, r.status), amount: r.amount || null }) },
@@ -167,59 +168,92 @@ export function splitTerms(q) {
     .map((w) => (/^[\d,]+(\.\d+)?$/.test(w) ? w.replace(/,/g, '') : w))
 }
 
-export function createSearch({ db }) {
+export function createSearch({ db, isManager = () => false }) {
   // อ่านรายชื่อตารางตอนค้นครั้งแรก (บางตารางถูกสร้างหลังโมดูลนี้)
   let tables = null
   const hasTable = (t) => (tables ||= new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name))).has(t)
-  const colsOf = (t) => new Set(db.prepare(`PRAGMA table_info(${JSON.stringify(t)})`).all().map((c) => c.name))
+  const colCache = new Map()
+  const colsOf = (t) => { if (!colCache.has(t)) colCache.set(t, new Set(db.prepare(`PRAGMA table_info(${JSON.stringify(t)})`).all().map((c) => c.name))); return colCache.get(t) }
   const stmtCache = new Map()
+  const prep = (key, build) => { let st = stmtCache.get(key); if (!st) { st = db.prepare(build()); stmtCache.set(key, st) } return st }
+  const usable = (user, s) => {
+    const deny = user.role === 'admin' ? [] : (user.deny_mods || [])
+    return hasTable(s.table) && s.allow(user) && !(s.mod && deny.includes(s.mod))
+  }
+  // แถวจากฐานข้อมูล → รายการที่หน้าจอใช้ (ซ่อนยอดต้นทุนช่างจากคนที่ไม่ใช่ผู้จัดการ)
+  const toItem = (s, r, mgr) => {
+    const m = s.map(r)
+    const hide = !mgr && s.cost && s.cost(r)
+    return {
+      id: r.id ?? null, ...m, date: toISODate(s.date ? s.date(r) : ''),
+      amount: !hide && m.amount != null && m.amount !== '' && Number.isFinite(Number(m.amount)) ? Number(m.amount) : null,
+      house_code: m.house_code ?? r.house_code ?? '', house_name: m.house_name ?? r._house_name ?? (r.house || ''), house_id: m.house_id ?? r._house_id ?? null,
+      page: s.page,
+    }
+  }
+  const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '')
 
   // user = req.user · opts: q, year (พ.ศ.), dept, type, limit (ต่อกลุ่ม)
   function search(user, { q, year, dept, type, limit = 8 } = {}) {
     const terms = splitTerms(q)
     const out = { q: String(q || ''), groups: [], total: 0 }
     if (!terms.length || terms.join('').length < 2) return out
-    const deny = user.role === 'admin' ? [] : (user.deny_mods || [])
+    const mgr = isManager(user)
     const ce = Number(year) > 2400 ? Number(year) - 543 : 0
     const cap = Math.max(1, Math.min(200, Number(limit) || 8))
     for (const s of SOURCES) {
       if (type && s.key !== type) continue
       if (dept && s.dept !== dept) continue
-      if (!hasTable(s.table) || !s.allow(user) || (s.mod && deny.includes(s.mod))) continue
-      let st = stmtCache.get(s.key + ':' + terms.length)
-      if (!st) {
-        const have = colsOf(s.table)
-        const join = !s.noJoin && have.has('house_code')
-        const cols = s.cols.filter((c) => have.has(c.slice(2))).map((c) => `COALESCE(CAST(${c} AS TEXT),'')`)
-        if (join) cols.push("COALESCE(h.name,'')", "COALESCE(t.house_code,'')")
-        if (!cols.length) continue
+      if (!usable(user, s)) continue
+      const have = colsOf(s.table)
+      const join = !s.noJoin && have.has('house_code')
+      const cols = s.cols.filter((c) => have.has(c.slice(2))).map((c) => `COALESCE(CAST(${c} AS TEXT),'')`)
+      if (join) cols.push("COALESCE(h.name,'')", "COALESCE(t.house_code,'')")
+      if (!cols.length) continue
+      const st = prep('q:' + s.key + ':' + terms.length, () => {
         const hay = cols.join(" || ' ' || ")
         const where = terms.map(() => `(${hay}) LIKE ? ESCAPE '\\'`).join(' AND ')
-        const sql = `SELECT ${s.select || 't.*'}${join ? ', h.name AS _house_name, h.id AS _house_id' : ''} FROM ${s.table} t` +
+        return `SELECT ${s.select || 't.*'}${join ? ', h.name AS _house_name, h.id AS _house_id' : ''} FROM ${s.table} t` +
           (join ? ' LEFT JOIN houses h ON h.code = t.house_code' : '') + ` WHERE ${where} ORDER BY t.rowid DESC LIMIT 500`
-        st = db.prepare(sql)
-        stmtCache.set(s.key + ':' + terms.length, st)
-      }
+      })
       let rows
       try { rows = st.all(...terms.map((w) => `%${esc(w)}%`)) } catch { continue }
       const fetchedAll = rows.length < 500
-      let items = rows.map((r) => {
-        const m = s.map(r)
-        const iso = toISODate(s.date ? s.date(r) : '')
-        return {
-          id: r.id ?? null, ...m, date: iso,
-          amount: m.amount != null && m.amount !== '' && Number.isFinite(Number(m.amount)) ? Number(m.amount) : null,
-          house_code: m.house_code ?? r.house_code ?? '', house_name: m.house_name ?? r._house_name ?? (r.house || ''), house_id: m.house_id ?? r._house_id ?? null,
-          page: s.page,
-        }
-      })
+      let items = rows.map((r) => toItem(s, r, mgr))
       if (ce && s.date) items = items.filter((x) => x.date && Number(x.date.slice(0, 4)) === ce)
       if (!items.length) continue
-      items.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+      items.sort(byDateDesc)
       out.groups.push({ type: s.key, label: s.label, dept: s.dept, dept_label: DEPTS[s.dept], count: items.length, more: !fetchedAll, items: items.slice(0, cap) })
       out.total += items.length
     }
     return out
   }
-  return { search }
+
+  // ===== แฟ้มบ้าน: ทุกเรื่องของบ้านหลังเดียว จากทุกแผนก (แท็บ "ประวัติทั้งหมด" + พิมพ์แฟ้มบ้าน) =====
+  //  ผูกด้วยรหัสบ้าน (house_code) · ใบขอซื้อเก่าที่มีแต่ชื่อบ้าน (ไม่มีรหัส) ก็นับด้วย · สิทธิ์เหมือนการค้นหา
+  function houseFile(user, code) {
+    const h = db.prepare('SELECT * FROM houses WHERE code=?').get(String(code || ''))
+    if (!h) return null
+    const mgr = isManager(user)
+    const groups = []
+    for (const s of SOURCES) {
+      if (s.noJoin || !usable(user, s)) continue
+      const have = colsOf(s.table)
+      if (!have.has('house_code')) continue
+      const byName = have.has('house')
+      const st = prep('h:' + s.key, () => `SELECT ${s.select || 't.*'} FROM ${s.table} t WHERE t.house_code = ?` +
+        (byName ? " OR ((t.house_code IS NULL OR t.house_code = '') AND t.house = ? AND t.house <> '')" : '') + ' ORDER BY t.rowid DESC LIMIT 3000')
+      let rows
+      try { rows = byName ? st.all(h.code, h.name) : st.all(h.code) } catch { continue }
+      if (!rows.length) continue
+      const items = rows.map((r) => toItem(s, { ...r, _house_name: h.name, _house_id: h.id }, mgr)).sort(byDateDesc)
+      const amounts = items.filter((x) => x.amount != null)
+      groups.push({
+        type: s.key, label: s.label, dept: s.dept, dept_label: DEPTS[s.dept], count: items.length, more: rows.length >= 3000,
+        total: amounts.length ? amounts.reduce((t, x) => t + x.amount, 0) : null, items,
+      })
+    }
+    return { house: { id: h.id, code: h.code, name: h.name, customer: h.customer, status: h.status, project: h.project }, groups, can_see_cost: mgr }
+  }
+  return { search, houseFile }
 }

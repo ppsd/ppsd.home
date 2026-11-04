@@ -118,6 +118,31 @@ test('สิทธิ์: ดูอย่างเดียวค้นไม่
   if (e) assert.ok(!JSON.stringify(e).match(/"base"|bank_acct|tax_id/), 'ห้ามมีเงินเดือน/บัญชี')
 })
 
+test('แฟ้มบ้าน: รวมทุกแผนกของบ้านเดียว · ต้นทุนช่างเห็นเฉพาะผู้จัดการ', async () => {
+  const ci = await POST('/houses/SR-01/installments', { no: 1, detail: 'งวดช่างทดสอบแฟ้ม', amount: 77777, side: 'contractor' })
+  assert.ok(ci.status < 300, JSON.stringify(ci.data))
+  const f = await GET('/houses/SR-01/file')
+  assert.equal(f.status, 200)
+  const types = f.data.groups.map((g) => g.type)
+  for (const t of ['expense', 'issue', 'pr', 'installment']) assert.ok(types.includes(t), t + ' ต้องอยู่ในแฟ้ม: ' + types)
+  assert.ok(!types.includes('house'), 'ไม่ต้องซ้ำตัวบ้าน')
+  const inst = f.data.groups.find((g) => g.type === 'installment').items.find((x) => x.title.includes('งวดช่างทดสอบแฟ้ม'))
+  assert.equal(inst.amount, 77777, 'แอดมิน/ผู้จัดการเห็นยอดช่าง')
+  assert.equal(f.data.can_see_cost, true)
+  // ผู้ใช้หน้างาน (ไม่ใช่ผู้จัดการ) → เห็นงวดแต่ไม่เห็นยอดช่าง · ไม่เห็นบัญชี
+  const st = (await POST('/login', { username: 'srsite', pin: '4321' })).data.token
+  const res = await fetch(BASE + '/houses/SR-01/file', { headers: { Authorization: 'Bearer ' + st } })
+  const v = await res.json()
+  const vi = v.groups.find((g) => g.type === 'installment').items.find((x) => x.title.includes('งวดช่างทดสอบแฟ้ม'))
+  assert.equal(vi.amount, null, 'คนที่ไม่ใช่ผู้จัดการต้องไม่เห็นยอดจ่ายช่าง')
+  assert.equal(v.can_see_cost, false)
+  for (const t of ['journal', 'po', 'payment', 'expense']) assert.ok(!v.groups.some((g) => g.type === t), 'site ต้องไม่เห็น ' + t)
+  // ค้นหาก็ต้องซ่อนยอดช่างเหมือนกัน
+  const sr = await find({ q: 'งวดช่างทดสอบแฟ้ม' }, st)
+  assert.equal(sr.data.groups.find((g) => g.type === 'installment').items[0].amount, null)
+  assert.equal((await GET('/houses/ไม่มีบ้านนี้/file')).status, 404)
+})
+
 test('คำสั้นเกิน / ไม่ล็อกอิน', async () => {
   assert.equal((await find({ q: 'ก' })).data.total, 0)
   const res = await fetch(BASE + '/search?q=บ้าน')

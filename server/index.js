@@ -2344,10 +2344,16 @@ const canWrite = requireRole('admin', 'accounting', 'site')
 const financeOnly = requireRole('admin', 'accounting')
 const adminOnly = requireRole('admin')
 // ===== ค้นหาข้อมูลทุกแผนก (ช่องค้นหาด้านบน) — สิทธิ์ตามหน้าต้นทาง + ปิดโมดูลรายคน · ดู server/search.js =====
-const globalSearch = createSearch({ db })
+const globalSearch = createSearch({ db, isManager })
 api.get('/search', (req, res) => {
   const { q = '', year = '', dept = '', type = '', limit = '' } = req.query || {}
   res.json(globalSearch.search(req.user, { q: String(q).slice(0, 120), year, dept: String(dept), type: String(type), limit: Number(limit) || 8 }))
+})
+// แฟ้มบ้าน: ทุกเรื่องของบ้านหลังนี้จากทุกแผนก (แท็บ "ประวัติทั้งหมด" + พิมพ์แฟ้มบ้าน)
+api.get('/houses/:code/file', (req, res) => {
+  const r = globalSearch.houseFile(req.user, req.params.code)
+  if (!r) return res.status(404).json({ error: 'ไม่พบบ้าน' })
+  res.json(r)
 })
 // ===== CRM (ลูกค้า 360 · Lead/Pipeline) — โมดูลแยกใน crm.js =====
 const crmDeps = { canWrite, financeOnly, audit, notifyChange, nowTS, todayTH, docYear, nextSeq, linePush, lineApprovers, lineUidOfName, setLineCtx, getLineCtx, lineReply, userByLine, getSetting, setSetting, publicBaseUrl: () => publicBaseUrl(), hasLineToken: () => !!getSetting('line_token', '') }
