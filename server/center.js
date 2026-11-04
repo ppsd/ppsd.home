@@ -236,6 +236,8 @@ export function createCenter(d) {
     return { house: h, list }
   }
 
+  // ช่วงตรวจข้อความลูกค้า (settings.cust_redirect_user) → ข้อความไปหาผู้ตรวจแทนลูกค้า
+  const reviewerName = () => { const id = Number(d.getSetting('cust_redirect_user', '')) || 0; return id ? db.prepare('SELECT name FROM users WHERE id=?').get(id)?.name || '' : '' }
   const rowOut = (r) => ({ ...r, lines: jparse(r.lines) || [], house_name: houseName(r.house_code), files: (jparse(r.body) || {}).files || [], body: undefined, params: undefined })
 
   function register(api) {
@@ -307,7 +309,7 @@ export function createCenter(d) {
       const { house, list } = customersOfHouse(req.params.code)
       if (!house) return res.status(404).json({ error: 'ไม่พบบ้าน' })
       const sent = db.prepare('SELECT id, ts, text, by, status, kind FROM customer_updates WHERE house_code=? ORDER BY id DESC LIMIT 20').all(house.code)
-      res.json({ house: { code: house.code, name: house.name, customer: house.customer, pct: house.pct }, customers: list.map((c) => ({ id: c.id, name: c.name })), sent, canSend: canCustomer(req.user), hasLine: !!d.getSetting('line_token', '') })
+      res.json({ house: { code: house.code, name: house.name, customer: house.customer, pct: house.pct }, customers: list.map((c) => ({ id: c.id, name: c.name })), sent, canSend: canCustomer(req.user), hasLine: !!d.getSetting('line_token', ''), redirect_to: reviewerName() })
     })
     api.post('/center/customer/:code/send', async (req, res) => {
       if (!canCustomer(req.user)) return res.status(403).json({ error: 'ส่งอัปเดตลูกค้าได้เฉพาะแอดมิน/ผู้จัดการ/ฝ่ายดูแลลูกค้า' })
@@ -324,10 +326,10 @@ export function createCenter(d) {
         const ok = await d.linePush(c.line_uid, text)
         if (ok) { okNames.push(c.name); try { db.prepare('INSERT INTO customer_contacts (customer_id,date,channel,note,by,done) VALUES (?,?,?,?,?,1)').run(c.id, d.todayTH(), 'LINE', 'ส่งอัปเดต: ' + short(text, 200), req.user.name) } catch { /* ignore */ } }
       }
-      db.prepare('INSERT INTO customer_updates (ts,house_code,text,by,sent_to,status,kind) VALUES (?,?,?,?,?,?,?)').run(d.nowTS(), house.code, text, req.user.name, okNames.join(', '), okNames.length ? 'ส่งแล้ว' : 'ส่งไม่สำเร็จ', kind)
+      db.prepare('INSERT INTO customer_updates (ts,house_code,text,by,sent_to,status,kind) VALUES (?,?,?,?,?,?,?)').run(d.nowTS(), house.code, text, req.user.name, okNames.join(', '), okNames.length ? (reviewerName() ? `ส่งให้ ${reviewerName()} ตรวจ (ยังไม่ถึงลูกค้า)` : 'ส่งแล้ว') : 'ส่งไม่สำเร็จ', kind)
       d.audit(req, 'ส่งอัปเดตลูกค้าทาง LINE', `${house.code} → ${okNames.join(', ') || 'ไม่สำเร็จ'}`)
       if (!okNames.length) return res.status(502).json({ error: 'ส่ง LINE ไม่สำเร็จ — ตรวจการตั้งค่า LINE ที่หน้า ผู้ใช้งาน → แจ้งเตือน LINE' })
-      res.json({ ok: true, sent_to: okNames })
+      res.json({ ok: true, sent_to: okNames, redirect_to: reviewerName() })
     })
   }
 

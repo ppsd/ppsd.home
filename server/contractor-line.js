@@ -30,7 +30,32 @@ export function createContractorBot(d) {
   ensureColumn('installments', 'claim_status', 'TEXT') // ช่างขอเบิกทาง LINE: 'ขอเบิก' → 'อนุมัติเบิก' (บัญชีจ่ายได้เลย)
   ensureColumn('installments', 'claim_at', 'TEXT')
 
-  const conByLine = (uid) => db.prepare("SELECT * FROM contractor_line WHERE line_uid=? AND status='ใช้งาน'").get(uid) || null
+  // ---- ช่วงทดสอบ: ตั้ง settings.con_test_user = id ผู้ใช้ → บอทช่างใช้ได้เฉพาะ LINE ของคนนั้น (ช่างจริงผูกไม่ได้) · ว่าง = ใช้จริง ----
+  function testUser() {
+    const id = Number(d.getSetting('con_test_user', '')) || 0
+    return id ? db.prepare('SELECT id, name, line_uid FROM users WHERE id=?').get(id) || { id, name: '?', line_uid: null } : null
+  }
+  const allowedUid = (uid) => { const t = testUser(); return !t || (!!t.line_uid && t.line_uid === uid) }
+  const conByLine = (uid) => (allowedUid(uid) && db.prepare("SELECT * FROM contractor_line WHERE line_uid=? AND status='ใช้งาน'").get(uid)) || null
+  const TEST_BLOCK_MSG = 'ระบบช่างทาง LINE ของ PPSD ยังอยู่ในช่วงทดสอบค่ะ 🙏 ยังเปิดให้ใช้งานจริงไม่ได้ — ทีมงานจะแจ้งอีกครั้งเมื่อพร้อมใช้'
+  /** ผู้ทดสอบ (มีบัญชีพนักงานอยู่แล้ว) ใช้บอทในฐานะช่าง: ส่งรหัสช่าง = เข้าโหมดช่าง · 'ออกโหมดช่าง' = กลับเป็นพนักงาน → คืน promise ถ้าจัดการแล้ว */
+  function testerRoute(uid, t, tok) {
+    const tu = testUser()
+    if (!tu?.line_uid || tu.line_uid !== uid) return null
+    const linked = db.prepare("SELECT * FROM contractor_line WHERE line_uid=? AND status='ใช้งาน'").get(uid)
+    if (/^\d{6}$/.test(t) && db.prepare('SELECT 1 FROM contractor_link_codes WHERE code=? AND expires >= ?').get(t, Date.now())) {
+      const c = consumeCode(t, uid)
+      if (c) { d.setLineCtx(uid, null); return d.lineReply(tok, `${lt('con.link_ok', { name: c.name })}\n\n🧪 โหมดทดสอบช่าง: ตอนนี้บอทคุยกับคุณในฐานะ "${c.name}" · พิมพ์ 'ออกโหมดช่าง' เพื่อกลับเป็นพนักงาน`) }
+    }
+    if (!linked) return null
+    if (/^(ออกโหมดช่าง|ออกจากโหมดช่าง|โหมดพนักงาน)$/.test(t)) {
+      db.prepare("UPDATE contractor_line SET status='ปิด' WHERE id=?").run(linked.id)
+      d.setLineCtx(uid, null)
+      return d.lineReply(tok, `ออกจากโหมดช่าง "${linked.name}" แล้วค่ะ — กลับเป็นพนักงานตามเดิม`)
+    }
+    return api_.handleText(uid, linked, t, tok)
+  }
+  const testerLinked = (uid) => { const tu = testUser(); return tu?.line_uid && tu.line_uid === uid ? db.prepare("SELECT * FROM contractor_line WHERE line_uid=? AND status='ใช้งาน'").get(uid) || null : null }
   const houseName = (code) => db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code
   // บ้านที่ช่างคนนี้ถูกจ้าง (ชื่อตรง หรืออ้างทะเบียนผู้รับเหมาเดียวกัน) · บ้านที่ส่งมอบ/ยกเลิกแล้วไม่แสดง
   function housesOf(con) {
@@ -52,6 +77,7 @@ export function createContractorBot(d) {
   function consumeCode(code, uid) {
     const r = db.prepare('SELECT * FROM contractor_link_codes WHERE code=? AND expires >= ?').get(String(code), Date.now())
     if (!r) return null
+    if (!allowedUid(uid)) return { blocked: true } // ช่วงทดสอบ: ไม่ใช่ LINE ผู้ทดสอบ → ไม่ผูก (รหัสยังใช้ได้)
     db.prepare('DELETE FROM contractor_link_codes WHERE code=?').run(r.code)
     db.prepare("UPDATE contractor_line SET status='ปิด' WHERE line_uid=?").run(uid)
     db.prepare("DELETE FROM contractor_line WHERE line_uid=?").run(uid)
@@ -240,7 +266,8 @@ export function createContractorBot(d) {
       if (!canManage(req.user)) return res.status(403).json({ error: 'เฉพาะแอดมิน/ผู้จัดการ/บัญชี' })
       const linked = db.prepare("SELECT id,name,vendor_id,status,linked_at,linked_by FROM contractor_line WHERE status='ใช้งาน' ORDER BY name").all()
         .map((c) => ({ ...c, houses: housesOf(c).map((h) => h.name) }))
-      res.json({ linked })
+      const tu = testUser()
+      res.json({ linked, test: tu ? { name: tu.name, has_line: !!tu.line_uid } : null })
     })
     api.post('/contractor-line/code', (req, res) => {
       if (!canManage(req.user)) return res.status(403).json({ error: 'ออกรหัสได้เฉพาะแอดมิน/ผู้จัดการ/บัญชี' })
@@ -248,7 +275,8 @@ export function createContractorBot(d) {
       if (!name) return res.status(400).json({ error: 'กรุณาระบุชื่อช่าง' })
       const code = newCode({ name, vendor_id: Number(req.body?.vendor_id) || null, by: req.user.name })
       d.audit(req, 'ออกรหัสผูก LINE ช่าง', name)
-      res.json({ code, name, expires_days: 3 })
+      const tu = testUser()
+      res.json({ code, name, expires_days: 3, test: tu ? tu.name : '' })
     })
     api.post('/contractor-line/:id/disable', (req, res) => {
       if (!canManage(req.user)) return res.status(403).json({ error: 'เฉพาะแอดมิน/ผู้จัดการ/บัญชี' })
@@ -260,9 +288,13 @@ export function createContractorBot(d) {
     })
   }
 
-  return {
+  const api_ = {
     byLine: conByLine,
     consumeCode,
+    testerRoute,
+    testerLinked,
+    testUser,
+    TEST_BLOCK_MSG,
     handleText: (uid, con, t, tok) => {
       const before = d.getLineCtx(uid)
       const r = handleText(uid, con, t, tok)
@@ -273,4 +305,5 @@ export function createContractorBot(d) {
     handleImage,
     register,
   }
+  return api_
 }

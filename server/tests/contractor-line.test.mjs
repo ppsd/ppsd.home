@@ -112,3 +112,37 @@ test('ตีกลับรายงานความคืบหน้า + �
   await line('ส่ง')
   assert.equal((await A('GET', '/approvals?status=all')).data.length, n0, 'ยกเลิกผูกแล้วต้องไม่สร้างคำขอ')
 })
+
+test('ช่วงทดสอบ: บอทช่างใช้ได้เฉพาะ LINE ผู้ทดสอบ (พนักงาน) · ช่างจริงผูกไม่ได้ · ออกโหมดช่างแล้วกลับเป็นพนักงาน', async () => {
+  // ผู้ทดสอบ = แอดมิน ผูก LINE ของตัวเองก่อน
+  const TESTER = 'U' + 't'.repeat(32), REAL = 'U' + 'r'.repeat(32)
+  const sc = await A('POST', '/line-link/code', {})
+  assert.equal(sc.status, 200, JSON.stringify(sc.data))
+  const lineAs = async (uid, text) => { await api(null, 'POST', '/line/webhook', { events: [{ type: 'message', replyToken: 'r' + Math.random(), source: { type: 'user', userId: uid }, message: { type: 'text', text } }] }); await wait(150) }
+  await lineAs(TESTER, sc.data.code)
+  const me = (await A('GET', '/center/line-test')).data.users.find((u) => u.name === 'ธวัช วรรณสุข')
+  assert.ok(me?.has_line, 'แอดมินต้องผูก LINE แล้ว')
+  assert.equal((await S('GET', '/center/line-test')).status, 403)
+  assert.equal((await A('PUT', '/center/line-test', { con_test_user: me.id, cust_redirect_user: me.id })).status, 200)
+  const t = (await A('GET', '/center/line-test')).data
+  assert.equal(t.con_test_user.id, me.id)
+  assert.equal(t.cust_redirect_user.id, me.id)
+  // ช่างจริงส่งรหัส → ไม่ผูก
+  const c1 = await A('POST', '/contractor-line/code', { name: 'ช่างเอก' })
+  assert.equal(c1.data.test, 'ธวัช วรรณสุข')
+  await lineAs(REAL, c1.data.code)
+  assert.equal((await A('GET', '/contractor-line')).data.linked.length, 0, 'ช่วงทดสอบ ช่างจริงต้องผูกไม่ได้')
+  // ผู้ทดสอบส่งรหัสเดิม → เข้าโหมดช่าง แล้วแจ้งปัญหาได้
+  await lineAs(TESTER, c1.data.code)
+  assert.equal((await A('GET', '/contractor-line')).data.linked.length, 1)
+  const n0 = (await A('GET', '/approvals?status=all')).data.length
+  await lineAs(TESTER, 'แจ้งปัญหา ทดสอบโหมดช่าง')
+  await lineAs(TESTER, 'ส่ง')
+  const after = (await A('GET', '/approvals?status=all')).data
+  assert.equal(after.length, n0 + 1)
+  assert.ok(after[0].requested_by.includes('ช่างเอก'))
+  // ออกโหมดช่าง → ไม่ใช่ช่างแล้ว
+  await lineAs(TESTER, 'ออกโหมดช่าง')
+  assert.equal((await A('GET', '/contractor-line')).data.linked.length, 0)
+  await A('PUT', '/center/line-test', { con_test_user: 0, cust_redirect_user: 0 })
+})

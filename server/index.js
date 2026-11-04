@@ -628,7 +628,26 @@ function lineTestCopy(to, msg) {
   const who = db.prepare('SELECT name FROM users WHERE line_uid=?').get(to)?.name || (() => { try { return db.prepare('SELECT name FROM customers WHERE line_uid=?').get(to)?.name } catch { return '' } })() || (String(to).startsWith('C') ? 'กลุ่ม LINE' : 'ผู้รับอื่น')
   linePush(t.line_uid, [`🧪 สำเนา (โหมดทดสอบ) — ปกติส่งถึง: ${who}`, ...lineMessages(msg).slice(0, 4)])
 }
+// ช่วงตรวจข้อความลูกค้า: settings.cust_redirect_user = id ผู้ใช้ → ทุกข้อความที่จะส่งถึง LINE ลูกค้า ส่งให้คนนั้นแทน (ยังไม่ถึงลูกค้า) · ว่าง = ส่งลูกค้าจริง
+function custRedirectUser() {
+  const id = Number(getSetting('cust_redirect_user', '')) || 0
+  return id ? db.prepare("SELECT id, name, line_uid FROM users WHERE id=? AND status<>'ปิดใช้งาน'").get(id) || null : null
+}
+function custRedirect(to, msg) {
+  if (!to || String(to)[0] !== 'U') return null
+  let c = null
+  try { c = db.prepare('SELECT name FROM customers WHERE line_uid=?').get(to) } catch { /* ไม่มีตาราง */ }
+  if (!c) return null
+  const r = custRedirectUser()
+  if (!Number(getSetting('cust_redirect_user', '')) ) return null
+  if (!r?.line_uid) return { drop: true } // ตั้งผู้ตรวจไว้แต่ยังไม่ผูก LINE → ไม่ส่งถึงลูกค้า
+  if (r.line_uid === to) return null
+  return { to: r.line_uid, msg: [`📨 [ตรวจก่อนส่งลูกค้า] ข้อความนี้ปกติส่งถึงลูกค้า: ${c.name} — ยังไม่ถึงลูกค้า`, ...lineMessages(msg).slice(0, 4)] }
+}
 async function linePush(to, msg) {
+  const red = custRedirect(to, msg)
+  if (red?.drop) { noteLineError(to, 0, 'ตั้งให้ส่งข้อความลูกค้าไปตรวจก่อน แต่ผู้ตรวจยังไม่ผูก LINE'); return false }
+  if (red) { to = red.to; msg = red.msg }
   if (to && !lineAllowed(to, msg)) { lineTestCopy(to, msg); return true } // โหมดทดสอบ: ระงับ + ส่งสำเนาให้คนทดสอบ (ไม่ให้ขึ้นเตือนส่งไม่สำเร็จ)
   const token = getSetting('line_token', '')
   if (!token || !to) { if (!token) lineLastError = { at: nowTS(), to: '', status: 0, reason: 'ยังไม่ได้ตั้ง LINE token' }; return false }
@@ -1546,6 +1565,8 @@ function myOpenWorkOrders(u) {
 async function handleLineUserMessage(uid, text, replyToken) {
   const t = String(text || '').trim()
   const u = userByLine(uid)
+  // ช่วงทดสอบบอทช่าง: ผู้ทดสอบ (พนักงาน) ส่งรหัสช่าง → คุยในฐานะช่าง จนพิมพ์ 'ออกโหมดช่าง'
+  if (u) { const tr = conBot.testerRoute(uid, t, replyToken); if (tr) return tr }
   // ยังไม่ผูก → รับเฉพาะรหัส 6 หลัก
   if (!u) {
     if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
@@ -1560,6 +1581,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
       const cl = consumeCustomerCode(t, uid)
       if (cl) { setLineCtx(uid, null); return handleCustomerLineMessage(crmDeps, uid, cl, 'สวัสดี', replyToken) }
       const cn = conBot.consumeCode(t, uid)
+      if (cn?.blocked) return lineReply(replyToken, conBot.TEST_BLOCK_MSG) // ช่วงทดสอบ: ช่างจริงยังผูกไม่ได้
       if (cn) { setLineCtx(uid, null); return lineReply(replyToken, lt('con.link_ok', { name: cn.name })) }
       if (con) return conBot.handleText(uid, con, t, replyToken)
       return lineReply(replyToken, lt('staff.code_bad'))
@@ -2070,6 +2092,8 @@ function submitLineOrder(uid, u, d, replyToken) {
 // รูปที่ส่งมาในแชท = รูปใบเสนอราคา → ผูกกับ PR ที่กำลังคุยอยู่ หรือถามว่าของ PR ไหน
 async function handleLineUserImage(uid, message, replyToken) {
   const u = userByLine(uid)
+  const tcon = u && conBot.testerLinked(uid) // ผู้ทดสอบอยู่ในโหมดช่าง → รูป = รูปงานของช่าง
+  if (tcon) { const timg = await lineFetchImage(message); if (!timg) return lineReply(replyToken, 'ดาวน์โหลดรูปไม่สำเร็จค่ะ ลองส่งใหม่อีกครั้ง'); return conBot.handleImage(uid, tcon, timg, replyToken) }
   if (!u) {
     if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
     const cust = customerByLine(uid)
@@ -2311,8 +2335,28 @@ registerCrmService(api, crmDeps) // LINE ลูกค้า · เคสแจ�
 const center = createCenter({ db, isManager, audit, nowTS, todayTH, linePush, lineUidOfName, getSetting, setSetting, setHistoryUser, effectivePosition, lineSeen })
 center.register(api)
 // บอท LINE ช่าง/ผู้รับเหมา (contractor-line.js) — ทุกเรื่องที่ช่างส่งเข้าคิวรออนุมัติของ center
-const conBot = createContractorBot({ db, center, audit, nowTS, todayTH, isManager, linePush, lineReply, setLineCtx, getLineCtx, saveImageFile, setHistoryUser })
+const conBot = createContractorBot({ db, center, audit, nowTS, todayTH, isManager, linePush, lineReply, setLineCtx, getLineCtx, saveImageFile, setHistoryUser, getSetting })
 conBot.register(api)
+// ช่วงทดสอบ (สั่งโดยเจ้าของ 4 พ.ย. 69): บอทช่างใช้ได้เฉพาะผู้ทดสอบ + ข้อความถึงลูกค้าส่งให้ ศิตาพิชญ์ ตรวจก่อน — ตั้งค่าครั้งแรกให้เอง แอดมินเปลี่ยนได้ที่ ความเคลื่อนไหวบ้าน → ตั้งค่า
+{
+  const reviewer = db.prepare("SELECT id FROM users WHERE name LIKE 'ศิตาพิชญ์%' AND status<>'ปิดใช้งาน' ORDER BY id").get()?.id || Number(getSetting('line_test_only', '')) || ''
+  for (const k of ['con_test_user', 'cust_redirect_user']) if (getSetting(k, '__unset__') === '__unset__' && reviewer) setSetting(k, String(reviewer))
+}
+api.get('/center/line-test', adminOnly, (_req, res) => {
+  const who = (k) => { const id = Number(getSetting(k, '')) || 0; const u = id ? db.prepare('SELECT id, name, line_uid FROM users WHERE id=?').get(id) : null; return u ? { id: u.id, name: u.name, has_line: !!u.line_uid } : null }
+  res.json({ con_test_user: who('con_test_user'), cust_redirect_user: who('cust_redirect_user'),
+    users: db.prepare("SELECT id, name, (line_uid IS NOT NULL) AS has_line FROM users WHERE status<>'ปิดใช้งาน' ORDER BY name").all().map((u) => ({ id: u.id, name: u.name, has_line: !!u.has_line })) })
+})
+api.put('/center/line-test', adminOnly, (req, res) => {
+  const b = req.body || {}
+  for (const k of ['con_test_user', 'cust_redirect_user']) if (b[k] !== undefined) {
+    const id = Number(b[k]) || 0
+    if (id && !db.prepare('SELECT 1 FROM users WHERE id=?').get(id)) return res.status(400).json({ error: 'ไม่พบผู้ใช้' })
+    setSetting(k, id ? String(id) : '')
+  }
+  audit(req, 'ตั้งค่าช่วงทดสอบ LINE ช่าง/ลูกค้า', `บอทช่าง: ${getSetting('con_test_user', '') ? 'ทดสอบ (ผู้ใช้ #' + getSetting('con_test_user', '') + ')' : 'ใช้จริง'} · ข้อความลูกค้า: ${getSetting('cust_redirect_user', '') ? 'ส่งให้ผู้ใช้ #' + getSetting('cust_redirect_user', '') + ' ตรวจก่อน' : 'ส่งลูกค้าจริง'}`)
+  res.json({ ok: true })
+})
 const nMoney = (v) => Number(String(v ?? 0).replace(/,/g, '')) || 0
 const sideTH = (s) => (s === 'contractor' ? 'ฝั่งช่าง' : 'ฝั่งลูกค้า')
 const houseLabel = (code) => db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code

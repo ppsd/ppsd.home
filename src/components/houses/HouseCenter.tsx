@@ -53,7 +53,7 @@ export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number
       </div>
       {tab === 'feed' && <Feed canCustomer={info.canCustomer} onCompose={setCompose} onSeen={loadInfo} onOpenHouse={(code) => { const h = data.houses.find((x) => x.code === code); if (h && onOpenHouse) onOpenHouse(h.id) }} />}
       {tab === 'approvals' && <Approvals canApprove={info.canApprove} onChanged={loadInfo} />}
-      {tab === 'gates' && <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}><Gates /><AlertSettings /></div>}
+      {tab === 'gates' && <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}><TestModeSettings /><Gates /><AlertSettings /></div>}
       {tab === 'cline' && linked && <ContractorLine linked={linked} reload={reloadLinked} />}
       {compose && <ComposeModal init={compose} onClose={() => setCompose(null)} />}
     </div>
@@ -193,7 +193,7 @@ function ComposeModal({ init, onClose }: { init: { house: string; text: string; 
   const { data } = useApp()
   const [house, setHouse] = useState(init.house)
   const [text, setText] = useState(init.text)
-  const [info, setInfo] = useState<{ customers: { id: number; name: string }[]; sent: { id: number; ts: string; text: string; by: string; status: string }[]; hasLine: boolean; house: { name: string; customer: string } } | null>(null)
+  const [info, setInfo] = useState<{ customers: { id: number; name: string }[]; sent: { id: number; ts: string; text: string; by: string; status: string }[]; hasLine: boolean; redirect_to?: string; house: { name: string; customer: string } } | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   useEffect(() => { setInfo(null); if (house) api.get<typeof info>('/center/customer/' + encodeURIComponent(house)).then(setInfo).catch((e) => setMsg((e as Error).message)) }, [house])
@@ -203,9 +203,9 @@ function ComposeModal({ init, onClose }: { init: { house: string; text: string; 
   const send = async () => {
     if (!house) return setMsg('เลือกบ้านก่อน')
     if (!text.trim()) return setMsg('พิมพ์ข้อความก่อน')
-    if (!confirm(`ส่งข้อความนี้เข้า LINE ของ ${info?.customers.map((c) => c.name).join(', ') || 'ลูกค้า'}?\n(ส่งแล้วลูกค้าเห็นทันที ดึงคืนไม่ได้)`)) return
+    if (!confirm(info?.redirect_to ? `ส่งข้อความนี้ให้ ${info.redirect_to} ตรวจก่อน? (ยังไม่ถึงลูกค้า)` : `ส่งข้อความนี้เข้า LINE ของ ${info?.customers.map((c) => c.name).join(', ') || 'ลูกค้า'}?\n(ส่งแล้วลูกค้าเห็นทันที ดึงคืนไม่ได้)`)) return
     setBusy(true); setMsg('')
-    try { const r = await api.post<{ sent_to: string[] }>('/center/customer/' + encodeURIComponent(house) + '/send', { text, kind: init.kind }); alert('ส่งแล้ว ✔ ถึง ' + r.sent_to.join(', ')); onClose() }
+    try { const r = await api.post<{ sent_to: string[]; redirect_to?: string }>('/center/customer/' + encodeURIComponent(house) + '/send', { text, kind: init.kind }); alert(r.redirect_to ? `ส่งให้ ${r.redirect_to} ตรวจแล้ว ✔ (ยังไม่ถึงลูกค้า ${r.sent_to.join(', ')})` : 'ส่งแล้ว ✔ ถึง ' + r.sent_to.join(', ')); onClose() }
     catch (e) { setMsg((e as Error).message) }
     setBusy(false)
   }
@@ -225,6 +225,7 @@ function ComposeModal({ init, onClose }: { init: { house: string; text: string; 
         {house && info && (info.customers.length
           ? <div style={{ fontSize: 13, color: C.green }}>ส่งถึง: {info.customers.map((c) => c.name).join(', ')} (ผูก LINE แล้ว)</div>
           : <div style={{ fontSize: 13, color: C.red }}>ลูกค้าบ้านนี้ ({info.house.customer || 'ไม่ระบุชื่อ'}) ยังไม่ได้ผูก LINE — ไปที่หน้า ลูกค้า (CRM) → ออกรหัสผูก LINE ให้ลูกค้าก่อน</div>)}
+        {info?.redirect_to && <div style={{ fontSize: 13, color: C.amber, background: '#FDF3E1', borderRadius: 8, padding: '8px 10px' }}>🧪 ช่วงตรวจข้อความ: กดส่งแล้วข้อความจะไปที่ LINE ของ <b>{info.redirect_to}</b> ก่อน — <b>ยังไม่ถึงลูกค้า</b></div>}
         {house && info && !info.hasLine && <div style={{ fontSize: 13, color: C.red }}>ระบบยังไม่ได้ตั้งค่า LINE (หน้า ผู้ใช้งาน → แจ้งเตือน LINE)</div>}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12.5, color: C.sub, alignSelf: 'center' }}>แบบข้อความ:</span>
@@ -436,6 +437,52 @@ function AlertSettings() {
         <span style={{ fontSize: 13, color: msg.includes('✔') ? C.green : C.red }}>{msg}</span>
       </div>
       {preview && <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 12.5, background: C.bg, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10, maxHeight: 320, overflowY: 'auto', color: C.ink }}>{preview}</pre>}
+    </div>
+  )
+}
+
+// ---------------- ช่วงทดสอบ LINE ช่าง / ข้อความลูกค้า (แอดมิน) ----------------
+interface LineTest { con_test_user: { id: number; name: string; has_line: boolean } | null; cust_redirect_user: { id: number; name: string; has_line: boolean } | null; users: { id: number; name: string; has_line: boolean }[] }
+function TestModeSettings() {
+  const [d, setD] = useState<LineTest | null>(null)
+  const [con, setCon] = useState('')
+  const [cust, setCust] = useState('')
+  const [msg, setMsg] = useState('')
+  const load = () => api.get<LineTest>('/center/line-test').then((r) => { setD(r); setCon(r.con_test_user ? String(r.con_test_user.id) : ''); setCust(r.cust_redirect_user ? String(r.cust_redirect_user.id) : '') }).catch((e) => setMsg((e as Error).message))
+  useEffect(() => { load() }, [])
+  if (!d) return <div style={{ ...card, padding: 18, flex: '1 1 360px', color: C.sub, fontSize: 13 }}>{msg || 'กำลังโหลด…'}</div>
+  const save = async () => {
+    if (!con && !confirm('เปิดบอทช่างให้ช่างจริงใช้? ช่างที่ได้รหัสจะผูก LINE และส่งเรื่องเข้าระบบได้ทันที')) return
+    if (!cust && !confirm('ให้ข้อความถึงลูกค้าส่งถึงลูกค้าจริง? (อัปเดตรายสัปดาห์ · เตือนงวด · ข้อความจากหน้านี้ ฯลฯ จะถึงลูกค้าทันที)')) return
+    try { await api.put('/center/line-test', { con_test_user: con ? Number(con) : 0, cust_redirect_user: cust ? Number(cust) : 0 }); setMsg('บันทึกแล้ว ✔'); load() } catch (e) { setMsg((e as Error).message) }
+  }
+  const pick = (v: string, set: (s: string) => void, offLabel: string) => (
+    <select value={v} onChange={(e) => { setMsg(''); set(e.target.value) }} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13.5, padding: '7px 10px', borderRadius: 8, border: '1px solid #D2DAE1', marginTop: 4 }}>
+      <option value="">{offLabel}</option>
+      {d.users.map((u) => <option key={u.id} value={u.id}>{u.name}{u.has_line ? '' : ' (ยังไม่ผูก LINE)'}</option>)}
+    </select>
+  )
+  const warn = (u: LineTest['con_test_user']) => u && !u.has_line ? <div style={{ fontSize: 12, color: C.red, marginTop: 4 }}>{u.name} ยังไม่ได้ผูก LINE — ทดสอบไม่ได้จนกว่าจะผูก</div> : null
+  return (
+    <div style={{ ...card, padding: 18, flex: '1 1 360px', maxWidth: 560, borderColor: '#E9C98C' }}>
+      <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink, marginBottom: 4 }}>🧪 ช่วงทดสอบ LINE (ช่าง / ลูกค้า)</div>
+      <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 12 }}>แยกจาก "โหมดทดสอบ" ของหน้า LINE — พนักงานใช้บอทตามปกติได้ แต่ช่างจริงและลูกค้าจริงยังไม่ได้รับอะไร</div>
+      <label style={{ display: 'block', fontSize: 13.5, color: C.ink, marginBottom: 12 }}>
+        <b>บอทช่าง/ผู้รับเหมา</b> — ใช้ได้เฉพาะ LINE ของ
+        {pick(con, setCon, '— ใช้จริง (ช่างทุกคนผูกได้) —')}
+        {warn(d.con_test_user)}
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>ผู้ทดสอบส่งรหัสช่างในแชท → บอทคุยในฐานะช่างคนนั้น · พิมพ์ "ออกโหมดช่าง" เพื่อกลับเป็นพนักงาน · ช่างจริงส่งรหัสมาจะได้ข้อความว่ายังทดสอบอยู่</div>
+      </label>
+      <label style={{ display: 'block', fontSize: 13.5, color: C.ink, marginBottom: 12 }}>
+        <b>ข้อความถึงลูกค้าทาง LINE</b> — ส่งให้คนนี้ตรวจก่อน (ยังไม่ถึงลูกค้า)
+        {pick(cust, setCust, '— ส่งถึงลูกค้าจริง —')}
+        {warn(d.cust_redirect_user)}
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>ครอบทุกข้อความที่ระบบส่งหาลูกค้าเอง: อัปเดตจากหน้านี้ · อัปเดตรายสัปดาห์ · เตือนงวด · แจ้ง QC/เคสซ่อม · วันเกิด ฯลฯ — แต่ละข้อความขึ้นหัวว่าปกติจะส่งถึงลูกค้าคนไหน</div>
+      </label>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button style={btn(true)} onClick={save}>บันทึก</button>
+        <span style={{ fontSize: 13, color: msg.includes('✔') ? C.green : C.red }}>{msg}</span>
+      </div>
     </div>
   )
 }
