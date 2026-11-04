@@ -13,6 +13,7 @@ import { api } from '../../api'
 import { OFFICE_CATS } from '../../data'
 import FilesPanel from './FilesPanel'
 import ContractorsPanel from './ContractorsPanel'
+import MoneyContractsPanel from './MoneyContractsPanel'
 import InstallmentSection from './InstallmentSection'
 import WorkOrders from '../site/WorkOrders'
 import Procurement from '../procurement/Procurement'
@@ -138,6 +139,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
     { id: 'installments', label: 'งวดงาน', count: String(houseInst.length) },
     { id: 'workorders', label: 'ใบสั่งงาน', count: '' },
     { id: 'contractors', label: 'ช่าง / ผู้รับเหมา', count: '' },
+    { id: 'money', label: 'การเงิน & สัญญา', count: '' },
     { id: 'issues', label: 'ปัญหา', count: String(houseIssues.length) },
     { id: 'boq', label: 'BOQ', count: '' },
     { id: 'qc', label: 'QC ตรวจงาน', count: '' },
@@ -375,6 +377,9 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
 
           {/* TAB: ส่งมอบงาน (เฉพาะบ้านนี้) */}
             {keepTab('handover', <div style={{ padding: 16 }}><Handover houseCode={house.code} /></div>)}
+
+          {/* TAB: การเงิน & สัญญา (สัญญา 2 ฝั่ง + ประวัติเงินเข้า-ออก) — มี modal จึงเก็บไว้เบื้องหลัง */}
+            {keepTab('money', <MoneyContractsPanel houseCode={house.code} />)}
 
           {/* TAB: ช่าง/ผู้รับเหมา */}
             {tab === 'contractors' && <ContractorsPanel houseCode={house.code} />}

@@ -2674,7 +2674,7 @@ const HOUSE_MONEY_TABLES = [
   ['fixed_assets', 'ทรัพย์สิน'], ['fuel_requests', 'เบิกค่าน้ำมัน'], ['ledger', 'บัญชีแยกบ้าน'],
 ]
 const HOUSE_WORK_TABLES = ['inst_acceptance', 'house_categories', 'tasks', 'issues', 'boqs', 'contractor_evals', 'contractors', 'qc_inspections',
-  'site_reports', 'site_docs', 'safety_records', 'handover_docs', 'cashflows', 'work_orders', 'doc_register', 'nps']
+  'site_reports', 'site_docs', 'safety_records', 'handover_docs', 'cashflows', 'work_orders', 'doc_register', 'nps', 'house_contracts', 'house_money_log']
 api.delete('/houses/:code', canWrite, (req, res) => {
   const h = db.prepare('SELECT * FROM houses WHERE code=?').get(req.params.code)
   if (!h) return res.status(404).json({ error: 'ไม่พบบ้าน' })
@@ -2977,6 +2977,25 @@ function instStatus(side, amount, paid) {
   return isCon ? 'รอจ่าย' : 'รอเก็บเงิน'
 }
 // mark collected/paid IN FULL (or reset) → updates the house money
+// ===== ประวัติเงินเข้า-ออกต่อบ้าน (แท็บ "การเงิน & สัญญา") =====
+const MONEY_METHODS = ['โอน', 'เงินสด', 'เช็ค', 'อื่นๆ']
+const isIsoDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''))
+// บันทึกเงินเข้า/ออก 1 ครั้งของงวด (delta = ยอดที่เปลี่ยน · ติดลบ = ยกเลิก/ถอน) — ข้อมูลเสริม (วันที่/วิธี/เลขที่) มาจาก body ถ้ามี
+function logMoney(req, inst, delta, extraNote) {
+  if (!inst || !(Math.abs(delta) > 0.004)) return
+  const b = req.body || {}
+  const party = inst.side === 'contractor'
+    ? (inst.contractor || '')
+    : (db.prepare('SELECT customer FROM houses WHERE code=?').get(inst.house_code)?.customer || '')
+  const method = MONEY_METHODS.includes(b.method) ? b.method : ''
+  const note = [String(b.note || '').slice(0, 300), extraNote || ''].filter(Boolean).join(' · ')
+  try {
+    db.prepare(`INSERT INTO house_money_log (house_code,side,installment_id,inst_no,inst_detail,party,date_iso,amount,method,ref_no,note,by,created)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(inst.house_code, inst.side === 'contractor' ? 'contractor' : 'customer', inst.id, String(inst.no ?? ''), inst.detail || '', party,
+        isIsoDate(b.date_iso) ? b.date_iso : todayISO(), delta, method, String(b.ref_no || '').slice(0, 60), note, req.user?.name || '-', new Date().toISOString())
+  } catch (e) { console.error('money log:', e.message) }
+}
 api.post('/installments/:id/collect', canWrite, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
@@ -2990,6 +3009,7 @@ api.post('/installments/:id/collect', canWrite, (req, res) => {
   const status = instStatus(inst.side, inst.amount, paid)
   db.prepare('UPDATE installments SET status=?, paid=?, ontime=? WHERE id=?')
     .run(status, paid, done && !isContractor ? 'ตรงเวลา' : inst.ontime, inst.id)
+  logMoney(req, inst, paid - (inst.paid || 0), done ? '' : 'ยกเลิกการ' + (isContractor ? 'จ่าย' : 'เก็บเงิน'))
   recomputeHouse(inst.house_code)
   try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(collect):', e.message); logJournalIssue('inst', inst.id, `งวด ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, done ? (isContractor ? 'จ่ายช่าง' : 'เก็บเงินงวด') : 'ยกเลิก', `${inst.house_code} งวด ${inst.no}`)
@@ -3006,10 +3026,137 @@ api.post('/installments/:id/pay', canWrite, (req, res) => {
   const paid = Math.max(0, Math.min(inst.amount, (inst.paid || 0) + add))
   const status = instStatus(inst.side, inst.amount, paid)
   db.prepare('UPDATE installments SET paid=?, status=? WHERE id=?').run(paid, status, inst.id)
+  logMoney(req, inst, paid - (inst.paid || 0), paid < (inst.paid || 0) ? 'ถอนยอด' : '')
   recomputeHouse(inst.house_code)
   try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(pay):', e.message); logJournalIssue('inst', inst.id, `งวดช่าง ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, inst.side === 'contractor' ? 'จ่ายช่างบางส่วน' : 'เก็บเงินบางส่วน', `${inst.house_code} งวด ${inst.no} +${add}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
+})
+
+// ----- แท็บ "การเงิน & สัญญา": สัญญา 2 ฝั่ง + ประวัติเงินเข้า-ออก + ยอดสรุป -----
+const CONTRACT_KINDS = { main: 'สัญญาหลัก', amend: 'แก้ไขสัญญา', add: 'งานเพิ่ม', reduce: 'งานลด' }
+api.get('/houses/:code/money', (req, res) => {
+  const h = db.prepare('SELECT * FROM houses WHERE code=?').get(req.params.code)
+  if (!h) return res.status(404).json({ error: 'ไม่พบบ้าน' })
+  const contracts = db.prepare('SELECT * FROM house_contracts WHERE house_code=? ORDER BY side, party, COALESCE(sign_date,created), id').all(h.code)
+  const fileNames = new Map(db.prepare('SELECT id, name FROM files WHERE house_code=?').all(h.code).map((f) => [f.id, f.name]))
+  for (const c of contracts) c.file_name = c.file_id ? (fileNames.get(c.file_id) || null) : null
+  const insts = db.prepare('SELECT * FROM installments WHERE house_code=?').all(h.code)
+  const instIds = new Set(insts.map((i) => i.id))
+  const log = db.prepare('SELECT * FROM house_money_log WHERE house_code=? ORDER BY date_iso, id').all(h.code)
+  for (const r of log) r.inst_deleted = r.installment_id != null && !instIds.has(r.installment_id)
+  // ยอดยกมา: เงินที่เก็บ/จ่ายไปก่อนเริ่มบันทึกประวัติ (ยอดในงวด − ยอดที่มีประวัติ) → ผลรวมประวัติ = ยอดจริงของงวดเสมอ
+  const carry = []
+  for (const i of insts) {
+    const logged = log.filter((r) => r.installment_id === i.id).reduce((s, r) => s + (Number(r.amount) || 0), 0)
+    const diff = (i.paid || 0) - logged
+    if (Math.abs(diff) > 0.004) carry.push({
+      id: null, carry: true, house_code: h.code, side: i.side === 'contractor' ? 'contractor' : 'customer', installment_id: i.id,
+      inst_no: String(i.no ?? ''), inst_detail: i.detail || '', party: i.side === 'contractor' ? (i.contractor || '') : (h.customer || ''),
+      date_iso: null, amount: diff, method: '', ref_no: '', note: 'ยอดยกมา — เก็บ/จ่ายก่อนเริ่มบันทึกประวัติ (ไม่มีวันที่)', by: '',
+    })
+  }
+  const sumC = (side, party) => contracts.filter((c) => c.side === side && (party == null || c.party === party)).reduce((s, c) => s + (Number(c.amount) || 0), 0)
+  const hasC = (side, party) => contracts.some((c) => c.side === side && (party == null || c.party === party))
+  // ช่างของบ้าน: รายชื่อจากแท็บช่าง + ชื่อที่มีสัญญา/งวด
+  const names = new Set([
+    ...db.prepare('SELECT name FROM contractors WHERE house_code=?').all(h.code).map((r) => r.name),
+    ...contracts.filter((c) => c.side === 'contractor').map((c) => c.party),
+    ...insts.filter((i) => i.side === 'contractor' && i.contractor).map((i) => i.contractor),
+  ].filter(Boolean))
+  const agreed = new Map(db.prepare('SELECT name, contract_total FROM contractors WHERE house_code=?').all(h.code).map((r) => [r.name, r.contract_total || 0]))
+  const parties = [...names].map((name) => {
+    const ci = insts.filter((i) => i.side === 'contractor' && i.contractor === name)
+    return {
+      name, contract_value: hasC('contractor', name) ? sumC('contractor', name) : null, agreed_total: agreed.get(name) || 0,
+      inst_total: ci.reduce((s, i) => s + (i.amount || 0), 0), paid: ci.reduce((s, i) => s + (i.paid || 0), 0),
+    }
+  })
+  const custInst = insts.filter((i) => i.side !== 'contractor')
+  const conInst = insts.filter((i) => i.side === 'contractor')
+  res.json({
+    house: { code: h.code, name: h.name, customer: h.customer, value: h.value || 0, contractor_value: h.contractor_value || 0, contract_no: h.contract_no || '' },
+    contracts,
+    log: [...carry, ...log],
+    summary: {
+      customer: {
+        contract_value: hasC('customer') ? sumC('customer') : null, house_value: h.value || 0,
+        inst_total: custInst.reduce((s, i) => s + (i.amount || 0), 0), received: custInst.reduce((s, i) => s + (i.paid || 0), 0),
+      },
+      contractor: {
+        contract_value: hasC('contractor') ? sumC('contractor') : null, house_value: h.contractor_value || 0,
+        inst_total: conInst.reduce((s, i) => s + (i.amount || 0), 0), paid: conInst.reduce((s, i) => s + (i.paid || 0), 0),
+      },
+      parties,
+    },
+  })
+})
+// ตรวจ/แปลงข้อมูลสัญญาจากฟอร์ม → แถวที่บันทึกได้ (หรือ error)
+function contractFromBody(h, b) {
+  const side = b.side === 'contractor' ? 'contractor' : b.side === 'customer' ? 'customer' : null
+  if (!side) return { error: 'เลือกฝั่งสัญญา (ลูกค้า / ช่าง)' }
+  const kind = Object.hasOwn(CONTRACT_KINDS, b.kind) ? b.kind : null
+  if (!kind) return { error: 'เลือกประเภทสัญญา' }
+  const party = String(b.party || (side === 'customer' ? h.customer || '' : '')).trim().slice(0, 120)
+  if (!party) return { error: side === 'contractor' ? 'เลือกช่าง / ผู้รับเหมา' : 'ใส่ชื่อลูกค้า' }
+  let amount = Number(b.amount)
+  if (!Number.isFinite(amount)) return { error: 'ใส่ยอดเงินเป็นตัวเลข' }
+  amount = Math.round(amount * 100) / 100
+  if (kind === 'main' || kind === 'add') { if (!(amount > 0)) return { error: 'ยอดเงินต้องมากกว่า 0' } }
+  if (kind === 'reduce') { if (amount === 0) return { error: 'ยอดเงินต้องไม่เป็น 0' }; amount = -Math.abs(amount) }
+  if (kind === 'amend' && amount === 0) return { error: 'ใส่ยอดที่เปลี่ยน (+ เพิ่ม / − ลด)' }
+  if (b.sign_date && !isIsoDate(b.sign_date)) return { error: 'วันที่เซ็นไม่ถูกต้อง' }
+  const fileId = b.file_id ? Number(b.file_id) : null
+  if (fileId && !db.prepare('SELECT 1 FROM files WHERE id=? AND house_code=?').get(fileId, h.code)) return { error: 'ไฟล์แนบไม่ใช่ไฟล์ของบ้านนี้' }
+  return {
+    row: {
+      side, kind, party, amount, file_id: fileId || null,
+      no: String(b.no || '').trim().slice(0, 60), title: String(b.title || '').trim().slice(0, 200),
+      sign_date: b.sign_date || null, note: String(b.note || '').trim().slice(0, 500),
+    },
+  }
+}
+api.post('/houses/:code/contracts', canWrite, (req, res) => {
+  const h = db.prepare('SELECT * FROM houses WHERE code=?').get(req.params.code)
+  if (!h) return res.status(404).json({ error: 'ไม่พบบ้าน' })
+  const r = contractFromBody(h, req.body || {})
+  if (r.error) return res.status(400).json({ error: r.error })
+  const c = r.row
+  const info = db.prepare(`INSERT INTO house_contracts (house_code,side,party,kind,no,title,sign_date,amount,file_id,note,by,created)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(h.code, c.side, c.party, c.kind, c.no, c.title, c.sign_date, c.amount, c.file_id, c.note, req.user?.name || '-', new Date().toISOString())
+  audit(req, 'เพิ่มสัญญา', `${h.code} ${CONTRACT_KINDS[c.kind]} ${c.party} ${baht(c.amount)}`)
+  res.json(db.prepare('SELECT * FROM house_contracts WHERE id=?').get(info.lastInsertRowid))
+})
+api.put('/houses/:code/contracts/:id', canWrite, (req, res) => {
+  const h = db.prepare('SELECT * FROM houses WHERE code=?').get(req.params.code)
+  const old = db.prepare('SELECT * FROM house_contracts WHERE id=? AND house_code=?').get(req.params.id, req.params.code)
+  if (!h || !old) return res.status(404).json({ error: 'ไม่พบสัญญา' })
+  const r = contractFromBody(h, req.body || {})
+  if (r.error) return res.status(400).json({ error: r.error })
+  const c = r.row
+  db.prepare('UPDATE house_contracts SET side=?, party=?, kind=?, no=?, title=?, sign_date=?, amount=?, file_id=?, note=? WHERE id=?')
+    .run(c.side, c.party, c.kind, c.no, c.title, c.sign_date, c.amount, c.file_id, c.note, old.id)
+  audit(req, 'แก้ไขสัญญา', `${h.code} ${CONTRACT_KINDS[c.kind]} ${c.party} ${baht(old.amount)} → ${baht(c.amount)}`)
+  res.json(db.prepare('SELECT * FROM house_contracts WHERE id=?').get(old.id))
+})
+api.delete('/houses/:code/contracts/:id', financeOnly, (req, res) => {
+  const old = db.prepare('SELECT * FROM house_contracts WHERE id=? AND house_code=?').get(req.params.id, req.params.code)
+  if (!old) return res.status(404).json({ error: 'ไม่พบสัญญา' })
+  db.prepare('DELETE FROM house_contracts WHERE id=?').run(old.id)
+  audit(req, 'ลบสัญญา', `${old.house_code} ${CONTRACT_KINDS[old.kind] || old.kind} ${old.party} ${baht(old.amount)}`)
+  res.json({ ok: true })
+})
+// แก้รายละเอียดของรายการเงิน (วันที่จริง / วิธีจ่าย / เลขที่เอกสาร / หมายเหตุ) — ยอดเงินแก้ไม่ได้ (ยอดมาจากงวดงาน)
+api.put('/houses/:code/money-log/:id', canWrite, (req, res) => {
+  const old = db.prepare('SELECT * FROM house_money_log WHERE id=? AND house_code=?').get(req.params.id, req.params.code)
+  if (!old) return res.status(404).json({ error: 'ไม่พบรายการ' })
+  const b = req.body || {}
+  if (b.date_iso && !isIsoDate(b.date_iso)) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง' })
+  if (b.method && !MONEY_METHODS.includes(b.method)) return res.status(400).json({ error: 'วิธีชำระไม่ถูกต้อง' })
+  db.prepare('UPDATE house_money_log SET date_iso=?, method=?, ref_no=?, note=? WHERE id=?')
+    .run(b.date_iso || old.date_iso, b.method ?? old.method, String(b.ref_no ?? old.ref_no ?? '').slice(0, 60), String(b.note ?? old.note ?? '').slice(0, 300), old.id)
+  audit(req, 'แก้ไขรายการเงินบ้าน', `${old.house_code} งวด ${old.inst_no} ${baht(old.amount)}`)
+  res.json(db.prepare('SELECT * FROM house_money_log WHERE id=?').get(old.id))
 })
 
 api.get('/installments', (_req, res) => {
@@ -3272,6 +3419,7 @@ api.post('/repair/installments/:id', financeOnly, (req, res) => {
   if (action === 'confirm') {
     // เก็บ/จ่ายจริงแล้ว → ตั้งยอดเต็ม + ลงบัญชี (วันที่วันนี้ — เงินเก่าไม่มีวันที่จริงบันทึกไว้)
     db.prepare('UPDATE installments SET paid=?, status=? WHERE id=?').run(inst.amount, instStatus(inst.side, inst.amount, inst.amount), inst.id)
+    logMoney(req, inst, inst.amount - (inst.paid || 0), 'ซ่อมงวด: ยืนยันว่าเก็บ/จ่ายแล้วจริง (ไม่ทราบวันที่จริง)')
     recomputeHouse(inst.house_code)
     try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { logJournalIssue('inst', inst.id, `ซ่อมงวด ${inst.no} ${inst.house_code || ''}`, e) }
     audit(req, 'ซ่อมงวดงาน: ยืนยันเก็บ/จ่ายแล้วจริง', `${inst.house_code} งวด ${inst.no} ${baht(inst.amount)}`)

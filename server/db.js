@@ -776,6 +776,23 @@ db.exec(`CREATE TABLE IF NOT EXISTS doc_register (
   status TEXT, owner TEXT, house_code TEXT, note TEXT, revisions TEXT, expiry TEXT, by TEXT, created TEXT
 )`)
 ensureColumn('doc_register', 'expiry', 'TEXT') // วันหมดอายุ (ใบอนุญาต/เอกสารมีอายุ) — ISO YYYY-MM-DD
+// ===== การเงินและสัญญาต่อบ้าน (แท็บ "การเงิน & สัญญา") =====
+// สัญญา 2 ฝั่ง: บริษัท↔ลูกค้า (side=customer) · บริษัท↔ช่าง/ผู้รับเหมา (side=contractor, party=ชื่อช่าง)
+// kind: main = สัญญาหลัก · amend = แก้ไขสัญญา/เซ็นครั้งถัดไป (ยอดเปลี่ยน +/−) · add = งานเพิ่ม (+) · reduce = งานลด (−)
+// amount เก็บแบบมีเครื่องหมาย → มูลค่าสัญญาล่าสุดของคู่สัญญา = SUM(amount)
+db.exec(`CREATE TABLE IF NOT EXISTS house_contracts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  house_code TEXT, side TEXT, party TEXT, kind TEXT, no TEXT, title TEXT, sign_date TEXT,
+  amount REAL, file_id INTEGER, note TEXT, by TEXT, created TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_hc_house ON house_contracts(house_code)')
+// ประวัติเงินเข้า-ออกทีละครั้ง (บันทึกอัตโนมัติทุกครั้งที่กดเก็บเงิน/จ่ายช่างที่งวดงาน) — amount ติดลบ = ยกเลิก/ถอนยอด
+db.exec(`CREATE TABLE IF NOT EXISTS house_money_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  house_code TEXT, side TEXT, installment_id INTEGER, inst_no TEXT, inst_detail TEXT, party TEXT,
+  date_iso TEXT, amount REAL, method TEXT, ref_no TEXT, note TEXT, by TEXT, created TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_hml_house ON house_money_log(house_code)')
 ensureColumn('users', 'system_only', 'INTEGER') // 1 = บัญชีระบบ (ผู้ดูแล/เจ้าของที่ไม่ใช่พนักงาน) — ไม่สร้างพนักงาน HR · ไม่ขึ้นในเงินเดือน/ลงเวลา
 ensureColumn('users', 'must_change_pin', 'INTEGER') // 1 = ถูกรีเซ็ต PIN ต้องตั้งใหม่ตอนเข้าครั้งแรก
 // คลังรหัสผ่านบริษัท — เซิร์ฟเวอร์เก็บเฉพาะข้อความที่เข้ารหัสแล้ว (enc) · เข้ารหัส/ถอดรหัสที่เบราว์เซอร์ด้วย master passphrase ที่ระบบไม่รู้
