@@ -213,7 +213,7 @@ function ComposeModal({ init, onClose }: { init: { house: string; text: string; 
     <ModalShell title={init.kind === 'notice' ? 'แจ้งลูกค้าทาง LINE' : 'ส่งอัปเดตให้ลูกค้าทาง LINE'} sub="ตรวจข้อความก่อนส่ง — อย่าใส่ราคาฝั่งช่าง/ต้นทุน/เรื่องภายใน" width={620} closeOnBackdrop={false} onClose={onClose}
       footer={<>
         <button style={btn()} onClick={onClose}>ยกเลิก</button>
-        <button style={btn(true)} disabled={busy || !info?.customers.length} onClick={send}>{busy ? 'กำลังส่ง…' : 'ส่งเข้า LINE ลูกค้า'}</button>
+        <button style={btn(true)} disabled={busy || !house || (!info?.customers.length && !info?.redirect_to)} onClick={send}>{busy ? 'กำลังส่ง…' : info?.redirect_to ? `ส่งให้ ${info.redirect_to} ตรวจ` : 'ส่งเข้า LINE ลูกค้า'}</button>
       </>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <label style={{ fontSize: 13, color: C.sub }}>บ้าน
@@ -224,7 +224,7 @@ function ComposeModal({ init, onClose }: { init: { house: string; text: string; 
         </label>
         {house && info && (info.customers.length
           ? <div style={{ fontSize: 13, color: C.green }}>ส่งถึง: {info.customers.map((c) => c.name).join(', ')} (ผูก LINE แล้ว)</div>
-          : <div style={{ fontSize: 13, color: C.red }}>ลูกค้าบ้านนี้ ({info.house.customer || 'ไม่ระบุชื่อ'}) ยังไม่ได้ผูก LINE — ไปที่หน้า ลูกค้า (CRM) → ออกรหัสผูก LINE ให้ลูกค้าก่อน</div>)}
+          : <div style={{ fontSize: 13, color: info.redirect_to ? C.sub : C.red }}>ลูกค้าบ้านนี้ ({info.house.customer || 'ไม่ระบุชื่อ'}) ยังไม่ได้ผูก LINE{info.redirect_to ? ' — ช่วงตรวจส่งให้ผู้ตรวจดูได้เลย (ก่อนใช้จริงต้องให้ลูกค้าผูก LINE ที่หน้า ลูกค้า CRM)' : ' — ไปที่หน้า ลูกค้า (CRM) → ออกรหัสผูก LINE ให้ลูกค้าก่อน'}</div>)}
         {info?.redirect_to && <div style={{ fontSize: 13, color: C.amber, background: '#FDF3E1', borderRadius: 8, padding: '8px 10px' }}>🧪 ช่วงตรวจข้อความ: กดส่งแล้วข้อความจะไปที่ LINE ของ <b>{info.redirect_to}</b> ก่อน — <b>ยังไม่ถึงลูกค้า</b></div>}
         {house && info && !info.hasLine && <div style={{ fontSize: 13, color: C.red }}>ระบบยังไม่ได้ตั้งค่า LINE (หน้า ผู้ใช้งาน → แจ้งเตือน LINE)</div>}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

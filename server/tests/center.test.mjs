@@ -168,3 +168,14 @@ test('แจ้งเตือนกลุ่ม LINE: ตั้งค่าไ�
   assert.equal((await A('POST', '/center/alerts/test')).status, 400)
   await A('PUT', '/center/alerts', { on: false })
 })
+
+test('ช่วงตรวจข้อความลูกค้า: ลูกค้ายังไม่ผูก LINE ก็ส่งให้ผู้ตรวจได้ (ไม่ติดเงื่อนไขผูก LINE)', async () => {
+  const me = (await A('GET', '/center/line-test')).data.users.find((u) => u.name === 'ธวัช วรรณสุข')
+  assert.equal((await A('PUT', '/center/line-test', { cust_redirect_user: me.id })).status, 200)
+  const g = await A('GET', `/center/customer/${H}`)
+  assert.equal(g.data.redirect_to, 'ธวัช วรรณสุข')
+  const r = await A('POST', `/center/customer/${H}/send`, { text: 'ทดสอบ' })
+  assert.equal(r.status, 400)
+  assert.ok(!String(r.data.error).includes('ลูกค้าบ้านนี้ยังไม่ได้ผูก'), r.data.error) // ติดแค่ยังไม่ตั้ง LINE ของระบบทดสอบ
+  await A('PUT', '/center/line-test', { cust_redirect_user: 0 })
+})

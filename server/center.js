@@ -318,9 +318,20 @@ export function createCenter(d) {
       if (text.length > 4500) return res.status(400).json({ error: 'ข้อความยาวเกินไป (ไม่เกิน 4,500 ตัวอักษร)' })
       const { house, list } = customersOfHouse(req.params.code)
       if (!house) return res.status(404).json({ error: 'ไม่พบบ้าน' })
-      if (!list.length) return res.status(400).json({ error: 'ลูกค้าบ้านนี้ยังไม่ได้ผูก LINE — ให้ลูกค้าผูก LINE ก่อน (หน้า ลูกค้า/CRM → ออกรหัสผูก LINE)' })
+      const rid = Number(d.getSetting('cust_redirect_user', '')) || 0
+      const reviewer = rid ? db.prepare('SELECT name, line_uid FROM users WHERE id=?').get(rid) : null
+      if (!list.length && !reviewer) return res.status(400).json({ error: 'ลูกค้าบ้านนี้ยังไม่ได้ผูก LINE — ให้ลูกค้าผูก LINE ก่อน (หน้า ลูกค้า/CRM → ออกรหัสผูก LINE)' })
       if (!d.getSetting('line_token', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่า LINE (หน้า ผู้ใช้งาน → แจ้งเตือน LINE)' })
       const kind = req.body?.kind === 'notice' ? 'notice' : 'update'
+      // ช่วงตรวจ + ลูกค้ายังไม่ผูก LINE: ส่งให้ผู้ตรวจดูได้เลย (ยังไงก็ไม่ถึงลูกค้าอยู่แล้ว) — ทดลองกับบ้านทดสอบได้
+      if (!list.length) {
+        if (!reviewer.line_uid) return res.status(400).json({ error: `${reviewer.name} (ผู้ตรวจข้อความลูกค้า) ยังไม่ได้ผูก LINE` })
+        const ok = await d.linePush(reviewer.line_uid, [`📨 [ตรวจก่อนส่งลูกค้า] ข้อความนี้ปกติส่งถึงลูกค้าบ้าน ${house.name}${house.customer ? ` (${house.customer})` : ''} — ลูกค้ายังไม่ได้ผูก LINE · ยังไม่ถึงลูกค้า`, text])
+        db.prepare('INSERT INTO customer_updates (ts,house_code,text,by,sent_to,status,kind) VALUES (?,?,?,?,?,?,?)').run(d.nowTS(), house.code, text, req.user.name, '', ok ? `ส่งให้ ${reviewer.name} ตรวจ (ลูกค้ายังไม่ผูก LINE)` : 'ส่งไม่สำเร็จ', kind)
+        d.audit(req, 'ส่งอัปเดตลูกค้า (ช่วงตรวจ) ให้ผู้ตรวจ', `${house.code} → ${reviewer.name}${ok ? '' : ' ไม่สำเร็จ'}`)
+        if (!ok) return res.status(502).json({ error: 'ส่ง LINE ไม่สำเร็จ — ตรวจการตั้งค่า LINE ที่หน้า ผู้ใช้งาน → แจ้งเตือน LINE' })
+        return res.json({ ok: true, sent_to: [house.customer || 'ลูกค้า'], redirect_to: reviewer.name })
+      }
       const okNames = []
       for (const c of list) {
         const ok = await d.linePush(c.line_uid, text)
