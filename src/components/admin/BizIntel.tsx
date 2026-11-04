@@ -17,14 +17,14 @@ interface ReportBody {
   competitors: { name: string; area: string; website: string; price_range: string; strengths: string; weaknesses: string; vs_us: string }[]
 }
 interface Report { id: number; kind: string; created: string; by: string; body: ReportBody; cost_usd: number }
-interface HouseRow { code: string; name: string; status: string; value: number; contractor_plan: number; other_expense: number; est_margin: number; est_margin_pct: number | null; collected: number; pct: number }
+interface HouseRow { code: string; name: string; status: string; no_plan?: boolean; value: number; contractor_plan: number; other_expense: number; est_margin: number; est_margin_pct: number | null; collected: number; pct: number }
 interface Running { kinds: string[]; done: string[]; failed: string[]; current: string; started: string; by: string }
 interface IntelData {
   kinds: Record<string, { label: string; web: boolean }>; order: string[]
   kpis: { cash: number | null; houses_active: number; value_active: number; remain_active: number; ar_overdue: number; ar_overdue_n: number; ap_overdue: number; need_30d: number; inflow_30d: number; leads_30d: number; late_houses: number }
   finance: FinFlag[]; alerts: AiAlert[]; reports: Record<string, Report | null>; lastErr: Record<string, { created: string; error: string } | null>
   houses: HouseRow[]; competitors: Competitor[]
-  settings: { auto: boolean; hour: number; line: boolean; last_run: { at: string; by: string; done: string[]; failed: string[] } | null; has_key: boolean }
+  settings: { auto: boolean; hour: number; line: boolean; line_users: number[]; line_candidates: { id: number; name: string }[]; last_run: { at: string; by: string; done: string[]; failed: string[] } | null; has_key: boolean }
   running: Running | null; cost30_usd: number
 }
 interface HistRow { id: number; created: string; by: string; ok: number; summary: string; score: number | null; error: string; cost_usd: number }
@@ -254,8 +254,12 @@ export default function BizIntel() {
                     <td className="num" style={{ padding: '8px 12px' }}>{baht(h.value)}</td>
                     <td className="num" style={{ padding: '8px 12px' }}>{baht(h.contractor_plan)}</td>
                     <td className="num" style={{ padding: '8px 12px' }}>{baht(h.other_expense)}</td>
-                    <td className="num" style={{ padding: '8px 12px', color: h.est_margin < 0 ? '#C24036' : undefined, fontWeight: 600 }}>{baht(h.est_margin)}</td>
-                    <td className="num" style={{ padding: '8px 12px', color: h.est_margin_pct != null && h.est_margin_pct < 10 ? '#C24036' : '#2E7D55' }}>{h.est_margin_pct == null ? '-' : h.est_margin_pct + '%'}</td>
+                    {h.no_plan
+                      ? <td colSpan={2} style={{ padding: '8px 12px', color: '#B7791F', fontSize: 12.5 }}>⚠ ยังไม่ใส่ค่าช่างตามสัญญา — คิดกำไรไม่ได้</td>
+                      : <>
+                        <td className="num" style={{ padding: '8px 12px', color: h.est_margin < 0 ? '#C24036' : undefined, fontWeight: 600 }}>{baht(h.est_margin)}</td>
+                        <td className="num" style={{ padding: '8px 12px', color: h.est_margin_pct != null && h.est_margin_pct < 10 ? '#C24036' : '#2E7D55' }}>{h.est_margin_pct == null ? '-' : h.est_margin_pct + '%'}</td>
+                      </>}
                     <td className="num" style={{ padding: '8px 12px' }}>{h.pct}%</td>
                   </tr>
                 ))}</tbody>
@@ -366,7 +370,8 @@ function CompetitorModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 
 function SettingsModal({ s, onClose, onSaved }: { s: IntelData['settings']; onClose: () => void; onSaved: () => void }) {
   const [auto, setAuto] = useState(s.auto); const [hour, setHour] = useState(s.hour); const [line, setLine] = useState(s.line)
-  const save = async () => { try { await api.put('/intel/settings', { auto, hour, line }); onSaved() } catch (e) { window.alert((e as Error).message) } }
+  const [who, setWho] = useState<number[]>(s.line_users || [])
+  const save = async () => { try { await api.put('/intel/settings', { auto, hour, line, line_users: who }); onSaved() } catch (e) { window.alert((e as Error).message) } }
   return (
     <ModalShell title="ตั้งค่าศูนย์วิเคราะห์ธุรกิจ" onClose={onClose}
       footer={<><button style={btn} onClick={onClose}>ยกเลิก</button><button style={btnPrimary} onClick={save}>บันทึก</button></>}>
@@ -379,8 +384,19 @@ function SettingsModal({ s, onClose, onSaved }: { s: IntelData['settings']; onCl
         <span>ค่า AI ประมาณ 40–100 บาท/วัน</span>
       </div>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, cursor: 'pointer' }}>
-        <input type="checkbox" checked={line} onChange={(e) => setLine(e.target.checked)} /> ส่ง LINE หา CEO/ผู้จัดการ เมื่อมี "เรื่องด่วน" ใหม่
+        <input type="checkbox" checked={line} onChange={(e) => setLine(e.target.checked)} /> ส่ง LINE เมื่อมี "เรื่องด่วน" ใหม่
       </label>
+      {line && (
+        <div style={{ margin: '10px 0 0 26px', fontSize: 13, color: '#5C6770' }}>
+          <div style={{ marginBottom: 6 }}>ส่งให้ใคร (ไม่ติ๊กเลย = CEO/ผู้จัดการทุกคนที่ผูก LINE):</div>
+          {s.line_candidates.map((u) => (
+            <label key={u.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, cursor: 'pointer', color: '#1C2730' }}>
+              <input type="checkbox" checked={who.includes(u.id)} onChange={(e) => setWho(e.target.checked ? [...who, u.id] : who.filter((x) => x !== u.id))} /> {u.name}
+            </label>
+          ))}
+          {!s.line_candidates.length && <div>ยังไม่มี CEO/ผู้จัดการที่ผูก LINE</div>}
+        </div>
+      )}
       {!s.has_key && <div style={{ marginTop: 14, fontSize: 12.5, color: '#C24036' }}>ยังไม่ได้ตั้งกุญแจ AI — ผู้ดูแลระบบตั้งได้ที่เมนู ผู้ใช้งาน → ตั้งค่า AI</div>}
     </ModalShell>
   )

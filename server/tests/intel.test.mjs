@@ -93,3 +93,37 @@ test('คู่แข่ง: เพิ่มเองได้ · เอาอ�
   assert.equal(s.data.hour, 23)
   assert.equal(s.data.line, false)
 })
+
+test('วันที่บ้านแบบไทยอ่านได้ (1/7/69 · 1 ก.ค. 69 · ISO)', async () => {
+  const { toIsoDate } = await import('../intel.js')
+  assert.equal(toIsoDate('1/7/69'), '2026-07-01')
+  assert.equal(toIsoDate('1/3/2570'), '2027-03-01')
+  assert.equal(toIsoDate('15 พ.ย. 69'), '2026-11-15')
+  assert.equal(toIsoDate('2026-07-01'), '2026-07-01')
+  assert.equal(toIsoDate(''), '')
+  assert.equal(toIsoDate('ไม่ใช่วันที่'), '')
+})
+
+test('ตรวจการเงิน: บ้านที่ยังไม่ใส่ค่าช่าง/วันที่ ถูกเตือนรวมเป็นเรื่องเดียว และไม่แสดงกำไร %', async () => {
+  const code = 'NP-' + Date.now()
+  const h = await call('POST', '/houses', { code, name: 'บ้านยังไม่มีแผนต้นทุน', status: 'กำลังสร้าง', value: 2000000 })
+  assert.ok(h.status < 300, JSON.stringify(h.data))
+  const dated = 'DT-' + Date.now()
+  assert.ok((await call('POST', '/houses', { code: dated, name: 'บ้านมีวันที่', status: 'กำลังสร้าง', value: 1000000, start_date: '1/7/69', deliver_date: '1/3/99' })).status < 300)
+  const r = await call('GET', '/intel')
+  const row = r.data.houses.find((x) => x.code === code)
+  assert.equal(row.no_plan, true)
+  assert.equal(row.est_margin_pct, null, 'ยังไม่มีแผนต้นทุน ต้องไม่โชว์กำไร 100%')
+  const np = r.data.finance.find((f) => f.key.startsWith('intel:fin:noplan:'))
+  assert.ok(np && np.detail.includes(code))
+  const nd = r.data.finance.find((f) => f.key.startsWith('intel:fin:nodates:'))
+  assert.ok(nd && nd.detail.includes(code))
+  assert.ok(!nd.detail.includes(dated), 'บ้านที่กรอกวันที่แบบไทยแล้วต้องไม่ถูกเตือน')
+})
+
+test('ผู้รับ LINE: บันทึกได้เฉพาะ CEO/ผู้จัดการที่ผูก LINE (id อื่นถูกตัดทิ้ง)', async () => {
+  const s = await call('PUT', '/intel/settings', { line_users: [99999] })
+  assert.equal(s.status, 200)
+  assert.deepEqual(s.data.line_users, [])
+  assert.ok(Array.isArray(s.data.line_candidates))
+})

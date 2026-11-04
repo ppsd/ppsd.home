@@ -35,6 +35,24 @@ export function parseAiJson(text) {
 
 const str = (v, n = 600) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
 const num = (v) => Number(v) || 0
+// วันที่ในบ้านเก็บได้หลายแบบ: ISO "2026-07-01" · ไทย "1/7/69" · "1/7/2569" · "1 ก.ค. 69" → คืน ISO หรือ ''
+const TH_MON = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+export function toIsoDate(v) {
+  const t = String(v ?? '').trim()
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10)
+  let d, m, y
+  const a = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/)
+  if (a) { d = +a[1]; m = +a[2]; y = +a[3] } else {
+    const b = t.match(/^(\d{1,2})\s*([ก-๙.]+)\s*(\d{2,4})$/)
+    if (!b) return ''
+    d = +b[1]; m = TH_MON.findIndex((x) => x.replace(/\./g, '') === b[2].replace(/\./g, '')) + 1; y = +b[3]
+    if (!m) return ''
+  }
+  if (y < 100) y += 2500 // ปี พ.ศ. 2 หลัก
+  if (y > 2400) y -= 543
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return ''
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
 const daysBetween = (aIso, bIso) => Math.round((Date.parse(bIso) - Date.parse(aIso)) / 86400000)
 
 // ทำให้ผลจาก AI อยู่ในรูปที่หน้าเว็บแสดงได้แน่นอน
@@ -82,11 +100,15 @@ export function createIntel({ db, aiAsk, aiKey, audit, nowTS, todayISO, getSetti
     const houseRows = houses.map((h) => {
       const value = num(h.value), plan = num(h.contractor_value), exp = num(expByHouse.get(h.code))
       const cost = plan + exp
+      const startIso = toIsoDate(h.start_date), deliverIso = toIsoDate(h.deliver_date)
       const margin = value - cost
       return {
         code: h.code, name: h.name, status: h.status || '', kind: h.kind || '', value, contractor_plan: plan, contractor_paid: num(h.paid), other_expense: exp,
-        est_margin: margin, est_margin_pct: value > 0 ? Math.round((margin / value) * 1000) / 10 : null,
-        collected: num(h.collected), remain: num(h.remain), pct: num(h.pct), start_date: h.start_date || '', deliver_date: h.deliver_date || '', area_sqm: num(h.area_sqm),
+        // ยังไม่ใส่ค่าช่างตามสัญญา (บ้านขาย) → กำไรที่คำนวณได้ไม่ใช่ของจริง ไม่แสดง %
+        no_plan: value > 0 && plan === 0 && !['cm', 'office', 'marketing'].includes(h.kind || ''),
+        no_dates: !['office', 'marketing'].includes(h.kind || '') && (!startIso || !deliverIso),
+        est_margin: margin, est_margin_pct: value > 0 && !(plan === 0 && !['cm', 'office', 'marketing'].includes(h.kind || '')) ? Math.round((margin / value) * 1000) / 10 : null,
+        collected: num(h.collected), remain: num(h.remain), pct: num(h.pct), start_date: startIso, deliver_date: deliverIso, area_sqm: num(h.area_sqm),
         overpaid_contractor: plan > 0 && num(h.paid) > plan ? num(h.paid) - plan : 0,
       }
     })
@@ -117,7 +139,7 @@ export function createIntel({ db, aiAsk, aiKey, audit, nowTS, todayISO, getSetti
     const ncrOpen = safe(() => db.prepare("SELECT house_code, title, date, created FROM site_docs WHERE kind='ncr' AND COALESCE(status,'') NOT IN ('ปิด','ปิดแล้ว','แก้ไขแล้ว') ORDER BY id DESC LIMIT 20").all(), [])
     const qc = safe(() => db.prepare("SELECT COALESCE(status,'') s, COUNT(*) n FROM qc_inspections WHERE COALESCE(created,'') >= ? GROUP BY s").all(ago(180)), [])
     const woLate = safe(() => db.prepare("SELECT COUNT(*) n FROM work_orders WHERE due_date IS NOT NULL AND due_date != '' AND due_date < ? AND COALESCE(status,'') NOT IN ('เสร็จ','ปิดงาน','ยกเลิก','ผ่าน')").get(today).n, 0)
-    const lateHouses = houseRows.filter((h) => h.deliver_date && /^\d{4}-\d{2}-\d{2}$/.test(h.deliver_date) && h.deliver_date < today && h.status !== 'ส่งมอบแล้ว' && h.status !== 'after-service')
+    const lateHouses = houseRows.filter((h) => h.deliver_date && h.deliver_date < today && h.status !== 'ส่งมอบแล้ว' && h.status !== 'after-service')
       .map((h) => ({ code: h.code, deliver_date: h.deliver_date, pct: h.pct, days_late: daysBetween(h.deliver_date, today) }))
     // ลูกค้า / การขาย
     const leadStages = safe(() => db.prepare("SELECT COALESCE(stage,'') stage, COUNT(*) n FROM leads WHERE COALESCE(created,'') >= ? GROUP BY stage").all(ago(365)), [])
@@ -163,6 +185,12 @@ export function createIntel({ db, aiAsk, aiKey, audit, nowTS, todayISO, getSetti
       if (h.overpaid_contractor > 0) add('high', 'overpaid:' + h.code, `บ้าน ${h.code} จ่ายช่างเกินสัญญา ${baht(h.overpaid_contractor)}`, `จ่ายช่างแล้ว ${baht(h.contractor_paid)} · ตามสัญญา ${baht(h.contractor_plan)}`, 'ตรวจว่ามีงานเพิ่ม (VO) รองรับหรือลงงวดผิด')
       if (h.contractor_plan > 0 && h.value > 0 && h.collected > 0 && h.contractor_paid > h.collected * 1.0 && h.pct < 100) add('med', 'prepay:' + h.code, `บ้าน ${h.code} จ่ายช่างมากกว่าเงินที่เก็บจากลูกค้า`, `เก็บลูกค้าแล้ว ${baht(h.collected)} · จ่ายช่างแล้ว ${baht(h.contractor_paid)}`, 'เร่งเก็บงวดลูกค้า / ชะลอจ่ายช่างให้ตรงความคืบหน้า')
     }
+    // ข้อมูลไม่ครบ → ตัวเลขกำไร/ความล่าช้าเชื่อไม่ได้ (รวมเป็นเรื่องเดียว ไม่แตกรายหลัง)
+    const live = snap.houses.rows.filter((h) => h.status !== 'ส่งมอบแล้ว' && h.status !== 'after-service')
+    const noPlan = live.filter((h) => h.no_plan)
+    if (noPlan.length) add(noPlan.length >= 3 ? 'high' : 'med', 'noplan:' + noPlan.map((h) => h.code).sort().join(','), `บ้าน ${noPlan.length} หลังยังไม่ได้ใส่ค่าช่างตามสัญญา (แผนต้นทุน) — กำไรที่เห็นไม่ใช่ของจริง`, `${noPlan.map((h) => h.code).slice(0, 12).join(', ')}${noPlan.length > 12 ? ' …' : ''} · มูลค่ารวม ${baht(noPlan.reduce((a, h) => a + h.value, 0))}`, 'เปิดบ้าน → แก้ไขข้อมูล ใส่ราคาช่าง (ตัวบ้าน/โรงจอดรถ/ถนน) หรือใส่งวดช่าง — เริ่มจากหลังที่มูลค่าสูงสุด')
+    const noDates = live.filter((h) => h.no_dates && h.value > 0)
+    if (noDates.length) add('med', 'nodates:' + noDates.map((h) => h.code).sort().join(','), `บ้าน ${noDates.length} หลังไม่มีวันเริ่มงาน/วันส่งมอบ — ระบบจับงานล่าช้าไม่ได้`, `${noDates.map((h) => h.code).slice(0, 12).join(', ')}${noDates.length > 12 ? ' …' : ''}`, 'เปิดบ้าน → แก้ไขข้อมูล ใส่วันเริ่มและวันกำหนดส่งมอบตามสัญญา')
     if (snap.ar.over30_n) add('high', 'ar30', `ลูกค้าค้างจ่ายเกิน 30 วัน ${snap.ar.over30_n} งวด รวม ${baht(snap.ar.over30_amt)}`, `ค้างนานสุด ${snap.ar.oldest_days} วัน`, 'โทรตาม/ส่งหนังสือทวงถาม และพิจารณาชะลองานบ้านที่ค้างนาน')
     else if (snap.ar.overdue_n) add('med', 'ar', `ลูกค้าค้างจ่าย (เลยกำหนด) ${snap.ar.overdue_n} งวด รวม ${baht(snap.ar.overdue_amt)}`, '', 'ส่งข้อความเตือนลูกค้าก่อนเกิน 30 วัน')
     if (snap.ap.overdue_n) add('med', 'ap', `หนี้ผู้ขายเลยกำหนด ${snap.ap.overdue_n} ใบ รวม ${baht(snap.ap.overdue_amt)}`, '', 'จ่ายหรือขอเลื่อนกับร้าน — ค้างนานเสียเครดิตและส่วนลด')
@@ -336,13 +364,20 @@ score = คะแนนสุขภาพธุรกิจโดยรวม (1
     const lines = [...finNew.map((x) => '🔴 [การเงิน] ' + x.title), ...ai.map((a) => `🔴 [${INTEL_KINDS[a.kind]?.label || a.kind}] ${a.title}${a.action ? '\n   → ' + a.action : ''}`)]
     const text = `📊 ศูนย์วิเคราะห์ธุรกิจ — เรื่องด่วน ${lines.length} เรื่อง\n\n${lines.slice(0, 12).join('\n')}${lines.length > 12 ? `\n…และอีก ${lines.length - 12} เรื่อง` : ''}\n\nดูรายละเอียด: เมนู ศูนย์วิเคราะห์ธุรกิจ`
     let n = 0
-    for (const u of managersWithLine()) { if (await linePush(u.line_uid, text)) n++ }
+    for (const u of lineRecipients()) { if (await linePush(u.line_uid, text)) n++ }
     if (n) {
       for (const x of finNew) sent.add(x.key)
       for (const a of ai) sent.add('intel:ai:' + a.id)
       setSetting('intel_line_sent', JSON.stringify([...sent].slice(-500)))
     }
     return n
+  }
+
+  // ผู้รับ LINE: ตั้งเลือกคนได้ (intel_line_users = [id,...]) · ไม่ได้เลือก = CEO/ผู้จัดการทุกคนที่ผูก LINE
+  const lineUserIds = () => safe(() => JSON.parse(getSetting('intel_line_users', '[]')).map(Number).filter(Boolean), [])
+  function lineRecipients() {
+    const all = managersWithLine(), ids = lineUserIds()
+    return ids.length ? all.filter((u) => ids.includes(Number(u.id))) : all
   }
 
   // อัตโนมัติวันละครั้ง (ค่าเริ่มต้น 07:00) — ตรวจทุก 10 นาที
@@ -361,6 +396,7 @@ score = คะแนนสุขภาพธุรกิจโดยรวม (1
   function settings() {
     return {
       auto: getSetting('intel_auto', '1') === '1', hour: Number(getSetting('intel_hour', '7')) || 7, line: getSetting('intel_line', '1') === '1',
+      line_users: lineUserIds(), line_candidates: managersWithLine().map((u) => ({ id: u.id, name: u.name })),
       last_run: safe(() => JSON.parse(getSetting('intel_last_run', '') || 'null'), null), has_key: !!aiKey(),
     }
   }
@@ -441,6 +477,10 @@ score = คะแนนสุขภาพธุรกิจโดยรวม (1
       const b = req.body || {}
       if (b.auto != null) setSetting('intel_auto', b.auto ? '1' : '0')
       if (b.line != null) setSetting('intel_line', b.line ? '1' : '0')
+      if (Array.isArray(b.line_users)) {
+        const ok = new Set(managersWithLine().map((u) => Number(u.id)))
+        setSetting('intel_line_users', JSON.stringify(b.line_users.map(Number).filter((id) => ok.has(id))))
+      }
       if (b.hour != null) { const h = Math.max(0, Math.min(23, Math.round(Number(b.hour) || 0))); setSetting('intel_hour', String(h)) }
       audit(req, 'ศูนย์วิเคราะห์ธุรกิจ: ตั้งค่า', JSON.stringify(settings()))
       res.json(settings())
