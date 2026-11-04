@@ -34,12 +34,23 @@ function PermCell({ level }: { level: string }) {
 export default function Users({ onAddUser }: { onAddUser: () => void }) {
   const { data, user, updateUser, removeUser, downloadBackup, resetUserPin, addPosition, restoreBackup } = useApp()
   // แก้ไขรายชื่อ: ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง · ลบ · เปิด-ปิดใช้งาน
-  const [editU, setEditU] = useState<{ id: number; name: string; username: string; position: string; employee_code: string } | null>(null)
+  const [editU, setEditU] = useState<{ id: number; name: string; username: string; position: string; employee_code: string; system_only: boolean; was_system: boolean; had_emp: string } | null>(null)
   const [editErr, setEditErr] = useState('')
   const saveEdit = async () => {
     if (!editU) return
     setEditErr('')
-    try { await updateUser(editU.id, { name: editU.name, username: editU.username, position: editU.position, employee_code: editU.employee_code }); setEditU(null) } catch (e) { setEditErr((e as Error).message) }
+    // เปลี่ยนเป็นบัญชีระบบ → ทะเบียนพนักงานที่ผูกอยู่จะถูกลบ (ไม่ขึ้นใน HR/เงินเดือน/ลงเวลา) — ยืนยันก่อน
+    if (editU.system_only && !editU.was_system && editU.had_emp && !window.confirm(`เปลี่ยน "${editU.name}" เป็นบัญชีระบบ (ไม่ใช่พนักงาน)?
+
+ทะเบียนพนักงาน ${editU.had_emp} จะถูกลบ → ไม่ขึ้นในหน้า HR / เงินเดือน / ลงเวลาอีก
+บัญชีเข้าใช้งานและสิทธิ์ยังเหมือนเดิม
+(ถ้ามีประวัติจ่ายเงินเดือน/เบิกแล้ว ระบบจะไม่ให้เปลี่ยน)`)) return
+    try {
+      await updateUser(editU.id, editU.system_only
+        ? { name: editU.name, username: editU.username, position: editU.position, system_only: true }
+        : { name: editU.name, username: editU.username, position: editU.position, system_only: false, employee_code: editU.employee_code })
+      setEditU(null)
+    } catch (e) { setEditErr((e as Error).message) }
   }
   const delUser = async (u: { id: number; name: string }) => {
     if (!window.confirm(`ลบผู้ใช้ "${u.name}" ออกจากระบบ?\n(เอกสารเก่าที่มีชื่อนี้ยังอยู่ครบ แต่บัญชีนี้จะเข้าระบบไม่ได้อีก)`)) return
@@ -327,7 +338,10 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                     <span style={{ width: 30, height: 30, borderRadius: '50%', background: '#30506A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 12.5, flexShrink: 0 }}>{u.name[0]}</span>
                     <div>
                       <div style={{ fontWeight: 500 }}>{u.name}</div>
-                      {(u.position || u.employee_code) && <div style={{ fontSize: 11, color: '#94A0A8' }}>{[u.position, u.employee_code ? 'HR ' + u.employee_code : ''].filter(Boolean).join(' · ')}</div>}
+                      {(u.position || u.employee_code || u.system_only) && <div style={{ fontSize: 11, color: '#94A0A8' }}>
+                        {u.system_only && <span title="บัญชีระบบ — ไม่ใช่พนักงาน ไม่ขึ้นใน HR/เงินเดือน/ลงเวลา" style={{ fontWeight: 600, color: '#6B4FA0', background: '#EFEAF7', padding: '1px 7px', borderRadius: 20, marginRight: 5 }}>บัญชีระบบ</span>}
+                        {[u.position, u.employee_code ? 'HR ' + u.employee_code : ''].filter(Boolean).join(' · ')}
+                      </div>}
                     </div>
                   </td>
                   <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{u.username}</td>
@@ -368,7 +382,7 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                         ))}
                       </select>
                       <button onClick={() => doResetPin(u.id, u.name)} title="ตั้ง PIN ใหม่ให้ผู้ใช้นี้" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#fff', border: '1px solid #ECDCB8', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>รีเซ็ต PIN</button>
-                      <button onClick={() => { setEditErr(''); setEditU({ id: u.id, name: u.name, username: u.username, position: u.position || '', employee_code: u.employee_code || '' }) }} title="แก้ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>✎ แก้ไข</button>
+                      <button onClick={() => { setEditErr(''); setEditU({ id: u.id, name: u.name, username: u.username, position: u.position || '', employee_code: u.employee_code || '', system_only: !!u.system_only, was_system: !!u.system_only, had_emp: u.employee_code || '' }) }} title="แก้ชื่อ / ชื่อผู้ใช้ / ตำแหน่ง" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>✎ แก้ไข</button>
                       {u.id !== user?.id && <>
                         <button onClick={() => toggleActive(u)} title={active ? 'ปิดการใช้งานบัญชีนี้ (เข้าระบบไม่ได้ แต่ข้อมูลยังอยู่)' : 'เปิดใช้งานบัญชีนี้'} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: active ? '#5C6770' : '#2E7D55', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>{active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</button>
                         <button onClick={() => delUser(u)} title="ลบผู้ใช้ออกจากระบบ" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #EDD3CE', borderRadius: 7, padding: '5px 9px', cursor: 'pointer' }}>🗑 ลบ</button>
@@ -384,10 +398,14 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                           {editU.position && !data.positions.includes(editU.position) && <option value={editU.position}>{editU.position}</option>}
                         </select>
                         {editU.employee_code && <div style={{ fontSize: 11, color: '#94A0A8', marginTop: -2 }}>ตำแหน่งเก็บที่ทะเบียนพนักงาน HR ที่เดียว — แก้ตรงนี้จะเปลี่ยนใน HR ด้วย และสิทธิ์ของคนนั้นเปลี่ยนทันที</div>}
-                        <select value={editU.employee_code} onChange={(e) => setEditU({ ...editU, employee_code: e.target.value })} title="ผูกบัญชีนี้กับพนักงานในทะเบียน HR (ชื่อ/ลายเซ็น/ลงเวลา ใช้ร่วมกัน)" style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }}>
+                        <select value={editU.system_only ? 'system' : 'staff'} onChange={(e) => setEditU({ ...editU, system_only: e.target.value === 'system' })} title="ประเภทบัญชี" style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }}>
+                          <option value="staff">ประเภท: พนักงาน (มีทะเบียน HR · ขึ้นในเงินเดือน/ลงเวลา)</option>
+                          <option value="system">ประเภท: บัญชีระบบ (ผู้ดูแล/เจ้าของ — ไม่ใช่พนักงาน)</option>
+                        </select>
+                        {!editU.system_only && <select value={editU.employee_code} onChange={(e) => setEditU({ ...editU, employee_code: e.target.value })} title="ผูกบัญชีนี้กับพนักงานในทะเบียน HR (ชื่อ/ลายเซ็น/ลงเวลา ใช้ร่วมกัน)" style={{ fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 7, padding: '6px 9px' }}>
                           <option value="">— ไม่ผูกกับพนักงาน HR —</option>
                           {data.employees.filter((e) => !e.user_id || e.user_id === u.id || e.code === editU.employee_code).map((e) => <option key={e.code} value={e.code}>{e.code} · {e.name}{e.nickname ? ` (${e.nickname})` : ''}{e.user_id && e.user_id !== u.id ? ' · ผูกคนอื่น' : ''}</option>)}
-                        </select>
+                        </select>}
                         {editErr && <div style={{ fontSize: 11.5, color: '#C24036' }}>{editErr}</div>}
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                           <button onClick={() => setEditU(null)} style={{ fontFamily: 'inherit', fontSize: 11.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>ยกเลิก</button>

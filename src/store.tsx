@@ -375,6 +375,7 @@ export interface ApiUser {
   line_uid?: string | null // ผูก LINE แล้ว (สั่งงาน/รับงานผ่านบอท)
   employee_code?: string // พนักงาน HR ที่ผูกกับบัญชีนี้
   position_from_hr?: boolean // ตำแหน่งมาจากทะเบียนพนักงาน (แก้ที่ HR)
+  system_only?: boolean // บัญชีระบบ (ไม่ใช่พนักงาน) — ไม่มีทะเบียน HR · ไม่ขึ้นในเงินเดือน
 }
 export interface Dashboard {
   building: number

@@ -3370,8 +3370,9 @@ const usernameOfCode = (code) => String(code || '').toLowerCase().replace(/[^a-z
 const isAutoAccount = (u, emp) => !!u && !!emp && (u.username === usernameOfCode(emp.code) || u.username === usernameOfCode(emp.code) + '-' + emp.id)
 // ข้อมูลผู้ใช้สำหรับส่งกลับ: ตำแหน่งยึด HR เมื่อผูกพนักงาน
 function userOut(id) {
-  const u = db.prepare('SELECT id,name,username,role,status,last_active,deny_mods,position,line_uid FROM users WHERE id=?').get(id)
+  const u = db.prepare('SELECT id,name,username,role,status,last_active,deny_mods,position,line_uid,system_only FROM users WHERE id=?').get(id)
   if (!u) return null
+  u.system_only = !!u.system_only
   const emp = db.prepare('SELECT code, role FROM employees WHERE user_id=? ORDER BY id LIMIT 1').get(u.id)
   return { ...u, position: emp ? (emp.role || '') : (u.position || ''), position_from_hr: !!emp, employee_code: emp?.code || '' }
 }
@@ -5644,9 +5645,9 @@ api.get('/payables', financeOnly, (_req, res) => {
 
 // ---------- users (admin only) ----------
 api.get('/users', adminOnly, (_req, res) =>
-  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods,line_uid FROM users ORDER BY id').all().map((u) => {
+  res.json(db.prepare('SELECT id,name,username,role,status,last_active,signature,position,deny_mods,line_uid,system_only FROM users ORDER BY id').all().map((u) => {
     const emp = db.prepare('SELECT code, role FROM employees WHERE user_id=? ORDER BY id LIMIT 1').get(u.id)
-    return { ...u, position: emp ? (emp.role || '') : (u.position || ''), position_from_hr: !!emp, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })(), employee_code: emp?.code || '' }
+    return { ...u, system_only: !!u.system_only, position: emp ? (emp.role || '') : (u.position || ''), position_from_hr: !!emp, deny_mods: (() => { try { return JSON.parse(u.deny_mods || '[]') } catch { return [] } })(), employee_code: emp?.code || '' }
   }))
 )
 // upload/replace a signature image (admin can set anyone's; users can set their own)
@@ -5664,8 +5665,18 @@ api.put('/users/:id/signature', (req, res) => {
   res.json({ ok: true, filled })
 })
 api.post('/users', adminOnly, (req, res) => {
-  const { name, username, pin, role, position, employee_code } = req.body || {}
+  const { name, username, pin, role, position, employee_code, system_only } = req.body || {}
   if (!name || !username) return res.status(400).json({ error: 'กรุณากรอกชื่อและชื่อผู้ใช้' })
+  // บัญชีระบบ (ไม่ใช่พนักงาน) → สร้างแค่บัญชีเข้าใช้งาน ไม่สร้าง/ไม่ผูกพนักงาน HR (ไม่ขึ้นในเงินเดือน/ลงเวลา)
+  if (system_only) {
+    if (employee_code) return res.status(400).json({ error: 'บัญชีระบบผูกกับพนักงานไม่ได้ — ถ้าเป็นพนักงาน ให้เลือกประเภท "พนักงาน"' })
+    try {
+      const info = db.prepare("INSERT INTO users (name,username,pin,role,status,last_active,position,system_only) VALUES (?,?,?,?,?,'เพิ่งสร้าง',?,1)")
+        .run(String(name).trim(), String(username).trim(), hashPin(String(pin || '0000')), role || 'viewer', 'ใช้งาน', position || '')
+      audit(req, 'เพิ่มผู้ใช้', `${name} (บัญชีระบบ — ไม่ใช่พนักงาน)`)
+      return res.status(201).json({ ...userOut(info.lastInsertRowid), employeeCreated: false })
+    } catch { return res.status(400).json({ error: 'ชื่อผู้ใช้นี้มีอยู่แล้ว' }) }
+  }
   const linkEmp = employee_code ? db.prepare('SELECT * FROM employees WHERE code=?').get(String(employee_code)) : null
   if (employee_code && !linkEmp) return res.status(404).json({ error: 'ไม่พบพนักงานรหัส ' + employee_code })
   const hashed = hashPin(String(pin || '0000'))
@@ -5718,7 +5729,28 @@ api.post('/users', adminOnly, (req, res) => {
 api.put('/users/:id', adminOnly, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id)
   if (!u) return res.status(404).json({ error: 'ไม่พบผู้ใช้' })
-  const { role, status, deny_mods, name, username, position, employee_code } = req.body || {}
+  const { role, status, deny_mods, name, username, position, employee_code, system_only } = req.body || {}
+  // เปลี่ยนประเภทบัญชี: บัญชีระบบ (ไม่ใช่พนักงาน) ↔ พนักงาน
+  if (system_only !== undefined && !!system_only !== !!u.system_only) {
+    if (system_only) {
+      const emp = db.prepare('SELECT * FROM employees WHERE user_id=?').get(u.id)
+      if (emp) {
+        // มีประวัติเงิน (จ่ายเงินเดือนแล้ว/เบิก/หัก/รายได้อื่น) → ลบพนักงานไม่ได้ ให้ตั้ง "ลาออก" แทน (เก็บประวัติไว้)
+        const paidBatch = db.prepare("SELECT no FROM payroll_batches WHERE status='closed' AND (emp_codes LIKE ? OR data LIKE ?) LIMIT 1").get(`%"${emp.code}"%`, `%"code":"${emp.code}"%`)
+        const money = ['salary_advances', 'deductions', 'other_income'].find((t) => db.prepare(`SELECT 1 FROM ${t} WHERE emp_code=? LIMIT 1`).get(emp.code))
+        if (paidBatch || money) return res.status(409).json({ error: `${emp.code} ${emp.name} มีประวัติ${paidBatch ? 'จ่ายเงินเดือน (' + paidBatch.no + ')' : 'เบิก/หัก/รายได้อื่น'}แล้ว — แยกเป็นบัญชีระบบไม่ได้ (ลบประวัติไม่ได้) · ถ้าไม่ได้ทำงานแล้ว ให้ตั้งพนักงานคนนี้เป็น "ลาออก" ที่หน้า HR` })
+        db.prepare('DELETE FROM payroll_inputs WHERE emp_code=?').run(emp.code) // ช่องกรอกวันทำงานที่ยังไม่จ่าย
+        db.prepare('DELETE FROM employees WHERE id=?').run(emp.id)
+        audit(req, 'แยกเป็นบัญชีระบบ', `${u.name} — ลบทะเบียนพนักงาน ${emp.code} (ไม่ขึ้นในเงินเดือน/ลงเวลาแล้ว)`)
+      } else audit(req, 'แยกเป็นบัญชีระบบ', u.name)
+      db.prepare('UPDATE users SET system_only=1 WHERE id=?').run(u.id)
+    } else {
+      db.prepare('UPDATE users SET system_only=0 WHERE id=?').run(u.id)
+      audit(req, 'เปลี่ยนเป็นบัญชีพนักงาน', `${u.name} — ผูกพนักงานในช่อง "ผูกกับพนักงาน HR" หรือระบบสร้างให้เมื่อรีสตาร์ต`)
+    }
+    u.system_only = system_only ? 1 : 0
+  }
+  if (employee_code && u.system_only) return res.status(400).json({ error: 'บัญชีระบบผูกกับพนักงานไม่ได้ — เปลี่ยนประเภทเป็น "พนักงาน" ก่อน' })
   // ผูกบัญชีนี้กับพนักงานในทะเบียน HR (เปลี่ยนคนได้ · '' = ปลดผูก) — พนักงานที่ผูกคนเดิมถูกปลดให้
   if (employee_code !== undefined) {
     const code = String(employee_code || '')

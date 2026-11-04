@@ -776,6 +776,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS doc_register (
   status TEXT, owner TEXT, house_code TEXT, note TEXT, revisions TEXT, expiry TEXT, by TEXT, created TEXT
 )`)
 ensureColumn('doc_register', 'expiry', 'TEXT') // วันหมดอายุ (ใบอนุญาต/เอกสารมีอายุ) — ISO YYYY-MM-DD
+ensureColumn('users', 'system_only', 'INTEGER') // 1 = บัญชีระบบ (ผู้ดูแล/เจ้าของที่ไม่ใช่พนักงาน) — ไม่สร้างพนักงาน HR · ไม่ขึ้นในเงินเดือน/ลงเวลา
 ensureColumn('users', 'must_change_pin', 'INTEGER') // 1 = ถูกรีเซ็ต PIN ต้องตั้งใหม่ตอนเข้าครั้งแรก
 // คลังรหัสผ่านบริษัท — เซิร์ฟเวอร์เก็บเฉพาะข้อความที่เข้ารหัสแล้ว (enc) · เข้ารหัส/ถอดรหัสที่เบราว์เซอร์ด้วย master passphrase ที่ระบบไม่รู้
 db.exec(`CREATE TABLE IF NOT EXISTS vault_entries (
@@ -851,7 +852,7 @@ for (const e of db.prepare('SELECT id,pin FROM employees').all())
 
 // เชื่อมผู้ใช้เดิม ↔ พนักงาน HR: สร้างพนักงานให้ผู้ใช้ที่ยังไม่มีชื่อตรงกันใน HR (idempotent — ทำครั้งเดียวต่อคน)
 {
-  const usersNoEmp = db.prepare('SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM employees e WHERE TRIM(e.name) = TRIM(u.name))').all()
+  const usersNoEmp = db.prepare('SELECT * FROM users u WHERE COALESCE(u.system_only,0)=0 AND NOT EXISTS (SELECT 1 FROM employees e WHERE TRIM(e.name) = TRIM(u.name))').all()
   if (usersNoEmp.length) {
     let maxNum = db.prepare("SELECT code FROM employees WHERE code LIKE 'EMP-%'").all()
       .reduce((m, r) => Math.max(m, parseInt(String(r.code).slice(4), 10) || 0), 0)

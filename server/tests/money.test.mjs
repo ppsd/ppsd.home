@@ -2683,3 +2683,28 @@ test('ใบขอจ้างทาง LINE: จับราคากลาง�
   const m = await prOf('อิฐแดง 1000') || (await GET('/purchase-requests')).data.sort((x, y) => y.id - x.id)[0]
   assert.notEqual(m.amount, 1000 * 150, 'สั่งวัสดุอิฐแดงต้องไม่ไปจับค่าแรงก่อผนัง')
 })
+
+test('บัญชีระบบ (ไม่ใช่พนักงาน): สร้างแล้วไม่มีพนักงาน HR · เปลี่ยนบัญชีเดิมเป็นบัญชีระบบ = ลบทะเบียนพนักงาน (ถ้าไม่มีประวัติเงิน) · มีประวัติเบิก = ไม่ให้เปลี่ยน', async () => {
+  const empCount = async () => (await GET('/employees')).data.length
+  const n0 = await empCount()
+  const s = await POST('/users', { name: 'ผู้ดูแล ภายนอก', username: 'sysadm', pin: '4747', role: 'admin', system_only: true })
+  assert.equal(s.status, 201); assert.equal(s.data.system_only, true); assert.equal(s.data.employee_code, '')
+  assert.equal(await empCount(), n0, 'บัญชีระบบต้องไม่สร้างพนักงาน')
+  assert.ok((await GET('/users')).data.find((u) => u.username === 'sysadm').system_only)
+  // บัญชีพนักงานธรรมดา → เปลี่ยนเป็นบัญชีระบบ
+  const a = await POST('/users', { name: 'เจ้าของ ทดสอบ', username: 'owner1', pin: '4848', role: 'admin' })
+  assert.ok(a.data.employee_code, 'บัญชีพนักงานต้องมีทะเบียน HR')
+  const code = a.data.employee_code
+  await PUT('/payroll/inputs', { period, emp_code: code, work_days: 10 })
+  const ch = await PUT(`/users/${a.data.id}`, { system_only: true })
+  assert.equal(ch.status, 200); assert.equal(ch.data.system_only, true)
+  assert.ok(!(await GET('/employees')).data.some((e) => e.code === code), 'ลบทะเบียนพนักงานแล้ว')
+  const pr = (await GET(`/payroll?period=${period}`)).data.rows
+  assert.ok(Array.isArray(pr) && pr.length > 0 && !pr.some((r) => r.code === code), 'ไม่ขึ้นในเงินเดือน')
+  // มีประวัติเบิก → เปลี่ยนไม่ได้
+  const b = await POST('/users', { name: 'พนักงาน เบิกแล้ว', username: 'advd1', pin: '4949', role: 'site' })
+  const adv = await POST('/salary-advances', { emp_code: b.data.employee_code, amount: 100, period })
+  assert.equal(adv.status, 201)
+  assert.equal((await PUT(`/users/${b.data.id}`, { system_only: true })).status, 409)
+  await DEL('/salary-advances/' + adv.data.id)
+})

@@ -279,8 +279,15 @@ export default function App() {
     const posList = app.data.positions.length ? app.data.positions : ['ผู้จัดการ']
     setModal({
       title: 'เพิ่มผู้ใช้',
-      sub: 'สร้างบัญชี + สร้างพนักงานใน HR ให้อัตโนมัติ (กรอกรอบเดียว)',
+      sub: 'สร้างบัญชี + สร้างพนักงานใน HR ให้อัตโนมัติ (กรอกรอบเดียว) · เลือก "บัญชีระบบ" ถ้าไม่ใช่พนักงาน',
       fields: [
+        {
+          label: 'ประเภทบัญชี',
+          value: 'staff',
+          ph: '',
+          hint: 'บัญชีระบบ = ผู้ดูแล/เจ้าของที่ไม่ใช่พนักงาน → ไม่สร้างพนักงานใน HR ไม่ขึ้นในเงินเดือน/ลงเวลา',
+          options: [{ value: 'staff', label: 'พนักงาน (สร้างทะเบียน HR ให้)' }, { value: 'system', label: 'บัญชีระบบ (ไม่ใช่พนักงาน)' }],
+        },
         { label: 'ชื่อ-สกุล', value: '', ph: '', required: true, hint: 'ระบบจะสร้างพนักงานใน HR ชื่อนี้ให้อัตโนมัติ · วันลา/เงินเดือนไปเติมที่เมนู บุคลากร/HR ทีหลัง' },
         { label: 'ชื่อผู้ใช้ (ไว้ล็อกอิน)', value: '', ph: 'username', required: true },
         { label: 'PIN เริ่มต้น (4 หลัก)', value: '', ph: '0000', required: true, hint: 'ใช้ทั้งล็อกอินระบบ และลงเวลา (kiosk) · เปลี่ยนภายหลังได้ด้วยปุ่มรูปกุญแจ' },
@@ -311,7 +318,7 @@ export default function App() {
           options: [{ value: '', label: '— จับคู่ชื่อให้อัตโนมัติ —' }, ...app.data.employees.filter((e) => !e.user_id).map((e) => ({ value: e.code, label: `${e.code} · ${e.name}${e.nickname ? ` (${e.nickname})` : ''}` }))],
         },
       ],
-      onSubmit: ([name, username, pin, role, position, employee_code]) => app.addUser({ name, username, pin, role, position, employee_code }),
+      onSubmit: ([kind, name, username, pin, role, position, employee_code]) => app.addUser(kind === 'system' ? { name, username, pin, role, position, system_only: true } : { name, username, pin, role, position, employee_code }),
     })
   }
 
