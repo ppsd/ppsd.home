@@ -116,10 +116,101 @@ export function createCenter(d) {
     const info = db.prepare('INSERT INTO change_requests (ts,kind,op,house_code,title,lines,params,body,requested_by,requested_by_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
       .run(d.nowTS(), kind, op, house_code, title, JSON.stringify(lines), JSON.stringify(params), JSON.stringify(body), by, by_id, 'รออนุมัติ')
     const id = info.lastInsertRowid
-    pushApprovers(`📝 คำขอรออนุมัติ #${id}\n${title}${house_code ? `\nบ้าน: ${houseName(house_code)}` : ''}\n${lines.slice(0, 6).map((l) => '• ' + l).join('\n')}\nโดย ${by}\n— เปิด ERP → ความเคลื่อนไหวบ้าน → รออนุมัติ`, by)
+    const cr = db.prepare('SELECT * FROM change_requests WHERE id=?').get(id)
+    if (kind === 'contractor_line' && conApprovers().length) pushConCard(cr) // เรื่องจากช่าง → การ์ดให้ผู้ตรวจที่ตั้งไว้กดอนุมัติใน LINE
+    else pushApprovers(`📝 คำขอรออนุมัติ #${id}\n${title}${house_code ? `\nบ้าน: ${houseName(house_code)}` : ''}\n${lines.slice(0, 6).map((l) => '• ' + l).join('\n')}\nโดย ${by}\n— เปิด ERP → ความเคลื่อนไหวบ้าน → รออนุมัติ`, by)
     return id
   }
   const fireDecided = (cr, status, reason) => { try { decidedHooks[cr.op]?.(cr, status, reason) } catch (e) { console.error('decided hook:', e.message) } }
+
+  // ---- ผู้ตรวจเรื่องจากช่าง (settings.con_approvers = [id ผู้ใช้]) — อนุมัติ/ตีกลับเรื่องจากช่างได้ทั้งเว็บและการ์ด LINE ----
+  const conApproverIds = () => { const v = jparse(d.getSetting('con_approvers', '')); return Array.isArray(v) ? v.map(Number).filter(Boolean) : [] }
+  const conApprovers = () => conApproverIds().map((id) => db.prepare("SELECT id, name, line_uid FROM users WHERE id=? AND COALESCE(status,'ใช้งาน')='ใช้งาน'").get(id)).filter(Boolean)
+  const isConApprover = (u) => !!u && conApproverIds().includes(Number(u.id))
+  const canDecide = (u, cr) => canApprove(u) || (cr?.kind === 'contractor_line' && isConApprover(u))
+  function conCard(cr) {
+    const files = ((jparse(cr.body) || {}).files || []).length
+    const row = (label, value) => ({ type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+      { type: 'text', text: label, size: 'sm', color: '#94A0A8', flex: 2 }, { type: 'text', text: String(value || '-'), size: 'sm', color: '#1C2730', flex: 5, wrap: true }] })
+    return {
+      type: 'flex', altText: `เรื่องจากช่างรอตรวจ #${cr.id}: ${short(cr.title, 60)}`,
+      contents: { type: 'bubble', size: 'mega',
+        header: { type: 'box', layout: 'vertical', backgroundColor: '#30506A', paddingAll: '14px', contents: [
+          { type: 'text', text: `เรื่องจากช่าง #${cr.id}`, color: '#FFFFFF', weight: 'bold', size: 'md' },
+          { type: 'text', text: 'รอตรวจ / อนุมัติ', color: '#D8E3EC', size: 'xs' }] },
+        body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+          { type: 'text', text: cr.title, weight: 'bold', size: 'md', color: '#1C2730', wrap: true },
+          { type: 'separator', margin: 'sm' },
+          row('บ้าน', houseName(cr.house_code)), row('ส่งโดย', cr.requested_by),
+          ...(jparse(cr.lines) || []).slice(0, 5).map((l) => ({ type: 'text', text: '• ' + short(l, 120), size: 'sm', color: '#1C2730', wrap: true })),
+          ...(files ? [{ type: 'text', text: `📷 รูป ${files} รูป — ดูใน ERP → ความเคลื่อนไหวบ้าน → รออนุมัติ`, size: 'xs', color: '#5C6770', wrap: true }] : []),
+          { type: 'separator', margin: 'md' },
+          { type: 'text', text: 'อนุมัติไหมคะ?', weight: 'bold', size: 'md', color: '#30506A', margin: 'md', align: 'center' }] },
+        footer: { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+          { type: 'button', style: 'primary', color: '#2E7D55', height: 'sm', action: { type: 'postback', label: 'อนุมัติ', data: `cr:${cr.id}:approve`, displayText: `อนุมัติ #${cr.id}` } },
+          { type: 'button', style: 'secondary', height: 'sm', action: { type: 'postback', label: 'ตีกลับ', data: `cr:${cr.id}:reject`, displayText: `ตีกลับ #${cr.id}` } }] } },
+    }
+  }
+  function pushConCard(cr) { for (const u of conApprovers()) if (u.line_uid) d.linePush(u.line_uid, conCard(cr)).catch?.(() => {}) }
+
+  /** อนุมัติคำขอ (ใช้ร่วมกัน เว็บ + การ์ด LINE) → { ok } หรือ { error, code } */
+  async function approveReq(id, user, note = '', auditReq = null) {
+    const cr = db.prepare('SELECT * FROM change_requests WHERE id=?').get(id)
+    if (!cr) return { error: 'ไม่พบคำขอ', code: 404 }
+    if (!canDecide(user, cr)) return { error: 'อนุมัติได้เฉพาะแอดมิน/ผู้จัดการ (เรื่องจากช่าง: ผู้ตรวจที่ตั้งไว้)', code: 403 }
+    if (cr.status !== 'รออนุมัติ') return { error: `คำขอนี้${cr.status}ไปแล้ว${cr.decided_by ? ' (โดย ' + cr.decided_by + ')' : ''}`, code: 409 }
+    // กันกดซ้ำพร้อมกัน: จองสถานะก่อนทำ
+    if (!db.prepare("UPDATE change_requests SET status='กำลังทำ' WHERE id=? AND status='รออนุมัติ'").run(cr.id).changes) return { error: 'คำขอนี้กำลังถูกดำเนินการ', code: 409 }
+    d.setHistoryUser(`${cr.requested_by} (อนุมัติโดย ${user.name})`)
+    const r = await apply(cr)
+    d.setHistoryUser(user.name)
+    if (r.code >= 400) {
+      db.prepare("UPDATE change_requests SET status='รออนุมัติ', result=? WHERE id=?").run('ทำไม่สำเร็จ: ' + (r.body?.error || r.code), cr.id)
+      return { error: 'ทำรายการไม่สำเร็จ: ' + (r.body?.error || 'ข้อมูลเปลี่ยนไปแล้ว') + ' — คำขอยังค้างอยู่ ตีกลับได้', code: r.code }
+    }
+    db.prepare("UPDATE change_requests SET status='อนุมัติ', decided_by=?, decided_at=?, reason=?, result='ทำรายการแล้ว' WHERE id=?").run(user.name, d.nowTS(), String(note || '').slice(0, 300), cr.id)
+    d.audit(auditReq || { user }, 'อนุมัติคำขอ', `#${cr.id} ${cr.title}`)
+    pushUser(cr.requested_by, `✅ คำขอ #${cr.id} ได้รับอนุมัติแล้วโดย ${user.name}\n${cr.title}`)
+    fireDecided({ ...cr, decided_by: user.name }, 'อนุมัติ', String(note || ''))
+    if (cr.kind === 'contractor_line') for (const a of conApprovers()) if (a.line_uid && a.id !== user.id) d.linePush(a.line_uid, `ℹ️ เรื่องจากช่าง #${cr.id} อนุมัติแล้วโดย ${user.name} — ไม่ต้องกดซ้ำค่ะ`).catch?.(() => {})
+    return { ok: true, cr }
+  }
+  /** ตีกลับ (ผู้อนุมัติ ต้องมีเหตุผล) / ยกเลิก (ผู้ขอเอง) */
+  function rejectReq(id, user, note = '', auditReq = null) {
+    const cr = db.prepare('SELECT * FROM change_requests WHERE id=?').get(id)
+    if (!cr) return { error: 'ไม่พบคำขอ', code: 404 }
+    const own = cr.requested_by_id && cr.requested_by_id === user.id
+    const decider = canDecide(user, cr)
+    if (!decider && !own) return { error: 'ตีกลับได้เฉพาะแอดมิน/ผู้จัดการ (เรื่องจากช่าง: ผู้ตรวจที่ตั้งไว้)', code: 403 }
+    if (cr.status !== 'รออนุมัติ') return { error: `คำขอนี้${cr.status}ไปแล้ว${cr.decided_by ? ' (โดย ' + cr.decided_by + ')' : ''}`, code: 409 }
+    const reason = String(note || '').trim().slice(0, 300)
+    if (!own && !reason) return { error: 'กรุณาบอกเหตุผลที่ตีกลับ', code: 400 }
+    const st = own && !decider ? 'ยกเลิก' : 'ตีกลับ'
+    db.prepare('UPDATE change_requests SET status=?, decided_by=?, decided_at=?, reason=? WHERE id=?').run(st, user.name, d.nowTS(), reason || 'ผู้ขอยกเลิกเอง', cr.id)
+    d.audit(auditReq || { user }, st === 'ยกเลิก' ? 'ยกเลิกคำขอ' : 'ตีกลับคำขอ', `#${cr.id} ${cr.title}${reason ? ' · ' + reason : ''}`)
+    fireDecided({ ...cr, decided_by: user.name }, st, reason)
+    if (st === 'ตีกลับ') pushUser(cr.requested_by, `↩️ คำขอ #${cr.id} ถูกตีกลับโดย ${user.name}\n${cr.title}\nเหตุผล: ${reason}`)
+    if (cr.kind === 'contractor_line') for (const a of conApprovers()) if (a.line_uid && a.id !== user.id) d.linePush(a.line_uid, `ℹ️ เรื่องจากช่าง #${cr.id} ถูกตีกลับโดย ${user.name} — ไม่ต้องกดซ้ำค่ะ`).catch?.(() => {})
+    return { ok: true, cr }
+  }
+  /** ปุ่มในการ์ด LINE (cr:<id>:approve|reject) + เหตุผลที่พิมพ์ตามมา → คืน promise ถ้าจัดการแล้ว · null = ไม่ใช่เรื่องนี้ */
+  function linePostback(uid, u, data, tok) {
+    const m = String(data || '').match(/^cr:(\d+):(approve|reject)$/)
+    if (!m) return null
+    const cr = db.prepare('SELECT * FROM change_requests WHERE id=?').get(Number(m[1]))
+    if (!cr) return d.lineReply(tok, 'ไม่พบคำขอนี้แล้วค่ะ')
+    if (!canDecide(u, cr)) return d.lineReply(tok, 'คุณไม่ได้เป็นผู้ตรวจเรื่องนี้ค่ะ')
+    if (cr.status !== 'รออนุมัติ') return d.lineReply(tok, `คำขอ #${cr.id} ${cr.status}ไปแล้ว${cr.decided_by ? ' โดย ' + cr.decided_by : ''} ค่ะ`)
+    if (m[2] === 'reject') { d.setLineCtx(uid, { kind: 'cr_reject', id: cr.id, ttl: 6 * 3600000 }); return d.lineReply(tok, `จะตีกลับ #${cr.id} "${short(cr.title, 60)}" — เหตุผลคืออะไรคะ? (พิมพ์ข้อความ ช่างจะได้รู้ว่าต้องแก้อะไร · พิมพ์ 'ยกเลิก' ถ้าไม่ตีกลับ)`) }
+    return approveReq(cr.id, u, 'อนุมัติผ่าน LINE').then((r) => d.lineReply(tok, r.error ? `ทำรายการไม่ได้ค่ะ: ${r.error}` : `✅ อนุมัติ #${cr.id} แล้วค่ะ — แจ้งช่างแล้ว`))
+  }
+  function lineText(uid, u, t, tok, ctx) {
+    if (ctx?.kind !== 'cr_reject') return null
+    d.setLineCtx(uid, null)
+    if (/^(ยกเลิก|cancel)$/i.test(t)) return d.lineReply(tok, 'ไม่ตีกลับแล้วค่ะ — คำขอยังรออยู่ กดปุ่มในการ์ดได้อีก')
+    const r = rejectReq(ctx.id, u, t)
+    return d.lineReply(tok, r.error ? `ทำรายการไม่ได้ค่ะ: ${r.error}` : `↩️ ตีกลับ #${ctx.id} แล้วค่ะ — แจ้งช่างพร้อมเหตุผลแล้ว`)
+  }
 
   // ทำรายการที่อนุมัติแล้วจริง: เรียก handler เดิมในนามผู้ขอ
   function apply(cr) {
@@ -247,7 +338,7 @@ export function createCenter(d) {
     })
     api.get('/center/unread', (req, res) => {
       const u = unreadFor(req.user)
-      res.json({ unread: u.count, last_seen: u.seen, pending: canApprove(req.user) ? db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ'").get().c : db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ' AND requested_by_id=?").get(req.user.id).c, canApprove: canApprove(req.user), canCustomer: canCustomer(req.user) })
+      res.json({ unread: u.count, last_seen: u.seen, pending: pendingFor(req.user), canApprove: canApprove(req.user) || isConApprover(req.user), canCustomer: canCustomer(req.user) })
     })
     api.post('/center/seen', (req, res) => {
       const id = Number(req.body?.last_id) || maxFeedId()
@@ -257,43 +348,32 @@ export function createCenter(d) {
     // ---- คิวอนุมัติ ----
     api.get('/approvals', (req, res) => {
       const st = String(req.query.status || 'รออนุมัติ')
-      const mine = !canApprove(req.user)
-      const rows = db.prepare(`SELECT * FROM change_requests WHERE ${st === 'all' ? '1=1' : 'status=?'} ${mine ? 'AND requested_by_id=?' : ''} ORDER BY id DESC LIMIT 200`).all(...(st === 'all' ? [] : [st]), ...(mine ? [req.user.id] : []))
-      res.json(rows.map(rowOut))
+      const all = canApprove(req.user), conAp = isConApprover(req.user)
+      const rows = db.prepare(`SELECT * FROM change_requests WHERE ${st === 'all' ? '1=1' : 'status=?'} ${all ? '' : conAp ? "AND (kind='contractor_line' OR requested_by_id=?)" : 'AND requested_by_id=?'} ORDER BY id DESC LIMIT 200`).all(...(st === 'all' ? [] : [st]), ...(all ? [] : [req.user.id]))
+      res.json(rows.map((r) => ({ ...rowOut(r), can_decide: canDecide(req.user, r) })))
     })
     api.post('/approvals/:id/approve', async (req, res) => {
-      if (!canApprove(req.user)) return res.status(403).json({ error: 'อนุมัติได้เฉพาะแอดมิน/ผู้จัดการ' })
-      const cr = db.prepare('SELECT * FROM change_requests WHERE id=?').get(req.params.id)
-      if (!cr) return res.status(404).json({ error: 'ไม่พบคำขอ' })
-      if (cr.status !== 'รออนุมัติ') return res.status(409).json({ error: `คำขอนี้${cr.status}ไปแล้ว` })
-      // กันกดซ้ำพร้อมกัน: จองสถานะก่อนทำ
-      if (!db.prepare("UPDATE change_requests SET status='กำลังทำ' WHERE id=? AND status='รออนุมัติ'").run(cr.id).changes) return res.status(409).json({ error: 'คำขอนี้กำลังถูกดำเนินการ' })
-      d.setHistoryUser(`${cr.requested_by} (อนุมัติโดย ${req.user.name})`)
-      const r = await apply(cr)
-      d.setHistoryUser(req.user.name)
-      if (r.code >= 400) {
-        db.prepare("UPDATE change_requests SET status='รออนุมัติ', result=? WHERE id=?").run('ทำไม่สำเร็จ: ' + (r.body?.error || r.code), cr.id)
-        return res.status(r.code).json({ error: 'ทำรายการไม่สำเร็จ: ' + (r.body?.error || 'ข้อมูลเปลี่ยนไปแล้ว') + ' — คำขอยังค้างอยู่ ตีกลับได้' })
-      }
-      db.prepare("UPDATE change_requests SET status='อนุมัติ', decided_by=?, decided_at=?, reason=?, result='ทำรายการแล้ว' WHERE id=?").run(req.user.name, d.nowTS(), String(req.body?.note || '').slice(0, 300), cr.id)
-      d.audit(req, 'อนุมัติคำขอ', `#${cr.id} ${cr.title}`)
-      pushUser(cr.requested_by, `✅ คำขอ #${cr.id} ได้รับอนุมัติแล้วโดย ${req.user.name}\n${cr.title}`)
-      fireDecided(cr, 'อนุมัติ', String(req.body?.note || ''))
+      const r = await approveReq(req.params.id, req.user, String(req.body?.note || ''), req)
+      if (r.error) return res.status(r.code || 400).json({ error: r.error })
       res.json({ ok: true })
     })
     api.post('/approvals/:id/reject', (req, res) => {
-      const cr = db.prepare('SELECT * FROM change_requests WHERE id=?').get(req.params.id)
-      if (!cr) return res.status(404).json({ error: 'ไม่พบคำขอ' })
-      const own = cr.requested_by_id === req.user.id
-      if (!canApprove(req.user) && !own) return res.status(403).json({ error: 'ตีกลับได้เฉพาะแอดมิน/ผู้จัดการ' })
-      if (cr.status !== 'รออนุมัติ') return res.status(409).json({ error: `คำขอนี้${cr.status}ไปแล้ว` })
-      const reason = String(req.body?.note || '').trim().slice(0, 300)
-      if (!own && !reason) return res.status(400).json({ error: 'กรุณาบอกเหตุผลที่ตีกลับ' })
-      db.prepare('UPDATE change_requests SET status=?, decided_by=?, decided_at=?, reason=? WHERE id=?').run(own && !canApprove(req.user) ? 'ยกเลิก' : 'ตีกลับ', req.user.name, d.nowTS(), reason || 'ผู้ขอยกเลิกเอง', cr.id)
-      d.audit(req, own ? 'ยกเลิกคำขอ' : 'ตีกลับคำขอ', `#${cr.id} ${cr.title}${reason ? ' · ' + reason : ''}`)
-      fireDecided(cr, own && !canApprove(req.user) ? 'ยกเลิก' : 'ตีกลับ', reason)
-      if (!own) pushUser(cr.requested_by, `↩️ คำขอ #${cr.id} ถูกตีกลับโดย ${req.user.name}\n${cr.title}\nเหตุผล: ${reason}`)
+      const r = rejectReq(req.params.id, req.user, String(req.body?.note || ''), req)
+      if (r.error) return res.status(r.code || 400).json({ error: r.error })
       res.json({ ok: true })
+    })
+    // ผู้ตรวจเรื่องจากช่าง (ได้การ์ด LINE ให้กดอนุมัติ/ตีกลับ)
+    api.get('/center/con-approvers', (req, res) => {
+      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'ตั้งค่าได้เฉพาะผู้ดูแลระบบ' })
+      const ids = conApproverIds()
+      res.json({ ids, users: db.prepare("SELECT id, name, role, (line_uid IS NOT NULL) AS has_line FROM users WHERE COALESCE(status,'ใช้งาน')='ใช้งาน' ORDER BY name").all().map((u) => ({ ...u, has_line: !!u.has_line })) })
+    })
+    api.put('/center/con-approvers', (req, res) => {
+      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'ตั้งค่าได้เฉพาะผู้ดูแลระบบ' })
+      const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter((id) => id && db.prepare('SELECT 1 FROM users WHERE id=?').get(id)))].slice(0, 6)
+      d.setSetting('con_approvers', JSON.stringify(ids))
+      d.audit(req, 'ตั้งผู้ตรวจเรื่องจากช่าง (การ์ด LINE)', ids.map((id) => db.prepare('SELECT name FROM users WHERE id=?').get(id)?.name).join(', ') || '(ไม่มี — ส่งข้อความถึงแอดมิน/ผู้จัดการทุกคน)')
+      res.json({ ok: true, ids })
     })
     api.get('/approvals/gates', (_req, res) => { const on = gatesOn(); res.json(Object.entries(GATES).map(([k, g]) => ({ key: k, label: g.label, group: g.group, on: on[k] }))) })
     api.put('/approvals/gates', (req, res) => {
@@ -344,12 +424,18 @@ export function createCenter(d) {
     })
   }
 
+  // จำนวนคำขอที่รอเรา: แอดมิน/ผู้จัดการ = ทั้งหมด · ผู้ตรวจเรื่องจากช่าง = เรื่องจากช่าง + ของตัวเอง · คนอื่น = ของตัวเอง
+  function pendingFor(u) {
+    if (canApprove(u)) return db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ'").get().c
+    if (isConApprover(u)) return db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ' AND (kind='contractor_line' OR requested_by_id=?)").get(u.id).c
+    return db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ' AND requested_by_id=?").get(u.id).c
+  }
   // แจ้งเตือนกระดิ่ง (รวมเข้า /notifications)
   function notificationsFor(user) {
     const out = []
     try {
-      if (canApprove(user)) {
-        const n = db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ'").get().c
+      if (canApprove(user) || isConApprover(user)) {
+        const n = canApprove(user) ? db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ'").get().c : db.prepare("SELECT COUNT(*) c FROM change_requests WHERE status='รออนุมัติ' AND kind='contractor_line'").get().c
         if (n) out.push({ kind: 'approval', icon: 'warn', title: `มีคำขอรออนุมัติ ${n} รายการ`, sub: 'เพิ่ม-ลดงาน / แก้ยอดเงิน — เปิดหน้าความเคลื่อนไหวบ้าน → รออนุมัติ', page: 'center' })
       }
       for (const r of db.prepare("SELECT * FROM change_requests WHERE requested_by_id=? AND status='ตีกลับ' AND decided_at >= ? ORDER BY id DESC LIMIT 5").all(user.id, new Date(Date.now() - 3 * 86400000 + 7 * 3600000).toISOString().slice(0, 10)))
@@ -485,5 +571,5 @@ export function createCenter(d) {
     })
   }
 
-  return { gated, register: (api) => { register(api); registerAlerts(api) }, notificationsFor, canApprove, submit, registerOp, alertTick }
+  return { gated, register: (api) => { register(api); registerAlerts(api) }, notificationsFor, canApprove, submit, registerOp, alertTick, linePostback, lineText }
 }

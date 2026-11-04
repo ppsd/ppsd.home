@@ -10,7 +10,7 @@ import { LinkCodeBox, useLinkedContractors } from './ContractorLineLink'
 
 interface FeedPart { text: string; lines: string[] }
 interface FeedItem { id: number; min_id: number; ts: string; user: string; house_code: string; house_name: string; cats: string[]; flag: boolean; approval: { id: number; status: string } | null; parts: FeedPart[] }
-interface Req { files?: number[]; id: number; ts: string; kind: string; house_code: string; house_name: string; title: string; lines: string[]; requested_by: string; requested_by_id: number; status: string; decided_by?: string; decided_at?: string; reason?: string; result?: string }
+interface Req { can_decide?: boolean; files?: number[]; id: number; ts: string; kind: string; house_code: string; house_name: string; title: string; lines: string[]; requested_by: string; requested_by_id: number; status: string; decided_by?: string; decided_at?: string; reason?: string; result?: string }
 interface Gate { key: string; label: string; group: string; on: boolean }
 interface Unread { unread: number; last_seen?: number; pending: number; canApprove: boolean; canCustomer: boolean }
 
@@ -53,7 +53,7 @@ export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number
       </div>
       {tab === 'feed' && <Feed canCustomer={info.canCustomer} onCompose={setCompose} onSeen={loadInfo} onOpenHouse={(code) => { const h = data.houses.find((x) => x.code === code); if (h && onOpenHouse) onOpenHouse(h.id) }} />}
       {tab === 'approvals' && <Approvals canApprove={info.canApprove} onChanged={loadInfo} />}
-      {tab === 'gates' && <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}><TestModeSettings /><Gates /><AlertSettings /></div>}
+      {tab === 'gates' && <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}><TestModeSettings /><ConApproverSettings /><Gates /><AlertSettings /></div>}
       {tab === 'cline' && linked && <ContractorLine linked={linked} reload={reloadLinked} />}
       {compose && <ComposeModal init={compose} onClose={() => setCompose(null)} />}
     </div>
@@ -258,7 +258,7 @@ function Approvals({ canApprove, onChanged }: { canApprove: boolean; onChanged: 
   useEffect(() => { load() }, [load])
   useEffect(() => { const on = () => load(); window.addEventListener('ppsd:changed', on); return () => window.removeEventListener('ppsd:changed', on) }, [load])
   const act = async (r: Req, what: 'approve' | 'reject') => {
-    if (what === 'reject' && canApprove && r.requested_by_id !== user?.id && !(reason[r.id] || '').trim()) return alert('พิมพ์เหตุผลที่ตีกลับก่อน (ผู้ขอจะได้รู้ว่าต้องแก้อะไร)')
+    if (what === 'reject' && r.can_decide && r.requested_by_id !== user?.id && !(reason[r.id] || '').trim()) return alert('พิมพ์เหตุผลที่ตีกลับก่อน (ผู้ขอจะได้รู้ว่าต้องแก้อะไร)')
     if (what === 'approve' && !confirm(`อนุมัติคำขอ #${r.id}?\n${r.title}\n\nกดแล้วระบบจะบันทึกรายการนี้จริงทันที`)) return
     setBusy(r.id)
     try { await api.post(`/approvals/${r.id}/${what}`, { note: reason[r.id] || '' }); load(); onChanged() }
@@ -285,11 +285,11 @@ function Approvals({ canApprove, onChanged }: { canApprove: boolean; onChanged: 
             {!!r.files?.length && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>{r.files.map((fid, i) => <button key={fid} style={chip(false)} onClick={() => api.openFile(`/files/${fid}/view`).catch((e) => alert((e as Error).message))}>📷 รูป {i + 1}</button>)}</div>}
             {r.reason && <div style={{ fontSize: 12.5, color: r.status === 'ตีกลับ' ? C.red : C.sub, marginTop: 3 }}>เหตุผล/หมายเหตุ: {r.reason}</div>}
             {r.result && r.status === 'รออนุมัติ' && <div style={{ fontSize: 12.5, color: C.red, marginTop: 3 }}>{r.result}</div>}
-            {r.status === 'รออนุมัติ' && (canApprove || r.requested_by_id === user?.id) && (
+            {r.status === 'รออนุมัติ' && (r.can_decide || r.requested_by_id === user?.id) && (
               <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                {canApprove && <input value={reason[r.id] || ''} onChange={(e) => setReason((m) => ({ ...m, [r.id]: e.target.value }))} placeholder="หมายเหตุ / เหตุผลถ้าตีกลับ" style={{ flex: 1, minWidth: 200, fontFamily: 'inherit', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid #D2DAE1' }} />}
-                {canApprove && r.requested_by_id !== user?.id && <button style={{ ...btn(), color: C.red, borderColor: '#E8B7B2' }} disabled={busy === r.id} onClick={() => act(r, 'reject')}>↩️ ตีกลับ</button>}
-                {canApprove && <button style={{ ...btn(true), background: C.green }} disabled={busy === r.id} onClick={() => act(r, 'approve')}>{busy === r.id ? 'กำลังทำ…' : '✅ อนุมัติ'}</button>}
+                {r.can_decide && <input value={reason[r.id] || ''} onChange={(e) => setReason((m) => ({ ...m, [r.id]: e.target.value }))} placeholder="หมายเหตุ / เหตุผลถ้าตีกลับ" style={{ flex: 1, minWidth: 200, fontFamily: 'inherit', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid #D2DAE1' }} />}
+                {r.can_decide && r.requested_by_id !== user?.id && <button style={{ ...btn(), color: C.red, borderColor: '#E8B7B2' }} disabled={busy === r.id} onClick={() => act(r, 'reject')}>↩️ ตีกลับ</button>}
+                {r.can_decide && <button style={{ ...btn(true), background: C.green }} disabled={busy === r.id} onClick={() => act(r, 'approve')}>{busy === r.id ? 'กำลังทำ…' : '✅ อนุมัติ'}</button>}
                 {r.requested_by_id === user?.id && <button style={btn()} disabled={busy === r.id} onClick={() => { if (confirm('ยกเลิกคำขอนี้?')) act(r, 'reject') }}>ยกเลิกคำขอ</button>}
               </div>
             )}
@@ -479,6 +479,35 @@ function TestModeSettings() {
         {warn(d.cust_redirect_user)}
         <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>ครอบทุกข้อความ: อัปเดตจากหน้านี้ · อัปเดตรายสัปดาห์ · เตือนงวด · แจ้ง QC/เคสซ่อม · วันเกิด ฯลฯ และ<b>คำตอบของบอทเมื่อลูกค้าทักมาเอง</b> (เรื่องที่ลูกค้าแจ้งยังเข้าระบบ) — แต่ละข้อความขึ้นหัวว่าเป็นของลูกค้าคนไหน</div>
       </label>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button style={btn(true)} onClick={save}>บันทึก</button>
+        <span style={{ fontSize: 13, color: msg.includes('✔') ? C.green : C.red }}>{msg}</span>
+      </div>
+    </div>
+  )
+}
+
+// ---------------- ผู้ตรวจเรื่องจากช่าง — ได้การ์ด LINE ให้กดอนุมัติ/ตีกลับ (แอดมิน) ----------------
+function ConApproverSettings() {
+  const [d, setD] = useState<{ ids: number[]; users: { id: number; name: string; role: string; has_line: boolean }[] } | null>(null)
+  const [ids, setIds] = useState<number[]>([])
+  const [msg, setMsg] = useState('')
+  const load = () => api.get<{ ids: number[]; users: { id: number; name: string; role: string; has_line: boolean }[] }>('/center/con-approvers').then((r) => { setD(r); setIds(r.ids) }).catch((e) => setMsg((e as Error).message))
+  useEffect(() => { load() }, [])
+  if (!d) return <div style={{ ...card, padding: 18, flex: '1 1 360px', color: C.sub, fontSize: 13 }}>{msg || 'กำลังโหลด…'}</div>
+  const save = async () => { try { await api.put('/center/con-approvers', { ids }); setMsg('บันทึกแล้ว ✔'); load() } catch (e) { setMsg((e as Error).message) } }
+  const shown = d.users.filter((u) => u.has_line || ids.includes(u.id))
+  return (
+    <div style={{ ...card, padding: 18, flex: '1 1 360px', maxWidth: 560 }}>
+      <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink, marginBottom: 4 }}>👷 ผู้ตรวจเรื่องจากช่าง (การ์ด LINE)</div>
+      <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 10 }}>ช่างส่งรายงานงาน / แจ้งปัญหา / ขอของ / ขอเบิกงวด ทาง LINE → คนที่เลือกได้ <b>การ์ดให้กด อนุมัติ / ตีกลับ ในแชท</b> (แบบเดียวกับการ์ดใบขอซื้อ) · คนที่เลือกอนุมัติเรื่องจากช่างได้แม้ไม่ใช่แอดมิน/ผู้จัดการ · ไม่เลือกใคร = ส่งข้อความหาแอดมิน/ผู้จัดการทุกคนแบบเดิม</div>
+      {shown.map((u) => (
+        <label key={u.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0', fontSize: 13.5, color: C.ink, cursor: 'pointer' }}>
+          <input type="checkbox" checked={ids.includes(u.id)} onChange={(e) => { setMsg(''); setIds((cur) => (e.target.checked ? [...cur, u.id] : cur.filter((x) => x !== u.id))) }} style={{ width: 16, height: 16 }} />
+          {u.name}{!u.has_line && <span style={{ fontSize: 11.5, color: C.red }}>(ยังไม่ผูก LINE — จะไม่ได้การ์ด)</span>}
+        </label>
+      ))}
+      <div style={{ fontSize: 12, color: C.sub, margin: '8px 0 10px' }}>แสดงเฉพาะคนที่ผูก LINE แล้ว · ตอนโหมดทดสอบของหน้า LINE เปิดอยู่ การ์ดจะไปเป็นสำเนาที่คนทดสอบแทน (กดปุ่มในสำเนาได้)</div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <button style={btn(true)} onClick={save}>บันทึก</button>
         <span style={{ fontSize: 13, color: msg.includes('✔') ? C.green : C.red }}>{msg}</span>

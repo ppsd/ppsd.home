@@ -989,6 +989,8 @@ async function useOnlineOffer(hit, u, uid, replyToken) {
 async function handleLinePostback(uid, data, replyToken) {
   const u = userByLine(uid)
   if (!u) return lineReply(replyToken, lineUserDisabled(uid) ? LINE_DISABLED_MSG : 'ยังไม่ได้ผูกบัญชี ERP กับ LINE นี้ค่ะ')
+  const crPb = center.linePostback(uid, u, data, replyToken) // การ์ด "เรื่องจากช่าง": อนุมัติ / ตีกลับ
+  if (crPb) return crPb
   const grPb = lineReceive.handlePostback(uid, u, data, replyToken) // ปุ่ม "ยอมรับตามที่ได้" ของผลตรวจรับ
   if (grPb) return grPb
   const m = String(data || '').match(/^apv:(pr|po|payment|expense):(\d+):(approve|hold|reject)$/)
@@ -1578,6 +1580,7 @@ async function handleLineUserMessage(uid, text, replyToken) {
   const u = userByLine(uid)
   // ช่วงทดสอบบอทช่าง: ผู้ทดสอบ (พนักงาน) ส่งรหัสช่าง → คุยในฐานะช่าง จนพิมพ์ 'ออกโหมดช่าง'
   if (u) { const tr = conBot.testerRoute(uid, t, replyToken); if (tr) return tr }
+  if (u) { const ct = center.lineText(uid, u, t, replyToken, getLineCtx(uid)); if (ct) return ct } // เหตุผลตีกลับเรื่องจากช่าง
   // ยังไม่ผูก → รับเฉพาะรหัส 6 หลัก
   if (!u) {
     if (lineUserDisabled(uid)) return lineReply(replyToken, LINE_DISABLED_MSG)
@@ -2343,7 +2346,7 @@ const crmDeps = { canWrite, financeOnly, audit, notifyChange, nowTS, todayTH, do
 registerCrm(api, crmDeps)
 registerCrmService(api, crmDeps) // LINE ลูกค้า · เคสแจ้งซ่อม/SLA · ประกัน · NPS · ข้อความอัตโนมัติ
 // ===== ศูนย์กลางงานบ้าน (center.js): ความเคลื่อนไหวบ้าน · คิวรออนุมัติ (เพิ่ม-ลดงาน/แก้ยอดเงิน) · ส่งอัปเดตลูกค้า =====
-const center = createCenter({ db, isManager, audit, nowTS, todayTH, linePush, lineUidOfName, getSetting, setSetting, setHistoryUser, effectivePosition, lineSeen })
+const center = createCenter({ db, isManager, audit, nowTS, todayTH, linePush, lineUidOfName, getSetting, setSetting, setHistoryUser, effectivePosition, lineSeen, lineReply, setLineCtx })
 center.register(api)
 // บอท LINE ช่าง/ผู้รับเหมา (contractor-line.js) — ทุกเรื่องที่ช่างส่งเข้าคิวรออนุมัติของ center
 const conBot = createContractorBot({ db, center, audit, nowTS, todayTH, isManager, linePush, lineReply, setLineCtx, getLineCtx, saveImageFile, setHistoryUser, getSetting })
@@ -2352,6 +2355,10 @@ conBot.register(api)
 {
   const reviewer = db.prepare("SELECT id FROM users WHERE name LIKE 'ศิตาพิชญ์%' AND status<>'ปิดใช้งาน' ORDER BY id").get()?.id || Number(getSetting('line_test_only', '')) || ''
   for (const k of ['con_test_user', 'cust_redirect_user']) if (getSetting(k, '__unset__') === '__unset__' && reviewer) setSetting(k, String(reviewer))
+  if (getSetting('con_approvers', '__unset__') === '__unset__') {
+    const ids = ["ณัฐพล%", "ธนาพนธ์%"].map((p) => db.prepare("SELECT id FROM users WHERE name LIKE ? AND status<>'ปิดใช้งาน' ORDER BY id").get(p)?.id).filter(Boolean)
+    if (ids.length) setSetting('con_approvers', JSON.stringify(ids))
+  }
 }
 api.get('/center/line-test', adminOnly, (_req, res) => {
   const who = (k) => { const id = Number(getSetting(k, '')) || 0; const u = id ? db.prepare('SELECT id, name, line_uid FROM users WHERE id=?').get(id) : null; return u ? { id: u.id, name: u.name, has_line: !!u.line_uid } : null }

@@ -173,3 +173,43 @@ test('ช่วงตรวจข้อความลูกค้า: ลูก
   assert.ok(issues.some((i) => String(i.title).includes('ก๊อกน้ำรั่ว')), 'เคสที่ลูกค้าแจ้งต้องยังเข้าระบบ')
   await A('PUT', '/center/line-test', { cust_redirect_user: 0 })
 })
+
+test('ผู้ตรวจเรื่องจากช่าง: ได้การ์ด LINE · กดอนุมัติ/ตีกลับในแชทได้ · อนุมัติได้เฉพาะเรื่องจากช่าง', async () => {
+  const APPR = 'U' + 'p'.repeat(32), CON = 'U' + 'q'.repeat(32)
+  const ev = async (uid, e) => { await api(null, 'POST', '/line/webhook', { events: [{ replyToken: 'r' + Math.random(), source: { type: 'user', userId: uid }, ...e }] }); await wait(200) }
+  const say = (uid, text) => ev(uid, { type: 'message', message: { type: 'text', text } })
+  const press = (uid, data) => ev(uid, { type: 'postback', postback: { data } })
+  // ผู้ใช้บัญชี (ไม่ใช่แอดมิน/ผู้จัดการ) ผูก LINE แล้วตั้งเป็นผู้ตรวจเรื่องจากช่าง
+  await say(APPR, (await S('POST', '/line-link/code', {})).data.code)
+  const acc = (await A('GET', '/center/con-approvers')).data.users.find((u) => u.name === 'บัญชี ทดสอบ')
+  assert.ok(acc?.has_line)
+  assert.equal((await S('PUT', '/center/con-approvers', { ids: [acc.id] })).status, 403)
+  assert.equal((await A('PUT', '/center/con-approvers', { ids: [acc.id] })).status, 200)
+  // ช่างส่งเรื่อง 2 เรื่อง
+  await say(CON, (await A('POST', '/contractor-line/code', { name: 'ช่างเอก' })).data.code)
+  await say(CON, 'แจ้งปัญหา ผนังร้าวห้องนอน'); await say(CON, 'ส่ง')
+  await say(CON, 'ขอของ ทราย 2 คิว'); await say(CON, 'ส่ง')
+  const mine = (await S('GET', '/approvals')).data
+  const p1 = mine.find((x) => x.title.includes('แจ้งปัญหา') && x.status === 'รออนุมัติ')
+  const p2 = mine.find((x) => x.title.includes('ขอวัสดุ') && x.status === 'รออนุมัติ')
+  assert.ok(p1?.can_decide && p2?.can_decide, 'ผู้ตรวจต้องเห็นเรื่องจากช่างและตัดสินได้')
+  // กดอนุมัติในการ์ด LINE
+  await press(APPR, `cr:${p1.id}:approve`)
+  assert.equal((await A('GET', '/approvals?status=all')).data.find((x) => x.id === p1.id).status, 'อนุมัติ')
+  // กดตีกลับ → พิมพ์เหตุผล
+  await press(APPR, `cr:${p2.id}:reject`)
+  await say(APPR, 'ขอระบุบ้านและจำนวนให้ชัด')
+  const r2 = (await A('GET', '/approvals?status=all')).data.find((x) => x.id === p2.id)
+  assert.equal(r2.status, 'ตีกลับ')
+  assert.equal(r2.reason, 'ขอระบุบ้านและจำนวนให้ชัด')
+  // เรื่องที่ไม่ใช่จากช่าง (พนักงานแก้ยอด) → ผู้ตรวจเรื่องจากช่างอนุมัติไม่ได้
+  await A('POST', `/houses/${H}/installments`, { no: 5, detail: 'งวดทดสอบ', amount: 5000, side: 'customer' })
+  await A('PUT', '/approvals/gates', { inst_edit: true })
+  const inst = (await A('GET', '/installments')).data.find((i) => i.house_code === H && i.no === 5)
+  const s1 = await S('PUT', `/installments/${inst.id}`, { amount: 6000 })
+  assert.equal(s1.status, 200)
+  const other = (await A('GET', '/approvals')).data.find((x) => x.kind !== 'contractor_line')
+  assert.ok(other)
+  assert.equal((await S('POST', `/approvals/${other.id}/approve`)).status, 403)
+  await A('PUT', '/center/con-approvers', { ids: [] })
+})
