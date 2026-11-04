@@ -39,6 +39,7 @@ import Vault from './components/admin/Vault'
 import CeoVoice from './components/dashboard/CeoVoice'
 import DocReview from './components/docreview/DocReview'
 import HouseCenter from './components/houses/HouseCenter'
+import GlobalSearch, { HOUSE_TAB, type SearchItem } from './components/shared/GlobalSearch'
 import Login from './Login'
 import { useApp } from './store'
 import { titles, OFFICE_CATS, HOUSE_STATUSES, type ModalDef } from './data'
@@ -49,7 +50,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users' | 'stock'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview' | 'center'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview' | 'center' | 'search'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -69,6 +70,7 @@ export default function App() {
   const [page, setPage] = useState<Page>('houses') // house-first: เปิดมาเจอรายการบ้านก่อน
   const [selId, setSelId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
+  const [globalQ, setGlobalQ] = useState('') // คำค้นของหน้า "ผลการค้นหา" (ทุกแผนก)
   const [statusFilter, setStatusFilter] = useState('all')
   const [detailTab, setDetailTab] = useState('installments')
   // modal ของ App เปิดซ้อน/ย่อค้างไว้ได้หลายอัน (เปิดอันใหม่ ไม่ทับอันที่ย่อไว้)
@@ -135,9 +137,9 @@ export default function App() {
   if (forcePin) return <ForcePinChange userName={user.name} onDone={() => setForcePin(false)} />
 
   const go = (p: Page) => setPage(p)
-  const openHouse = (id: number) => {
+  const openHouse = (id: number, tab = 'installments') => {
     setSelId(id)
-    setDetailTab('installments')
+    setDetailTab(tab)
     setPage('houseDetail')
   }
   const openHouseByName = (name: string) => {
@@ -145,6 +147,13 @@ export default function App() {
     if (h) openHouse(h.id)
   }
   const onNavigate = (id: string) => go(NAV_TO_PAGE[id] || 'dashboard')
+  // ผลค้นหา: ของที่ผูกบ้าน → เปิดบ้านที่แท็บของชนิดนั้น · อย่างอื่น → ไปหน้าต้นทาง
+  const openSearchHit = (it: SearchItem, type: string) => {
+    if (it.page === 'house' && it.house_id != null) return openHouse(it.house_id, HOUSE_TAB[type] || 'installments')
+    if (NAV_TO_PAGE[it.page]) return go(NAV_TO_PAGE[it.page])
+    if (it.house_id != null) openHouse(it.house_id, HOUSE_TAB[type] || 'installments')
+  }
+  const openSearchAll = (q: string) => { setGlobalQ(q); go('search') }
 
   const selHouse = data.houses.find((h) => h.id === selId) || data.houses[0]
 
@@ -399,6 +408,7 @@ export default function App() {
       case 'ceovoice': return <CeoVoice />
       case 'docreview': return <DocReview />
       case 'center': return <HouseCenter onOpenHouse={openHouse} />
+      case 'search': return <GlobalSearch initialQ={globalQ} onOpen={openSearchHit} onOpenHouse={(id, type) => openHouse(id, HOUSE_TAB[type] || 'installments')} />
       default: return null
     }
   }
@@ -409,7 +419,7 @@ export default function App() {
       <div className="nav-backdrop" onClick={() => setNavOpen(false)} />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
-        <Topbar crumb={crumb} pageTitle={pageTitle} onNavigate={onNavigate} onOpenHouse={openHouse} onChangePin={openChangePin} onMenu={() => setNavOpen(true)} />
+        <Topbar crumb={crumb} pageTitle={pageTitle} onNavigate={onNavigate} onOpenHouse={openHouse} onChangePin={openChangePin} onMenu={() => setNavOpen(true)} onSearchAll={openSearchAll} onOpenResult={openSearchHit} />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
           <ModalHostContext.Provider value={modalHost}>

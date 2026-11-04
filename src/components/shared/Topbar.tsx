@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { roleLabel } from '../../erpData'
 import { useApp } from '../../store'
 import { api } from '../../api'
+import { searchUrl, thDate, baht, type SearchItem, type SearchResult } from './GlobalSearch'
 
 interface TopbarProps {
   crumb: string
@@ -10,11 +11,13 @@ interface TopbarProps {
   onOpenHouse: (id: number) => void
   onChangePin: () => void
   onMenu?: () => void // ปุ่ม ☰ เปิดเมนูซ้าย (แสดงเฉพาะจอแคบ)
+  onSearchAll: (q: string) => void // ไปหน้า "ผลการค้นหา" (ทุกแผนก ทุกปี)
+  onOpenResult: (item: SearchItem, type: string) => void
 }
 
 const notifColor = (icon: string) => (icon === 'danger' ? '#C24036' : icon === 'warn' ? '#B7791F' : '#30506A')
 
-export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onChangePin, onMenu }: TopbarProps) {
+export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onChangePin, onMenu, onSearchAll, onOpenResult }: TopbarProps) {
   // ผูก LINE ของฉัน (ทุกคนกดได้ ไม่ต้องเข้าหน้าผู้ใช้งาน)
   const [lineCode, setLineCode] = useState<{ code: string; expires_min: number } | null>(null)
   const requestLineCode = async () => {
@@ -25,16 +28,25 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
   const notifs = data.notifications
   const [open, setOpen] = useState(false)
 
-  // global search across houses + customers
+  // ค้นหาทุกแผนก: บ้าน/ลูกค้าขึ้นทันทีจากข้อมูลในเครื่อง → ระหว่างนั้นถามเซิร์ฟเวอร์ (ทุกแผนก ทุกปี ตามสิทธิ์) แล้วแสดงแทน
   const [q, setQ] = useState('')
   const term = q.trim().toLowerCase()
-  const houseHits = term
+  const [srv, setSrv] = useState<SearchResult | null>(null)
+  useEffect(() => {
+    setSrv(null)
+    if (term.length < 2) return
+    let alive = true
+    const t = setTimeout(() => { api.get<SearchResult>(searchUrl(q.trim(), { limit: 4 })).then((r) => { if (alive) setSrv(r) }).catch(() => { /* ใช้ผลในเครื่องแทน */ }) }, 280)
+    return () => { alive = false; clearTimeout(t) }
+  }, [term]) // eslint-disable-line react-hooks/exhaustive-deps
+  const houseHits = term && !srv
     ? data.houses.filter((h) => `${h.name} ${h.code} ${h.project} ${h.customer}`.toLowerCase().includes(term)).slice(0, 6)
     : []
-  const custHits = term
+  const custHits = term && !srv
     ? (data.customers || []).filter((c) => `${c.name} ${c.phone} ${c.project}`.toLowerCase().includes(term)).slice(0, 5)
     : []
-  const hasHits = houseHits.length > 0 || custHits.length > 0
+  const hasHits = houseHits.length > 0 || custHits.length > 0 || (srv?.total || 0) > 0
+  const goAll = () => { if (q.trim()) { onSearchAll(q.trim()); setQ('') } }
   return (
     <header
       style={{
@@ -89,7 +101,8 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="ค้นหาบ้าน / ลูกค้า"
+              onKeyDown={(e) => { if (e.key === 'Enter') goAll(); if (e.key === 'Escape') setQ('') }}
+              placeholder="ค้นหาทุกแผนก (บ้าน เอกสาร ร้าน ยอดเงิน)"
               style={{
                 border: 'none',
                 background: 'transparent',
@@ -107,8 +120,24 @@ export default function Topbar({ crumb, pageTitle, onNavigate, onOpenHouse, onCh
           {term && (
             <>
               <div onClick={() => setQ('')} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
-              <div className="tb-pop" style={{ position: 'absolute', left: 0, top: 44, width: 320, maxHeight: 420, overflowY: 'auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, boxShadow: '0 16px 50px rgba(20,30,40,.18)', zIndex: 31 }}>
-                {!hasHits && <div style={{ padding: '22px 16px', textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>ไม่พบผลลัพธ์</div>}
+              <div className="tb-pop" style={{ position: 'absolute', left: 0, top: 44, width: 400, maxHeight: 480, overflowY: 'auto', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, boxShadow: '0 16px 50px rgba(20,30,40,.18)', zIndex: 31 }}>
+                {!hasHits && <div style={{ padding: '22px 16px', textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>{term.length < 2 ? 'พิมพ์อย่างน้อย 2 ตัวอักษร' : srv ? 'ไม่พบผลลัพธ์' : 'กำลังค้นหา…'}</div>}
+                {srv?.groups.map((g) => (
+                  <div key={g.type}>
+                    <div style={{ padding: '8px 14px 4px', fontSize: 11, fontWeight: 600, color: '#94A0A8' }}>{g.label} <span style={{ fontWeight: 400 }}>({g.count}{g.more ? '+' : ''})</span></div>
+                    {g.items.map((it, i) => (
+                      <div key={g.type + (it.id ?? i)} onClick={() => { onOpenResult(it, g.type); setQ('') }} className="hov-fafbfc" style={{ padding: '8px 14px', cursor: 'pointer', borderTop: '1px solid #F1F4F6' }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: '#1C2730', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || '—'}</div>
+                        <div style={{ fontSize: 11.5, color: '#94A0A8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{[it.date && thDate(it.date), it.house_name && g.type !== 'house' ? it.house_name : '', it.amount != null ? baht(it.amount) : '', it.sub].filter(Boolean).join(' · ')}</div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {term.length >= 2 && (
+                  <div onClick={goAll} className="hov-fafbfc" style={{ position: 'sticky', bottom: 0, background: '#F7F9FA', padding: '10px 14px', borderTop: '1px solid #E1E5EA', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, color: '#30506A', textAlign: 'center' }}>
+                    ดูผลทั้งหมด{srv ? ` (${srv.total.toLocaleString('th-TH')} รายการ)` : ''} · กรองตามปี/แผนก →
+                  </div>
+                )}
                 {houseHits.length > 0 && <div style={{ padding: '8px 14px 4px', fontSize: 11, fontWeight: 600, color: '#94A0A8' }}>บ้าน</div>}
                 {houseHits.map((h) => (
                   <div key={'h' + h.id} onClick={() => { onOpenHouse(h.id); setQ('') }} className="hov-fafbfc" style={{ padding: '9px 14px', cursor: 'pointer', borderTop: '1px solid #F1F4F6' }}>
