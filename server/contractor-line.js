@@ -57,12 +57,13 @@ export function createContractorBot(d) {
   }
   const testerLinked = (uid) => { const tu = testUser(); return tu?.line_uid && tu.line_uid === uid ? db.prepare("SELECT * FROM contractor_line WHERE line_uid=? AND status='ใช้งาน'").get(uid) || null : null }
   const houseName = (code) => db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code
-  // บ้านที่ช่างคนนี้ถูกจ้าง (ชื่อตรง หรืออ้างทะเบียนผู้รับเหมาเดียวกัน) · บ้านที่ส่งมอบ/ยกเลิกแล้วไม่แสดง
+  // บ้านที่ช่างคนนี้ถูกจ้าง (ชื่อตรง หรืออ้างทะเบียนผู้รับเหมาเดียวกัน) · บ้านยกเลิกไม่แสดง · บ้าน Test แสดงเฉพาะช่วงทดสอบ
   function housesOf(con) {
     const rows = db.prepare(`SELECT c.house_code, c.role, c.contract_total, h.name, h.status FROM contractors c JOIN houses h ON h.code=c.house_code
       WHERE (c.name=? OR (c.vendor_id IS NOT NULL AND c.vendor_id=?)) ORDER BY h.id DESC`).all(con.name, con.vendor_id ?? -1)
     const seen = new Set()
-    return rows.filter((r) => !['ยกเลิก', 'test'].includes(String(r.status || '').trim()) && !seen.has(r.house_code) && seen.add(r.house_code))
+    const hide = testUser() ? ['ยกเลิก'] : ['ยกเลิก', 'test'] // ช่วงทดสอบ: บ้านสถานะ Test ใช้ทดลองได้ · ใช้จริง: ซ่อนบ้านทดสอบจากช่างจริง
+    return rows.filter((r) => !hide.includes(String(r.status || '').trim()) && !seen.has(r.house_code) && seen.add(r.house_code))
   }
   const instsOf = (con, code) => db.prepare("SELECT * FROM installments WHERE house_code=? AND side='contractor' AND contractor=? ORDER BY no, id").all(code, con.name)
 

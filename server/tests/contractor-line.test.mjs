@@ -141,10 +141,20 @@ test('ช่วงทดสอบ: บอทช่างใช้ได้เฉ
   const after = (await A('GET', '/approvals?status=all')).data
   assert.equal(after.length, n0 + 1)
   assert.ok(after[0].requested_by.includes('ช่างเอก'))
+  // บ้านสถานะ Test: ช่วงทดสอบต้องเห็น (ใช้ทดลองได้)
+  assert.equal((await A('POST', '/houses', { code: 'CL-T1', name: 'บ้านทดสอบสถานะเทส', status: 'test' })).status, 201)
+  assert.ok((await A('POST', '/houses/CL-T1/contractors', { name: 'ช่างเอก', role: 'ทดสอบ' })).status < 300)
+  assert.ok((await A('GET', '/contractor-line')).data.linked[0].houses.includes('บ้านทดสอบสถานะเทส'), 'ช่วงทดสอบต้องเห็นบ้าน Test')
   // ออกโหมดช่าง → ไม่ใช่ช่างแล้ว
   await lineAs(TESTER, 'ออกโหมดช่าง')
   assert.equal((await A('GET', '/contractor-line')).data.linked.length, 0)
   await A('PUT', '/center/line-test', { con_test_user: 0, cust_redirect_user: 0 })
+  // ใช้จริง: บ้าน Test ต้องไม่โผล่ให้ช่างจริงเห็น
+  const code2 = (await A('POST', '/contractor-line/code', { name: 'ช่างเอก' })).data.code
+  await lineAs(REAL, code2)
+  const real = (await A('GET', '/contractor-line')).data.linked.find((c) => c.name === 'ช่างเอก')
+  assert.ok(real && !real.houses.includes('บ้านทดสอบสถานะเทส') && real.houses.includes('บ้านทดสอบช่างไลน์'))
+  await A('POST', `/contractor-line/${real.id}/disable`)
 })
 
 test('ช่วงตรวจข้อความลูกค้า: ลูกค้าทักบอทมาเอง → ไม่ถึงลูกค้า แต่เรื่องที่ลูกค้าแจ้งยังบันทึกเข้าระบบ', async () => {
