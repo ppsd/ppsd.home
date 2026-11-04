@@ -127,6 +127,7 @@ export const canPmsUser = (u: GateUser) => isCeoUser(u)
 export const nav: NavDef[] = [
   { id: 'dashboard', label: 'หน้าสรุป', icon: 'M3 10.5L12 3l9 7.5M5.5 9.5V21h13V9.5' },
   { id: 'houses', label: 'บ้าน', icon: 'M4 21h16M6 21V8l6-4 6 4v13M10 21v-5h4v5' },
+  { id: 'center', label: 'ความเคลื่อนไหวบ้าน', icon: 'M12 3a6 6 0 00-6 6v4l-2 3h16l-2-3V9a6 6 0 00-6-6z M10 19a2 2 0 004 0' },
   { id: 'customers', label: 'ลูกค้า (CRM)', icon: 'M12 12a4 4 0 100-8 4 4 0 000 8 M4 20c0-4 4-6 8-6s8 2 8 6' },
   { id: 'installments', label: 'งวดงาน', icon: 'M4 6h16M4 12h16M4 18h11' },
   { id: 'gantt', label: 'แผนงาน', icon: 'M4 6h10 M4 12h7 M4 18h13' },
@@ -185,6 +186,7 @@ export const navGroups: NavGroup[] = [
 export const titles: Record<string, [string, string]> = {
   dashboard: ['ภาพรวมระบบ', 'หน้าสรุป'],
   houses: ['การจัดการบ้าน', 'บ้านทั้งหมด'],
+  center: ['ศูนย์กลางงานบ้าน', 'ความเคลื่อนไหวบ้าน'],
   customers: ['ลูกค้า', 'CRM — ลูกค้า 360° · Lead/Pipeline · รายงาน'],
   installments: ['การเงิน', 'งวดงาน'],
   gantt: ['หน้างาน', 'แผนงาน / ไทม์ไลน์'],

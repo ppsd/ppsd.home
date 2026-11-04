@@ -38,6 +38,7 @@ import Pms from './components/hr/Pms'
 import Vault from './components/admin/Vault'
 import CeoVoice from './components/dashboard/CeoVoice'
 import DocReview from './components/docreview/DocReview'
+import HouseCenter from './components/houses/HouseCenter'
 import Login from './Login'
 import { useApp } from './store'
 import { titles, OFFICE_CATS, HOUSE_STATUSES, type ModalDef } from './data'
@@ -48,7 +49,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users' | 'stock'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview' | 'center'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -58,7 +59,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
-  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line', docreview: 'docreview',
+  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line', docreview: 'docreview', center: 'center',
 }
 
 export default function App() {
@@ -107,6 +108,14 @@ export default function App() {
     document.addEventListener('click', onClick)
     window.addEventListener('keydown', onKey, true) // capture: ทำงานก่อน Esc ของ ModalShell
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('click', onClick); window.removeEventListener('keydown', onKey, true) }
+  }, [])
+  // แถบแจ้ง "ส่งขออนุมัติแล้ว" (เซิร์ฟเวอร์บอกว่างานนี้ต้องรอแอดมิน/ผู้จัดการอนุมัติก่อน)
+  const [pendingMsg, setPendingMsg] = useState('')
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null
+    const on = (e: Event) => { setPendingMsg(String((e as CustomEvent).detail || '')); if (t) clearTimeout(t); t = setTimeout(() => setPendingMsg(''), 9000) }
+    window.addEventListener('ppsd:pending', on)
+    return () => { window.removeEventListener('ppsd:pending', on); if (t) clearTimeout(t) }
   }, [])
   const [navOpen, setNavOpen] = useState(false) // จอแคบ (< 1024px): เมนูซ้ายซ่อนไว้ กด ☰ แล้วเลื่อนออกมา
   useEffect(() => { setForcePin(!!user?.mustChangePin) }, [user?.mustChangePin])
@@ -389,6 +398,7 @@ export default function App() {
       case 'pms': return <Pms />
       case 'ceovoice': return <CeoVoice />
       case 'docreview': return <DocReview />
+      case 'center': return <HouseCenter onOpenHouse={openHouse} />
       default: return null
     }
   }
@@ -415,6 +425,11 @@ export default function App() {
       <ModalHostContext.Provider value={modalHost}>
         {modals.map((m) => <Modal key={m.key} modal={m.def} onClose={() => setModals((ms) => ms.filter((x) => x.key !== m.key))} />)}
       </ModalHostContext.Provider>
+      {pendingMsg && (
+        <div role="status" onClick={() => { setPendingMsg(''); go('center') }} title="กดเพื่อดูคำขอ" style={{ position: 'fixed', left: '50%', bottom: 20, transform: 'translateX(-50%)', zIndex: 120, maxWidth: 'min(560px, 92vw)', background: '#FDF3E1', color: '#7A4E0B', border: '1px solid #E9C98C', borderRadius: 12, padding: '12px 16px', fontSize: 14, boxShadow: '0 8px 24px rgba(0,0,0,.15)', cursor: 'pointer' }}>
+          ⏳ {pendingMsg} <span style={{ textDecoration: 'underline', marginLeft: 6 }}>ดูคำขอ</span>
+        </div>
+      )}
       {printDoc && <PrintDoc kind={printDoc.kind} slip={printDoc.slip} onClose={() => setPrintDoc(null)} />}
     </div></>
   )

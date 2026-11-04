@@ -62,6 +62,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
     throw new ApiError(res.status, msg)
   }
+  // งานที่ต้องรออนุมัติ: เซิร์ฟเวอร์บอกผ่าน header → แสดงแถบแจ้ง (App) ว่ายังไม่มีผลจนกว่าจะอนุมัติ
+  const pending = res.headers.get('X-PPSD-Pending')
+  if (pending) { try { window.dispatchEvent(new CustomEvent('ppsd:pending', { detail: decodeURIComponent(pending) })) } catch { /* ignore */ } }
   if (res.status === 204) return undefined as T
   return res.json()
 }

@@ -24,6 +24,7 @@ import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
 import { createDocReview } from './doc-review.js'
 import { lt, listLineTexts, setLineText } from './line-texts.js'
+import { createCenter, FIELD_LABEL as CENTER_FIELD_LABEL } from './center.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -293,6 +294,7 @@ const CHANGE_MAP = [
   [/^\/customers/, ['customers']],
   [/^\/(tasks|sales-docs)/, ['tasks', 'salesDocs']],
   [/^\/notifications/, ['notifications']],
+  [/^\/(approvals|center)/, ['houses', 'installments', 'dashboard', 'notifications', 'center']],
 ]
 function keysForPath(p) { for (const [re, keys] of CHANGE_MAP) if (re.test(p)) return keys; return ['dashboard', 'notifications'] }
 function notifyChange(keys) {
@@ -2297,6 +2299,89 @@ const adminOnly = requireRole('admin')
 const crmDeps = { canWrite, financeOnly, audit, notifyChange, nowTS, todayTH, docYear, nextSeq, linePush, lineApprovers, lineUidOfName, setLineCtx, getLineCtx, lineReply, userByLine, getSetting, setSetting, publicBaseUrl: () => publicBaseUrl(), hasLineToken: () => !!getSetting('line_token', '') }
 registerCrm(api, crmDeps)
 registerCrmService(api, crmDeps) // LINE ลูกค้า · เคสแจ้งซ่อม/SLA · ประกัน · NPS · ข้อความอัตโนมัติ
+// ===== ศูนย์กลางงานบ้าน (center.js): ความเคลื่อนไหวบ้าน · คิวรออนุมัติ (เพิ่ม-ลดงาน/แก้ยอดเงิน) · ส่งอัปเดตลูกค้า =====
+const center = createCenter({ db, isManager, audit, nowTS, todayTH, linePush, lineUidOfName, getSetting, setSetting, setHistoryUser, effectivePosition })
+center.register(api)
+const nMoney = (v) => Number(String(v ?? 0).replace(/,/g, '')) || 0
+const sideTH = (s) => (s === 'contractor' ? 'ฝั่งช่าง' : 'ฝั่งลูกค้า')
+const houseLabel = (code) => db.prepare('SELECT name FROM houses WHERE code=?').get(code)?.name || code
+// ตรวจว่าคำขอนี้กระทบเงิน/เพิ่มลดงานไหม → คืนรายละเอียดคำขออนุมัติ (null = ไม่กระทบ ทำได้เลย)
+const GATE_CHECK = {
+  housePut(req) {
+    const h = db.prepare('SELECT * FROM houses WHERE id=?').get(req.params.id); if (!h) return null
+    const b = req.body || {}, keys = ['value', 'service_fee', ...HOUSE_NUM_FIELDS], body = {}, lines = []
+    for (const k of keys) if (b[k] != null && b[k] !== '' && nMoney(b[k]) !== (Number(h[k]) || 0)) { body[k] = nMoney(b[k]); lines.push(`${CENTER_FIELD_LABEL[k] || k}: ${baht(h[k])} → ${baht(body[k])}`) }
+    if (!lines.length) return null
+    const rest = { ...b }; for (const k of keys) delete rest[k]
+    return { house_code: h.code, title: `แก้มูลค่าบ้าน ${h.name}`, lines, body, rest }
+  },
+  instAdd(req) {
+    const b = req.body || {}
+    return { house_code: req.params.code, title: `เพิ่มงวดงาน ${sideTH(b.side)} บ้าน ${houseLabel(req.params.code)}`, lines: [`งวด ${b.no || '-'} ${b.detail || ''}`.trim(), `ยอด ${baht(nMoney(b.amount))}`, ...(b.contractor ? ['ช่าง: ' + b.contractor] : [])] }
+  },
+  instBulk(req) {
+    const items = Array.isArray(req.body?.items) ? req.body.items : []
+    if (!items.length) return null
+    const sum = (s) => items.filter((it) => (it.side === 'contractor' ? 'contractor' : 'customer') === s).reduce((a, it) => a + nMoney(it.amount), 0)
+    return { house_code: req.params.code, title: `นำเข้างวดงาน ${items.length} งวด บ้าน ${houseLabel(req.params.code)}`, lines: [`ฝั่งลูกค้ารวม ${baht(sum('customer'))}`, `ฝั่งช่างรวม ${baht(sum('contractor'))}`, ...items.slice(0, 4).map((it) => `งวด ${it.no || '-'} ${String(it.detail || '').slice(0, 40)} ${baht(nMoney(it.amount))}`)] }
+  },
+  instEdit(req) {
+    const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id); if (!inst) return null
+    const b = req.body || {}
+    if (b.amount == null || b.amount === '' || nMoney(b.amount) === (Number(inst.amount) || 0)) return null
+    const amt = nMoney(b.amount)
+    if (amt < (inst.paid || 0)) return { error: `มูลค่างวดต่ำกว่ายอดที่${inst.side === 'contractor' ? 'จ่าย' : 'เก็บ'}ไปแล้ว (${baht(inst.paid)})` }
+    const rest = { ...b }; delete rest.amount
+    return { house_code: inst.house_code, title: `แก้ยอดงวด ${inst.no} ${sideTH(inst.side)} บ้าน ${houseLabel(inst.house_code)}`, lines: [String(inst.detail || ''), `ยอด ${baht(inst.amount)} → ${baht(amt)} (${amt >= inst.amount ? '+' : ''}${(amt - inst.amount).toLocaleString('en-US')})`], body: { amount: amt }, rest }
+  },
+  instDel(req) {
+    const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id); if (!inst) return null
+    return { house_code: inst.house_code, title: `ลบงวด ${inst.no} ${sideTH(inst.side)} บ้าน ${houseLabel(inst.house_code)}`, lines: [String(inst.detail || ''), `ยอด ${baht(inst.amount)}`] }
+  },
+  instPay(req) {
+    const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id); if (!inst || inst.side !== 'contractor') return null
+    const add = nMoney(req.body?.amount); if (!add) return null
+    return { house_code: inst.house_code, title: `${add > 0 ? 'จ่ายเงินช่าง' : 'ถอนยอดจ่ายช่าง'} งวด ${inst.no} บ้าน ${houseLabel(inst.house_code)}`, lines: [`${inst.contractor || ''} · ${inst.detail || ''}`, `ยอด ${baht(add)} (งวดนี้ ${baht(inst.amount)} · จ่ายแล้ว ${baht(inst.paid)})`] }
+  },
+  instCollectContractor(req) { // ปุ่ม "จ่ายครบ" ของงวดช่าง → ใช้เรื่อง "จ่ายเงินช่าง"
+    const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id); if (!inst || inst.side !== 'contractor') return null
+    return { house_code: inst.house_code, title: `${req.body?.uncollect ? 'ยกเลิกการจ่ายช่าง' : 'จ่ายเงินช่างเต็มงวด'} งวด ${inst.no} บ้าน ${houseLabel(inst.house_code)}`, lines: [`${inst.contractor || ''} · ${inst.detail || ''}`, `ยอด ${baht(inst.amount)}`] }
+  },
+  instCollectCustomer(req) {
+    const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id); if (!inst || inst.side === 'contractor') return null
+    return { house_code: inst.house_code, title: `${req.body?.uncollect ? 'ยกเลิกการเก็บเงิน' : 'เก็บเงินลูกค้า'} งวด ${inst.no} บ้าน ${houseLabel(inst.house_code)}`, lines: [String(inst.detail || ''), `ยอด ${baht(inst.amount)}`] }
+  },
+  contractAdd(req) {
+    const b = req.body || {}
+    return { house_code: req.params.code, title: `เพิ่มสัญญา${b.side === 'contractor' ? 'ช่าง' : 'ลูกค้า'} บ้าน ${houseLabel(req.params.code)}`, lines: [`${b.party || ''} ${b.title || ''}`.trim(), `ยอด ${baht(nMoney(b.amount))}`] }
+  },
+  contractEdit(req) {
+    const old = db.prepare('SELECT * FROM house_contracts WHERE id=? AND house_code=?').get(req.params.id, req.params.code); if (!old) return null
+    const b = req.body || {}
+    if (b.amount == null || nMoney(b.amount) === (Number(old.amount) || 0)) return null
+    return { house_code: old.house_code, title: `แก้ยอดสัญญา บ้าน ${houseLabel(old.house_code)}`, lines: [`${old.party || ''} ${old.title || ''}`.trim(), `ยอด ${baht(old.amount)} → ${baht(nMoney(b.amount))}`] }
+  },
+  contractorAdd(req) {
+    const b = req.body || {}
+    return { house_code: req.params.code, title: `จ้างช่างเข้าบ้าน ${houseLabel(req.params.code)}`, lines: [`${b.name || ''} · ${b.role || ''}`, ...(nMoney(b.contract_total) ? [`ยอดจ้าง ${baht(nMoney(b.contract_total))}`] : nMoney(b.unit_price) ? [`${b.qty || 0} × ${baht(nMoney(b.unit_price))}`] : [])] }
+  },
+  contractorEdit(req) {
+    const cur = db.prepare('SELECT * FROM contractors WHERE id=?').get(req.params.id); if (!cur) return null
+    const b = req.body || {}
+    const changed = ['contract_total', 'unit_price', 'qty'].filter((k) => b[k] != null && b[k] !== '' && nMoney(b[k]) !== (Number(cur[k]) || 0))
+    if (!changed.length) return null
+    return { house_code: cur.house_code, title: `แก้ยอดจ้างช่าง ${cur.name} บ้าน ${houseLabel(cur.house_code)}`, lines: changed.map((k) => `${CENTER_FIELD_LABEL[k] || k}: ${(Number(cur[k]) || 0).toLocaleString('en-US')} → ${nMoney(b[k]).toLocaleString('en-US')}`) }
+  },
+  contractorDel(req) {
+    const cur = db.prepare('SELECT * FROM contractors WHERE id=?').get(req.params.id); if (!cur) return null
+    return { house_code: cur.house_code, title: `เอาช่าง ${cur.name} ออกจากบ้าน ${houseLabel(cur.house_code)}`, lines: [String(cur.role || ''), ...(cur.contract_total ? [`ยอดจ้าง ${baht(cur.contract_total)}`] : [])] }
+  },
+  contractorAdv(req) {
+    const c = db.prepare('SELECT * FROM contractors WHERE id=?').get(req.params.id); if (!c) return null
+    const b = req.body || {}
+    return { house_code: c.house_code, title: `${b.type === 'deduct' ? 'หักค่าของจากงวด' : 'ออกค่าของให้'} ผู้รับเหมา ${c.name}`, lines: [String(b.item || ''), `ยอด ${baht(nMoney(b.amount))}`] }
+  },
+}
 
 // ---------- ชั้นควบคุมภายใน / กันโกง (Internal Control) ----------
 // ค่าตั้งต้นของกติกาควบคุม (admin แก้ได้ในหน้า "ตรวจสอบ")
@@ -2668,7 +2753,7 @@ api.post('/houses', canWrite, (req, res) => {
   res.status(201).json(withProfit(db.prepare('SELECT * FROM houses WHERE id = ?').get(info.lastInsertRowid)))
 })
 
-api.put('/houses/:id', canWrite, (req, res) => {
+api.put('/houses/:id', canWrite, center.gated('house_value', 'house_put', GATE_CHECK.housePut, (req, res) => {
   const h = db.prepare('SELECT * FROM houses WHERE id = ?').get(req.params.id)
   if (!h) return res.status(404).json({ error: 'ไม่พบบ้าน' })
   const b = req.body || {}
@@ -2679,7 +2764,7 @@ api.put('/houses/:id', canWrite, (req, res) => {
   recomputeHouse(h.code)
   audit(req, 'แก้ไขบ้าน', h.name)
   res.json(withProfit(db.prepare('SELECT * FROM houses WHERE id = ?').get(h.id)))
-})
+}))
 // ลบบ้าน — เฉพาะบ้านสถานะ "test" (บ้านทดสอบ) · ลบข้อมูลงานที่ผูกกับบ้านไปด้วย
 // ถ้ามีเอกสารการเงิน (PR/PO/ใบจ่าย/รายจ่าย/เงินสดย่อย/เอกสารขาย/สต๊อก/บัญชี) ผูกอยู่ → ไม่ให้ลบ กันบัญชีเพี้ยน
 const HOUSE_MONEY_TABLES = [
@@ -2741,7 +2826,7 @@ api.delete('/houses/:code/inst-cats/:id', canWrite, (req, res) => {
   audit(req, 'ลบหัวข้องวดงาน', cat.label)
   res.json({ ok: true })
 })
-api.post('/houses/:code/installments', canWrite, (req, res) => {
+api.post('/houses/:code/installments', canWrite, center.gated('inst_add', 'inst_add', GATE_CHECK.instAdd, (req, res) => {
   const b = req.body || {}
   const side = b.side === 'contractor' ? 'contractor' : 'customer'
   // หมวดมาตรฐาน 3 อย่าง หรือหัวข้อใหญ่ที่ผู้ใช้เพิ่มเอง (ใช้ชื่อหัวข้อเป็น category ได้เลย)
@@ -2755,9 +2840,9 @@ api.post('/houses/:code/installments', canWrite, (req, res) => {
   recomputeHouse(req.params.code)
   audit(req, 'เพิ่มงวดงาน', `${req.params.code} งวด ${b.no || '-'} ${baht(Number(b.amount) || 0)} (${side === 'contractor' ? 'ช่าง' : 'ลูกค้า'})`)
   res.status(201).json(db.prepare('SELECT * FROM installments WHERE id = ?').get(info.lastInsertRowid))
-})
+}))
 // นำเข้างวดงานเป็นชุด (bulk) — จาก Excel/วางข้อความ หรือจากที่ AI อ่านสัญญามา
-api.post('/houses/:code/installments/bulk', canWrite, (req, res) => {
+api.post('/houses/:code/installments/bulk', canWrite, center.gated('inst_add', 'inst_bulk', GATE_CHECK.instBulk, (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : []
   if (!items.length) return res.status(400).json({ error: 'ไม่มีงวดงานให้นำเข้า' })
   const ins = db.prepare('INSERT INTO installments (house_code,no,detail,days,due,due_iso,ontime,amount,status,side,category,contractor,paid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)')
@@ -2777,7 +2862,7 @@ api.post('/houses/:code/installments/bulk', canWrite, (req, res) => {
   recomputeHouse(req.params.code)
   audit(req, 'นำเข้างวดงาน', `${req.params.code} ${n} งวด`)
   res.json({ ok: true, count: n })
-})
+}))
 // ===== AI (Claude) — ใช้ร่วมกันทุกจุดที่ให้ AI อ่านเอกสาร (ใบส่งของ / สัญญางวดงาน) =====
 // รุ่นที่เลือกได้ในหน้า ผู้ใช้งาน → ตั้งค่า AI · รุ่นเก่าตระกูล claude-3 ถูกปลดแล้ว → บังคับเป็นรุ่นปัจจุบัน
 const AI_MODELS = [
@@ -2933,7 +3018,7 @@ api.post('/ai-settings/test', adminOnly, async (_req, res) => {
   res.json({ ok: true, model: ai.model, reply: String(ai.text || '').trim().slice(0, 80), ms: Date.now() - t0 })
 })
 // edit an installment (รายละเอียด/วัน/กำหนด/จำนวนเงิน/สถานะ)
-api.put('/installments/:id', canWrite, (req, res) => {
+api.put('/installments/:id', canWrite, center.gated('inst_edit', 'inst_edit', GATE_CHECK.instEdit, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
   const b = req.body || {}
@@ -2955,8 +3040,8 @@ api.put('/installments/:id', canWrite, (req, res) => {
   try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(inst-edit):', e.message); logJournalIssue('inst', inst.id, `งวด ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, 'แก้ไขงวดงาน', `${inst.house_code} งวด ${inst.no}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
-})
-api.delete('/installments/:id', canWrite, (req, res) => {
+}))
+api.delete('/installments/:id', canWrite, center.gated('inst_del', 'inst_del', GATE_CHECK.instDel, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
   // ถอนรายการบัญชีให้สำเร็จก่อน แล้วค่อยลบงวด — กันบัญชีค้างโดยไม่มีเอกสารต้นทาง
@@ -2966,7 +3051,7 @@ api.delete('/installments/:id', canWrite, (req, res) => {
   recomputeHouse(inst.house_code)
   audit(req, 'ลบงวดงาน', `${inst.house_code} งวด ${inst.no}`)
   res.json({ ok: true })
-})
+}))
 // ซ่อมครั้งเดียว: งวดที่มียอดเก็บ/จ่ายจริง (paid > 0) แต่สถานะไม่ตรงยอด → ตั้งตามยอด (ยอดเงินคือความจริง)
 try {
   backfillSignatures()
@@ -3010,7 +3095,7 @@ function logMoney(req, inst, delta, extraNote) {
         isIsoDate(b.date_iso) ? b.date_iso : todayISO(), delta, method, String(b.ref_no || '').slice(0, 60), note, req.user?.name || '-', new Date().toISOString())
   } catch (e) { console.error('money log:', e.message) }
 }
-api.post('/installments/:id/collect', canWrite, (req, res) => {
+api.post('/installments/:id/collect', canWrite, center.gated('inst_pay', 'collect_con', GATE_CHECK.instCollectContractor, center.gated('inst_collect', 'collect_cust', GATE_CHECK.instCollectCustomer, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
   const done = req.body?.uncollect ? false : true
@@ -3028,9 +3113,9 @@ api.post('/installments/:id/collect', canWrite, (req, res) => {
   try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(collect):', e.message); logJournalIssue('inst', inst.id, `งวด ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, done ? (isContractor ? 'จ่ายช่าง' : 'เก็บเงินงวด') : 'ยกเลิก', `${inst.house_code} งวด ${inst.no}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
-})
+})))
 // add a PARTIAL payment to an installment (จ่าย/เก็บทีละบางส่วน). amount can be negative to reverse.
-api.post('/installments/:id/pay', canWrite, (req, res) => {
+api.post('/installments/:id/pay', canWrite, center.gated('inst_pay', 'inst_pay', GATE_CHECK.instPay, (req, res) => {
   const inst = db.prepare('SELECT * FROM installments WHERE id=?').get(req.params.id)
   if (!inst) return res.status(404).json({ error: 'ไม่พบงวดงาน' })
   const add = Number(req.body?.amount) || 0
@@ -3045,7 +3130,7 @@ api.post('/installments/:id/pay', canWrite, (req, res) => {
   try { acct.syncInstallmentJournal(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id)) } catch (e) { console.error('journal(pay):', e.message); logJournalIssue('inst', inst.id, `งวดช่าง ${inst.no} ${inst.house_code || ''}`, e) }
   audit(req, inst.side === 'contractor' ? 'จ่ายช่างบางส่วน' : 'เก็บเงินบางส่วน', `${inst.house_code} งวด ${inst.no} +${add}`)
   res.json(db.prepare('SELECT * FROM installments WHERE id=?').get(inst.id))
-})
+}))
 
 // ----- แท็บ "การเงิน & สัญญา": สัญญา 2 ฝั่ง + ประวัติเงินเข้า-ออก + ยอดสรุป -----
 const CONTRACT_KINDS = { main: 'สัญญาหลัก', amend: 'แก้ไขสัญญา', add: 'งานเพิ่ม', reduce: 'งานลด' }
@@ -3130,7 +3215,7 @@ function contractFromBody(h, b) {
     },
   }
 }
-api.post('/houses/:code/contracts', canWrite, (req, res) => {
+api.post('/houses/:code/contracts', canWrite, center.gated('contract', 'contract_add', GATE_CHECK.contractAdd, (req, res) => {
   const h = db.prepare('SELECT * FROM houses WHERE code=?').get(req.params.code)
   if (!h) return res.status(404).json({ error: 'ไม่พบบ้าน' })
   const r = contractFromBody(h, req.body || {})
@@ -3140,8 +3225,8 @@ api.post('/houses/:code/contracts', canWrite, (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(h.code, c.side, c.party, c.kind, c.no, c.title, c.sign_date, c.amount, c.file_id, c.note, req.user?.name || '-', new Date().toISOString())
   audit(req, 'เพิ่มสัญญา', `${h.code} ${CONTRACT_KINDS[c.kind]} ${c.party} ${baht(c.amount)}`)
   res.json(db.prepare('SELECT * FROM house_contracts WHERE id=?').get(info.lastInsertRowid))
-})
-api.put('/houses/:code/contracts/:id', canWrite, (req, res) => {
+}))
+api.put('/houses/:code/contracts/:id', canWrite, center.gated('contract', 'contract_edit', GATE_CHECK.contractEdit, (req, res) => {
   const h = db.prepare('SELECT * FROM houses WHERE code=?').get(req.params.code)
   const old = db.prepare('SELECT * FROM house_contracts WHERE id=? AND house_code=?').get(req.params.id, req.params.code)
   if (!h || !old) return res.status(404).json({ error: 'ไม่พบสัญญา' })
@@ -3152,7 +3237,7 @@ api.put('/houses/:code/contracts/:id', canWrite, (req, res) => {
     .run(c.side, c.party, c.kind, c.no, c.title, c.sign_date, c.amount, c.file_id, c.note, old.id)
   audit(req, 'แก้ไขสัญญา', `${h.code} ${CONTRACT_KINDS[c.kind]} ${c.party} ${baht(old.amount)} → ${baht(c.amount)}`)
   res.json(db.prepare('SELECT * FROM house_contracts WHERE id=?').get(old.id))
-})
+}))
 api.delete('/houses/:code/contracts/:id', financeOnly, (req, res) => {
   const old = db.prepare('SELECT * FROM house_contracts WHERE id=? AND house_code=?').get(req.params.id, req.params.code)
   if (!old) return res.status(404).json({ error: 'ไม่พบสัญญา' })
@@ -6173,7 +6258,7 @@ function contractorPricing(b, cur = {}) {
   if (vendor_id && !db.prepare("SELECT id FROM vendors WHERE id=? AND kind='ผู้รับเหมา'").get(vendor_id)) vendor_id = null
   return { labor_rate_id, qty, unit_price, contract_total, price_note, vendor_id }
 }
-api.put('/contractors/:id', canWrite, (req, res) => {
+api.put('/contractors/:id', canWrite, center.gated('contractor', 'contractor_edit', GATE_CHECK.contractorEdit, (req, res) => {
   const cur = db.prepare('SELECT * FROM contractors WHERE id=?').get(req.params.id)
   if (!cur) return res.status(404).json({ error: 'ไม่พบช่าง/ผู้รับเหมา' })
   const b = req.body || {}
@@ -6188,13 +6273,13 @@ api.put('/contractors/:id', canWrite, (req, res) => {
   if (name !== cur.name) db.prepare("UPDATE installments SET contractor=? WHERE house_code=? AND side='contractor' AND contractor=?").run(name, cur.house_code, cur.name)
   if (laborCompare(rate, p.unit_price) === 'สูงกว่า') audit(req, 'จ้างช่างสูงกว่าราคากลาง', `${name} · ${rate.name} ฿${p.unit_price}/${rate.unit} (ราคากลาง ${rate.price_min}–${rate.price_max}) ${p.price_note ? '· ' + p.price_note : ''}`)
   res.json({ ...db.prepare('SELECT * FROM contractors WHERE id=?').get(cur.id), price_vs: laborCompare(rate, p.unit_price) })
-})
+}))
 
 // ---------- ค่าของที่บริษัทออกให้ผู้รับเหมาก่อน (แล้วหักจากงวด) ----------
 api.get('/contractors/:id/advances', (req, res) =>
   res.json(db.prepare('SELECT * FROM contractor_advances WHERE contractor_id=? ORDER BY id DESC').all(req.params.id))
 )
-api.post('/contractors/:id/advances', canWrite, (req, res) => {
+api.post('/contractors/:id/advances', canWrite, center.gated('contractor_adv', 'contractor_adv', GATE_CHECK.contractorAdv, (req, res) => {
   const c = db.prepare('SELECT * FROM contractors WHERE id=?').get(req.params.id)
   if (!c) return res.status(404).json({ error: 'ไม่พบช่าง/ผู้รับเหมา' })
   const b = req.body || {}
@@ -6209,7 +6294,7 @@ api.post('/contractors/:id/advances', canWrite, (req, res) => {
     .run(c.id, c.house_code, todayTH(), type, b.item || '', amount, req.user.name)
   audit(req, type === 'advance' ? 'ออกค่าของให้ผู้รับเหมา' : 'หักค่าของจากงวดผู้รับเหมา', `${c.name} ${baht(amount)}`)
   res.status(201).json({ ok: true })
-})
+}))
 api.delete('/contractor-advances/:id', canWrite, (req, res) => {
   const a = db.prepare('SELECT * FROM contractor_advances WHERE id=?').get(req.params.id)
   db.prepare('DELETE FROM contractor_advances WHERE id=?').run(req.params.id)
@@ -7698,7 +7783,7 @@ api.get('/work-orders/executor-stats', auditView, (req, res) => {
   const ontimeCount = scored.filter((r) => (r.kpi_days || 0) === 0).length
   res.json({ executor: name, total, overdue, onTimeRate: withDue ? Math.round((onTime / withDue) * 100) : 100, kpiPoints, scoredCount: scored.length, earlyCount, lateCount, ontimeCount })
 })
-api.post('/houses/:code/contractors', canWrite, (req, res) => {
+api.post('/houses/:code/contractors', canWrite, center.gated('contractor', 'contractor_add', GATE_CHECK.contractorAdd, (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: 'กรุณากรอกชื่อช่าง/ผู้รับเหมา' })
   const p = contractorPricing(b)
@@ -7710,11 +7795,11 @@ api.post('/houses/:code/contractors', canWrite, (req, res) => {
       p.labor_rate_id, p.qty, p.unit_price, p.contract_total, p.price_note, p.vendor_id)
   if (laborCompare(rate, p.unit_price) === 'สูงกว่า') audit(req, 'จ้างช่างสูงกว่าราคากลาง', `${b.name} · ${rate.name} ฿${p.unit_price}/${rate.unit} (ราคากลาง ${rate.price_min}–${rate.price_max}) ${p.price_note ? '· ' + p.price_note : ''}`)
   res.status(201).json({ ...db.prepare('SELECT * FROM contractors WHERE id=?').get(info.lastInsertRowid), price_vs: laborCompare(rate, p.unit_price) })
-})
-api.delete('/contractors/:id', canWrite, (req, res) => {
+}))
+api.delete('/contractors/:id', canWrite, center.gated('contractor', 'contractor_del', GATE_CHECK.contractorDel, (req, res) => {
   db.prepare('DELETE FROM contractors WHERE id=?').run(req.params.id)
   res.json({ ok: true })
-})
+}))
 api.post('/customers/:id/contacts', canWrite, (req, res) => {
   const { channel, note } = req.body || {}
   if (!note) return res.status(400).json({ error: 'กรุณากรอกรายละเอียด' })
@@ -7914,6 +7999,7 @@ api.delete('/files/:id', canWrite, (req, res) => {
 api.get('/notifications', (req, res) => {
   const mgr = isManager(req.user)
   const out = []
+  try { out.push(...center.notificationsFor(req.user)) } catch (e) { console.error('centerNotifications:', e.message) } // คำขอรออนุมัติ / ถูกตีกลับ
   try { out.push(...crmNotifications(req.user), ...serviceNotifications(req.user)) } catch (e) { console.error('crmNotifications:', e.message) } // Lead เงียบ / นัดติดตามลูกค้า / เคสเกิน SLA / คะแนนต่ำ
   const todayISO = new Date().toISOString().slice(0, 10)
   const woDone = (s) => s === 'ส่งงาน' || s === 'เสร็จ' || s === 'ตรวจผ่าน' // ส่งงานแล้ว = ไม่นับเลยกำหนด (รอผู้สั่งตรวจรับ)

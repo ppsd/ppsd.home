@@ -38,6 +38,17 @@ export default function Sidebar({ activePage, onNavigate, onClose, collapsed = f
     check(); const t = setInterval(check, 60000)
     return () => { alive = false; clearInterval(t) }
   }, [])
+  // ตัวเลขที่เมนู ความเคลื่อนไหวบ้าน = เรื่องใหม่ที่ยังไม่ได้ดู + คำขอรออนุมัติ (ถ้าเป็นผู้อนุมัติ)
+  const [centerN, setCenterN] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const check = () => api.get<{ unread: number; pending: number; canApprove: boolean }>('/center/unread').then((r) => { if (alive) setCenterN((r.unread || 0) + (r.canApprove ? r.pending || 0 : 0)) }).catch(() => {})
+    check(); const t = setInterval(check, 60000)
+    let deb: ReturnType<typeof setTimeout> | null = null
+    const on = () => { if (deb) clearTimeout(deb); deb = setTimeout(check, 1500) }
+    window.addEventListener('ppsd:changed', on); window.addEventListener('ppsd:center-seen', check)
+    return () => { alive = false; clearInterval(t); if (deb) clearTimeout(deb); window.removeEventListener('ppsd:changed', on); window.removeEventListener('ppsd:center-seen', check) }
+  }, [])
   const restartServer = async () => {
     if (!window.confirm('รีสตาร์ทเซิร์ฟเวอร์ตอนนี้? ทุกคนจะใช้งานไม่ได้ประมาณ 5–10 วินาที')) return
     setRestarting(true)
@@ -116,6 +127,7 @@ export default function Sidebar({ activePage, onNavigate, onClose, collapsed = f
 
       <nav style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: mini ? '4px 8px' : '4px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
         {visible(home) && itemRow(home, false)}
+        {visible(byId['center']) && itemRow({ ...byId['center'], badge: centerN ? (centerN > 99 ? '99+' : String(centerN)) : undefined }, false)}
 
         {groups.map((g) => {
           const isOpen = !!open[g.id]
