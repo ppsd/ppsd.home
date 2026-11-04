@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { baht } from '../../data'
 import { useApp } from '../../store'
+import ChangeHistory from './ChangeHistory'
 
 interface Flag { sev: 'high' | 'med'; type: string; key: string; title: string; detail: string; ref: string; acked: boolean; ackBy?: string; ackNote?: string }
 interface Recon { label: string; a: string; av: number; b: string; bv: number; diff: number; ok: boolean }
@@ -43,7 +44,7 @@ export default function AuditCenter() {
   const [counts, setCounts] = useState<{ high: number; med: number }>({ high: 0, med: 0 })
   const [ctrl, setCtrl] = useState<Controls | null>(null)
   const [log, setLog] = useState<AuditRow[]>([])
-  const [tab, setTab] = useState<'flags' | 'reconcile' | 'log' | 'rules'>('flags')
+  const [tab, setTab] = useState<'flags' | 'reconcile' | 'history' | 'log' | 'rules'>('flags')
   const [showAcked, setShowAcked] = useState(false)
   const [denied, setDenied] = useState(false)
   // ต้องยืนยัน PIN ก่อนเข้า
@@ -122,7 +123,7 @@ export default function AuditCenter() {
 
       {/* tabs */}
       <div style={{ display: 'flex', gap: 2, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 11, padding: '6px 8px', flexWrap: 'wrap' }} className="no-print">
-        {([['flags', 'สัญญาณเตือน'], ['reconcile', 'กระทบยอด'], ['log', 'ประวัติการใช้งาน'], ['rules', 'กติกาควบคุม']] as const).map(([id, label]) => (
+        {([['flags', 'สัญญาณเตือน'], ['reconcile', 'กระทบยอด'], ['history', 'ประวัติการแก้ไขข้อมูล'], ['log', 'ประวัติการใช้งาน'], ['rules', 'กติกาควบคุม']] as const).map(([id, label]) => (
           <div key={id} onClick={() => setTab(id)} style={{ fontSize: 13, fontWeight: tab === id ? 600 : 500, color: tab === id ? '#fff' : '#5C6770', background: tab === id ? '#30506A' : 'transparent', padding: '7px 14px', borderRadius: 7, cursor: 'pointer' }}>{label}</div>
         ))}
         <button onClick={() => window.print()} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🖨 พิมพ์รายงานตรวจสอบ</button>
@@ -202,6 +203,9 @@ export default function AuditCenter() {
           )}
         </div>
       )}
+
+      {/* ประวัติการแก้ไขข้อมูล (ทุกตาราง) */}
+      {tab === 'history' && <ChangeHistory />}
 
       {/* LOG */}
       {tab === 'log' && (

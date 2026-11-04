@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, readdir
 import Database from 'better-sqlite3'
 import { networkInterfaces } from 'node:os'
 import { db, dbFile } from './db.js'
+import { historyContext, setHistoryUser, setupHistory } from './history.js'
 import { registerCrm, crmNotifications } from './crm.js'
 import { moneySummary } from './money.js'
 import zlib from 'node:zlib'
@@ -236,6 +237,7 @@ function syncEmployeePin(user, hashedPin) {
 }
 
 const api = express.Router()
+api.use(historyContext) // ประวัติการแก้ไขข้อมูล: ผูกคำขอ → รู้ว่าใครเป็นคนเพิ่ม/แก้/ลบ (ต้องอยู่ก่อน middleware อื่น)
 
 // access log: บันทึกคำขอที่ "แก้ข้อมูล" (POST/PUT/DELETE) และคำขอที่ผิดพลาด (4xx/5xx) — ใคร · IP · อะไร · ผลลัพธ์ · เวลา
 // ไม่บันทึก body (มี PIN) · ซ่อนโทเคนในพาธ (ลิงก์ติดตาม GPS / พอร์ทัลลูกค้า)
@@ -1069,7 +1071,7 @@ function consumeLineLinkCode(code, uid) {
   return u
 }
 // บัญชีที่ปิดใช้งาน (เช่น พนักงานลาออก) ใช้บอทไม่ได้ — ไม่ลบการผูก LINE ไว้ เปิดบัญชีคืนแล้วใช้ต่อได้ทันที
-const userByLine = (uid) => { const u = db.prepare("SELECT * FROM users WHERE line_uid=? AND status<>'ปิดใช้งาน'").get(uid); return u ? { ...u, position: effectivePosition(u) } : u }
+const userByLine = (uid) => { const u = db.prepare("SELECT * FROM users WHERE line_uid=? AND status<>'ปิดใช้งาน'").get(uid); if (u) setHistoryUser(u.name + ' (LINE)'); return u ? { ...u, position: effectivePosition(u) } : u }
 const lineUserDisabled = (uid) => !!db.prepare("SELECT 1 FROM users WHERE line_uid=? AND status='ปิดใช้งาน'").get(uid)
 const LINE_DISABLED_MSG = 'บัญชี ERP ที่ผูกกับ LINE นี้ถูกปิดใช้งานแล้วค่ะ — ติดต่อผู้ดูแลระบบ'
 const lineUidOfName = (name) => db.prepare("SELECT line_uid FROM users WHERE name=? AND line_uid IS NOT NULL AND status<>'ปิดใช้งาน'").get(name)?.line_uid || null
@@ -6322,6 +6324,40 @@ api.put('/controls', adminOnly, (req, res) => {
   res.json({ ...next, synced })
 })
 api.get('/audit-log', requireManager, (_req, res) => res.json(db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 300').all()))
+// ===== ประวัติการแก้ไขข้อมูล (change_history — บันทึกอัตโนมัติทุกตาราง ดู server/history.js) =====
+// ผู้จัดการขึ้นไปดูได้ · ข้อมูลเงินเดือน/HR เฉพาะคนที่ดูเงินเดือนได้ · ผู้ใช้/คลังรหัสผ่าน/ตั้งค่า เฉพาะแอดมิน
+const HIST_SALARY_TABLES = ['employees', 'payroll_runs', 'payroll_batches', 'payroll_inputs', 'salary_advances', 'deductions', 'other_income', 'pms_reviews']
+const HIST_ADMIN_TABLES = ['users', 'vault_entries', 'settings', 'pin_reset_requests']
+function histHidden(user) {
+  const hide = []
+  if (user?.role !== 'admin') hide.push(...HIST_ADMIN_TABLES)
+  if (!canSeeSalary(user)) hide.push(...HIST_SALARY_TABLES)
+  return hide
+}
+api.get('/change-history', requireManager, (req, res) => {
+  const qy = req.query || {}
+  const where = []; const args = []
+  const hide = histHidden(req.user)
+  if (hide.length) { where.push(`table_name NOT IN (${hide.map(() => '?').join(',')})`); args.push(...hide) }
+  if (qy.table) { where.push('table_name=?'); args.push(String(qy.table)) }
+  if (qy.key) { where.push('row_key=?'); args.push(String(qy.key)) }
+  if (qy.user) { where.push('user=?'); args.push(String(qy.user)) }
+  if (['insert', 'update', 'delete'].includes(qy.action)) { where.push('action=?'); args.push(qy.action) }
+  if (isIsoDate(qy.from)) { where.push('ts >= ?'); args.push(qy.from) }
+  if (isIsoDate(qy.to)) { where.push('ts < ?'); args.push(qy.to + ' 99') }
+  if (qy.q) { where.push('(row_key = ? OR before LIKE ? OR after LIKE ?)'); const like = '%' + String(qy.q).slice(0, 100) + '%'; args.push(String(qy.q), like, like) }
+  if (Number(qy.before_id) > 0) { where.push('id < ?'); args.push(Number(qy.before_id)) }
+  const limit = Math.min(500, Math.max(1, Number(qy.limit) || 200))
+  const sql = `SELECT * FROM change_history ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT ${limit}`
+  res.json(db.prepare(sql).all(...args))
+})
+api.get('/change-history/meta', requireManager, (req, res) => {
+  const hide = new Set(histHidden(req.user))
+  const tables = db.prepare('SELECT table_name t, COUNT(*) n FROM change_history GROUP BY table_name ORDER BY n DESC').all().filter((r) => !hide.has(r.t))
+  const users = db.prepare('SELECT user u, COUNT(*) n FROM change_history GROUP BY user ORDER BY n DESC LIMIT 200').all()
+  const first = db.prepare('SELECT MIN(ts) ts FROM change_history').get()?.ts || null
+  res.json({ tables, users, since: first })
+})
 
 // ประเมินสัญญาณเตือนทั้งหมด (red flags) จากข้อมูลจริง
 api.get('/audit-center', requireManager, (_req, res) => {
@@ -8692,6 +8728,8 @@ api.post('/backup-mirror/run', adminOnly, async (req, res) => {
 
 const PORT = process.env.PORT || 3001
 // bind to 0.0.0.0 so other devices on the network can reach it
+// ประวัติการแก้ไขข้อมูลทุกตาราง — สร้าง trigger หลัง migration/ตารางทั้งหมดถูกสร้างแล้ว
+try { console.log(`  ประวัติการแก้ไขข้อมูล: เปิดบันทึก ${setupHistory(db)} ตาราง`) } catch (e) { console.error('history setup:', e.message) }
 app.listen(PORT, '0.0.0.0', (err) => {
   // Express 5 ส่ง error (เช่น พอร์ตไม่ว่าง) มาที่ callback นี้แทนการล่ม — ถ้าไม่เช็ค ตัวที่ได้พอร์ตไม่ได้จะค้างรัน
   // งานตั้งเวลา/สรุปเช้า/ลิงก์สาธารณะซ้ำ และแย่งตั้ง Webhook LINE (เช่น เปิด start.bat ซ้อนกับ run-server.bat)
