@@ -155,6 +155,7 @@ export const nav: NavDef[] = [
   { id: 'costing', label: 'ต้นทุน / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', gate: 'finance' },
   { id: 'accounting', label: 'บัญชีแยกประเภท (GL)', icon: 'M4 4h16v16H4z M4 9h16 M9 9v11 M14 13h3 M14 16h3', gate: 'finance' },
   { id: 'audit', label: 'ตรวจสอบ', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z M9 12l2 2 4-4', gate: 'manager' },
+  { id: 'bizintel', label: 'ศูนย์วิเคราะห์ธุรกิจ (AI)', icon: 'M3 3v18h18 M7 15l3-4 3 2 5-7 M17 6h2v2', gate: 'manager' },
   { id: 'users', label: 'ผู้ใช้งาน', icon: 'M12 3l7 3v5c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z' },
   { id: 'line', label: 'LINE', icon: 'M4 5h16v11H9l-5 4z M8 10h.01 M12 10h.01 M16 10h.01', gate: 'admin' },
   { id: 'vault', label: 'คลังรหัสผ่านบริษัท', icon: 'M5 11h14v10H5z M8 11V7a4 4 0 018 0v4 M12 15v3', gate: 'vault' },
@@ -175,7 +176,7 @@ export interface NavGroup { id: string; label: string; icon: string; items: stri
 // house-first: "บ้าน" เป็นทางเข้าหลัก (แสดงเดี่ยวบนสุด) → กดบ้านแล้วเจอย่อยในบ้าน
 // กลุ่มด้านล่างคือส่วนที่ยังเข้าแบบข้ามบ้าน (บางส่วนจะย้ายเข้าบ้านในเฟสถัดไป) + ส่วนกลางบริษัท
 export const navGroups: NavGroup[] = [
-  { id: 'overview', label: 'ภาพรวม / ข้ามบ้าน', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18', items: ['dashboard', 'gantt', 'qcsummary', 'ceovoice'] },
+  { id: 'overview', label: 'ภาพรวม / ข้ามบ้าน', icon: 'M4 20V10 M10 20V4 M16 20v-8 M3 20h18', items: ['dashboard', 'bizintel', 'gantt', 'qcsummary', 'ceovoice'] },
   { id: 'site', label: 'งานหน้างาน (ข้ามบ้าน)', icon: 'M3 21h18 M5 21V7l7-4 7 4v14 M9 21v-6h6v6', items: ['issues', 'workorders', 'qc', 'sitedocs', 'sitereport', 'safety', 'handover'] },
   { id: 'procure', label: 'จัดซื้อ', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01', items: ['procurement', 'matprices', 'stock'] },
   { id: 'finance', label: 'บัญชี / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', items: ['installments', 'sales', 'expenses', 'costing', 'accounting', 'express', 'docreg', 'audit'] },
@@ -216,6 +217,7 @@ export const titles: Record<string, [string, string]> = {
   costing: ['การเงิน', 'ต้นทุน / ประเมินราคา'],
   accounting: ['การเงิน', 'บัญชีแยกประเภท (ระบบบัญชีคู่)'],
   audit: ['ควบคุมภายใน', 'ตรวจสอบ'],
+  bizintel: ['ผู้บริหาร', 'ศูนย์วิเคราะห์ธุรกิจ — ตรวจการเงิน · เศรษฐกิจโลก · วัสดุ · คู่แข่ง · จุดอ่อนของเรา'],
   users: ['ตั้งค่า', 'ผู้ใช้งาน'],
   line: ['ส่วนกลางบริษัท', 'LINE'],
 }

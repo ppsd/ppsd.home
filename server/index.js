@@ -27,6 +27,7 @@ import { lt, listLineTexts, setLineText } from './line-texts.js'
 import { createCenter, FIELD_LABEL as CENTER_FIELD_LABEL } from './center.js'
 import { createContractorBot } from './contractor-line.js'
 import { createSearch } from './search.js'
+import { createIntel } from './intel.js'
 import { planByKey, pickPlan, buildPlanRows, plansForClient } from './installment-plans.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -6651,6 +6652,15 @@ api.post('/audit-center/ack', requireManager, (req, res) => {
   audit(req, 'รับทราบสัญญาณเตือน', key)
   res.json({ ok: true })
 })
+
+// ---------- ศูนย์วิเคราะห์ธุรกิจ (ตรวจการเงิน + รายงาน AI: เศรษฐกิจโลก วัสดุ คู่แข่ง ลูกค้าจับผิด มุมมองนักธุรกิจโลก) — ดู server/intel.js ----------
+const intel = createIntel({
+  db, aiAsk, aiKey: () => aiKey(), audit, nowTS, todayISO, getSetting, setSetting, linePush, baht, notifyChange,
+  cashBalance: () => acct.cashBalance(),
+  managersWithLine: () => db.prepare("SELECT id, name, role, position, line_uid FROM users WHERE line_uid IS NOT NULL AND status='ใช้งาน'").all().filter((u) => isManager(u)),
+})
+intel.register(api, requireManager)
+setInterval(() => intel.tick(), 10 * 60 * 1000)
 
 // ---------- เอกสารหน้างาน (Site Documents): RFI / RFA / NCR / VO ----------
 const SITE_KINDS = {

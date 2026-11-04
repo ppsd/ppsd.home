@@ -23,6 +23,7 @@ import Reports from './components/dashboard/Reports'
 import Gantt from './components/dashboard/Gantt'
 import Sales from './components/sales/Sales'
 import AuditCenter from './components/admin/AuditCenter'
+import BizIntel from './components/admin/BizIntel'
 import SiteDocs from './components/site/SiteDocs'
 import WorkOrders from './components/site/WorkOrders'
 import QcInspect from './components/site/QcInspect'
@@ -50,7 +51,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users' | 'stock'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview' | 'center' | 'search'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview' | 'center' | 'search' | 'bizintel'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -60,7 +61,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
-  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line', docreview: 'docreview', center: 'center',
+  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line', docreview: 'docreview', center: 'center', bizintel: 'bizintel',
 }
 
 export default function App() {
@@ -393,6 +394,7 @@ export default function App() {
       case 'reports': return <Reports />
       case 'vault': return <Vault />
       case 'audit': return <AuditCenter />
+      case 'bizintel': return <BizIntel />
       case 'workorders': return <WorkOrders />
       case 'sitedocs': return <SiteDocs />
       case 'qc': return <QcInspect />
