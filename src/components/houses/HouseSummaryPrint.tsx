@@ -24,7 +24,7 @@ interface Props {
 
 export default function HouseSummaryPrint({ house, installments, expenses, issues, otherCost, canSeeProfit, onClose }: Props) {
   const today = new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
-  const isOffice = house.kind === 'office'
+  const isOffice = house.kind === 'office' || house.kind === 'marketing'
   const cust = installments.filter((r) => (r.side || 'customer') === 'customer').sort((a, b) => a.no - b.no)
   const contr = installments.filter((r) => r.side === 'contractor').sort((a, b) => a.no - b.no)
   const sum = (a: { amount: number; paid?: number }[], k: 'amount' | 'paid') => a.reduce((s, r) => s + (Number(r[k]) || 0), 0)

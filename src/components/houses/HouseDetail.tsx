@@ -10,7 +10,7 @@ import {
 import { useApp } from '../../store'
 import type { ApiHouse } from '../../store'
 import { api } from '../../api'
-import { OFFICE_CATS } from '../../data'
+import { OFFICE_CATS, MARKETING_CATS } from '../../data'
 import FilesPanel from './FilesPanel'
 import ContractorsPanel from './ContractorsPanel'
 import MoneyContractsPanel from './MoneyContractsPanel'
@@ -180,6 +180,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         )}
         {house.kind === 'cm' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#C0852C', padding: '5px 13px', borderRadius: 20 }}>ควบคุมงาน (CM)</span>}
         {house.kind === 'office' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#30506A', padding: '5px 13px', borderRadius: 20 }}>🏢 ออฟฟิศ / ค่าใช้จ่ายภายใน</span>}
+        {house.kind === 'marketing' && <span style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#8A3B6E', padding: '5px 13px', borderRadius: 20 }}>📣 การตลาด / สื่อโฆษณา</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           {canEditHouse && String(house.status || '').trim() === 'test' && (
             <button onClick={removeTestHouse} disabled={deleting} title="ลบบ้านทดสอบนี้และข้อมูลที่ผูกอยู่ (งวด ไฟล์ BOQ QC ฯลฯ) — ลบได้เฉพาะบ้านสถานะ Test"
@@ -210,7 +211,7 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
         </div>
       )}
 
-      {house.kind === 'office' ? (
+      {house.kind === 'office' || house.kind === 'marketing' ? (
         <OfficeSummary house={house} expenses={houseExp} prs={(data.prs || []).filter((r) => (r.house_code || '') === house.code)} pos={(data.purchaseOrders || []).filter((o) => o.house_code === house.code)} />
       ) : (<>
       {/* financial summary: customer vs contractor + profit */}
@@ -468,23 +469,27 @@ export default function HouseDetail({ house, tab, onSetTab, onGoHouses, onEditHo
 // สรุปค่าใช้จ่ายของโครงการ "ออฟฟิศ" แยกตามหมวด (เบิกค่าน้ำมัน / ซ่อมแซมออฟฟิศ / ของใช้สำนักงาน / อื่นๆ)
 // ใบขอซื้อ (อนุมัติแล้ว) นับตามหมวดในใบ · ใบสั่งซื้อผูกหมวดผ่านเลข PR · รายจ่ายจับคู่จากชื่อหมวดในรายจ่าย (ไม่ตรงหมวดไหน = อื่นๆ)
 function OfficeSummary({ house, expenses, prs, pos }: { house: ApiHouse; expenses: { cat: string; amount: number }[]; prs: { no: string; category?: string; amount: number; status: string; approval?: { done: boolean } }[]; pos: { pr_no?: string; amount: number }[] }) {
-  const catOfPr = (no?: string) => prs.find((r) => r.no === no)?.category || 'other'
-  const rows = OFFICE_CATS.map((c) => {
-    const pr = prs.filter((r) => (r.category || 'other') === c.key && (r.approval?.done || r.status === 'อนุมัติ')).reduce((s, r) => s + r.amount, 0)
-    const po = pos.filter((o) => catOfPr(o.pr_no) === c.key).reduce((s, o) => s + o.amount, 0)
-    const exp = expenses.filter((e) => (OFFICE_CATS.some((x) => x.label === e.cat) ? e.cat : 'อื่นๆ') === c.label).reduce((s, e) => s + e.amount, 0)
+  // โครงการการตลาดใช้หมวดโฆษณา · ออฟฟิศใช้หมวดออฟฟิศ — หมวดที่ไม่ตรง = หมวดสุดท้าย (อื่นๆ)
+  const isMkt = house.kind === 'marketing'
+  const CATS = isMkt ? MARKETING_CATS : OFFICE_CATS
+  const otherKey = CATS[CATS.length - 1].key, otherLabel = CATS[CATS.length - 1].label
+  const catOfPr = (no?: string) => prs.find((r) => r.no === no)?.category || otherKey
+  const rows = CATS.map((c) => {
+    const pr = prs.filter((r) => (CATS.some((x) => x.key === r.category) ? r.category : otherKey) === c.key && (r.approval?.done || r.status === 'อนุมัติ')).reduce((s, r) => s + r.amount, 0)
+    const po = pos.filter((o) => (CATS.some((x) => x.key === catOfPr(o.pr_no)) ? catOfPr(o.pr_no) : otherKey) === c.key).reduce((s, o) => s + o.amount, 0)
+    const exp = expenses.filter((e) => (CATS.some((x) => x.label === e.cat) ? e.cat : otherLabel) === c.label).reduce((s, e) => s + e.amount, 0)
     return { ...c, pr, po, exp }
   })
   const tot = (k: 'pr' | 'po' | 'exp') => rows.reduce((s, r) => s + r[k], 0)
   return (
     <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 0, background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }}>
-        <Cell label="รายจ่ายออฟฟิศที่บันทึกแล้ว" value={baht(tot('exp'))} color="#1C2730" sub={`รหัส ${house.code} · ประเภท: ออฟฟิศ / ค่าใช้จ่ายภายใน`} br />
+        <Cell label={isMkt ? 'ค่าการตลาดที่บันทึกแล้ว' : 'รายจ่ายออฟฟิศที่บันทึกแล้ว'} value={baht(tot('exp'))} color="#1C2730" sub={`รหัส ${house.code} · ประเภท: ${isMkt ? 'การตลาด / สื่อโฆษณา' : 'ออฟฟิศ / ค่าใช้จ่ายภายใน'}`} br />
         <Cell label="ใบขอซื้อที่อนุมัติแล้ว" value={baht(tot('pr'))} color="#30506A" sub={`${prs.filter((r) => r.approval?.done || r.status === 'อนุมัติ').length} ใบ`} br />
         <Cell label="ใบสั่งซื้อ (PO)" value={baht(tot('po'))} color="#C0852C" sub={`${pos.length} ใบ`} />
       </div>
       <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden' }}>
-        <div style={{ padding: '13px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>ค่าใช้จ่ายแยกตามหมวด (ออฟฟิศ)</div>
+        <div style={{ padding: '13px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>ค่าใช้จ่ายแยกตามหมวด ({isMkt ? 'การตลาด' : 'ออฟฟิศ'})</div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
@@ -513,7 +518,7 @@ function OfficeSummary({ house, expenses, prs, pos }: { house: ApiHouse; expense
             </tr>
           </tfoot>
         </table>
-        <div style={{ fontSize: 11.5, color: '#94A0A8', padding: '8px 18px' }}>ตอนขอซื้อของเข้าออฟฟิศ เลือกหมวด เบิกค่าน้ำมัน / ซ่อมแซมออฟฟิศ / ของใช้สำนักงาน / อื่นๆ ในใบขอซื้อ · บันทึกรายจ่ายให้ใส่ชื่อหมวดเดียวกันในช่อง "หมวด"</div>
+        <div style={{ fontSize: 11.5, color: '#94A0A8', padding: '8px 18px' }}>{isMkt ? 'ตอนขอซื้อ/จ้างงานโฆษณา เลือกโครงการนี้แล้วเลือกหมวด' : 'ตอนขอซื้อของเข้าออฟฟิศ เลือกหมวด'} {CATS.map((c) => c.label).join(' / ')} ในใบขอซื้อ · บันทึกรายจ่ายให้ใส่ชื่อหมวดเดียวกันในช่อง "หมวด"</div>
       </div>
     </>
   )

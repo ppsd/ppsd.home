@@ -1828,6 +1828,12 @@ function matchHouseInText(t) {
   const houses = db.prepare('SELECT code, name, kind FROM houses').all()
   const hit = houses.filter((x) => (x.name && t.includes(x.name)) || (x.code && t.includes(x.code))).sort((a, b) => (b.name || '').length - (a.name || '').length)[0]
   if (hit) return { code: hit.code, name: hit.name || hit.code, text: t.replace(hit.name || hit.code, ' ') }
+  // พูดถึง "การตลาด/โฆษณา" → โครงการการตลาด
+  const mm = t.match(/(?:ที่|ของ|เข้า|ใน|ค่า|งาน)?\s*(การตลาด|โฆษณา|marketing)/i)
+  if (mm) {
+    const o = houses.find((x) => x.kind === 'marketing')
+    if (o) return { code: o.code, name: o.name || o.code, text: t.replace(mm[0], ' ') }
+  }
   // พูดถึง "ออฟฟิศ/สำนักงาน/office" → โครงการออฟฟิศ (ค่าใช้จ่ายภายใน)
   const om = t.match(/(?:ที่|ของ|เข้า|ใน)?\s*(ออฟฟิศ|สำนักงาน|office)/i)
   if (om) {
@@ -1933,8 +1939,9 @@ function orderSummary(d) {
 async function handleLineOrder(uid, u, t, replyToken, ctx, pre) {
   // ตอบหมวดของออฟฟิศ (1-4 หรือพิมพ์ชื่อหมวด)
   if (ctx?.kind === 'order' && ctx.pending === 'ocat') {
-    const n = Number(t.trim()); const hit = OFFICE_CATS[n - 1] || OFFICE_CATS.find(([, l]) => t.includes(l) || l.includes(t.trim()))
-    if (!hit) return lineReply(replyToken, `ตอบเป็นตัวเลข 1-${OFFICE_CATS.length} ค่ะ (${OFFICE_CATS.map(([, l], i) => `${i + 1}=${l}`).join(' ')})`)
+    const CATS = catsForKind(internalKindOf(ctx.house_code))
+    const n = Number(t.trim()); const hit = CATS[n - 1] || CATS.find(([, l]) => t.includes(l) || l.includes(t.trim()))
+    if (!hit) return lineReply(replyToken, `ตอบเป็นตัวเลข 1-${CATS.length} ค่ะ (${CATS.map(([, l], i) => `${i + 1}=${l}`).join(' ')})`)
     return finishOrderAsk(uid, { ...ctx, category: hit[0], category_label: hit[1], pending: null }, replyToken)
   }
   // ตอบคำถาม "ของบ้านไหน"
@@ -1950,6 +1957,9 @@ async function handleLineOrder(uid, u, t, replyToken, ctx, pre) {
   return finishOrderAsk(uid, { kind: 'order', ...d, images: ctx?.kind === 'order' ? ctx.images || [] : [], pending: null, house_asked: false }, replyToken)
 }
 const OFFICE_CATS = [['fuel', 'เบิกค่าน้ำมัน'], ['repair', 'ซ่อมแซมออฟฟิศ'], ['supplies', 'ของใช้สำนักงาน'], ['other', 'อื่นๆ']]
+// โครงการการตลาด / สื่อโฆษณา (kind=marketing) — หมวดเดียวกับหน้าเว็บ (src/data.ts MARKETING_CATS)
+const MARKETING_CATS = [['ads_online', 'โฆษณาออนไลน์ (Facebook / Google / TikTok)'], ['print', 'ป้าย / สิ่งพิมพ์'], ['event', 'บูธ / งานแสดงบ้าน'], ['media', 'ถ่ายภาพ / วิดีโอ / กราฟิก'], ['show_home', 'บ้านตัวอย่าง'], ['mkt_other', 'การตลาดอื่นๆ']]
+const catsForKind = (kind) => (kind === 'marketing' ? MARKETING_CATS : OFFICE_CATS)
 // ===== AI อ่านภาษาคนในแชท → รายการสั่งของ / คำสั่งงาน (ใช้แทนกติกาจับคำเมื่อตั้งกุญแจ AI แล้ว · ไม่มีกุญแจ/AI ล้ม → กติกาเดิม) =====
 const AI_PARSE_MODEL = process.env.PPSD_AI_PARSE_MODEL || 'claude-sonnet-5'
 const TH_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์']
@@ -1970,7 +1980,7 @@ async function aiParseLine(text, sender) {
 พนักงาน (รหัส|ชื่อ|ชื่อเล่น|ตำแหน่ง):
 ${emps.map((e) => `${e.code}|${e.name}|${e.nickname || ''}|${e.role || ''}`).join('\n')}
 บ้าน/โครงการ (รหัส|ชื่อ|ประเภท):
-${houses.map((h) => `${h.code}|${h.name}|${h.kind === 'office' ? 'ออฟฟิศ' : 'บ้านลูกค้า'}`).join('\n')}
+${houses.map((h) => `${h.code}|${h.name}|${h.kind === 'office' ? 'ออฟฟิศ' : h.kind === 'marketing' ? 'การตลาด/โฆษณา' : 'บ้านลูกค้า'}`).join('\n')}
 หมวดของออฟฟิศ: fuel=เบิกค่าน้ำมัน repair=ซ่อมแซมออฟฟิศ supplies=ของใช้สำนักงาน other=อื่นๆ
 
 ข้อความ: """${t}"""
@@ -1981,7 +1991,7 @@ ${houses.map((h) => `${h.code}|${h.name}|${h.kind === 'office' ? 'ออฟฟ�
 - intent=order เมื่อขอซื้อ/สั่งของ/ขอจ้าง/เบิก (วัสดุ อุปกรณ์ น้ำมัน ช่างรับเหมา) · intent=work เมื่อสั่งให้ "คน" ไปทำงาน/ติดต่อ/ตรวจ/โทร · intent=other ถ้าไม่ใช่ทั้งสอง (ทักทาย ถาม)
 - items: แยกทีละรายการ ชื่อของให้สะอาดเป็นชื่อวัสดุ/งานมาตรฐาน (ตัดคำพูด เช่น ซัก/หน่อย/นะ/ครับ/อีก/กับ) ใส่ขนาด/สเปคไว้ในชื่อ เช่น "เหล็กเส้น 12 มม." · qty ตัวเลข (ไม่ระบุ = 0) · unit หน่วยไทย (ถุง/เส้น/คิว/ลิตร/ชิ้น/ชุด/เหมา…)
 - house_code: รหัสจากรายการบ้านถ้าข้อความพูดถึง (เรียกย่อได้ เช่น "บ้านคุณพร" = บ้านที่ชื่อมีคำว่า พร) · พูดถึงออฟฟิศ/สำนักงาน = โครงการประเภทออฟฟิศ · ไม่มี = ""
-- category: เฉพาะเมื่อบ้านเป็นออฟฟิศ (fuel/repair/supplies/other)
+- category: เฉพาะเมื่อบ้านเป็นออฟฟิศ (fuel/repair/supplies/other) หรือการตลาด/โฆษณา (ads_online/print/event/media/show_home/mkt_other)
 - executor_code/executor_name: (intent=work) พนักงานที่ต้องไปทำ จับจากชื่อ/ชื่อเล่น/คำนำหน้า (พี่/ช่าง/คุณ/น้อง) ห้ามเป็นผู้ส่ง · ไม่ชัด = ""
 - task: (intent=work) สรุปงานที่ต้องทำสั้นๆ
 - due_iso: วันกำหนด YYYY-MM-DD จาก วันนี้/พรุ่งนี้/มะรืน/ศุกร์นี้/15 ก.ย. ฯลฯ · ไม่มี = ""
@@ -1997,7 +2007,7 @@ function normalizeAiParse(p, sender) {
   const out = { intent: ['order', 'work', 'other'].includes(p?.intent) ? p.intent : 'other', items: [], house_code: '', house_name: '', category: '', category_label: '', executor: '', executor_code: '', matched_by: '', task: String(p?.task || '').trim(), due_date: '', urgent: !!p?.urgent, by_ai: true }
   out.items = (Array.isArray(p?.items) ? p.items : []).map((it) => ({ desc: String(it?.desc || '').replace(/\s+/g, ' ').trim(), qty: num(it?.qty), unit: String(it?.unit || '').trim() })).filter((it) => it.desc)
   if (p?.house_code) { const h = db.prepare('SELECT code, name FROM houses WHERE code=?').get(String(p.house_code)); if (h) { out.house_code = h.code; out.house_name = h.name || h.code } }
-  if (p?.category && OFFICE_CATS.some(([k]) => k === p.category)) { out.category = p.category; out.category_label = OFFICE_CATS.find(([k]) => k === p.category)[1] }
+  { const C = [...OFFICE_CATS, ...MARKETING_CATS].find(([k]) => k === p?.category); if (C) { out.category = C[0]; out.category_label = C[1] } }
   let e = p?.executor_code ? db.prepare("SELECT code, name FROM employees WHERE code=? AND (status IS NULL OR status NOT IN ('ลาออก'))").get(String(p.executor_code)) : null
   if (!e && p?.executor_name) e = findEmployeeByName(String(p.executor_name))
   if (e) {
@@ -2017,11 +2027,13 @@ async function parseOrderSmart(text, sender, pre) {
   return { ...parseOrderText(text), by_ai: false }
 }
 
-const isOfficeHouse = (code) => !!code && db.prepare('SELECT kind FROM houses WHERE code=?').get(code)?.kind === 'office'
+// โครงการภายใน (ออฟฟิศ / การตลาด) → ถามหมวดค่าใช้จ่าย · คืนค่า kind หรือ '' ถ้าเป็นบ้านลูกค้า
+const internalKindOf = (code) => { const k = code ? db.prepare('SELECT kind FROM houses WHERE code=?').get(code)?.kind : ''; return k === 'office' || k === 'marketing' ? k : '' }
 function finishOrderAsk(uid, d, replyToken) {
   if (!d.house_name && !d.house_asked && db.prepare('SELECT COUNT(*) c FROM houses').get().c) { setLineCtx(uid, { ...d, pending: 'house' }); return lineReply(replyToken, `📝 รับรายการ ${d.items.length} รายการแล้ว — ของบ้านไหนคะ? (พิมพ์ชื่อบ้าน หรือ 'ไม่ระบุ')`) }
   // โครงการออฟฟิศ → ถามหมวด (น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ) เพื่อแยกค่าใช้จ่าย
-  if (isOfficeHouse(d.house_code) && !d.category) { setLineCtx(uid, { ...d, pending: 'ocat' }); return lineReply(replyToken, `🏢 ของออฟฟิศ — หมวดไหนคะ? ตอบตัวเลข\n${OFFICE_CATS.map(([, l], i) => `${i + 1}. ${l}`).join('\n')}`) }
+  const ik = internalKindOf(d.house_code)
+  if (ik && !d.category) { setLineCtx(uid, { ...d, pending: 'ocat' }); return lineReply(replyToken, `${ik === 'marketing' ? '📣 ค่าการตลาด / โฆษณา' : '🏢 ของออฟฟิศ'} — หมวดไหนคะ? ตอบตัวเลข\n${catsForKind(ik).map(([, l], i) => `${i + 1}. ${l}`).join('\n')}`) }
   // ถามรูปสินค้า (แนบเข้าใบ PR ให้จัดซื้อเห็นของที่ต้องการ) — ส่งรูปในแชทได้เลย
   if (!d.photos_asked && orderFilesOf(uid).length === 0) { setLineCtx(uid, { ...d, pending: 'photos' }); return lineReply(replyToken, `📷 มีรูปสินค้า/ตัวอย่างของที่ต้องการไหมคะ? ส่งรูปมาในแชทนี้ได้เลย (สูงสุด 3 รูป) พอครบพิมพ์ 'ครบ' · ถ้าไม่มีพิมพ์ 'ไม่มี'`) }
   setLineCtx(uid, { ...d, photos_asked: true, pending: 'confirm' })
@@ -2646,7 +2658,7 @@ api.post('/houses', canWrite, (req, res) => {
   // รหัสซ้ำ = งวด/จัดซื้อ/ไฟล์ของ 2 บ้านปนกัน → ห้าม
   const dup = db.prepare('SELECT name FROM houses WHERE code=?').get(code)
   if (dup) return res.status(409).json({ error: `รหัสบ้าน ${code} ถูกใช้แล้ว (บ้าน "${dup.name}")` })
-  const kind = ['cm', 'office'].includes(b.kind) ? b.kind : 'sale'
+  const kind = ['cm', 'office', 'marketing'].includes(b.kind) ? b.kind : 'sale'
   const info = db
     .prepare('INSERT INTO houses (code,name,project,customer,value,pct,collected,remain,status,area,design,start_date,deliver_date,manager,kind,owner,contract_no,scope,engineer,supervisor,service_fee,site_location) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(code, b.name, b.project || '', b.customer || '', v, Number(b.pct) || 0, 0, v, String(b.status || 'เพิ่งเริ่ม').trim(), b.area || '', b.design || '', b.start_date || '', b.deliver_date || '', b.manager || '', kind, b.owner || '', b.contract_no || '', b.scope || '', b.engineer || '', b.supervisor || '', Number(b.service_fee) || 0, b.site_location || '')
@@ -2662,7 +2674,7 @@ api.put('/houses/:id', canWrite, (req, res) => {
   const b = req.body || {}
   const f = (k, num) => (b[k] != null && b[k] !== '' ? (num ? Number(b[k]) : b[k]) : h[k])
   db.prepare(`UPDATE houses SET name=?, project=?, customer=?, value=?, pct=?, status=?, area=?, design=?, start_date=?, deliver_date=?, manager=?, kind=?, owner=?, contract_no=?, scope=?, engineer=?, supervisor=?, service_fee=?, site_location=?, photo=? WHERE id=?`)
-    .run(f('name'), f('project'), f('customer'), f('value', true), b.pct != null && b.pct !== '' ? Number(b.pct) : h.pct, String(f('status') || '').trim(), f('area'), f('design'), f('start_date'), f('deliver_date'), f('manager'), ['cm', 'sale', 'office'].includes(b.kind) ? b.kind : h.kind, f('owner'), f('contract_no'), f('scope'), f('engineer'), f('supervisor'), f('service_fee', true), f('site_location'), b.photo != null ? b.photo : h.photo, h.id)
+    .run(f('name'), f('project'), f('customer'), f('value', true), b.pct != null && b.pct !== '' ? Number(b.pct) : h.pct, String(f('status') || '').trim(), f('area'), f('design'), f('start_date'), f('deliver_date'), f('manager'), ['cm', 'sale', 'office', 'marketing'].includes(b.kind) ? b.kind : h.kind, f('owner'), f('contract_no'), f('scope'), f('engineer'), f('supervisor'), f('service_fee', true), f('site_location'), b.photo != null ? b.photo : h.photo, h.id)
   for (const k of HOUSE_NUM_FIELDS) db.prepare(`UPDATE houses SET ${k}=? WHERE id=?`).run(f(k, true) || 0, h.id)
   recomputeHouse(h.code)
   audit(req, 'แก้ไขบ้าน', h.name)
@@ -5163,7 +5175,7 @@ function createPurchaseRequest(body, user) {
   const seq = nextSeq('pr', () => Math.max(maxNoSuffix('purchase_requests'), db.prepare('SELECT COUNT(*) c FROM purchase_requests').get().c + 142))
   const no = `PR-${docYear()}-${String(seq).padStart(4, '0')}`
   const hName = house_code ? (db.prepare('SELECT name FROM houses WHERE code=?').get(house_code)?.name || house_code) : (house || '')
-  const cat = ['house', 'carport', 'road', 'fuel', 'repair', 'supplies', 'other'].includes(category) ? category : '' // บ้าน: ตัวบ้าน/โรงจอดรถ/ถนน · ออฟฟิศ: น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ
+  const cat = ['house', 'carport', 'road', 'fuel', 'repair', 'supplies', 'other', 'ads_online', 'print', 'event', 'media', 'show_home', 'mkt_other'].includes(category) ? category : '' // บ้าน: ตัวบ้าน/โรงจอดรถ/ถนน · ออฟฟิศ: น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ · การตลาด: ออนไลน์/ป้าย/บูธ/ถ่ายภาพ/บ้านตัวอย่าง/อื่นๆ
   const info = db
     .prepare('INSERT INTO purchase_requests (no,date,house,by,item,amount,status,requester_sig,image,house_code,category,items,images) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(no, todayTH(), hName, me.name, summary, total, needCheck ? 'รอตรวจสอบ' : 'รออนุมัติ', me.signature || null, imgs[0] || null, house_code || '', cat, lineItems ? JSON.stringify(lineItems) : null, imgs.length ? JSON.stringify(imgs) : null)
@@ -8073,6 +8085,57 @@ function monthlyReport(period) {
     journalIssues: db.prepare('SELECT COUNT(*) c FROM journal_issues').get().c,
   }
 }
+// ===== ภาพรวมเงิน 4 ขา (รายเดือน ตามบัญชี GL) =====
+// 1) จ่ายเพื่อบ้าน (โครงการขาย/CM) · 2) จ่ายภายในบริษัท (ออฟฟิศ + รายการไม่ผูกบ้าน เช่น เงินเดือน) · 3) การตลาด/โฆษณา (kind=marketing) · 4) เงินเข้าจากลูกค้า (รายได้ 4010)
+// ใช้ยอดในบัญชี (ต้นทุน/ค่าใช้จ่าย/รายได้ ตามวันที่ลงบัญชี) → ตรงกับงบกำไรขาดทุน ไม่นับซ้ำ (PO เครดิตนับตอนรับของ ไม่นับตอนจ่าย)
+function moneyStreams(year) {
+  const rows = db.prepare(`SELECT substr(e.date_iso,1,7) ym, COALESCE(h.kind,'') kind, COALESCE(e.house_code,'') hc, a.type, a.code acc, a.name acc_name,
+      SUM(l.debit) dr, SUM(l.credit) cr
+    FROM journal_lines l JOIN journal_entries e ON e.id=l.entry_id JOIN accounts a ON a.code=l.account
+    LEFT JOIN houses h ON h.code=e.house_code
+    WHERE e.void=0 AND e.date_iso LIKE ? AND a.type IN ('revenue','cost','expense')
+    GROUP BY ym, kind, hc, a.code`).all(year + '-%')
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100
+  const months = Array.from({ length: 12 }, (_, i) => ({ ym: `${year}-${String(i + 1).padStart(2, '0')}`, customer_in: 0, other_in: 0, house_out: 0, company_out: 0, marketing_out: 0 }))
+  const byHouse = new Map(); const companyAcc = new Map(); const mktAcc = new Map()
+  const streamOf = (kind, hc) => (kind === 'marketing' ? 'marketing' : kind === 'office' || !hc ? 'company' : 'house')
+  for (const r of rows) {
+    const m = months.find((x) => x.ym === r.ym); if (!m) continue
+    if (r.type === 'revenue') {
+      const v = r2(r.cr - r.dr)
+      if (r.acc === '4010') m.customer_in += v; else m.other_in += v
+      if (r.hc && r.acc === '4010') { const h = byHouse.get(r.hc) || { code: r.hc, in: 0, out: 0 }; h.in += v; byHouse.set(r.hc, h) }
+      continue
+    }
+    const v = r2(r.dr - r.cr)
+    const s = streamOf(r.kind, r.hc)
+    if (s === 'house') { m.house_out += v; const h = byHouse.get(r.hc) || { code: r.hc, in: 0, out: 0 }; h.out += v; byHouse.set(r.hc, h) }
+    else if (s === 'marketing') { m.marketing_out += v; mktAcc.set(r.acc_name, (mktAcc.get(r.acc_name) || 0) + v) }
+    else { m.company_out += v; companyAcc.set(r.acc_name, (companyAcc.get(r.acc_name) || 0) + v) }
+  }
+  for (const m of months) for (const k of ['customer_in', 'other_in', 'house_out', 'company_out', 'marketing_out']) m[k] = r2(m[k])
+  const total = Object.fromEntries(['customer_in', 'other_in', 'house_out', 'company_out', 'marketing_out'].map((k) => [k, r2(months.reduce((s, m) => s + m[k], 0))]))
+  const names = new Map(db.prepare('SELECT code, name, customer, status FROM houses').all().map((h) => [h.code, h]))
+  const houses = [...byHouse.values()].map((h) => ({ ...h, in: r2(h.in), out: r2(h.out), name: names.get(h.code)?.name || h.code, customer: names.get(h.code)?.customer || '', status: names.get(h.code)?.status || '' }))
+    .sort((a, b) => (b.in + b.out) - (a.in + a.out))
+  // ค่าการตลาดแยกหมวด (จากเอกสารต้นทาง: PO ตามหมวดใน PR · รายจ่าย · เงินสดย่อย · ใบจ่ายเงิน) — ตัวเลขรวมอาจต่างจากบัญชีเล็กน้อยถ้ามีรายการลงบัญชีมือ
+  const mktCodes = db.prepare("SELECT code FROM houses WHERE kind='marketing'").all().map((r) => r.code)
+  const catLabel = (c) => (MARKETING_CATS.find(([k, l]) => k === c || l === c)?.[1]) || (c ? String(c) : 'การตลาดอื่นๆ')
+  const byCat = new Map(); const addCat = (c, v) => { const k = catLabel(c); byCat.set(k, r2((byCat.get(k) || 0) + (Number(v) || 0))) }
+  if (mktCodes.length) {
+    const ph = mktCodes.map(() => '?').join(',')
+    for (const e of db.prepare(`SELECT e.cat, e.amount, e.po_id, pr.category prcat FROM expenses e LEFT JOIN purchase_orders po ON po.id=e.po_id LEFT JOIN purchase_requests pr ON pr.no=po.pr_no
+      WHERE e.house_code IN (${ph}) AND COALESCE(e.status,'') != 'ปฏิเสธ' AND COALESCE(e.date_iso,'') LIKE ?`).all(...mktCodes, year + '-%')) addCat(e.po_id ? e.prcat : e.cat, e.amount)
+    try { for (const p of db.prepare(`SELECT cat, amount FROM petty_expenses WHERE house_code IN (${ph}) AND COALESCE(date_iso,'') LIKE ?`).all(...mktCodes, year + '-%')) addCat(p.cat, p.amount) } catch { /* ไม่มีตารางเงินสดย่อย */ }
+    for (const p of db.prepare(`SELECT gross FROM payments WHERE house_code IN (${ph}) AND po_id IS NULL AND COALESCE(status,'') != 'ปฏิเสธ' AND COALESCE(date_iso,'') LIKE ?`).all(...mktCodes, year + '-%')) addCat('', p.gross)
+  }
+  const list = (m) => [...m.entries()].map(([name, amount]) => ({ name, amount: r2(amount) })).filter((x) => Math.abs(x.amount) > 0.004).sort((a, b) => b.amount - a.amount)
+  return { year, months, total, houses, company_by_account: list(companyAcc), marketing_by_account: list(mktAcc), marketing_by_cat: list(byCat), marketing_projects: mktCodes }
+}
+api.get('/reports/money-streams', financeOnly, (req, res) => {
+  const y = /^\d{4}$/.test(String(req.query.year || '')) ? String(req.query.year) : String(new Date().getFullYear())
+  res.json(moneyStreams(y))
+})
 api.get('/reports/monthly', financeOnly, (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
   res.json(monthlyReport(period))
@@ -8135,8 +8198,8 @@ api.get('/reports', financeOnly, (_req, res) => {
     out: outContractor + outMaterial + outPayroll + outOther,
     net: inCustomer - (outContractor + outMaterial + outPayroll + outOther),
   }
-  // ----- งบประมาณ (ต้นทุนแผน) vs จริง ต่อบ้าน -----
-  const budget = houses.map((h) => {
+  // ----- งบประมาณ (ต้นทุนแผน) vs จริง ต่อบ้าน — เฉพาะบ้านลูกค้า (ออฟฟิศ/การตลาดไม่มีงบต้นทุนช่าง → ดูที่ "เงิน 4 ขา") -----
+  const budget = houses.filter((h) => h.kind !== 'office' && h.kind !== 'marketing').map((h) => {
     const plan = h.contractor_value || 0 // ต้นทุนช่างตามแผน
     const actualContractor = h.paid || 0
     const actualMaterial = matByHouse[h.code] || 0
@@ -8730,6 +8793,18 @@ const PORT = process.env.PORT || 3001
 // bind to 0.0.0.0 so other devices on the network can reach it
 // ประวัติการแก้ไขข้อมูลทุกตาราง — สร้าง trigger หลัง migration/ตารางทั้งหมดถูกสร้างแล้ว
 try { console.log(`  ประวัติการแก้ไขข้อมูล: เปิดบันทึก ${setupHistory(db)} ตาราง`) } catch (e) { console.error('history setup:', e.message) }
+// ขาเงิน "การตลาด / สื่อโฆษณา": สร้างโครงการให้ครั้งเดียว (ถ้ายังไม่มี) — ใช้ลงค่าโฆษณาผ่าน PR/PO/รายจ่าย/เงินสดย่อย เหมือนโครงการออฟฟิศ
+try {
+  if (getSetting('marketing_project_v1', '') !== '1') {
+    if (!db.prepare("SELECT 1 FROM houses WHERE kind='marketing'").get()) {
+      let code = 'MKT'; for (let i = 1; db.prepare('SELECT 1 FROM houses WHERE code=?').get(code); i++) code = 'MKT-' + i
+      db.prepare("INSERT INTO houses (code,name,project,customer,value,pct,collected,remain,status,kind) VALUES (?,?,?,?,0,0,0,0,'เพิ่งเริ่ม','marketing')")
+        .run(code, 'การตลาด / สื่อโฆษณา', 'ภายในบริษัท', '')
+      console.log(`  สร้างโครงการ "การตลาด / สื่อโฆษณา" (${code}) ให้แล้ว`)
+    }
+    setSetting('marketing_project_v1', '1')
+  }
+} catch (e) { console.error('marketing project:', e.message) }
 app.listen(PORT, '0.0.0.0', (err) => {
   // Express 5 ส่ง error (เช่น พอร์ตไม่ว่าง) มาที่ callback นี้แทนการล่ม — ถ้าไม่เช็ค ตัวที่ได้พอร์ตไม่ได้จะค้างรัน
   // งานตั้งเวลา/สรุปเช้า/ลิงก์สาธารณะซ้ำ และแย่งตั้ง Webhook LINE (เช่น เปิด start.bat ซ้อนกับ run-server.bat)

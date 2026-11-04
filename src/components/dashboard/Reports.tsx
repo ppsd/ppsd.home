@@ -4,6 +4,7 @@ import { api } from '../../api'
 import { baht } from '../../data'
 import { exportXlsx, ExportButton } from '../../exportCsv'
 import MonthlyReportDoc, { type MonthlyReport } from './MonthlyReportDoc'
+import MoneyStreams from './MoneyStreams'
 
 const CAT_COLORS: Record<string, string> = { วัสดุ: '#30506A', ค่าแรง: '#C0852C', ขนส่ง: '#5C6770', อื่นๆ: '#2E7D55' }
 
@@ -68,6 +69,9 @@ export default function Reports() {
         <button onClick={openMonthly} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '8px 14px', cursor: 'pointer' }}>📊 เปิดรายงานผู้บริหาร</button>
         <button onClick={() => window.print()} className="hov-f3f5f7" style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 14px', cursor: 'pointer' }}>🖨 พิมพ์ / บันทึก PDF</button>
       </div>
+      {/* เงิน 4 ขา: บ้าน · บริษัท · การตลาด · ลูกค้า */}
+      <MoneyStreams />
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         <Kpi label="มูลค่าสัญญารวม" value={baht(totals.contract)} color="#1C2730" />
         <Kpi label="เก็บเงินแล้ว" value={baht(totals.collected)} color="#2E7D55" />

@@ -29,7 +29,7 @@ export default function Installments() {
   })
   // ตัวเลือกบ้าน = บ้านทั้งหมดในระบบ (ยกเว้นแบบออฟฟิศ/ค่าใช้จ่ายภายในที่ไม่มีงวด) + จำนวนงวดของแต่ละหลัง
   const instCount = installments.reduce<Record<string, number>>((m, r) => { m[r.house_code] = (m[r.house_code] || 0) + 1; return m }, {})
-  const houseOptions = (data.houses || []).filter((h) => h.kind !== 'office' || instCount[h.code]).slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
+  const houseOptions = (data.houses || []).filter((h) => (h.kind !== 'office' && h.kind !== 'marketing') || instCount[h.code]).slice().sort((a, b) => a.name.localeCompare(b.name, 'th'))
 
   return (
     <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>

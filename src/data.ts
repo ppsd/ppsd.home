@@ -348,7 +348,7 @@ export const filters = [
   { id: 'after-service', label: 'After-service' },
   { id: 'เพิ่งเริ่ม', label: 'เพิ่งเริ่ม' },
   { id: 'test', label: 'Test' },
-  { id: 'office', label: '🏢 ออฟฟิศ' }, // โครงการประเภทออฟฟิศ/ค่าใช้จ่ายภายใน (ดูจาก kind ไม่ใช่สถานะ)
+  { id: 'office', label: '🏢 ออฟฟิศ / การตลาด' }, // โครงการภายใน: ออฟฟิศ + การตลาด (ดูจาก kind ไม่ใช่สถานะ)
 ]
 
 // ---- house detail static data ----
@@ -584,9 +584,21 @@ export const OFFICE_CATS = [
   { key: 'supplies', label: 'ของใช้สำนักงาน' },
   { key: 'other', label: 'อื่นๆ' },
 ]
+// โครงการ "การตลาด / สื่อโฆษณา" (kind=marketing) — ขาเงินค่าโฆษณา แยกจากบ้านลูกค้าและค่าใช้จ่ายออฟฟิศ
+export const MARKETING_CATS = [
+  { key: 'ads_online', label: 'โฆษณาออนไลน์ (Facebook / Google / TikTok)' },
+  { key: 'print', label: 'ป้าย / สิ่งพิมพ์' },
+  { key: 'event', label: 'บูธ / งานแสดงบ้าน' },
+  { key: 'media', label: 'ถ่ายภาพ / วิดีโอ / กราฟิก' },
+  { key: 'show_home', label: 'บ้านตัวอย่าง' },
+  { key: 'mkt_other', label: 'การตลาดอื่นๆ' },
+]
+export const isMarketingKind = (kind?: string | null) => kind === 'marketing'
+/** โครงการภายใน (ไม่ใช่บ้านลูกค้า): ออฟฟิศ หรือ การตลาด */
+export const isInternalKind = (kind?: string | null) => kind === 'office' || kind === 'marketing'
 export const isOfficeKind = (kind?: string | null) => kind === 'office'
 // ชื่อบ้านที่มีคำว่า office/ออฟฟิศ/สำนักงาน ถือเป็นออฟฟิศด้วย (กรณียังไม่ได้ตั้งประเภทในหน้าแก้ไข)
 export const isOfficeHouse = (h?: { kind?: string | null; name?: string } | null) => !!h && (isOfficeKind(h.kind) || /office|ออฟฟิศ|สำนักงาน/i.test(h.name || ''))
-export const catsOfKind = (kind?: string | null) => (isOfficeKind(kind) ? OFFICE_CATS : HOUSE_CATS)
-export const catsOfHouse = (h?: { kind?: string | null; name?: string } | null) => (isOfficeHouse(h) ? OFFICE_CATS : HOUSE_CATS)
-export const catLabelOf = (key?: string | null) => [...HOUSE_CATS, ...OFFICE_CATS].find((c) => c.key === key)?.label || key || ''
+export const catsOfKind = (kind?: string | null) => (isMarketingKind(kind) ? MARKETING_CATS : isOfficeKind(kind) ? OFFICE_CATS : HOUSE_CATS)
+export const catsOfHouse = (h?: { kind?: string | null; name?: string } | null) => (isMarketingKind(h?.kind) ? MARKETING_CATS : isOfficeHouse(h) ? OFFICE_CATS : HOUSE_CATS)
+export const catLabelOf = (key?: string | null) => [...HOUSE_CATS, ...OFFICE_CATS, ...MARKETING_CATS].find((c) => c.key === key)?.label || key || ''

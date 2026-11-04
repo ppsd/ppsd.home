@@ -162,7 +162,7 @@ function Customer360({ id, onClose, onChanged }: { id: number; onClose: () => vo
   const closeCase = async (i: Issue, status: string) => { const note = status === 'แก้ไขแล้ว' ? window.prompt('สรุปการแก้ไขที่จะแจ้งลูกค้า (เว้นว่างได้)') : ''; if (note === null) return; try { await api.put('/crm/cases/' + i.id, { status, note_add: note || '' }); load() } catch (e) { setMsg((e as Error).message) } }
   const ss = STATUS_STYLE(c.status)
   const section = (title: string, body: React.ReactNode, extra?: React.ReactNode) => <div style={{ ...card }}><div style={{ padding: '9px 14px', borderBottom: '1px solid #EEF1F4', fontSize: 12.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>{title}{extra}</div><div style={{ padding: 12 }}>{body}</div></div>
-  const allHouses = (data.houses || []).filter((h) => h.kind !== 'office')
+  const allHouses = (data.houses || []).filter((h) => h.kind !== 'office' && h.kind !== 'marketing')
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* หัวลูกค้า */}
@@ -463,7 +463,7 @@ function CasesTab() {
           <ModalShell title="เปิดเคสให้ลูกค้า" sub="แจ้งซ่อม / สอบถาม / ร้องเรียน — แจ้งโฟร์แมน/ผู้บริหารทันที" width={560} onClose={() => setAdding(false)}
             footer={<><button onClick={() => setAdding(false)} style={ghost}>ยกเลิก</button><button onClick={add} style={btn()}>เปิดเคส</button></>}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
-              <Fld label="บ้าน" full><select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— เลือกบ้าน —</option>{(data.houses || []).filter((h) => h.kind !== 'office').map((h) => <option key={h.code} value={h.code}>{h.code} {h.name}</option>)}</select></Fld>
+              <Fld label="บ้าน" full><select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}><option value="">— เลือกบ้าน —</option>{(data.houses || []).filter((h) => h.kind !== 'office' && h.kind !== 'marketing').map((h) => <option key={h.code} value={h.code}>{h.code} {h.name}</option>)}</select></Fld>
               <Fld label="เรื่องที่แจ้ง" req full><input style={field} placeholder="เช่น ห้องน้ำชั้น 2 รั่วซึม" autoFocus value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Fld>
               <Fld label="ความเร่งด่วน"><select style={field} value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })}>{['ทั่วไป', 'ด่วน', 'ด่วนมาก'].map((x) => <option key={x}>{x}</option>)}</select></Fld>
               <Fld label="ประเภท"><select style={field} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['แจ้งซ่อม', 'สอบถาม', 'ร้องเรียน', 'ตรวจบ้านหลังส่งมอบ', 'อื่นๆ'].map((x) => <option key={x}>{x}</option>)}</select></Fld>

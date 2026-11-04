@@ -50,7 +50,7 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
   const st = (h: ApiHouse) => String(h.status || '').trim()
   // กลุ่มของบ้านสำหรับปุ่มกรอง: ออฟฟิศ (ประเภทโครงการ) · test (บ้านทดสอบ) · ที่เหลือตามสถานะ
   // "ทั้งหมด" = บ้านจริงเท่านั้น (ไม่รวมออฟฟิศและบ้านทดสอบ — ดูได้จากปุ่มของตัวเอง)
-  const groupOf = (h: ApiHouse) => (h.kind === 'office' ? 'office' : st(h))
+  const groupOf = (h: ApiHouse) => (h.kind === 'office' || h.kind === 'marketing' ? 'office' : st(h)) // ปุ่ม 🏢 = โครงการภายใน (ออฟฟิศ + การตลาด)
   const inFilter = (h: ApiHouse, id: string) => (id === 'all' ? !['office', 'test'].includes(groupOf(h)) : groupOf(h) === id)
   const filtered = houses.filter((h) => {
     const okS = inFilter(h, statusFilter)
@@ -99,7 +99,7 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
             <div key={h.id} onClick={() => onOpenHouse(h.id)} className="house-card" style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 13, overflow: 'hidden', cursor: 'pointer' }}>
               <div style={{ height: 130, background: h.photo ? '#1E2E3B' : 'repeating-linear-gradient(135deg,#EAEEF2 0 12px,#E2E8ED 12px 24px)', position: 'relative', display: 'flex', alignItems: 'flex-end', padding: 11 }}>
                 {h.photo && <img src={h.photo} alt={h.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
-                <span style={{ position: 'absolute', top: 11, right: 11, fontSize: 11, fontWeight: 600, color: h.kind === 'office' ? '#fff' : ss.c, background: h.kind === 'office' ? '#30506A' : ss.bg, padding: '3px 10px', borderRadius: 20, zIndex: 1 }}>{h.kind === 'office' ? '🏢 ออฟฟิศ' : h.status}</span>
+                <span style={{ position: 'absolute', top: 11, right: 11, fontSize: 11, fontWeight: 600, color: h.kind === 'office' || h.kind === 'marketing' ? '#fff' : ss.c, background: h.kind === 'office' ? '#30506A' : h.kind === 'marketing' ? '#8A3B6E' : ss.bg, padding: '3px 10px', borderRadius: 20, zIndex: 1 }}>{h.kind === 'office' ? '🏢 ออฟฟิศ' : h.kind === 'marketing' ? '📣 การตลาด' : h.status}</span>
                 {canEdit && (
                   <label onClick={(e) => e.stopPropagation()} title={h.photo ? 'เปลี่ยนรูปบ้าน' : 'ใส่รูปบ้าน'} style={{ position: 'absolute', top: 11, left: 11, zIndex: 1, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: '#30506A', background: 'rgba(255,255,255,.92)', border: '1px solid rgba(0,0,0,.06)', borderRadius: 20, padding: '3px 9px', cursor: uploading === h.id ? 'wait' : 'pointer' }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
@@ -113,7 +113,7 @@ export default function HouseList({ search, statusFilter, onSearch, onSetFilter,
                 <div style={{ fontSize: 15, fontWeight: 600, color: '#1C2730' }}>{h.name}</div>
                 <div style={{ fontSize: 12, color: '#94A0A8', marginTop: 1 }}>{h.project} · {h.customer}</div>
 
-                {h.kind === 'office' ? (
+                {h.kind === 'office' || h.kind === 'marketing' ? (
                   <div style={{ marginTop: 13 }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
                       <span style={{ fontSize: 11.5, color: '#5C6770' }}>ค่าใช้จ่ายออฟฟิศ (รายจ่ายที่บันทึก)</span>
