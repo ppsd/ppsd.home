@@ -345,5 +345,132 @@ export function createCenter(d) {
     return out
   }
 
-  return { gated, register, notificationsFor, canApprove, submit, registerOp }
+  // ===== แจ้งเตือนเข้ากลุ่ม LINE (เฟส 3) =====
+  // ทุก N นาที รวบเรื่องใหม่จากความเคลื่อนไหวบ้าน (เฉพาะประเภทที่เลือก) ส่งเป็นข้อความเดียวเข้ากลุ่ม/คนที่ตั้งไว้
+  // เปิดครั้งแรก/เปิดใหม่ = เริ่มนับจากตอนนี้ (ไม่ยิงย้อนหลัง) · ช่วงเงียบ (ค่าเริ่ม 20:00–07:00) เก็บไว้ส่งรวมตอนเช้า
+  const ALERT_CATS = {
+    flag: 'เพิ่ม-ลดงาน / ยอดเงินเปลี่ยน', approval: 'คำขออนุมัติ (ส่งขอ / อนุมัติ / ตีกลับ)', contractor: 'เรื่องที่ช่างส่งทาง LINE',
+    issue: 'ปัญหาหน้างานใหม่', site: 'งานหน้างานอื่นๆ (QC · ใบสั่งงาน · รายงาน)', customer: 'ส่งอัปเดตให้ลูกค้าแล้ว', info: 'ข้อมูลบ้าน / ไฟล์',
+  }
+  const ALERT_DEF = { on: false, targets: [], cats: { flag: true, approval: true, contractor: true, issue: true, site: false, customer: false, info: false }, every: 5, quiet: true }
+  const alertCfg = () => { const o = jparse(d.getSetting('center_alerts', '')) || {}; return { ...ALERT_DEF, ...o, cats: { ...ALERT_DEF.cats, ...(o.cats || {}) }, targets: Array.isArray(o.targets) ? o.targets : (d.getSetting('line_to', '') ? [d.getSetting('line_to', '')] : []) } }
+  // ตัวนับภายในของการแจ้งเตือน (เปลี่ยนทุกนาที) — เก็บแยกตารางที่ไม่เก็บประวัติ ไม่งั้นประวัติโตเองไม่หยุด
+  db.exec('CREATE TABLE IF NOT EXISTS center_state (k TEXT PRIMARY KEY, v TEXT)')
+  const stGet = (k) => db.prepare('SELECT v FROM center_state WHERE k=?').get(k)?.v ?? ''
+  const stSet = (k, v) => db.prepare('INSERT INTO center_state (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, String(v))
+  const isQuiet = (now = new Date()) => { const h = now.getHours(); return h >= 20 || h < 7 }
+  function alertEvents(fromId, toId) {
+    const ph = FEED_TABLES.map(() => '?').join(',')
+    const rows = db.prepare(`SELECT id, ts, user, table_name, action, before, after, ${houseExpr} AS hc FROM change_history WHERE id > ? AND id <= ? AND table_name IN (${ph}) ORDER BY id`).all(fromId, toId, ...FEED_TABLES)
+    const cfg = alertCfg(), byKey = new Map(), out = []
+    for (const r of rows) {
+      if (!r.hc || r.user === 'ระบบ') continue
+      const dsc = describe(r); if (!dsc) continue
+      const isNew = r.action === 'insert'
+      const match = (cfg.cats.flag && dsc.flag && r.table_name !== 'change_requests') || (cfg.cats.approval && r.table_name === 'change_requests') ||
+        (cfg.cats.contractor && (r.table_name === 'contractor_reports' || /\(ช่าง LINE\)/.test(r.user || ''))) || (cfg.cats.issue && r.table_name === 'issues' && isNew) ||
+        (cfg.cats.site && CAT_OF[r.table_name] === 'site') || (cfg.cats.customer && r.table_name === 'customer_updates') || (cfg.cats.info && CAT_OF[r.table_name] === 'info')
+      if (!match) continue
+      const key = `${r.ts}|${r.user}|${r.hc}`
+      const ex = byKey.get(key)
+      if (ex) { ex.parts.push(dsc); continue }
+      const ev = { ts: r.ts, user: r.user, house: r.hc, parts: [dsc] }
+      byKey.set(key, ev); out.push(ev)
+    }
+    return out
+  }
+  function alertText(evs) {
+    if (!evs.length) return ''
+    const MAX = 15, byHouse = new Map()
+    for (const e of evs.slice(0, MAX)) { if (!byHouse.has(e.house)) byHouse.set(e.house, []); byHouse.get(e.house).push(e) }
+    const L = [`🔔 ความเคลื่อนไหวบ้าน (${evs.length} เรื่อง)`]
+    for (const [h, es] of byHouse) {
+      L.push('', `🏠 ${houseName(h)}`)
+      for (const e of es) for (const p of e.parts.slice(0, 3)) {
+        L.push(`• ${e.ts.slice(11, 16)} ${String(e.user || '').replace(/ \(LINE\)$/, '')}: ${short(p.text, 90)}`)
+        for (const l of (p.lines || []).slice(0, 2)) L.push(`   ${short(l, 80)}`)
+      }
+    }
+    if (evs.length > MAX) L.push('', `…และอีก ${evs.length - MAX} เรื่อง`)
+    L.push('', '— ดูทั้งหมด: ERP → ความเคลื่อนไหวบ้าน')
+    return L.join('\n').slice(0, 4800)
+  }
+  let alertBusy = false
+  async function alertTick(force = false) {
+    if (alertBusy) return { sent: false, reason: 'busy' }
+    alertBusy = true
+    try {
+      const cfg = alertCfg(), max = maxFeedId()
+      const last = Number(stGet('center_alert_last')) || 0
+      if (!cfg.on || !last) { stSet('center_alert_last', String(max)); return { sent: false, reason: cfg.on ? 'start' : 'off' } } // ปิดอยู่ = เลื่อนจุดเริ่มตามไป (เปิดแล้วไม่ยิงย้อนหลัง)
+      if (!force) {
+        if (isQuiet() && cfg.quiet) return { sent: false, reason: 'quiet' }
+        const lastAt = Number(stGet('center_alert_at')) || 0
+        if (Date.now() - lastAt < Math.max(1, Number(cfg.every) || 5) * 60000) return { sent: false, reason: 'wait' }
+      }
+      const text = alertText(alertEvents(last, max))
+      stSet('center_alert_at', String(Date.now()))
+      if (!text) { stSet('center_alert_last', String(max)); return { sent: false, reason: 'empty' } }
+      if (!d.getSetting('line_token', '') || !cfg.targets.length) { stSet('center_alert_last', String(max)); return { sent: false, reason: 'no-line' } }
+      let ok = 0
+      for (const to of cfg.targets) if (await d.linePush(to, text)) ok++
+      if (ok) stSet('center_alert_last', String(max)) // ส่งไม่สำเร็จเลย → เก็บไว้ลองรอบหน้า
+      stSet('center_alert_status', JSON.stringify({ at: d.nowTS(), ok: ok > 0, sent: ok, of: cfg.targets.length }))
+      return { sent: ok > 0, text }
+    } finally { alertBusy = false }
+  }
+  setInterval(() => { alertTick().catch((e) => console.error('center alert:', e.message)) }, 60000)
+  setTimeout(() => { alertTick().catch(() => {}) }, 5000) // ตั้งจุดเริ่มตอนเปิดเซิร์ฟเวอร์
+
+  function registerAlerts(api) {
+    const adminOnly = (req, res) => { if (req.user?.role !== 'admin') { res.status(403).json({ error: 'ตั้งค่าได้เฉพาะผู้ดูแลระบบ' }); return false } return true }
+    api.get('/center/alerts', (req, res) => {
+      if (!adminOnly(req, res)) return
+      const seen = (d.lineSeen?.() || []).map((s) => ({ id: s.id, name: s.name, type: s.type }))
+      res.json({ ...alertCfg(), cat_labels: ALERT_CATS, seen, digest_to: d.getSetting('line_to', ''), has_token: !!d.getSetting('line_token', ''), status: jparse(stGet('center_alert_status')) })
+    })
+    api.put('/center/alerts', (req, res) => {
+      if (!adminOnly(req, res)) return
+      const b = req.body || {}, cur = alertCfg()
+      const next = {
+        on: b.on != null ? !!b.on : cur.on,
+        targets: Array.isArray(b.targets) ? [...new Set(b.targets.map((x) => String(x).trim()).filter((x) => /^[CRU][0-9a-f]{32}$/i.test(x)))].slice(0, 5) : cur.targets,
+        cats: Object.fromEntries(Object.keys(ALERT_CATS).map((k) => [k, b.cats?.[k] != null ? !!b.cats[k] : !!cur.cats[k]])),
+        every: Math.max(1, Math.min(60, Number(b.every) || cur.every)),
+        quiet: b.quiet != null ? !!b.quiet : cur.quiet,
+      }
+      if (next.on && !cur.on) stSet('center_alert_last', String(maxFeedId())) // เพิ่งเปิด → เริ่มนับจากตอนนี้
+      d.setSetting('center_alerts', JSON.stringify(next))
+      d.audit(req, 'ตั้งค่าแจ้งเตือนกลุ่ม LINE (ความเคลื่อนไหวบ้าน)', `${next.on ? 'เปิด' : 'ปิด'} · ผู้รับ ${next.targets.length} · ทุก ${next.every} นาที · ${Object.entries(next.cats).filter(([, v]) => v).map(([k]) => ALERT_CATS[k]).join(', ')}`)
+      res.json({ ok: true })
+    })
+    // ดูตัวอย่างข้อความจากเรื่องล่าสุด (ไม่ส่ง)
+    api.get('/center/alerts/preview', (req, res) => {
+      if (!adminOnly(req, res)) return
+      const max = maxFeedId()
+      const last = Number(stGet('center_alert_last')) || 0
+      let evs = alertEvents(last, max)
+      let pending = true
+      if (!evs.length) { pending = false; evs = alertEvents(Math.max(0, max - 3000), max).slice(-8) } // ไม่มีเรื่องรอส่ง → เอาเรื่องล่าสุดมาเป็นตัวอย่าง
+      res.json({ text: alertText(evs) || '(ยังไม่มีเรื่องที่ตรงกับประเภทที่เลือก)', pending, count: evs.length })
+    })
+    api.post('/center/alerts/test', async (req, res) => {
+      if (!adminOnly(req, res)) return
+      const cfg = alertCfg()
+      if (!d.getSetting('line_token', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่า LINE (หน้า LINE / ผู้ใช้งาน → แจ้งเตือน LINE)' })
+      if (!cfg.targets.length) return res.status(400).json({ error: 'ยังไม่ได้เลือกกลุ่ม/ผู้รับ' })
+      let ok = 0
+      for (const to of cfg.targets) if (await d.linePush(to, `🔔 ทดสอบแจ้งเตือน "ความเคลื่อนไหวบ้าน" จาก PPSD ERP\nกลุ่มนี้จะได้รับเรื่องสำคัญของบ้านทุก ${cfg.every} นาที (เมื่อมีเรื่องใหม่)`)) ok++
+      d.audit(req, 'ทดสอบแจ้งเตือนกลุ่ม LINE', `${ok}/${cfg.targets.length}`)
+      if (!ok) return res.status(502).json({ error: 'ส่งไม่สำเร็จ — ตรวจว่าบอทอยู่ในกลุ่ม และตั้งค่า LINE ถูกต้อง' })
+      res.json({ ok: true, sent: ok })
+    })
+    api.post('/center/alerts/send-now', async (req, res) => {
+      if (!adminOnly(req, res)) return
+      const r = await alertTick(true)
+      res.json(r)
+    })
+  }
+
+  return { gated, register: (api) => { register(api); registerAlerts(api) }, notificationsFor, canApprove, submit, registerOp, alertTick }
 }

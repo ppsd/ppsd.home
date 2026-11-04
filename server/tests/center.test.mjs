@@ -142,3 +142,29 @@ test('ส่งอัปเดตลูกค้า: พนักงานหน
   assert.equal(g.status, 200)
   assert.equal(g.data.canSend, true)
 })
+
+test('แจ้งเตือนกลุ่ม LINE: ตั้งค่าได้เฉพาะแอดมิน · เปิดแล้วนับเฉพาะเรื่องใหม่ · ตัวอย่างข้อความตามประเภทที่เลือก', async () => {
+  assert.equal((await S('GET', '/center/alerts')).status, 403)
+  const g = await A('GET', '/center/alerts')
+  assert.equal(g.status, 200)
+  assert.equal(g.data.on, false)
+  assert.ok(g.data.cat_labels.flag)
+  const GID = 'C' + 'a'.repeat(32)
+  assert.equal((await A('PUT', '/center/alerts', { on: true, targets: [GID, 'ไม่ใช่ไอดี'], cats: { flag: true, approval: true, site: false }, every: 2 })).status, 200)
+  const g2 = (await A('GET', '/center/alerts')).data
+  assert.deepEqual(g2.targets, [GID], 'ไอดีผิดรูปแบบต้องถูกตัดทิ้ง')
+  assert.equal(g2.every, 2)
+  // เพิ่งเปิด → ยังไม่มีเรื่องรอส่ง
+  assert.equal((await A('GET', '/center/alerts/preview')).data.pending, false)
+  // พนักงานเพิ่มงวด (เพิ่มงาน) → เข้าคิว + เป็นเรื่องรอส่งเข้ากลุ่ม
+  await S('POST', `/houses/${H}/installments`, { no: 9, detail: 'งานเพิ่ม รั้วหลังบ้าน', amount: 30000, side: 'customer' })
+  const p = (await A('GET', '/center/alerts/preview')).data
+  assert.equal(p.pending, true)
+  assert.ok(p.text.includes('บ้านทดสอบศูนย์กลาง') && p.text.includes('ส่งขออนุมัติ'), p.text)
+  // ยังไม่ตั้ง LINE token → ส่งไม่ได้ แต่ไม่ค้างเรื่องไว้ยิงทีหลัง
+  const n = (await A('POST', '/center/alerts/send-now')).data
+  assert.equal(n.sent, false)
+  assert.equal((await A('GET', '/center/alerts/preview')).data.pending, false)
+  assert.equal((await A('POST', '/center/alerts/test')).status, 400)
+  await A('PUT', '/center/alerts', { on: false })
+})

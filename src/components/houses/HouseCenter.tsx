@@ -36,7 +36,7 @@ export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number
   const loadInfo = useCallback(() => api.get<Unread>('/center/unread').then(setInfo).catch(() => {}), [])
   useEffect(() => { loadInfo() }, [loadInfo])
 
-  const tabs: [typeof tab, string][] = [['feed', 'ความเคลื่อนไหว'], ['approvals', `รออนุมัติ${info.pending ? ` (${info.pending})` : ''}`], ...(linked ? [['cline', `ช่าง LINE (${linked.length})`] as [typeof tab, string]] : []), ...(user?.role === 'admin' ? [['gates', 'ตั้งค่าการอนุมัติ'] as [typeof tab, string]] : [])]
+  const tabs: [typeof tab, string][] = [['feed', 'ความเคลื่อนไหว'], ['approvals', `รออนุมัติ${info.pending ? ` (${info.pending})` : ''}`], ...(linked ? [['cline', `ช่าง LINE (${linked.length})`] as [typeof tab, string]] : []), ...(user?.role === 'admin' ? [['gates', 'ตั้งค่า'] as [typeof tab, string]] : [])]
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -53,7 +53,7 @@ export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number
       </div>
       {tab === 'feed' && <Feed canCustomer={info.canCustomer} onCompose={setCompose} onSeen={loadInfo} onOpenHouse={(code) => { const h = data.houses.find((x) => x.code === code); if (h && onOpenHouse) onOpenHouse(h.id) }} />}
       {tab === 'approvals' && <Approvals canApprove={info.canApprove} onChanged={loadInfo} />}
-      {tab === 'gates' && <Gates />}
+      {tab === 'gates' && <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}><Gates /><AlertSettings /></div>}
       {tab === 'cline' && linked && <ContractorLine linked={linked} reload={reloadLinked} />}
       {compose && <ComposeModal init={compose} onClose={() => setCompose(null)} />}
     </div>
@@ -366,6 +366,76 @@ function ContractorLine({ linked, reload }: { linked: import('./ContractorLineLi
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ---------------- แจ้งเตือนเข้ากลุ่ม LINE (แอดมิน) ----------------
+interface AlertCfg { on: boolean; targets: string[]; cats: Record<string, boolean>; every: number; quiet: boolean; cat_labels: Record<string, string>; seen: { id: string; name: string; type: string }[]; digest_to: string; has_token: boolean; status: { at: string; ok: boolean; sent: number; of: number } | null }
+function AlertSettings() {
+  const [cfg, setCfg] = useState<AlertCfg | null>(null)
+  const [msg, setMsg] = useState('')
+  const [preview, setPreview] = useState('')
+  const [manual, setManual] = useState('')
+  const load = () => api.get<AlertCfg>('/center/alerts').then(setCfg).catch((e) => setMsg((e as Error).message))
+  useEffect(() => { load() }, [])
+  if (!cfg) return <div style={{ ...card, padding: 18, flex: '1 1 360px', color: C.sub, fontSize: 13 }}>{msg || 'กำลังโหลด…'}</div>
+  const set = (p: Partial<AlertCfg>) => { setMsg(''); setCfg({ ...cfg, ...p }) }
+  const groups = cfg.seen.filter((g) => g.type === 'group' || g.type === 'room')
+  const label = (id: string) => cfg.seen.find((g) => g.id === id)?.name || (id === cfg.digest_to ? 'กลุ่มสรุปเช้า' : id.slice(0, 10) + '…')
+  const toggleTarget = (id: string) => set({ targets: cfg.targets.includes(id) ? cfg.targets.filter((x) => x !== id) : [...cfg.targets, id] })
+  const save = async () => { await api.put('/center/alerts', { on: cfg.on, targets: cfg.targets, cats: cfg.cats, every: cfg.every, quiet: cfg.quiet }); setMsg('บันทึกแล้ว ✔'); load() }
+  const trySave = () => save().catch((e) => setMsg((e as Error).message))
+  const test = async () => { try { await save(); await api.post('/center/alerts/test'); setMsg('ส่งข้อความทดสอบแล้ว ✔ ดูในกลุ่ม LINE') } catch (e) { setMsg((e as Error).message) } }
+  const showPreview = async () => {
+    try { const r = await api.get<{ text: string; pending: boolean }>('/center/alerts/preview'); setPreview((r.pending ? '' : '(ตัวอย่างจากเรื่องล่าสุด — ตอนนี้ยังไม่มีเรื่องรอส่ง)\n\n') + r.text) }
+    catch (e) { setMsg((e as Error).message) }
+  }
+  const rowLabel: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0', fontSize: 13.5, color: C.ink, cursor: 'pointer' }
+  return (
+    <div style={{ ...card, padding: 18, flex: '1 1 360px', maxWidth: 560 }}>
+      <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink, marginBottom: 4 }}>🔔 แจ้งเตือนเข้ากลุ่ม LINE</div>
+      <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 12 }}>รวบเรื่องใหม่จากหน้านี้ส่งเป็นข้อความเดียวเข้ากลุ่มทีม — ทุกคนเห็นเร็วโดยไม่ต้องเปิดเว็บ · มีเรื่องใหม่ถึงจะส่ง · เปิดแล้วเริ่มนับจากตอนนี้ (ไม่ส่งย้อนหลัง)</div>
+      {!cfg.has_token && <div style={{ fontSize: 13, color: C.red, marginBottom: 10 }}>ยังไม่ได้ตั้งค่า LINE — ไปที่เมนู ส่วนกลางบริษัท → LINE ก่อน</div>}
+      <label style={{ ...rowLabel, fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+        <input type="checkbox" checked={cfg.on} onChange={(e) => set({ on: e.target.checked })} style={{ width: 18, height: 18 }} /> เปิดแจ้งเตือนกลุ่ม
+      </label>
+      <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>ส่งเข้ากลุ่ม (เลือกได้หลายกลุ่ม)</div>
+      {!groups.length && <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 6 }}>ยังไม่มีกลุ่มที่บอทเห็น — เชิญบอท PPSD เข้ากลุ่ม LINE ของทีม แล้วพิมพ์ "id" ในกลุ่ม 1 ครั้ง จากนั้นเปิดหน้านี้ใหม่</div>}
+      {[...new Set([...groups.map((g) => g.id), ...cfg.targets])].map((id) => (
+        <label key={id} style={rowLabel}>
+          <input type="checkbox" checked={cfg.targets.includes(id)} onChange={() => toggleTarget(id)} style={{ width: 16, height: 16 }} />
+          {label(id)}{id === cfg.digest_to && <span style={{ fontSize: 11, color: C.sub }}>(กลุ่มเดียวกับสรุปเช้า)</span>}
+        </label>
+      ))}
+      <div style={{ display: 'flex', gap: 6, margin: '6px 0 12px' }}>
+        <input value={manual} onChange={(e) => setManual(e.target.value.trim())} placeholder="หรือวาง Group ID (ขึ้นต้น C…)" style={{ flex: 1, fontFamily: 'inherit', fontSize: 12.5, padding: '6px 9px', borderRadius: 8, border: '1px solid #D2DAE1' }} />
+        <button style={btn()} disabled={!/^[CRU][0-9a-f]{32}$/i.test(manual)} onClick={() => { toggleTarget(manual); setManual('') }}>เพิ่ม</button>
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>เรื่องที่จะแจ้ง</div>
+      {Object.entries(cfg.cat_labels).map(([k, l]) => (
+        <label key={k} style={rowLabel}>
+          <input type="checkbox" checked={!!cfg.cats[k]} onChange={(e) => set({ cats: { ...cfg.cats, [k]: e.target.checked } })} style={{ width: 16, height: 16 }} /> {l}
+        </label>
+      ))}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', margin: '10px 0' }}>
+        <label style={{ fontSize: 13.5, color: C.ink }}>ส่งรวบทุก{' '}
+          <select value={cfg.every} onChange={(e) => set({ every: Number(e.target.value) })} style={{ fontFamily: 'inherit', fontSize: 13, padding: '4px 8px', borderRadius: 7, border: '1px solid #D2DAE1' }}>
+            {[1, 2, 5, 10, 15, 30, 60].map((n) => <option key={n} value={n}>{n} นาที</option>)}
+          </select>
+        </label>
+        <label style={rowLabel}>
+          <input type="checkbox" checked={cfg.quiet} onChange={(e) => set({ quiet: e.target.checked })} style={{ width: 16, height: 16 }} /> ไม่ส่งช่วง 20:00–07:00 (เก็บไว้ส่งรวมตอนเช้า)
+        </label>
+      </div>
+      {cfg.status && <div style={{ fontSize: 12, color: cfg.status.ok ? C.green : C.red, marginBottom: 8 }}>ส่งล่าสุด {thDay(cfg.status.at)} {hhmm(cfg.status.at)} · {cfg.status.ok ? `สำเร็จ ${cfg.status.sent}/${cfg.status.of} กลุ่ม` : 'ส่งไม่สำเร็จ'}</div>}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button style={btn(true)} onClick={trySave}>บันทึก</button>
+        <button style={btn()} onClick={test} disabled={!cfg.targets.length}>ส่งข้อความทดสอบ</button>
+        <button style={btn()} onClick={showPreview}>ดูตัวอย่างข้อความ</button>
+        <span style={{ fontSize: 13, color: msg.includes('✔') ? C.green : C.red }}>{msg}</span>
+      </div>
+      {preview && <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 12.5, background: C.bg, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10, maxHeight: 320, overflowY: 'auto', color: C.ink }}>{preview}</pre>}
     </div>
   )
 }

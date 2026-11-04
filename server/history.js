@@ -31,7 +31,7 @@ function currentUser() {
 export const SKIP_TABLES = new Set([
   'change_history', 'audit', 'ai_usage', 'location_log', 'takeoff_cache', 'doc_counters',
   'doc_images', 'line_order_files', 'pr_quote_files', 'journal_issues', 'material_price_history', 'labor_rate_history',
-  'pin_failures', 'takeoff_jobs', 'crm_sent', 'customer_link_codes', 'feed_seen', 'contractor_link_codes',
+  'pin_failures', 'takeoff_jobs', 'crm_sent', 'customer_link_codes', 'feed_seen', 'contractor_link_codes', 'center_state',
 ])
 // คอลัมน์ไฟล์/รูป (data URL / base64) → เก็บแค่ "[ไฟล์ n ตัวอักษร]" ให้รู้ว่าเปลี่ยน แต่ไม่ทำฐานข้อมูลบวม
 const BLOB_COL = /^(data|image|images|photo|photos|png|signature|files|submit_files)$|_sig$/

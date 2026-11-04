@@ -2308,7 +2308,7 @@ const crmDeps = { canWrite, financeOnly, audit, notifyChange, nowTS, todayTH, do
 registerCrm(api, crmDeps)
 registerCrmService(api, crmDeps) // LINE ลูกค้า · เคสแจ้งซ่อม/SLA · ประกัน · NPS · ข้อความอัตโนมัติ
 // ===== ศูนย์กลางงานบ้าน (center.js): ความเคลื่อนไหวบ้าน · คิวรออนุมัติ (เพิ่ม-ลดงาน/แก้ยอดเงิน) · ส่งอัปเดตลูกค้า =====
-const center = createCenter({ db, isManager, audit, nowTS, todayTH, linePush, lineUidOfName, getSetting, setSetting, setHistoryUser, effectivePosition })
+const center = createCenter({ db, isManager, audit, nowTS, todayTH, linePush, lineUidOfName, getSetting, setSetting, setHistoryUser, effectivePosition, lineSeen })
 center.register(api)
 // บอท LINE ช่าง/ผู้รับเหมา (contractor-line.js) — ทุกเรื่องที่ช่างส่งเข้าคิวรออนุมัติของ center
 const conBot = createContractorBot({ db, center, audit, nowTS, todayTH, isManager, linePush, lineReply, setLineCtx, getLineCtx, saveImageFile, setHistoryUser })
