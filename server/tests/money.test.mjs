@@ -2708,3 +2708,17 @@ test('บัญชีระบบ (ไม่ใช่พนักงาน): ส
   assert.equal((await PUT(`/users/${b.data.id}`, { system_only: true })).status, 409)
   await DEL('/salary-advances/' + adv.data.id)
 })
+
+test('เงินเดือนรายเดือน: กรอกวันทำงานเอง = ยอดสุดท้าย ไม่หักขาดจากลงเวลาซ้ำ · ไม่กรอก = หักขาดตามเดิม', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบยอดสุดท้าย', role: 'ช่าง', pay_type: 'รายเดือน', base: 30000, pin: '7272' })
+  const code = e.data.code
+  // ลงเวลา จ. 4 กับ ศ. 8 มี.ค. 2030 → ขาด อ.–พฤ. 3 วัน
+  for (const d of ['2030-03-04', '2030-03-08']) await POST('/attendance/manual', { emp_code: code, date: d, check_in: '08:00' })
+  const rowOf = async () => (await GET('/payroll?period=2030-03')).data.rows.find((r) => r.code === code)
+  const before = await rowOf()
+  assert.equal(before.absent_days, 3); assert.equal(before.leave_deduct, 3 * 1000, 'ไม่กรอก = หักขาด 3 วัน × 1,000')
+  await PUT('/payroll/inputs', { period: '2030-03', emp_code: code, work_days: 20 })
+  const after = await rowOf()
+  assert.equal(after.base, 20000, '30,000 ÷ 30 × 20')
+  assert.equal(after.leave_deduct, 0, 'กรอกเอง = ไม่หักขาดซ้ำ'); assert.equal(after.manual_final, true)
+})

@@ -3719,9 +3719,11 @@ function computePayroll(period) {
       prorated = inWd != null && inWd < dim
       basePay = prorated ? r2(Math.min(e.base || 0, (e.base || 0) / 30 * inWd)) : (e.base || 0)
     }
-    const absent = (isDaily || exempt) ? 0 : absentDaysInMonth(e, period)
+    // รายเดือนที่กรอกวันทำงานเอง = ตัวเลขที่กรอกเป็นยอดสุดท้าย (เจ้าของเลือก 4 พ.ย. 69) → ไม่หักขาด/ลาจากลงเวลาซ้ำอีก
+    const manualFinal = !isDaily && inWd != null
+    const absent = (isDaily || exempt || manualFinal) ? 0 : absentDaysInMonth(e, period)
     const daily = isDaily ? dailyRate : Math.round((e.base || 0) / 30) // เงินเดือน ÷ 30 วัน = ค่าจ้าง/วัน (หักขาด/ลา)
-    const deductDays = isDaily ? 0 : (rejected + unpaid + absent)
+    const deductDays = (isDaily || manualFinal) ? 0 : (rejected + unpaid + absent)
     // ประกันสังคมคิดจาก "เงินที่ได้จริงในงวด" เมื่อเป็นรายวัน/ทำไม่เต็มเดือน · รายวัน "ไม่หักภาษี"
     const sso = e.no_sso ? 0 : ((isDaily || prorated) ? ssoOf(basePay) : e.sso)
     const tax = e.tax || 0 // ภาษีกรอกเอง (แก้ได้ในตารางเงินเดือน)
@@ -3742,7 +3744,7 @@ function computePayroll(period) {
     // อย่าให้ข้อมูลลับ (PIN/ลายเซ็น/โทเคน) หลุดไปติดใน snapshot เงินเดือน
     const { pin, signature, track_token, ...pub } = e
     return {
-      ...pub, ot, sso, tax, base: basePay, leave_days: rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily,
+      ...pub, ot, sso, tax, base: basePay, leave_days: manualFinal ? 0 : rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily, manual_final: manualFinal,
       daily_rate: dailyRate, work_days: workDays, work_days_set: inWd != null, days_in_month: dim, prorated, monthly_base: isDaily ? null : (e.base || 0),
       exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
       retention, retention_refund: refund, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct, other_income: otherIncome,

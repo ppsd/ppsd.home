@@ -690,6 +690,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                           </span>
                         )}
                       {!locked && daily && !p.work_days_set && <span style={{ display: 'block', fontSize: 9.5, color: '#94A0A8' }}>ตามลงเวลา</span>}
+                      {!daily && p.work_days_set && <span title="กรอกวันทำงานเอง = ใช้ตัวเลขนี้เป็นยอดสุดท้าย ไม่หักวันขาด/ลาจากข้อมูลลงเวลาอีก" style={{ display: 'block', fontSize: 9.5, color: '#30506A' }}>ยอดสุดท้าย · ไม่หักขาด/ลา</span>}
                     </td>
                     <td className="num" style={{ ...td, textAlign: 'right' }}>
                       {baht(p.base)}
