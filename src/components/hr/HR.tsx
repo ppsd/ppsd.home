@@ -81,10 +81,10 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const delAtt = async (id: number) => { if (!window.confirm('ลบบันทึกการลงเวลานี้?')) return; try { await apiClient.del('/attendance/' + id); loadAttList() } catch (e) { alert((e as Error).message) } }
   // เงินเดือน: สรุปทั้งปี + เบิกล่วงหน้า
   const [annual, setAnnual] = useState<{ year: string; months: number; net: number; sso: number } | null>(null)
-  interface AdvGroup { emp_code: string; emp_name: string; worked: number; limit: number; taken: number; remaining: number; count: number; rounds: { id: number; date: string; amount: number; note: string }[] }
+  interface AdvGroup { emp_code: string; emp_name: string; worked: number | null; est: number; taken: number; left: number; count: number; rounds: { id: number; date: string; amount: number; note: string }[] }
   const [advances, setAdvances] = useState<AdvGroup[]>([])
   const [advForm, setAdvForm] = useState({ emp_code: '', amount: '', note: '' })
-  const [advLimit, setAdvLimit] = useState<{ worked: number; limit: number; taken: number; remaining: number } | null>(null)
+  const [advLimit, setAdvLimit] = useState<{ worked: number | null; est: number; taken: number; left: number } | null>(null) // ยอดอ้างอิง (ไม่จำกัดการเบิก)
   const [advErr, setAdvErr] = useState('')
   const loadAdvances = () => { const p = payrollMeta?.period; if (p) apiClient.get<{ rows: AdvGroup[] }>('/salary-advances/summary?period=' + p).then((r) => setAdvances(r.rows || [])).catch(() => setAdvances([])) }
   // สรุป retention สะสมต่อคน (หักไปแล้วเท่าไหร่ / ครบ 5,000 หรือยัง)
@@ -134,6 +134,10 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const submitAdvance = async () => {
     setAdvErr('')
     if (!advForm.emp_code || !advForm.amount) { setAdvErr('เลือกพนักงานและกรอกจำนวนเงิน'); return }
+    // ไม่จำกัดยอด — แค่เตือนถ้าเบิกรวมเกินเงินเดือนงวดนี้โดยประมาณ (สุทธิจะติดลบ ปิดงวดไม่ได้จนกว่าจะแก้)
+    if (advLimit && unMoney(advForm.amount) > advLimit.left && !window.confirm(`เบิกรวมจะเกินเงินเดือนงวดนี้โดยประมาณ (${baht(advLimit.est)})
+เงินสุทธิจะติดลบ — ต้องแก้ก่อนทำจ่าย
+บันทึกต่อไหม?`)) return
     try { await apiClient.post('/salary-advances', { emp_code: advForm.emp_code, amount: unMoney(advForm.amount), note: advForm.note, period: payrollMeta?.period }); setAdvForm({ emp_code: '', amount: '', note: '' }); loadAdvances() }
     catch (e) { setAdvErr((e as Error).message) }
   }
@@ -781,7 +785,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
 
           {/* เบิกเงินเดือนล่วงหน้า */}
           <div style={{ borderTop: '8px solid #F3F5F7' }}>
-            <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>เบิกเงินเดือนล่วงหน้า (งวด {payrollMeta?.periodLabel}) <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5 }}>· เบิกได้ไม่เกิน (วันมาทำงาน ÷ 2) × ค่าจ้าง/วัน · สิ้นเดือนหักคืนจากยอดสุทธิ</span></div>
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid #EEF1F4', fontSize: 13.5, fontWeight: 600 }}>เบิกเงินเดือนล่วงหน้า (งวด {payrollMeta?.periodLabel}) <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 11.5 }}>· ไม่จำกัดยอด · สิ้นเดือนหักคืนจากยอดสุทธิ</span></div>
             {payrollMeta?.locked && <div style={{ fontSize: 12.5, color: '#8A6D1F', background: '#FBF4E1', padding: '8px 18px' }}>งวดนี้ปิดแล้ว — บันทึก/ลบการเบิกไม่ได้ (ยอดจะไม่ถูกหักในเงินเดือน) เลือกงวดที่ยังไม่ปิดก่อน</div>}
             {!payrollMeta?.locked && <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
               <select style={{ ...field, width: 'auto', minWidth: 180 }} value={advForm.emp_code} onChange={(e) => setAdvForm({ ...advForm, emp_code: e.target.value })}>
@@ -791,7 +795,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนเงิน" value={advForm.amount} onChange={(v) => setAdvForm({ ...advForm, amount: v })} />
               <input style={{ ...field, flex: 1, minWidth: 140 }} placeholder="หมายเหตุ (ถ้ามี)" value={advForm.note} onChange={(e) => setAdvForm({ ...advForm, note: e.target.value })} />
               <button onClick={submitAdvance} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึกเบิก</button>
-              {advLimit && advForm.emp_code && <span style={{ fontSize: 12, color: advLimit.remaining > 0 ? '#2E7D55' : '#C24036' }}>มาทำงาน {advLimit.worked} วัน · เบิกได้อีก <b>{baht(advLimit.remaining)}</b> (เพดาน {baht(advLimit.limit)} · เบิกแล้ว {baht(advLimit.taken)})</span>}
+              {advLimit && advForm.emp_code && <span style={{ fontSize: 12, color: advLimit.left > 0 ? '#5C6770' : '#C24036' }}>เงินเดือนงวดนี้ประมาณ <b>{baht(advLimit.est)}</b>{advLimit.worked != null ? ` (${advLimit.worked} วัน)` : ''} · เบิกแล้ว {baht(advLimit.taken)}{advLimit.left < 0 ? ' · ⚠ เบิกเกินแล้ว' : ''}</span>}
             </div>}
             {advErr && <div style={{ fontSize: 12.5, color: '#C24036', padding: '8px 18px' }}>{advErr}</div>}
             {advances.length === 0
@@ -801,9 +805,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   {/* หัวข้อรายคน — เบิกกี่รอบ/รวม/เหลือ */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px', flexWrap: 'wrap', background: '#FBFCFD' }}>
                     <span style={{ fontSize: 13.5, fontWeight: 600, minWidth: 140 }}>{g.emp_name}</span>
-                    <span style={{ fontSize: 12, color: '#5C6770' }}>มาทำงาน {g.worked} วัน · เพดาน {baht(g.limit)}</span>
+                    <span style={{ fontSize: 12, color: '#5C6770' }}>เงินเดือนงวดนี้ประมาณ {baht(g.est)}{g.worked != null ? ` (${g.worked} วัน)` : ''}</span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#30506A', background: '#E9EFF3', padding: '2px 10px', borderRadius: 20 }}>เบิกแล้ว {g.count} รอบ = {baht(g.taken)}</span>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: g.remaining > 0 ? '#2E7D55' : '#C24036' }}>เหลือเบิกได้ {baht(g.remaining)}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: g.left >= 0 ? '#2E7D55' : '#C24036' }}>{g.left >= 0 ? `คงเหลือรับประมาณ ${baht(g.left)}` : `⚠ เบิกเกินเงินเดือน ${baht(-g.left)}`}</span>
                   </div>
                   {/* แต่ละรอบ */}
                   <div style={{ padding: '2px 18px 10px 30px' }}>

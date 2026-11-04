@@ -3992,36 +3992,12 @@ api.get('/payroll/retention', requireSalary, (_req, res) => {
   })
 })
 // ---- เบิกเงินเดือนล่วงหน้า ----
-const ADVANCE_DAILY_DIVISOR = 2 // เบิกได้ไม่เกิน (วันทำงาน ÷ 2) × ค่าจ้างรายวัน
-const ADVANCE_DAY_BASE = 30     // เงินเดือน ÷ 30 วัน = ค่าจ้าง/วัน
-// เพดานเบิกล่วงหน้า: (จำนวนวันมาทำงาน "ตั้งแต่วันที่ 1 ถึงวันนี้/วันที่เบิก" × ค่าจ้าง/วัน) ÷ 2
-function advanceLimit(emp, period) {
-  const [yy, mm] = period.split('-').map(Number)
-  const monthStart = isoDate(new Date(yy, mm - 1, 1))
-  const monthEnd = isoDate(new Date(yy, mm, 0))
-  const today = todayISO()
-  const upTo = monthEnd < today ? monthEnd : today // นับได้ไม่เกินวันนี้ (วันที่เบิก)
-  let worked
-  if (NO_ATTENDANCE_ROLES.includes(emp.role)) {
-    // ไม่ต้องลงเวลา (CEO/ผู้จัดการ) → ได้เงินเต็มโดยไม่ต้องตอกบัตร → นับวันทำงานตามปฏิทิน (จ.–ส. เว้นวันหยุดบริษัท) ตั้งแต่ต้นงวด/วันเริ่มงาน ถึงวันนี้
-    let from = monthStart
-    const empStart = emp.start && /^\d{4}-\d{2}-\d{2}$/.test(emp.start) ? emp.start : null
-    if (empStart && empStart > from) from = empStart
-    const holi = new Set(db.prepare('SELECT date FROM holidays WHERE date>=? AND date<=?').all(from, upTo).map((h) => h.date))
-    let n = 0
-    for (const d of eachDay(from, upTo)) { const wd = new Date(d + 'T00:00:00').getDay(); if (wd !== 0 && !holi.has(d)) n++ }
-    worked = Math.min(n, ADVANCE_DAY_BASE) // ไม่เกินมาตรฐาน 30 วัน (เบิกได้ไม่เกินครึ่งเดือน)
-  } else {
-    // วันทำงาน = วันที่มีบัตรตอก + วันที่ปรับปรุงเวลาอนุมัติแล้ว (ลืมตอกแต่มาจริง) — ไม่นับซ้ำ
-    const punchDates = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(emp.code, monthStart, upTo).map((r) => r.date))
-    for (const a of db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(emp.name, monthStart, upTo)) punchDates.add(a.date)
-    worked = punchDates.size
-    // รายวันที่ไม่ใช้เครื่องตอกบัตร (เช่น แม่บ้าน กรอกวันทำงานมือ) → ใช้วันทำงานที่กรอกไว้เป็นฐานเบิก
-    if (worked === 0 && emp.pay_type === 'รายวัน' && (Number(emp.work_days) || 0) > 0)
-      worked = Math.min(Number(emp.work_days) || 0, ADVANCE_DAY_BASE)
-  }
-  const daily = emp.pay_type === 'รายวัน' ? emp.base : Math.round((emp.base || 0) / ADVANCE_DAY_BASE)
-  return { worked, daily, limit: Math.floor(daily * worked / ADVANCE_DAILY_DIVISOR) }
+// เบิกล่วงหน้า "ไม่จำกัดยอด" (เจ้าของสั่ง 4 พ.ย. 69) — โชว์ยอดเงินเดือนงวดนี้โดยประมาณไว้อ้างอิงเท่านั้น
+//  est = เงินสุทธิก่อนหักเบิก ตามตารางเงินเดือน (ใช้วันทำงานที่กรอกในงวด ถ้ากรอกไว้) · เบิกเกินแล้วสุทธิติดลบ → ปิดงวดไม่ได้อยู่แล้ว
+function advanceInfoMap(period) {
+  const m = new Map()
+  for (const r of computePayroll(period)) m.set(r.code, { worked: r.work_days ?? null, est: Math.max(0, Math.round(netOf(r) + (r.advance || 0))) })
+  return m
 }
 api.get('/salary-advances', requireSalary, (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
@@ -4032,9 +4008,9 @@ api.get('/salary-advances/limit', requireSalary, (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(req.query.emp_code)
   if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
-  const { worked, daily, limit } = advanceLimit(emp, period)
+  const info = advanceInfoMap(period).get(emp.code) || { worked: null, est: 0 }
   const taken = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(emp.code, period).a
-  res.json({ worked, daily, limit, taken, remaining: Math.max(0, limit - taken), period })
+  res.json({ worked: info.worked, est: info.est, taken, left: info.est - taken, period })
 })
 // งวดที่ปิดแล้ว = snapshot ถูกล็อกไว้แล้ว — ห้ามบันทึกเบิก/หักย้อนเข้าไป (ยอดจะไม่ถูกหักจริง)
 // คนที่ทำจ่ายเงินเดือนของงวดนี้ไปแล้ว (รอบปิดแล้ว) = snapshot ถูกล็อก — ห้ามบันทึกเบิก/หัก/รายได้ย้อนเข้าไป (ยอดจะไม่ถูกนับจริง)
@@ -4047,10 +4023,6 @@ api.post('/salary-advances', financeOnly, (req, res) => {
   if (periodClosed(period, emp.code)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — บันทึกเบิกเข้างวดนี้ไม่ได้ (จะไม่ถูกหักในเงินเดือน) กรุณาเลือกงวดที่ยังไม่ปิด` })
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
-  const { worked, limit } = advanceLimit(emp, period)
-  const taken = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(emp.code, period).a
-  const remaining = limit - taken
-  if (amount > remaining) return res.status(400).json({ error: `เบิกได้ไม่เกิน ${remaining.toLocaleString()} บาท (มาทำงาน ${worked} วัน · เพดาน ${limit.toLocaleString()} · เบิกแล้ว ${taken.toLocaleString()})` })
   const info = db.prepare('INSERT INTO salary_advances (emp_code,emp_name,period,date,amount,note,by,created) VALUES (?,?,?,?,?,?,?,?)')
     .run(emp.code, emp.name, period, todayTH(), amount, b.note || '', req.user.name, todayTH())
   audit(req, 'เบิกเงินเดือนล่วงหน้า', `${emp.name} ${amount.toLocaleString()} บาท`)
@@ -4073,10 +4045,10 @@ api.get('/salary-advances/summary', requireSalary, (req, res) => {
     byEmp[a.emp_code].rounds.push({ id: a.id, date: a.date, amount: a.amount, note: a.note })
     byEmp[a.emp_code].taken += a.amount
   }
+  const info = advanceInfoMap(period)
   const rows = Object.values(byEmp).map((g) => {
-    const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(g.emp_code)
-    const { worked, limit } = emp ? advanceLimit(emp, period) : { worked: 0, limit: 0 }
-    return { ...g, worked, limit, remaining: Math.max(0, limit - g.taken), count: g.rounds.length }
+    const i = info.get(g.emp_code) || { worked: null, est: 0 }
+    return { ...g, worked: i.worked, est: i.est, left: i.est - g.taken, count: g.rounds.length }
   }).sort((a, b) => a.emp_name.localeCompare(b.emp_name, 'th'))
   res.json({ period, rows })
 })
