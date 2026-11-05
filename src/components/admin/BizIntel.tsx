@@ -61,7 +61,8 @@ function SevPill({ sev }: { sev: Sev }) {
 export default function BizIntel() {
   const { user } = useApp()
   const isManager = !!user?.isManager
-  const [unlocked, setUnlocked] = useState(false)
+  // ไม่ต้องใส่ PIN แล้ว (เจ้าของระบบสั่ง 5 พ.ย. 2569: เมนูนี้อยู่ในกลุ่มผู้บริหาร คนไม่มีสิทธิ์ไม่เห็น) — สิทธิ์ยังตรวจที่ server ทุกครั้ง
+  const [unlocked, setUnlocked] = useState(true)
   const [pin, setPin] = useState(''); const [pinErr, setPinErr] = useState(''); const [checking, setChecking] = useState(false)
   const [d, setD] = useState<IntelData | null>(null)
   const [err, setErr] = useState('')
