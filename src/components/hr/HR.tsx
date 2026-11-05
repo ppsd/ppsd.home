@@ -466,7 +466,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                       <td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{e.sick_used ?? 0}/{e.sick_quota ?? 0}</td>
                       <td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{e.personal_used ?? 0}/{e.personal_quota ?? 0}</td>
                       <td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{e.vacation_used ?? 0}/{e.vacation_quota ?? 0}</td>
-                      <td style={{ ...td, textAlign: 'center' }}><EmpSignatureCell empId={e.id} signature={e.signature} /></td>
+                      <td style={{ ...td, textAlign: 'center' }}><EmpSignatureCell empId={e.id} signature={e.signature} name={e.name} /></td>
                       <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: s.c, background: s.bg, padding: '2px 10px', borderRadius: 20 }}>{e.status}</span></td>
                       <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
