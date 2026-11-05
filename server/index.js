@@ -4431,9 +4431,9 @@ api.delete('/payroll/transfer-slip/:id', financeOnly, (req, res) => {
   res.json({ ok: true })
 })
 // เก็บรูปไว้ให้ LINE ดึง (doc_images + กุญแจสุ่ม) → คืน URL สาธารณะ
+//  ไม่ลบรูปของการส่งครั้งก่อน — ข้อความเก่าในแชท (ส่งซ้ำคนเดิม/งวดเดิม) ต้องยังเปิด/กด Keep/บันทึกได้
 function publishLineImage(kind, docId, buf) {
   const key = randomBytes(12).toString('hex')
-  db.prepare('DELETE FROM doc_images WHERE kind=? AND doc_id=?').run(kind, docId)
   db.prepare('INSERT INTO doc_images (kind,doc_id,key,png,created) VALUES (?,?,?,?,?)').run(kind, docId, key, buf, nowTS())
   return `${publicBaseUrl()}/api/pub/doc/${kind}/${docId}/${key}.png`
 }
@@ -4451,7 +4451,7 @@ async function sendPayslipLine(period, code) {
   // 1) รูปสลิปเงินเดือนเต็มใบ (หน้าเดียวกับที่พิมพ์)
   const token = issueDocViewToken('slip', emp.id, { slip: row, periodLabel: label })
   const png = await renderElementPng(`http://127.0.0.1:${PORT}/#docview/${token}`, '#doc-sheet', { width: 820, scale: 1.5 })
-  const slipUrl = publishLineImage('payslip-' + tag, emp.id, png)
+  const slipUrl = publishLineImage('payslip-' + tag, emp.id, await imageToJpeg(png, 'image/png', { maxWidth: 1240, quality: 90 })) // JPEG แบบเดียวกับสลิปโอน (LINE แนะนำ)
   const msgs = [
     lt('payroll.slip_msg', { name: emp.name, period: label, net: fmtMoney(Math.round(netOf(row) * 100) / 100), pay_date: row.pay_date || '-', bank: [emp.bank_name, maskAcct(emp.bank_acct)].filter(Boolean).join(' ') || '-' }),
     { type: 'image', originalContentUrl: slipUrl, previewImageUrl: slipUrl },
