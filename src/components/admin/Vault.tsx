@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
+import VaultPrint, { type PrintRow } from './VaultPrint'
 import { cryptoAvailable, decryptJson, deriveKey, encryptJson, passphraseStrength, randomSalt, verifyKey, VAULT_CHECK_TEXT } from '../../vaultCrypto'
 
 // ===== คลังรหัสผ่านบริษัท =====
@@ -54,6 +55,9 @@ export default function Vault() {
   const [userIds, setUserIds] = useState<number[]>([])
   const [rk, setRk] = useState({ old: '', n1: '', n2: '' })
   const idleTimer = useRef<number | null>(null)
+  // ---- เอกสารอ่านง่าย (พิมพ์/PDF) — CEO เท่านั้น · ต้องใส่รหัสผ่านหลักซ้ำ ----
+  const [printAsk, setPrintAsk] = useState<{ pass: string; withPw: boolean; scope: 'all' | 'filtered'; err: string; busy: boolean } | null>(null)
+  const [printDoc, setPrintDoc] = useState<{ rows: PrintRow[]; withPw: boolean } | null>(null)
 
   const loadMeta = useCallback(() => api.get<Meta>('/vault/meta').then((m) => { setMeta(m); setUserIds((m.users || []).filter((u) => u.allowed).map((u) => u.id)) }).catch((e) => setPassErr((e as Error).message)), [])
   useEffect(() => { if (allowed && pinOk) loadMeta() }, [allowed, pinOk, loadMeta])
@@ -66,7 +70,7 @@ export default function Vault() {
 
   // ---- ล็อกอัตโนมัติเมื่อไม่ใช้งาน ----
   const lock = useCallback(() => {
-    setKey(null); setSecrets({}); setEdit(null); setPass(''); setPanel('list')
+    setKey(null); setSecrets({}); setEdit(null); setPass(''); setPanel('list'); setPrintAsk(null); setPrintDoc(null)
     Object.values(revealed).forEach((t) => window.clearTimeout(t)); setRevealed({})
   }, [revealed])
   useEffect(() => {
@@ -225,6 +229,19 @@ export default function Vault() {
   const list = entries.filter((e) => (!cat || e.category === cat) && (!q || `${e.title} ${e.url} ${secrets[e.id]?.username || ''} ${secrets[e.id]?.note || ''}`.toLowerCase().includes(q.toLowerCase())))
   const byCat = VAULT_CATS.concat(entries.map((e) => e.category).filter((c) => !VAULT_CATS.includes(c))).map((c) => ({ c, items: list.filter((e) => e.category === c) })).filter((g) => g.items.length)
   const mask = '••••••••'
+  const filtered = !!(q || cat)
+  const openPrint = async () => {
+    if (!printAsk || !meta) return
+    setPrintAsk({ ...printAsk, busy: true, err: '' })
+    try {
+      const k = await deriveKey(printAsk.pass, meta.salt)
+      if (!(await verifyKey(k, meta.check))) { setPrintAsk({ ...printAsk, busy: false, err: 'รหัสผ่านหลักไม่ถูกต้อง' }); return }
+      const src = printAsk.scope === 'filtered' && filtered ? list : entries
+      const rows: PrintRow[] = src.filter((e) => !broken.has(e.id)).map((e) => ({ id: e.id, title: e.title, category: e.category, url: e.url, updated: e.updated || e.created, updated_by: e.updated_by || e.by, ...(secrets[e.id] || {}) }))
+      await api.post('/vault/print-log', { count: rows.length, with_passwords: printAsk.withPw })
+      setPrintDoc({ rows, withPw: printAsk.withPw }); setPrintAsk(null)
+    } catch (e) { setPrintAsk({ ...printAsk, busy: false, err: (e as Error).message }) }
+  }
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
       {toast && <div style={{ position: 'fixed', top: 76, right: 24, zIndex: 50, background: '#1C2730', color: '#fff', fontSize: 13, padding: '9px 14px', borderRadius: 9, boxShadow: '0 8px 24px rgba(0,0,0,.2)' }}>{toast}</div>}
@@ -235,7 +252,8 @@ export default function Vault() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {meta.is_ceo && <button style={{ ...btnS, ...(panel === 'users' ? { background: '#EAF0F5' } : {}) }} onClick={() => setPanel(panel === 'users' ? 'list' : 'users')}>👥 ผู้มีสิทธิ์</button>}
           {meta.is_ceo && <button style={{ ...btnS, ...(panel === 'rekey' ? { background: '#EAF0F5' } : {}) }} onClick={() => { setPassErr(''); setPanel(panel === 'rekey' ? 'list' : 'rekey') }}>🔑 เปลี่ยนรหัสผ่านหลัก</button>}
-          {meta.is_ceo && <button style={btnS} onClick={() => api.download('/vault/export').catch((e) => setToast((e as Error).message))} title="ไฟล์สำรองยังเข้ารหัสอยู่ เปิดได้ด้วยรหัสผ่านหลักเท่านั้น">⬇ ส่งออกสำรอง</button>}
+          {meta.is_ceo && <button style={btnS} onClick={() => setPrintAsk({ pass: '', withPw: true, scope: 'all', err: '', busy: false })} title="เอกสารที่คนอ่านได้ แยกหมวด — พิมพ์เก็บในซอง หรือบันทึก PDF">🖨 เอกสารอ่านง่าย</button>}
+          {meta.is_ceo && <button style={btnS} onClick={() => api.download('/vault/export').catch((e) => setToast((e as Error).message))} title="ไฟล์สำรองสำหรับกู้คืน — ยังเข้ารหัสอยู่ (คนอ่านไม่ได้) เปิดได้ด้วยรหัสผ่านหลักเท่านั้น">⬇ ไฟล์สำรอง (เข้ารหัส)</button>}
           <button style={btnS} onClick={() => { lock(); setToast('ล็อกคลังแล้ว') }}>🔒 ล็อก</button>
           <button style={btnP} onClick={openNew}>+ เพิ่มรายการ</button>
         </div>
@@ -375,6 +393,25 @@ export default function Vault() {
             <div style={{ fontSize: 11.5, color: '#94A0A8', marginTop: 10 }}>ชื่อผู้ใช้ รหัสผ่าน 2FA และหมายเหตุ ถูกเข้ารหัสก่อนส่ง · ชื่อระบบ หมวด URL เก็บแบบอ่านได้เพื่อค้นหา</div>
         </ModalShell>
       )}
+      {printAsk && (
+        <ModalShell title="🖨 เอกสารคลังรหัสผ่านแบบอ่านง่าย" sub="เปิดเอกสารที่พิมพ์ / บันทึก PDF ได้ — ระบบบันทึกประวัติว่าใครเปิดเมื่อไร" minimizable={false} onClose={() => setPrintAsk(null)}
+          footer={<><button style={btnS} onClick={() => setPrintAsk(null)}>ยกเลิก</button><button style={btnP} disabled={printAsk.busy || !printAsk.pass} onClick={openPrint}>{printAsk.busy ? 'กำลังตรวจ…' : 'เปิดเอกสาร'}</button></>}>
+          <div style={{ display: 'grid', gap: 12, fontSize: 13.5 }}>
+            <div><span style={lbl}>ใส่รหัสผ่านหลักของคลังอีกครั้ง</span>
+              <input style={field} type="password" autoFocus autoComplete="off" value={printAsk.pass} onChange={(e) => setPrintAsk({ ...printAsk, pass: e.target.value, err: '' })} onKeyDown={(e) => e.key === 'Enter' && printAsk.pass && openPrint()} /></div>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={printAsk.withPw} onChange={(e) => setPrintAsk({ ...printAsk, withPw: e.target.checked })} /> แสดงรหัสผ่านและรหัส 2FA ในเอกสาร <span style={{ fontSize: 12, color: '#94A0A8' }}>(ไม่ติ๊ก = รายชื่อบัญชีอย่างเดียว)</span></label>
+            {filtered && (
+              <div style={{ display: 'flex', gap: 14 }}>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="radio" checked={printAsk.scope === 'all'} onChange={() => setPrintAsk({ ...printAsk, scope: 'all' })} /> ทั้งหมด ({entries.length})</label>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="radio" checked={printAsk.scope === 'filtered'} onChange={() => setPrintAsk({ ...printAsk, scope: 'filtered' })} /> เฉพาะที่ค้น/กรองอยู่ ({list.length})</label>
+              </div>
+            )}
+            {printAsk.err && <div style={{ color: '#C24036', fontSize: 12.5 }}>{printAsk.err}</div>}
+            <div style={{ fontSize: 12, color: '#B7791F', background: '#FBF4E6', borderRadius: 8, padding: '8px 10px' }}>⚠ เอกสารนี้มีรหัสจริงที่อ่านได้ — พิมพ์แล้วเก็บในซองปิดผนึก/ตู้เซฟ · ถ้าบันทึก PDF อย่าส่งทาง LINE/อีเมล และลบไฟล์เมื่อใช้เสร็จ</div>
+          </div>
+        </ModalShell>
+      )}
+      {printDoc && <VaultPrint rows={printDoc.rows} cats={VAULT_CATS} by={user?.name || ''} withPasswords={printDoc.withPw} onClose={() => setPrintDoc(null)} />}
     </div>
   )
 }

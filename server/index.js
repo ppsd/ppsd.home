@@ -2760,6 +2760,11 @@ api.post('/vault/entries/:id/log', vaultOnly, (req, res) => {
   if (row) audit(req, kind, row.title)
   res.json({ ok: true })
 })
+// เปิดเอกสารอ่านง่าย (พิมพ์/PDF) — ถอดรหัสในเบราว์เซอร์ เซิร์ฟเวอร์รับแค่บันทึกว่าใครเปิด กี่รายการ มีรหัสผ่านไหม
+api.post('/vault/print-log', ceoOnly, (req, res) => {
+  audit(req, 'เปิดเอกสารคลังรหัสผ่านแบบอ่านง่าย (พิมพ์/PDF)', `${Number(req.body?.count) || 0} รายการ · ${req.body?.with_passwords ? 'แสดงรหัสผ่าน' : 'ไม่แสดงรหัสผ่าน'}`)
+  res.json({ ok: true })
+})
 // ส่งออกสำรองคลัง (ยังเข้ารหัสอยู่ — เปิดได้ด้วย passphrase เท่านั้น)
 api.get('/vault/export', ceoOnly, (req, res) => {
   const out = { kind: 'ppsd-vault', version: 1, exported: nowTS(), salt: getSetting('vault_salt', ''), check: getSetting('vault_check', ''), entries: db.prepare(`SELECT ${VAULT_COLS} FROM vault_entries ORDER BY id`).all() }
