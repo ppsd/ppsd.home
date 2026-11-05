@@ -36,3 +36,18 @@ export async function renderElementPng(url, selector, { width = 900, scale = 1.5
     await browser.close().catch(() => {})
   }
 }
+// ย่อรูป (เช่น สลิปโอนเงินจากมือถือ) เป็น JPEG กว้างไม่เกิน maxWidth — LINE รับรูปตัวอย่างได้ไม่เกิน 1 MB
+// ใช้ Chrome ในเครื่องเหมือน renderElementPng (ไม่ต้องลงไลบรารีรูปเพิ่ม) · รองรับ JPEG/PNG/WebP/GIF/BMP
+export async function imageToJpeg(buf, mime, { maxWidth = 1000, quality = 82, timeoutMs = 30000 } = {}) {
+  const browser = await launchBrowser()
+  try {
+    const page = await browser.newPage({ viewport: { width: maxWidth, height: 800 } })
+    const src = `data:${mime};base64,${Buffer.from(buf).toString('base64')}`
+    await page.setContent(`<html><body style="margin:0;background:#fff"><img id="im" style="display:block;max-width:${maxWidth}px;height:auto"></body></html>`, { timeout: timeoutMs })
+    const ok = await page.evaluate((s) => new Promise((res) => { const im = document.getElementById('im'); im.onload = () => res(im.naturalWidth > 0); im.onerror = () => res(false); im.src = s }), src)
+    if (!ok) throw new Error('เปิดรูปนี้ไม่ได้ (ใช้ไฟล์ JPG หรือ PNG)')
+    return await page.locator('#im').screenshot({ type: 'jpeg', quality })
+  } finally {
+    await browser.close().catch(() => {})
+  }
+}

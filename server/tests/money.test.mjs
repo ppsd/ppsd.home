@@ -2758,3 +2758,30 @@ test('เบิกล่วงหน้า: แนบสลิป (รูป/PDF
   assert.equal((await DEL('/salary-advances/slip/' + files[0].id)).status, 200)
   assert.equal((await GET(`/salary-advances/summary?period=${period}`)).data.rows.find((g) => g.emp_code === e.data.code).rounds[0].slips.length, 0)
 })
+
+test('ส่งสลิปเงินเดือนเข้า LINE: แนบสลิปโอนรายคน (รูปเท่านั้น) · รายการบอกสถานะจ่าย/LINE/สลิปโอน · คนยังไม่ทำจ่ายหรือไม่ผูก LINE ส่งไม่ได้', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบส่งสลิป', role: 'ช่าง', pay_type: 'รายเดือน', base: 12000 })
+  const code = e.data.code
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
+  const up = (mime, body) => fetch(`${BASE}/payroll/transfer-slip?period=${period}&emp_code=${code}&name=t.png&mime=${encodeURIComponent(mime)}`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body })
+  assert.equal((await up('application/pdf', Buffer.from('%PDF-1.4'))).status, 400, 'PDF ส่งเป็นรูปใน LINE ไม่ได้ → ไม่รับ')
+  const r = await up('image/png', png)
+  assert.equal(r.status, 201)
+  const ts = await r.json()
+  const list = (await GET(`/payroll/line-slips?period=${period}`)).data
+  const row = list.rows.find((x) => x.code === code)
+  assert.equal(row.paid, false); assert.equal(row.line, false); assert.equal(row.transfer.id, ts.id)
+  const get = await fetch(`${BASE}/payroll/transfer-slip/${ts.id}`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(get.status, 200); assert.equal(get.headers.get('content-type'), 'image/png')
+  // คนไม่มีสิทธิ์ดูเงินเดือนเปิดไม่ได้
+  const t2 = (await POST('/login', { username: 'nosal1', pin: '5151' })).data.token
+  assert.equal((await fetch(`${BASE}/payroll/transfer-slip/${ts.id}`, { headers: { Authorization: 'Bearer ' + t2 } })).status, 403)
+  assert.equal((await fetch(`${BASE}/payroll/line-slips?period=${period}`, { headers: { Authorization: 'Bearer ' + t2 } })).status, 403)
+  // ยังไม่ทำจ่าย → ส่งไม่ได้ (บันทึกเหตุผลไว้)
+  await PUT('/line-settings', { token: 'test-token' })
+  const s = await POST('/payroll/send-line', { period, emp_codes: [code] })
+  assert.equal(s.status, 200); assert.equal(s.data.sent, 0); assert.match(s.data.results[0].note, /ยังไม่ได้ทำจ่าย/)
+  assert.match((await GET(`/payroll/line-slips?period=${period}`)).data.rows.find((x) => x.code === code).sent.note, /ยังไม่ได้ทำจ่าย/)
+  await PUT('/line-settings', { token: '' })
+  assert.equal((await DEL('/payroll/transfer-slip/' + ts.id)).status, 200)
+})

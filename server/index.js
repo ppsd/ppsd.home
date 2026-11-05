@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
-import { renderElementPng } from './render.js'
+import { renderElementPng, imageToJpeg } from './render.js'
 import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
@@ -2250,9 +2250,9 @@ api.post('/kiosk/punch', (req, res) => {
 // ---------- เอกสารเป็นรูป (ส่งเข้า LINE) ----------
 // โทเคนชั่วคราวให้ Chrome (ในเครื่อง) เปิดหน้าเอกสารโดยไม่ต้องล็อกอิน — อายุ 3 นาที ใช้ครั้งเดียว
 const docViewTokens = new Map()
-function issueDocViewToken(kind, id) {
+function issueDocViewToken(kind, id, payload) {
   const t = randomBytes(18).toString('hex')
-  docViewTokens.set(t, { kind, id: Number(id), exp: Date.now() + 3 * 60 * 1000 })
+  docViewTokens.set(t, { kind, id: Number(id), payload, exp: Date.now() + 3 * 60 * 1000 })
   for (const [k, v] of docViewTokens) if (v.exp < Date.now()) docViewTokens.delete(k)
   return t
 }
@@ -2271,13 +2271,15 @@ api.get('/doc-view/:token', (req, res) => {
     const house = r.house_code ? db.prepare('SELECT name FROM houses WHERE code=?').get(r.house_code)?.name : ''
     return res.json({ kind: 'po', doc: { ...poRow(r), approval: approvalState('po', r.id) }, vendor, house_name: house || '' })
   }
+  if (v.kind === 'slip' && v.payload) return res.json({ kind: 'slip', slip: v.payload.slip, periodLabel: v.payload.periodLabel }) // สลิปเงินเดือน (ถ่ายรูปส่ง LINE)
   res.status(400).json({ error: 'ชนิดเอกสารไม่รองรับ' })
 })
 // รูปเอกสารสาธารณะ (ลิงก์มีกุญแจสุ่ม) — LINE ดึงรูปจากที่นี่ผ่านลิงก์สาธารณะ
 api.get('/pub/doc/:kind/:id/:key.png', (req, res) => {
   const row = db.prepare('SELECT png FROM doc_images WHERE kind=? AND doc_id=? AND key=? ORDER BY id DESC LIMIT 1').get(req.params.kind, Number(req.params.id), req.params.key)
   if (!row) return res.status(404).type('text/plain').send('ไม่พบรูป')
-  res.setHeader('Content-Type', 'image/png'); res.setHeader('Cache-Control', 'public, max-age=86400')
+  const isJpeg = row.png && row.png[0] === 0xFF && row.png[1] === 0xD8 // สลิปโอนเงินเก็บเป็น JPEG
+  res.setHeader('Content-Type', isJpeg ? 'image/jpeg' : 'image/png'); res.setHeader('Cache-Control', 'public, max-age=86400')
   res.send(row.png)
 })
 registerCrmPublic(api, () => crmDeps) // พอร์ทัลลูกค้า (ไม่ต้องล็อกอิน · ใช้โทเคนส่วนตัว)
@@ -4372,6 +4374,111 @@ api.post('/salary-advances', financeOnly, (req, res) => {
     .run(emp.code, emp.name, period, todayTH(), amount, b.note || '', req.user.name, todayTH())
   audit(req, 'เบิกเงินเดือนล่วงหน้า', `${emp.name} ${amount.toLocaleString()} บาท`)
   res.status(201).json(db.prepare('SELECT * FROM salary_advances WHERE id=?').get(info.lastInsertRowid))
+})
+// ===== ส่งสลิปเงินเดือนเข้า LINE รายคน (บัญชีกดส่งเอง) — รูปสลิปเต็มใบ + สลิปโอนเงินจากธนาคารของคนนั้น =====
+//  ส่งได้เฉพาะคนที่ "ทำจ่ายแล้ว" (ตัวเลขล็อก) · รูปส่งผ่านลิงก์สาธารณะที่มีกุญแจสุ่ม · โหมดทดสอบ LINE = ไปที่คนทดสอบแทน
+const TSLIP_MIME = /^image\/(png|jpe?g|webp)$/i
+const tslipOf = (period, code) => db.prepare('SELECT id, name, mime, size, uploaded, uploader FROM payroll_transfer_slips WHERE period=? AND emp_code=? ORDER BY id DESC LIMIT 1').get(period, code) || null
+const empLineUid = (code) => db.prepare('SELECT u.line_uid FROM employees e JOIN users u ON u.id=e.user_id WHERE e.code=? AND u.line_uid IS NOT NULL').get(code)?.line_uid || ''
+const periodOf = (q) => (/^\d{4}-\d{2}$/.test(String(q || '')) ? String(q) : currentPeriod())
+api.get('/payroll/line-slips', requireSalary, (req, res) => {
+  const period = periodOf(req.query.period)
+  const last = db.prepare('SELECT * FROM payroll_line_sends WHERE period=? ORDER BY id').all(period).reduce((m, r) => m.set(r.emp_code, r), new Map())
+  const t = lineTestUser()
+  res.json({
+    period, periodLabel: periodLabelTH(period), test_mode: t ? t.name : '', public_url: !!publicBaseUrl(),
+    rows: periodRows(period).map((r) => ({
+      code: r.code, name: r.name, paid: !!r.paid, net: Math.round(netOf(r) * 100) / 100, batch_no: r.batch_no || '',
+      line: !!empLineUid(r.code), transfer: tslipOf(period, r.code), sent: last.get(r.code) || null,
+    })),
+  })
+})
+api.post('/payroll/transfer-slip', financeOnly, diskFullGuard, express.raw({ type: 'application/octet-stream', limit: '20mb' }), (req, res) => {
+  const period = periodOf(req.query.period)
+  const emp = db.prepare('SELECT code, name FROM employees WHERE code=?').get(String(req.query.emp_code || ''))
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  const buf = Buffer.isBuffer(req.body) ? req.body : null
+  const mime = String(req.query.mime || '').toLowerCase()
+  if (!buf || !buf.length) return res.status(400).json({ error: 'ไม่มีไฟล์' })
+  if (!TSLIP_MIME.test(mime)) return res.status(400).json({ error: 'แนบได้เฉพาะรูป JPG / PNG (LINE ส่ง PDF เป็นรูปไม่ได้) — ถ้าเป็น PDF ให้แคปหน้าจอเป็นรูป' })
+  const name = String(req.query.name || 'transfer.jpg').slice(0, 120)
+  const info = db.prepare('INSERT INTO payroll_transfer_slips (period,emp_code,name,mime,size,uploaded,uploader) VALUES (?,?,?,?,?,?,?)').run(period, emp.code, name, mime, buf.length, todayTH(), req.user.name)
+  const path = 'tslip-' + info.lastInsertRowid
+  writeFileSync(join(uploadsDir, path), buf)
+  db.prepare('UPDATE payroll_transfer_slips SET path=? WHERE id=?').run(path, info.lastInsertRowid)
+  audit(req, 'แนบสลิปโอนเงินเดือน', `${emp.name} · ${periodLabelTH(period)} · ${name}`)
+  res.status(201).json(tslipOf(period, emp.code))
+})
+api.get('/payroll/transfer-slip/:id', requireSalary, (req, res) => {
+  const f = db.prepare('SELECT * FROM payroll_transfer_slips WHERE id=?').get(req.params.id)
+  const p = f?.path ? join(uploadsDir, f.path) : ''
+  if (!f || !existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' })
+  res.setHeader('Content-Type', TSLIP_MIME.test(f.mime) ? f.mime : 'application/octet-stream')
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.send(readFileSync(p))
+})
+api.delete('/payroll/transfer-slip/:id', financeOnly, (req, res) => {
+  const f = db.prepare('SELECT * FROM payroll_transfer_slips WHERE id=?').get(req.params.id)
+  if (!f) return res.status(404).json({ error: 'ไม่พบไฟล์' })
+  db.prepare('DELETE FROM payroll_transfer_slips WHERE id=?').run(f.id) // ไฟล์บนดิสก์เก็บไว้ (มีประวัติ)
+  audit(req, 'ลบสลิปโอนเงินเดือน', `${f.emp_code} · ${periodLabelTH(f.period)} · ${f.name}`)
+  res.json({ ok: true })
+})
+// เก็บรูปไว้ให้ LINE ดึง (doc_images + กุญแจสุ่ม) → คืน URL สาธารณะ
+function publishLineImage(kind, docId, buf) {
+  const key = randomBytes(12).toString('hex')
+  db.prepare('DELETE FROM doc_images WHERE kind=? AND doc_id=?').run(kind, docId)
+  db.prepare('INSERT INTO doc_images (kind,doc_id,key,png,created) VALUES (?,?,?,?,?)').run(kind, docId, key, buf, nowTS())
+  return `${publicBaseUrl()}/api/pub/doc/${kind}/${docId}/${key}.png`
+}
+const maskAcct = (a) => { const d = String(a || '').replace(/\D/g, ''); return d.length > 4 ? 'xxx-' + d.slice(-4) : d }
+async function sendPayslipLine(period, code) {
+  const hit = paidMap(period).get(code)
+  if (!hit) return { ok: false, note: 'ยังไม่ได้ทำจ่าย' }
+  const uid = empLineUid(code)
+  if (!uid) return { ok: false, note: 'ยังไม่ได้ผูก LINE' }
+  if (!publicBaseUrl()) return { ok: false, note: 'ยังไม่มีลิงก์สาธารณะ (เปิดลิงก์สาธารณะในเมนู LINE ก่อน)' }
+  const emp = db.prepare('SELECT id, code, name, bank_name, bank_acct FROM employees WHERE code=?').get(code)
+  const label = periodLabelTH(period)
+  const row = { ...hit.row, paid: true, batch_no: hit.batch.no, pay_date: hit.batch.pay_date, period: label }
+  const tag = period.replace('-', '')
+  // 1) รูปสลิปเงินเดือนเต็มใบ (หน้าเดียวกับที่พิมพ์)
+  const token = issueDocViewToken('slip', emp.id, { slip: row, periodLabel: label })
+  const png = await renderElementPng(`http://127.0.0.1:${PORT}/#docview/${token}`, '#doc-sheet', { width: 820, scale: 1.5 })
+  const slipUrl = publishLineImage('payslip-' + tag, emp.id, png)
+  const msgs = [
+    lt('payroll.slip_msg', { name: emp.name, period: label, net: fmtMoney(Math.round(netOf(row) * 100) / 100), pay_date: row.pay_date || '-', bank: [emp.bank_name, maskAcct(emp.bank_acct)].filter(Boolean).join(' ') || '-' }),
+    { type: 'image', originalContentUrl: slipUrl, previewImageUrl: slipUrl },
+  ]
+  // 2) สลิปโอนเงินจากธนาคาร (ถ้าแนบไว้) — ย่อเป็น JPEG ให้ LINE รับได้ (รูปตัวอย่างไม่เกิน 1 MB)
+  const ts = db.prepare('SELECT * FROM payroll_transfer_slips WHERE period=? AND emp_code=? ORDER BY id DESC LIMIT 1').get(period, code)
+  let note = 'ส่งสลิปเงินเดือน'
+  if (ts?.path && existsSync(join(uploadsDir, ts.path))) {
+    const jpg = await imageToJpeg(readFileSync(join(uploadsDir, ts.path)), ts.mime)
+    const u = publishLineImage('tslip-' + tag, emp.id, jpg)
+    msgs.push({ type: 'image', originalContentUrl: u, previewImageUrl: u })
+    note += ' + สลิปโอน'
+  } else note += ' (ไม่มีสลิปโอน)'
+  const ok = await linePush(uid, msgs)
+  if (!ok) note = 'ส่ง LINE ไม่สำเร็จ — ' + (lineLastError?.reason || 'ตรวจ token')
+  return { ok, note }
+}
+api.post('/payroll/send-line', financeOnly, async (req, res) => {
+  const period = periodOf(req.body?.period)
+  const codes = Array.isArray(req.body?.emp_codes) ? req.body.emp_codes.map(String) : []
+  if (!codes.length) return res.status(400).json({ error: 'เลือกพนักงานอย่างน้อย 1 คน' })
+  if (!getSetting('line_token', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้ง LINE token' })
+  const results = []
+  for (const code of codes) {
+    let r
+    try { r = await sendPayslipLine(period, code) } catch (e) { r = { ok: false, note: 'สร้างรูปสลิปไม่สำเร็จ — ' + String(e.message || e).slice(0, 160) } }
+    db.prepare('INSERT INTO payroll_line_sends (period,emp_code,at,by,ok,note) VALUES (?,?,?,?,?,?)').run(period, code, nowTS(), req.user.name, r.ok ? 1 : 0, r.note)
+    results.push({ code, ...r })
+  }
+  const okN = results.filter((r) => r.ok).length
+  audit(req, 'ส่งสลิปเงินเดือนเข้า LINE', `${periodLabelTH(period)} · สำเร็จ ${okN}/${results.length} คน${lineTestUser() ? ' (โหมดทดสอบ)' : ''}`)
+  res.json({ ok: true, sent: okN, results })
 })
 // ---- สลิป/หลักฐานการเบิก (รูปหรือ PDF) — แนบได้ทุกเมื่อ (หลักฐานไม่เปลี่ยนยอดเงิน) · เปิดดูได้เฉพาะคนที่ดูเงินเดือนได้ ----
 const ADV_SLIP_MIME = /^(image\/(png|jpe?g|gif|webp|bmp|heic|heif)|application\/pdf)$/i

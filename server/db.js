@@ -793,6 +793,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS house_money_log (
   date_iso TEXT, amount REAL, method TEXT, ref_no TEXT, note TEXT, by TEXT, created TEXT
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_hml_house ON house_money_log(house_code)')
+// สลิปโอนเงินเดือนจากธนาคาร รายคนต่องวด (ไฟล์บนดิสก์ files/tslip-<id>) + ประวัติส่งสลิปเข้า LINE
+db.exec(`CREATE TABLE IF NOT EXISTS payroll_transfer_slips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  period TEXT, emp_code TEXT, name TEXT, mime TEXT, size INTEGER, path TEXT, uploaded TEXT, uploader TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_tslip ON payroll_transfer_slips(period, emp_code)')
+db.exec(`CREATE TABLE IF NOT EXISTS payroll_line_sends (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  period TEXT, emp_code TEXT, at TEXT, by TEXT, ok INTEGER, note TEXT
+)`)
 // สลิป/หลักฐานการเบิกเงินเดือนล่วงหน้า (ไฟล์เก็บบนดิสก์ที่ files/adv-<id> · เปิดได้เฉพาะคนที่ดูเงินเดือนได้)
 db.exec(`CREATE TABLE IF NOT EXISTS salary_advance_files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -18,6 +18,7 @@ import ModalShell from '../shared/ModalShell'
 import WhtCertDoc, { type AnnualEmpRow } from './WhtCertDoc'
 import AllSlipsDoc from './AllSlipsDoc'
 import PayrollSummaryDoc from './PayrollSummaryDoc'
+import PayslipLineDialog from './PayslipLineDialog'
 import EfilingList from '../accounting/EfilingList'
 import EmpSignatureCell from './EmpSignatureCell'
 import LocationTrack from './LocationTrack'
@@ -84,6 +85,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   interface AdvGroup { emp_code: string; emp_name: string; worked: number | null; est: number; taken: number; left: number; count: number; rounds: { id: number; date: string; amount: number; note: string; slips?: { id: number; name: string; mime: string }[] }[] }
   const [advances, setAdvances] = useState<AdvGroup[]>([])
   const [advForm, setAdvForm] = useState({ emp_code: '', amount: '', note: '' })
+  const [lineSlipDlg, setLineSlipDlg] = useState(false) // ส่งสลิปเงินเดือนเข้า LINE รายคน
   const [advSlip, setAdvSlip] = useState<File | null>(null) // สลิป/หลักฐานการเบิก (รูปหรือ PDF) แนบพร้อมบันทึก
   const [advSlipKey, setAdvSlipKey] = useState(0)
   const uploadAdvSlip = async (advId: number, f: File) => {
@@ -484,6 +486,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
 
         {/* ===== payroll ===== */}
         {/* ทำจ่ายเงินเดือน (เลือกพนักงาน) — วางนอกส่วนสลับแท็บ ย่อพับแล้วข้อมูลไม่หาย */}
+        {lineSlipDlg && payrollMeta && <PayslipLineDialog period={payrollMeta.period} onClose={() => setLineSlipDlg(false)} />}
         {payDlg && payrollMeta && (() => {
           const sel = new Set(payDlg.sel)
           const chosen = unpaidRows.filter((p) => sel.has(p.code))
@@ -624,6 +627,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <button onClick={openWhtList} title="พิมพ์หนังสือรับรองหักภาษี ณ ที่จ่าย (50 ทวิ) รายพนักงาน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>🧾 50 ทวิ</button>
               {payrollMeta && unpaidRows.length > 0 && (
                 <button onClick={autofillDays} title="ดึงวันทำงานจากข้อมูลลงเวลาให้ทุกคนที่ยังไม่ได้ทำจ่าย (แก้ต่อได้)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>↺ ดึงวันจากลงเวลา</button>
+              )}
+              {payrollMeta && (
+                <button onClick={() => setLineSlipDlg(true)} title="แนบสลิปโอนเงินรายคน แล้วส่งสลิปเงินเดือน + สลิปโอน เข้า LINE ของพนักงาน (เฉพาะคนที่ทำจ่ายแล้ว)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>📨 ส่งสลิปเข้า LINE</button>
               )}
               {payrollMeta && unpaidRows.length > 0 && (
                 <button onClick={() => openPayDlg()} title="เลือกพนักงานที่จะทำจ่าย (จ่ายบางคนก่อนสิ้นเดือนได้ เช่น คนลาออก)" className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>💸 ทำจ่าย ({unpaidRows.length} คนที่ยังไม่จ่าย)</button>
