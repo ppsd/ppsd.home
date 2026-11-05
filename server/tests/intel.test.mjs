@@ -127,3 +127,17 @@ test('ผู้รับ LINE: บันทึกได้เฉพาะ CEO/�
   assert.deepEqual(s.data.line_users, [])
   assert.ok(Array.isArray(s.data.line_candidates))
 })
+
+test('ความถี่รายงาน: ค่าเริ่มต้น = ทุกวันจันทร์ · เปลี่ยนเป็นกดเอง/ทุกวันได้ · ค่าแปลกถูกปัดทิ้ง', async () => {
+  // ไฟล์ทดสอบนี้เคยตั้ง auto:false ไว้ก่อนหน้า → เดิม = กดเอง
+  let s = await call('PUT', '/intel/settings', { freq: 'weekly' })
+  assert.equal(s.data.freq, 'weekly')
+  assert.equal(s.data.auto, true)
+  s = await call('PUT', '/intel/settings', { freq: 'manual' })
+  assert.equal(s.data.freq, 'manual')
+  assert.equal(s.data.auto, false)
+  s = await call('PUT', '/intel/settings', { freq: 'hourly' })
+  assert.equal(s.data.freq, 'manual')
+  s = await call('PUT', '/intel/settings', { freq: 'daily' })
+  assert.equal(s.data.freq, 'daily')
+})

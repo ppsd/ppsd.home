@@ -24,7 +24,7 @@ interface IntelData {
   kpis: { cash: number | null; houses_active: number; value_active: number; remain_active: number; ar_overdue: number; ar_overdue_n: number; ap_overdue: number; need_30d: number; inflow_30d: number; leads_30d: number; late_houses: number }
   finance: FinFlag[]; alerts: AiAlert[]; reports: Record<string, Report | null>; lastErr: Record<string, { created: string; error: string } | null>
   houses: HouseRow[]; competitors: Competitor[]
-  settings: { auto: boolean; hour: number; line: boolean; line_users: number[]; line_candidates: { id: number; name: string }[]; last_run: { at: string; by: string; done: string[]; failed: string[] } | null; has_key: boolean }
+  settings: { freq: 'daily' | 'weekly' | 'manual'; auto: boolean; hour: number; line: boolean; line_users: number[]; line_candidates: { id: number; name: string }[]; last_run: { at: string; by: string; done: string[]; failed: string[] } | null; has_key: boolean }
   running: Running | null; cost30_usd: number
 }
 interface HistRow { id: number; created: string; by: string; ok: number; summary: string; score: number | null; error: string; cost_usd: number }
@@ -369,19 +369,22 @@ function CompetitorModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 }
 
 function SettingsModal({ s, onClose, onSaved }: { s: IntelData['settings']; onClose: () => void; onSaved: () => void }) {
-  const [auto, setAuto] = useState(s.auto); const [hour, setHour] = useState(s.hour); const [line, setLine] = useState(s.line)
+  const [freq, setFreq] = useState(s.freq || 'weekly'); const [hour, setHour] = useState(s.hour); const [line, setLine] = useState(s.line)
   const [who, setWho] = useState<number[]>(s.line_users || [])
-  const save = async () => { try { await api.put('/intel/settings', { auto, hour, line, line_users: who }); onSaved() } catch (e) { window.alert((e as Error).message) } }
+  const save = async () => { try { await api.put('/intel/settings', { freq, hour, line, line_users: who }); onSaved() } catch (e) { window.alert((e as Error).message) } }
   return (
     <ModalShell title="ตั้งค่าศูนย์วิเคราะห์ธุรกิจ" onClose={onClose}
       footer={<><button style={btn} onClick={onClose}>ยกเลิก</button><button style={btnPrimary} onClick={save}>บันทึก</button></>}>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginBottom: 14, cursor: 'pointer' }}>
-        <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> ให้ AI ทำรายงานครบ 6 หัวข้ออัตโนมัติทุกวัน
-      </label>
-      <div style={{ fontSize: 13, color: '#5C6770', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 8 }}>ให้ AI ทำรายงานครบ 6 หัวข้อ (ค่า AI ประมาณ 57 บาท/ครั้ง)</div>
+      {([['weekly', 'ทุกเช้าวันจันทร์ (แนะนำ)', 'ประมาณ 230 บาท/เดือน · ถ้าวันจันทร์เครื่องปิด จะทำวันถัดไปที่เปิด'], ['daily', 'ทุกเช้า', 'ประมาณ 1,700 บาท/เดือน'], ['manual', 'กดเองเท่านั้น', 'จ่ายเฉพาะตอนกด "อัปเดตรายงานทั้งหมด" / "อัปเดตหัวข้อนี้"']] as const).map(([v, t, sub]) => (
+        <label key={v} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 14, marginBottom: 8, cursor: 'pointer' }}>
+          <input type="radio" name="intel-freq" checked={freq === v} onChange={() => setFreq(v)} style={{ marginTop: 4 }} />
+          <span>{t}<div style={{ fontSize: 12, color: '#94A0A8' }}>{sub}</div></span>
+        </label>
+      ))}
+      <div style={{ fontSize: 13, color: '#5C6770', margin: '6px 0 14px', display: freq === 'manual' ? 'none' : 'flex', gap: 8, alignItems: 'center' }}>
         เวลาเริ่มทำ (โมง):
         <input type="number" min={0} max={23} value={hour} onChange={(e) => setHour(Number(e.target.value))} style={{ ...field, width: 80 }} />
-        <span>ค่า AI ประมาณ 40–100 บาท/วัน</span>
       </div>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, cursor: 'pointer' }}>
         <input type="checkbox" checked={line} onChange={(e) => setLine(e.target.checked)} /> ส่ง LINE เมื่อมี "เรื่องด่วน" ใหม่

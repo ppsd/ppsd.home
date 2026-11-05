@@ -381,13 +381,34 @@ score = คะแนนสุขภาพธุรกิจโดยรวม (1
   }
 
   // อัตโนมัติวันละครั้ง (ค่าเริ่มต้น 07:00) — ตรวจทุก 10 นาที
+  // ความถี่: weekly = ทุกเช้าวันจันทร์ (ค่าเริ่มต้น · ประหยัด ~230 บาท/เดือน) · daily = ทุกวัน · manual = กดเองเท่านั้น
+  // ข้อมูลเก่า: intel_auto='0' (เคยปิด) = manual
+  const freq = () => {
+    const f = getSetting('intel_freq', '')
+    if (['daily', 'weekly', 'manual'].includes(f)) return f
+    return getSetting('intel_auto', '1') === '0' ? 'manual' : 'weekly'
+  }
+  // วันจันทร์ของสัปดาห์นี้ (ISO) — ถ้าวันจันทร์เครื่องปิดอยู่ จะทำให้ทันทีวันถัดไปที่เปิด
+  const mondayOf = (todayIso) => {
+    const d = new Date(todayIso + 'T00:00:00')
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
   function tick() {
     try {
-      if (getSetting('intel_auto', '1') !== '1' || !aiKey() || running) return
+      const f = freq()
+      if (f === 'manual' || !aiKey() || running) return
       const hv = Number(getSetting('intel_hour', '7'))
       const hour = Number.isFinite(hv) ? Math.max(0, Math.min(23, hv)) : 7
       const today = todayISO()
-      if (new Date().getHours() < hour || getSetting('intel_auto_day', '') === today) return
+      const last = getSetting('intel_auto_day', '')
+      if (f === 'daily' && (new Date().getHours() < hour || last === today)) return
+      if (f === 'weekly') {
+        const mon = mondayOf(today)
+        if (last >= mon) return // สัปดาห์นี้ทำแล้ว
+        if (today === mon && new Date().getHours() < hour) return
+      }
       setSetting('intel_auto_day', today)
       runAll(null, 'ระบบ (อัตโนมัติ)')
     } catch (e) { console.error('[intel] tick', e.message) }
@@ -395,7 +416,7 @@ score = คะแนนสุขภาพธุรกิจโดยรวม (1
 
   function settings() {
     return {
-      auto: getSetting('intel_auto', '1') === '1', hour: Number(getSetting('intel_hour', '7')) || 7, line: getSetting('intel_line', '1') === '1',
+      freq: freq(), auto: freq() !== 'manual', hour: Number(getSetting('intel_hour', '7')) || 7, line: getSetting('intel_line', '1') === '1',
       line_users: lineUserIds(), line_candidates: managersWithLine().map((u) => ({ id: u.id, name: u.name })),
       last_run: safe(() => JSON.parse(getSetting('intel_last_run', '') || 'null'), null), has_key: !!aiKey(),
     }
@@ -475,7 +496,8 @@ score = คะแนนสุขภาพธุรกิจโดยรวม (1
     })
     api.put('/intel/settings', guard, (req, res) => {
       const b = req.body || {}
-      if (b.auto != null) setSetting('intel_auto', b.auto ? '1' : '0')
+      if (['daily', 'weekly', 'manual'].includes(b.freq)) { setSetting('intel_freq', b.freq); setSetting('intel_auto', b.freq === 'manual' ? '0' : '1') }
+      else if (b.auto != null) setSetting('intel_auto', b.auto ? '1' : '0')
       if (b.line != null) setSetting('intel_line', b.line ? '1' : '0')
       if (Array.isArray(b.line_users)) {
         const ok = new Set(managersWithLine().map((u) => Number(u.id)))
