@@ -4316,19 +4316,24 @@ api.post('/payroll/close', financeOnly, (req, res) => {
 })
 // สรุป Retention สะสมต่อคน — "แต่ละคนหักไปแล้วเท่าไหร่ / ครบ 5,000 หรือยัง"
 // paid = ยอดยกมา + ผลรวมที่หักในทุกงวดที่ปิดแล้ว (ยังไม่นับงวดที่ยังไม่ปิด)
-api.get('/payroll/retention', requireSalary, (_req, res) => {
-  const emps = db.prepare("SELECT code,name,retention,retention_opening FROM employees WHERE status != 'ลาออก' ORDER BY id").all()
+api.get('/payroll/retention', requireSalary, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  // คนลาออกที่ยังมีเงินประกันค้าง ต้องเห็นด้วย (ไว้ทำจ่ายคืน)
+  const emps = db.prepare("SELECT code,name,status,retention,retention_opening FROM employees ORDER BY id").all()
+  const pending = new Map(db.prepare('SELECT emp_code, retention_refund FROM payroll_inputs WHERE period=?').all(period).map((r) => [r.emp_code, Number(r.retention_refund) || 0]))
   res.json({
-    cap: RETENTION_CAP,
+    cap: RETENTION_CAP, period, periodLabel: periodLabelTH(period),
     rows: emps.map((e) => {
       const opening = e.retention_opening || 0
-      const paid = retentionPaidBefore(e.code, opening, '') // รวมทุกงวดที่ปิดแล้ว + ยกมา
+      const paid = retentionPaidBefore(e.code, opening, '') // รวมทุกงวดที่ปิดแล้ว + ยกมา (หักยอดที่คืนไปแล้ว)
       const remaining = Math.max(0, RETENTION_CAP - paid)
       return {
-        code: e.code, name: e.name, monthly: e.retention ?? 0, opening,
+        code: e.code, name: e.name, resigned: e.status === 'ลาออก', monthly: e.retention ?? 0, opening,
         paid, remaining, done: paid >= RETENTION_CAP,
+        refund_pending: pending.get(e.code) || 0, // ยอดคืนที่ตั้งไว้ในงวดนี้ (ยังไม่ทำจ่าย)
+        refund_paid: empPaid(period, e.code),
       }
-    }),
+    }).filter((r) => !r.resigned || r.paid > 0 || r.refund_pending > 0),
   })
 })
 // ---- เบิกเงินเดือนล่วงหน้า ----
@@ -4368,6 +4373,41 @@ api.post('/salary-advances', financeOnly, (req, res) => {
   audit(req, 'เบิกเงินเดือนล่วงหน้า', `${emp.name} ${amount.toLocaleString()} บาท`)
   res.status(201).json(db.prepare('SELECT * FROM salary_advances WHERE id=?').get(info.lastInsertRowid))
 })
+// ---- สลิป/หลักฐานการเบิก (รูปหรือ PDF) — แนบได้ทุกเมื่อ (หลักฐานไม่เปลี่ยนยอดเงิน) · เปิดดูได้เฉพาะคนที่ดูเงินเดือนได้ ----
+const ADV_SLIP_MIME = /^(image\/(png|jpe?g|gif|webp|bmp|heic|heif)|application\/pdf)$/i
+const advFilesOf = (advId) => db.prepare('SELECT id, advance_id, name, mime, size, uploaded, uploader FROM salary_advance_files WHERE advance_id=? ORDER BY id').all(advId)
+api.post('/salary-advances/:id/slip', financeOnly, diskFullGuard, express.raw({ type: 'application/octet-stream', limit: '25mb' }), (req, res) => {
+  const a = db.prepare('SELECT * FROM salary_advances WHERE id=?').get(req.params.id)
+  if (!a) return res.status(404).json({ error: 'ไม่พบรายการเบิก' })
+  const buf = Buffer.isBuffer(req.body) ? req.body : null
+  const mime = String(req.query.mime || '').toLowerCase()
+  const name = String(req.query.name || 'slip').slice(0, 120)
+  if (!buf || !buf.length) return res.status(400).json({ error: 'ไม่มีไฟล์' })
+  if (!ADV_SLIP_MIME.test(mime)) return res.status(400).json({ error: 'แนบได้เฉพาะรูปภาพหรือ PDF' })
+  if (db.prepare('SELECT COUNT(*) c FROM salary_advance_files WHERE advance_id=?').get(a.id).c >= 5) return res.status(400).json({ error: 'แนบได้สูงสุด 5 ไฟล์ต่อรายการ' })
+  const info = db.prepare('INSERT INTO salary_advance_files (advance_id,name,mime,size,uploaded,uploader) VALUES (?,?,?,?,?,?)').run(a.id, name, mime, buf.length, todayTH(), req.user.name)
+  const path = 'adv-' + info.lastInsertRowid
+  writeFileSync(join(uploadsDir, path), buf)
+  db.prepare('UPDATE salary_advance_files SET path=? WHERE id=?').run(path, info.lastInsertRowid)
+  audit(req, 'แนบสลิปเบิกล่วงหน้า', `${a.emp_name} ${Number(a.amount).toLocaleString()} บาท · ${name}`)
+  res.status(201).json(advFilesOf(a.id))
+})
+api.get('/salary-advances/slip/:fid', requireSalary, (req, res) => {
+  const f = db.prepare('SELECT * FROM salary_advance_files WHERE id=?').get(req.params.fid)
+  const p = f?.path ? join(uploadsDir, f.path) : ''
+  if (!f || !existsSync(p)) return res.status(404).json({ error: 'ไม่พบไฟล์' })
+  res.setHeader('Content-Type', ADV_SLIP_MIME.test(f.mime) ? f.mime : 'application/octet-stream')
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.send(readFileSync(p))
+})
+api.delete('/salary-advances/slip/:fid', financeOnly, (req, res) => {
+  const f = db.prepare('SELECT f.*, a.emp_name FROM salary_advance_files f LEFT JOIN salary_advances a ON a.id=f.advance_id WHERE f.id=?').get(req.params.fid)
+  if (!f) return res.status(404).json({ error: 'ไม่พบไฟล์' })
+  db.prepare('DELETE FROM salary_advance_files WHERE id=?').run(f.id) // ไฟล์บนดิสก์เก็บไว้ (มีประวัติ ดูย้อนได้)
+  audit(req, 'ลบสลิปเบิกล่วงหน้า', `${f.emp_name || ''} · ${f.name}`)
+  res.json({ ok: true })
+})
 api.delete('/salary-advances/:id', financeOnly, (req, res) => {
   const a = db.prepare('SELECT * FROM salary_advances WHERE id=?').get(req.params.id)
   if (a && periodClosed(a.period, a.emp_code)) return res.status(400).json({ error: `งวด ${periodLabelTH(a.period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — ลบรายการเบิกของงวดที่ปิดไม่ได้` })
@@ -4382,7 +4422,7 @@ api.get('/salary-advances/summary', requireSalary, (req, res) => {
   const byEmp = {}
   for (const a of advs) {
     if (!byEmp[a.emp_code]) byEmp[a.emp_code] = { emp_code: a.emp_code, emp_name: a.emp_name, rounds: [], taken: 0 }
-    byEmp[a.emp_code].rounds.push({ id: a.id, date: a.date, amount: a.amount, note: a.note })
+    byEmp[a.emp_code].rounds.push({ id: a.id, date: a.date, amount: a.amount, note: a.note, slips: advFilesOf(a.id) })
     byEmp[a.emp_code].taken += a.amount
   }
   const info = advanceInfoMap(period)

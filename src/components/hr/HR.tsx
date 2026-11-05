@@ -81,16 +81,44 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const delAtt = async (id: number) => { if (!window.confirm('ลบบันทึกการลงเวลานี้?')) return; try { await apiClient.del('/attendance/' + id); loadAttList() } catch (e) { alert((e as Error).message) } }
   // เงินเดือน: สรุปทั้งปี + เบิกล่วงหน้า
   const [annual, setAnnual] = useState<{ year: string; months: number; net: number; sso: number } | null>(null)
-  interface AdvGroup { emp_code: string; emp_name: string; worked: number | null; est: number; taken: number; left: number; count: number; rounds: { id: number; date: string; amount: number; note: string }[] }
+  interface AdvGroup { emp_code: string; emp_name: string; worked: number | null; est: number; taken: number; left: number; count: number; rounds: { id: number; date: string; amount: number; note: string; slips?: { id: number; name: string; mime: string }[] }[] }
   const [advances, setAdvances] = useState<AdvGroup[]>([])
   const [advForm, setAdvForm] = useState({ emp_code: '', amount: '', note: '' })
+  const [advSlip, setAdvSlip] = useState<File | null>(null) // สลิป/หลักฐานการเบิก (รูปหรือ PDF) แนบพร้อมบันทึก
+  const [advSlipKey, setAdvSlipKey] = useState(0)
+  const uploadAdvSlip = async (advId: number, f: File) => {
+    if (!/^(image\/|application\/pdf$)/.test(f.type)) throw new Error('แนบได้เฉพาะรูปภาพหรือ PDF')
+    await apiClient.uploadRaw('/salary-advances/' + advId + '/slip?name=' + encodeURIComponent(f.name), f)
+  }
+  const pickAdvSlip = (advId: number) => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*,application/pdf'
+    inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { await uploadAdvSlip(advId, f); loadAdvances() } catch (e) { alert((e as Error).message) } }
+    inp.click()
+  }
+  const delAdvSlip = async (fid: number, name: string) => {
+    if (!window.confirm(`ลบสลิป "${name}"?`)) return
+    try { await apiClient.del('/salary-advances/slip/' + fid); loadAdvances() } catch (e) { alert((e as Error).message) }
+  }
   const [advLimit, setAdvLimit] = useState<{ worked: number | null; est: number; taken: number; left: number } | null>(null) // ยอดอ้างอิง (ไม่จำกัดการเบิก)
   const [advErr, setAdvErr] = useState('')
   const loadAdvances = () => { const p = payrollMeta?.period; if (p) apiClient.get<{ rows: AdvGroup[] }>('/salary-advances/summary?period=' + p).then((r) => setAdvances(r.rows || [])).catch(() => setAdvances([])) }
   // สรุป retention สะสมต่อคน (หักไปแล้วเท่าไหร่ / ครบ 5,000 หรือยัง)
-  interface RetRow { code: string; name: string; monthly: number; opening: number; paid: number; remaining: number; done: boolean }
-  const [retSum, setRetSum] = useState<{ cap: number; rows: RetRow[] } | null>(null)
-  const loadRetention = () => apiClient.get<{ cap: number; rows: RetRow[] }>('/payroll/retention').then(setRetSum).catch(() => setRetSum(null))
+  interface RetRow { code: string; name: string; resigned?: boolean; monthly: number; opening: number; paid: number; remaining: number; done: boolean; refund_pending?: number; refund_paid?: boolean }
+  const [retSum, setRetSum] = useState<{ cap: number; periodLabel?: string; rows: RetRow[] } | null>(null)
+  const loadRetention = () => apiClient.get<{ cap: number; periodLabel?: string; rows: RetRow[] }>('/payroll/retention' + (payrollMeta?.period ? '?period=' + payrollMeta.period : '')).then(setRetSum).catch(() => setRetSum(null))
+  // ทำจ่ายคืนเงินประกันสะสม → ใส่ยอดคืนในงวดที่เลือก (บวกเข้าเงินสุทธิ ออกพร้อมเงินเดือนงวดนั้น)
+  const refundRetention = async (r: RetRow) => {
+    if (!payrollMeta) return
+    const raw = window.prompt(`คืนเงินประกันสะสมให้ ${r.name}
+สะสมอยู่ ${baht(r.paid)} — ใส่ยอดที่จะคืน (จ่ายพร้อมเงินเดือนงวด ${payrollMeta.periodLabel})
+ใส่ 0 = ยกเลิกการคืน`, String(r.refund_pending || r.paid))
+    if (raw == null) return
+    // เกินยอดสะสมในระบบได้ (เช่น หักไว้ก่อนใช้ ERP แต่ไม่ได้กรอกยอดยกมา) — แค่ถามยืนยัน
+    if (unMoney(raw) > r.paid && !window.confirm(`ยอดคืน ${baht(unMoney(raw))} มากกว่าเงินประกันสะสมในระบบ (${baht(r.paid)})
+ยืนยันคืนยอดนี้?`)) return
+    try { await apiClient.put('/payroll/inputs', { period: payrollMeta.period, emp_code: r.code, retention_refund: unMoney(raw) }); loadRetention(); refreshPayroll() }
+    catch (e) { alert((e as Error).message) }
+  }
   // แก้ยอดหัก retention ต่อเดือนของพนักงานตรงตารางเงินเดือนได้เลย (คนที่ครบแล้วตั้ง 0)
   const [retSaving, setRetSaving] = useState<number | null>(null)
   const saveRetentionMonthly = async (id: number, raw: string) => {
@@ -138,7 +166,15 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     if (advLimit && unMoney(advForm.amount) > advLimit.left && !window.confirm(`เบิกรวมจะเกินเงินเดือนงวดนี้โดยประมาณ (${baht(advLimit.est)})
 เงินสุทธิจะติดลบ — ต้องแก้ก่อนทำจ่าย
 บันทึกต่อไหม?`)) return
-    try { await apiClient.post('/salary-advances', { emp_code: advForm.emp_code, amount: unMoney(advForm.amount), note: advForm.note, period: payrollMeta?.period }); setAdvForm({ emp_code: '', amount: '', note: '' }); loadAdvances() }
+    try {
+      const a = await apiClient.post<{ id: number }>('/salary-advances', { emp_code: advForm.emp_code, amount: unMoney(advForm.amount), note: advForm.note, period: payrollMeta?.period })
+      setAdvForm({ emp_code: '', amount: '', note: '' })
+      if (advSlip) {
+        try { await uploadAdvSlip(a.id, advSlip) } catch (e) { setAdvErr('บันทึกเบิกแล้ว แต่แนบสลิปไม่สำเร็จ: ' + (e as Error).message + ' — กด 📎 ที่รายการเพื่อแนบใหม่') }
+        setAdvSlip(null); setAdvSlipKey((k) => k + 1)
+      }
+      loadAdvances()
+    }
     catch (e) { setAdvErr((e as Error).message) }
   }
   const delAdvance = async (id: number) => { try { await apiClient.del('/salary-advances/' + id); loadAdvances() } catch (e) { alert((e as Error).message) } }
@@ -735,9 +771,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                       {/* คืนเงินประกันผลงาน — แสดงช่องให้คนที่ลาออก หรือคนที่มีกรอกไว้แล้ว */}
                       {locked
                         ? (refund > 0 ? <span style={{ display: 'block', fontSize: 10.5, color: '#2E7D55' }}>คืน +{baht(refund)}</span> : null)
-                        : (p.status === 'ลาออก' || refund > 0) && (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end', marginTop: 3 }} title="คืนเงินประกันผลงานที่หักสะสมไว้ (บวกเข้าเงินสุทธิ)">
-                            <span style={{ color: '#2E7D55', fontSize: 10.5 }}>คืน +฿</span>
+                        : (p.status === 'ลาออก' || refund > 0 || (p.retention_paid || 0) > 0) && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, justifyContent: 'flex-end', marginTop: 3 }} title={`คืนเงินประกันสะสม (บวกเข้าเงินสุทธิ) · สะสมอยู่ ${baht((p.retention_paid || 0) + refund)}`}>
+                            <span style={{ color: '#2E7D55', fontSize: 10.5 }}>คืนประกัน +฿</span>
                             <input key={p.code + '-refund-' + refund} type="text" inputMode="decimal" defaultValue={String(refund || '')} placeholder="0"
                               disabled={inSaving === p.code + ':retention_refund'}
                               onFocus={(e) => e.currentTarget.select()}
@@ -795,6 +831,10 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               </select>
               <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนเงิน" value={advForm.amount} onChange={(v) => setAdvForm({ ...advForm, amount: v })} />
               <input style={{ ...field, flex: 1, minWidth: 140 }} placeholder="หมายเหตุ (ถ้ามี)" value={advForm.note} onChange={(e) => setAdvForm({ ...advForm, note: e.target.value })} />
+              <label title="แนบสลิปโอนเงิน/หลักฐานการเบิก (รูปหรือ PDF) — แนบเพิ่มทีหลังได้ที่รายการ" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: advSlip ? '#2E7D55' : '#5C6770', border: '1px dashed ' + (advSlip ? '#9CCBB0' : '#C9D2DA'), borderRadius: 8, padding: '7px 10px', cursor: 'pointer', maxWidth: 200, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                📎 {advSlip ? advSlip.name : 'แนบสลิป'}
+                <input key={advSlipKey} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={(e) => setAdvSlip(e.target.files?.[0] || null)} />
+              </label>
               <button onClick={submitAdvance} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}>บันทึกเบิก</button>
               {advLimit && advForm.emp_code && <span style={{ fontSize: 12, color: advLimit.left > 0 ? '#5C6770' : '#C24036' }}>เงินเดือนงวดนี้ประมาณ <b>{baht(advLimit.est)}</b>{advLimit.worked != null ? ` (${advLimit.worked} วัน)` : ''} · เบิกแล้ว {baht(advLimit.taken)}{advLimit.left < 0 ? ' · ⚠ เบิกเกินแล้ว' : ''}</span>}
             </div>}
@@ -817,6 +857,13 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                         <span style={{ fontSize: 11, fontWeight: 600, color: '#5C6770', background: '#F1F4F6', padding: '1px 9px', borderRadius: 20 }}>รอบ {i + 1}</span>
                         <span className="num" style={{ color: '#94A0A8' }}>{r.date}</span>
                         <span style={{ color: '#5C6770', flex: 1 }}>{r.note || ''}</span>
+                        {(r.slips || []).map((f) => (
+                          <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                            <button onClick={() => apiClient.openFile('/salary-advances/slip/' + f.id).catch((e) => alert((e as Error).message))} title={'เปิดดู ' + f.name} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, color: '#30506A', background: '#EEF3F7', border: 'none', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>{f.mime === 'application/pdf' ? '📄' : '🖼'} สลิป</button>
+                            <button onClick={() => delAdvSlip(f.id, f.name)} title="ลบสลิปนี้" style={{ border: 'none', background: 'none', color: '#94A0A8', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                          </span>
+                        ))}
+                        <button onClick={() => pickAdvSlip(r.id)} title="แนบสลิป/หลักฐานการเบิก (รูปหรือ PDF)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, color: (r.slips || []).length ? '#5C6770' : '#B7791F', background: '#fff', border: '1px solid ' + ((r.slips || []).length ? '#D2DAE1' : '#ECDCB8'), borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>📎 {(r.slips || []).length ? 'เพิ่ม' : 'แนบสลิป'}</button>
                         <span className="num" style={{ fontWeight: 600, color: '#C24036' }}>{baht(r.amount)}</span>
                         {!payrollMeta?.locked && <button onClick={() => delAdvance(r.id)} title="ยกเลิกรอบนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>}
                       </div>
@@ -923,13 +970,14 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     <th style={{ ...th, textAlign: 'right' }}>สะสมแล้ว</th>
                     <th style={{ ...th, textAlign: 'right' }}>เหลือถึงเพดาน</th>
                     <th style={{ ...th, textAlign: 'center', padding: '9px 18px' }}>สถานะ</th>
+                    <th style={{ ...th, textAlign: 'center', padding: '9px 18px' }}>คืนเงินประกัน (งวด {retSum.periodLabel || payrollMeta?.periodLabel})</th>
                   </tr></thead>
                   <tbody>
                     {retSum.rows.map((r) => {
                       const pct = Math.min(100, Math.round((r.paid / (retSum.cap || 5000)) * 100))
                       return (
                         <tr key={r.code} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
-                          <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name}</td>
+                          <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{r.name}{r.resigned ? <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#C24036', background: '#FBEEEC', padding: '1px 7px', borderRadius: 20 }}>ลาออก</span> : null}</td>
                           <td className="num" style={{ ...td, textAlign: 'right', color: r.done ? '#94A0A8' : '#5C6770' }}>{baht(r.monthly)}</td>
                           <td style={{ ...td, textAlign: 'right' }}>
                             <div className="num" style={{ fontWeight: 600, color: '#1C2730' }}>{baht(r.paid)} / {baht(retSum.cap)}</div>
@@ -940,6 +988,13 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                             {r.done
                               ? <span style={{ fontSize: 11.5, fontWeight: 600, color: '#2E7D55', background: '#E7F3EC', padding: '2px 10px', borderRadius: 20 }}>ครบแล้ว</span>
                               : <span style={{ fontSize: 11.5, fontWeight: 600, color: '#C0852C', background: '#FBF3E4', padding: '2px 10px', borderRadius: 20 }}>กำลังหัก</span>}
+                          </td>
+                          <td style={{ ...td, textAlign: 'center', padding: '10px 18px' }}>
+                            {r.refund_paid
+                              ? (r.refund_pending ? <span style={{ fontSize: 12, color: '#2E7D55' }}>✓ คืนแล้ว {baht(r.refund_pending)}</span> : <span style={{ fontSize: 11.5, color: '#94A0A8' }}>งวดนี้ทำจ่ายแล้ว</span>)
+                              : r.paid > 0
+                                ? <button onClick={() => refundRetention(r)} className="hov-f3f5f7" title="ตั้งยอดคืนเงินประกันสะสม — จ่ายรวมกับเงินเดือนงวดนี้" style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>{r.refund_pending ? `จะคืน ${baht(r.refund_pending)} · แก้` : 'คืนเงินประกัน'}</button>
+                                : <span style={{ fontSize: 11.5, color: '#94A0A8' }}>—</span>}
                           </td>
                         </tr>
                       )

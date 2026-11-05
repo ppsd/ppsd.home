@@ -83,7 +83,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <th style={{ ...th, background: C_SSO }}>ประกันสังคม</th>
                 <th style={{ ...th, background: C_SSO }}>ภาษี</th>
                 <th style={th}>รายการเบิก</th>
-                <th style={th}>หักหนี้</th>
+                <th style={th}>กยศ.</th>
                 <th style={th}>อื่นๆ</th>
                 <th style={th}>ประกันงาน/เดือน</th>
                 <th style={{ ...th, background: '#F6ECD6' }}>รวมหัก</th>

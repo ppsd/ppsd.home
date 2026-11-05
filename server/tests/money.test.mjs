@@ -2722,3 +2722,39 @@ test('เงินเดือนรายเดือน: กรอกวัน
   assert.equal(after.base, 20000, '30,000 ÷ 30 × 20')
   assert.equal(after.leave_deduct, 0, 'กรอกเอง = ไม่หักขาดซ้ำ'); assert.equal(after.manual_final, true)
 })
+
+test('เงินประกันผลงาน: คืนเงินประกันสะสมได้ทุกคน (ไม่ต้องลาออก) · บวกเข้าเงินสุทธิ · หน้าสรุปเห็นยอดที่จะคืน', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบคืนประกัน', role: 'ช่าง', pay_type: 'รายเดือน', base: 15000, retention: 500, retention_opening: 2000 })
+  const code = e.data.code
+  const ret = (await GET(`/payroll/retention?period=${period}`)).data
+  const r0 = ret.rows.find((r) => r.code === code)
+  assert.equal(r0.paid, 2000); assert.equal(r0.refund_pending, 0)
+  const rowBefore = (await GET(`/payroll?period=${period}`)).data.rows.find((r) => r.code === code)
+  const ok = await PUT('/payroll/inputs', { period, emp_code: code, retention_refund: 2500 })
+  assert.equal(ok.status, 200); assert.equal(ok.data.row.retention_refund, 2500)
+  const net = (r) => r.base + r.ot + r.other_income + r.retention_refund - r.sso - r.tax - r.leave_deduct - r.retention - r.student_loan - r.advance - r.other_deduct
+  assert.equal(Math.round(net(ok.data.row) - net(rowBefore)), 2500, 'ยอดคืนบวกเข้าเงินสุทธิ')
+  assert.equal((await GET(`/payroll/retention?period=${period}`)).data.rows.find((r) => r.code === code).refund_pending, 2500)
+})
+
+test('เบิกล่วงหน้า: แนบสลิป (รูป/PDF) ได้ · เปิดดูได้เฉพาะคนดูเงินเดือนได้ · ไฟล์อื่นแนบไม่ได้ · ลบได้', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบสลิปเบิก', role: 'ช่าง', pay_type: 'รายวัน', base: 500, work_days: 20 })
+  const adv = (await POST('/salary-advances', { emp_code: e.data.code, amount: 1000, period })).data
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
+  const up = (mime, body) => fetch(`${BASE}/salary-advances/${adv.id}/slip?name=slip.png&mime=${encodeURIComponent(mime)}`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body })
+  assert.equal((await up('text/html', Buffer.from('<script>x</script>'))).status, 400, 'ไฟล์ html แนบไม่ได้')
+  const r = await up('image/png', png)
+  assert.equal(r.status, 201)
+  const files = await r.json(); assert.equal(files.length, 1)
+  const row = (await GET(`/salary-advances/summary?period=${period}`)).data.rows.find((g) => g.emp_code === e.data.code)
+  assert.equal(row.rounds[0].slips.length, 1, 'สรุปเบิกต้องเห็นสลิป')
+  const get = await fetch(`${BASE}/salary-advances/slip/${files[0].id}`, { headers: { Authorization: 'Bearer ' + token } })
+  assert.equal(get.status, 200); assert.equal(get.headers.get('content-type'), 'image/png')
+  assert.equal(Buffer.from(await get.arrayBuffer()).length, png.length)
+  // คนที่ไม่มีสิทธิ์ดูเงินเดือน (site) เปิดสลิปไม่ได้
+  await POST('/users', { name: 'หน้างาน ไม่ดูเงินเดือน', username: 'nosal1', pin: '5151', role: 'site' })
+  const t2 = (await POST('/login', { username: 'nosal1', pin: '5151' })).data.token
+  assert.equal((await fetch(`${BASE}/salary-advances/slip/${files[0].id}`, { headers: { Authorization: 'Bearer ' + t2 } })).status, 403)
+  assert.equal((await DEL('/salary-advances/slip/' + files[0].id)).status, 200)
+  assert.equal((await GET(`/salary-advances/summary?period=${period}`)).data.rows.find((g) => g.emp_code === e.data.code).rounds[0].slips.length, 0)
+})

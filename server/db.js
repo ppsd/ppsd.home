@@ -793,6 +793,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS house_money_log (
   date_iso TEXT, amount REAL, method TEXT, ref_no TEXT, note TEXT, by TEXT, created TEXT
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_hml_house ON house_money_log(house_code)')
+// สลิป/หลักฐานการเบิกเงินเดือนล่วงหน้า (ไฟล์เก็บบนดิสก์ที่ files/adv-<id> · เปิดได้เฉพาะคนที่ดูเงินเดือนได้)
+db.exec(`CREATE TABLE IF NOT EXISTS salary_advance_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  advance_id INTEGER, name TEXT, mime TEXT, size INTEGER, path TEXT, uploaded TEXT, uploader TEXT
+)`)
+db.exec('CREATE INDEX IF NOT EXISTS idx_adv_files ON salary_advance_files(advance_id)')
 ensureColumn('users', 'system_only', 'INTEGER') // 1 = บัญชีระบบ (ผู้ดูแล/เจ้าของที่ไม่ใช่พนักงาน) — ไม่สร้างพนักงาน HR · ไม่ขึ้นในเงินเดือน/ลงเวลา
 ensureColumn('users', 'must_change_pin', 'INTEGER') // 1 = ถูกรีเซ็ต PIN ต้องตั้งใหม่ตอนเข้าครั้งแรก
 // คลังรหัสผ่านบริษัท — เซิร์ฟเวอร์เก็บเฉพาะข้อความที่เข้ารหัสแล้ว (enc) · เข้ารหัส/ถอดรหัสที่เบราว์เซอร์ด้วย master passphrase ที่ระบบไม่รู้
