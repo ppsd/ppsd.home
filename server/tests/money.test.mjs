@@ -2785,3 +2785,14 @@ test('ส่งสลิปเงินเดือนเข้า LINE: แน�
   await PUT('/line-settings', { token: '' })
   assert.equal((await DEL('/payroll/transfer-slip/' + ts.id)).status, 200)
 })
+
+test('พนักงานซ้ำ: ผู้ใช้ชื่อเว้นวรรคต่าง ("สมพล  ทดสอบ" กับ "สมพล ทดสอบ") ไม่ถูกสร้างพนักงานใหม่ตอนรีสตาร์ต', async () => {
+  const { default: Database } = await import('better-sqlite3')
+  const dbx = new Database(join(tmp, 'test.sqlite'))
+  dbx.prepare("INSERT INTO employees (code,name,status,pay_type,base) VALUES ('EMP-900','วรรค ทดสอบ','ทำงาน','รายเดือน',0)").run()
+  dbx.prepare("INSERT INTO users (name,username,pin,role,status) VALUES ('วรรค  ทดสอบ','wak2','x','site','ปิดใช้งาน')").run()
+  // จำลองขั้นตอนตอนเปิดเซิร์ฟเวอร์ (คำสั่งเดียวกับ db.js)
+  const n = dbx.prepare("SELECT COUNT(*) c FROM users u WHERE COALESCE(u.system_only,0)=0 AND NOT EXISTS (SELECT 1 FROM employees e WHERE REPLACE(e.name,' ','') = REPLACE(u.name,' ','') OR e.user_id = u.id) AND u.username='wak2'").get().c
+  dbx.close()
+  assert.equal(n, 0, 'ชื่อเว้นวรรคต่างกันต้องนับว่าเป็นคนเดียวกัน')
+})

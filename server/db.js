@@ -885,7 +885,8 @@ for (const e of db.prepare('SELECT id,pin FROM employees').all())
 
 // เชื่อมผู้ใช้เดิม ↔ พนักงาน HR: สร้างพนักงานให้ผู้ใช้ที่ยังไม่มีชื่อตรงกันใน HR (idempotent — ทำครั้งเดียวต่อคน)
 {
-  const usersNoEmp = db.prepare('SELECT * FROM users u WHERE COALESCE(u.system_only,0)=0 AND NOT EXISTS (SELECT 1 FROM employees e WHERE TRIM(e.name) = TRIM(u.name))').all()
+  // เทียบชื่อแบบไม่สนช่องว่าง — เดิม "สมพล  วงพุทธคำ" (เว้น 2 ช่อง) ไม่ตรง "สมพล วงพุทธคำ" → สร้างพนักงานซ้ำทุกครั้งที่รีสตาร์ต
+  const usersNoEmp = db.prepare("SELECT * FROM users u WHERE COALESCE(u.system_only,0)=0 AND NOT EXISTS (SELECT 1 FROM employees e WHERE REPLACE(e.name,' ','') = REPLACE(u.name,' ','') OR e.user_id = u.id)").all()
   if (usersNoEmp.length) {
     let maxNum = db.prepare("SELECT code FROM employees WHERE code LIKE 'EMP-%'").all()
       .reduce((m, r) => Math.max(m, parseInt(String(r.code).slice(4), 10) || 0), 0)
@@ -893,9 +894,9 @@ for (const e of db.prepare('SELECT id,pin FROM employees').all())
       sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,pin,signature,spouse,children,user_id)
       VALUES (?,?,?,?,?,?,0,0,0,0,'รายเดือน',30,0,3,0,3,0,?,NULL,0,0,?)`)
     // กันสร้างซ้ำ: ไม่สร้างพนักงานชื่อที่มีอยู่แล้ว หรือชื่อที่เพิ่งสร้างในรอบนี้ (เช่น ผู้ใช้ 2 คนชื่อเดียวกัน)
-    const seen = new Set(db.prepare('SELECT TRIM(name) n FROM employees').all().map((r) => r.n))
+    const seen = new Set(db.prepare("SELECT REPLACE(name,' ','') n FROM employees").all().map((r) => r.n))
     for (const u of usersNoEmp) {
-      const key = String(u.name || '').trim()
+      const key = String(u.name || '').replace(/\s+/g, '')
       if (!key || seen.has(key)) continue
       seen.add(key)
       maxNum += 1
