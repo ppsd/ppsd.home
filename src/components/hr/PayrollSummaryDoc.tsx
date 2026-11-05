@@ -27,12 +27,13 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
   // จำนวนเดือน/วัน: รายวัน = วัน · รายเดือนทำไม่เต็มเดือน = วัน ÷ 30 (เช่น 12 วัน = 0.40 เดือน)
   const countOf = (p: ApiPayroll) => (isDaily(p) ? (p.work_days || 0) : p.prorated ? (p.work_days || 0) / 30 : 1)
   const wageOf = (p: ApiPayroll) => p.base || 0
-  const extraOf = (p: ApiPayroll) => (p.ot || 0) + (p.other_income || 0) + (p.retention_refund || 0) // คอลัมน์ "รายรับอื่นๆ" = OT + รายได้อื่นๆ (โบนัส/เบี้ยขยัน ฯลฯ) + คืนเงินประกัน
-  const incomeOf = (p: ApiPayroll) => (p.base || 0) + extraOf(p)
+  const refundOf = (p: ApiPayroll) => p.retention_refund || 0 // คอลัมน์แยก "คืนเงินประกัน" (ไม่ปนกับรายรับอื่นๆ)
+  const extraOf = (p: ApiPayroll) => (p.ot || 0) + (p.other_income || 0) // คอลัมน์ "รายรับอื่นๆ" = OT + รายได้อื่นๆ (โบนัส/เบี้ยขยัน ฯลฯ)
+  const incomeOf = (p: ApiPayroll) => (p.base || 0) + extraOf(p) + refundOf(p)
 
   const sum = (f: (p: ApiPayroll) => number) => data.reduce((s, p) => s + (f(p) || 0), 0)
   const T = {
-    wage: sum(wageOf), other: sum(extraOf), income: sum(incomeOf), sso: sum((p) => p.sso || 0),
+    wage: sum(wageOf), other: sum(extraOf), refund: sum(refundOf), income: sum(incomeOf), sso: sum((p) => p.sso || 0),
     tax: sum((p) => p.tax || 0), advance: sum((p) => p.advance || 0), debt: sum((p) => p.student_loan || 0),
     misc: sum(otherOf), ret: sum((p) => p.retention || 0), deduct: sum(deductOf), net: sum(netOf),
   }
@@ -62,13 +63,13 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
         <div style={{ fontSize: 11, marginBottom: 4 }}>สำหรับงวด {periodLabel}</div>
 
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1080 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1140 }}>
             {/* แถวป้ายกลุ่มสี */}
             <thead>
               <tr>
                 <th style={{ ...th, border: 'none' }} colSpan={8} />
                 <th style={{ ...th, background: C_GREEN }}>ประกันสังคม</th>
-                <th style={{ ...th, border: 'none' }} />
+                <th style={{ ...th, border: 'none' }} colSpan={2} />
                 <th style={{ ...th, background: C_GREEN }}>ภงด. 1</th>
                 <th style={{ ...th, background: C_ORANGE }} colSpan={2}>อัตราปกติ 5%</th>
                 <th style={{ ...th, border: 'none' }} colSpan={5} />
@@ -79,6 +80,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 {['ลำดับ', 'คำนำหน้า', 'ชื่อ', 'สกุล', 'เลขบัตรประชาชน', 'ค่าจ้างรายวัน/รายเดือน', 'เดือนละ/วันละ', 'จำนวนเดือน/วัน'].map((h, i) => <th key={i} style={th}>{h}</th>)}
                 <th style={{ ...th, background: C_WAGE }}>รวมค่าจ้าง</th>
                 <th style={th}>รายรับอื่นๆ</th>
+                <th style={th}>คืนเงิน<br />ประกันสะสม</th>
                 <th style={th}>รวมรายรับ</th>
                 <th style={{ ...th, background: C_SSO }}>ประกันสังคม</th>
                 <th style={{ ...th, background: C_SSO }}>ภาษี</th>
@@ -110,6 +112,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                     <td style={{ ...tdR, color: '#C0392B' }} className="num">{daily || p.prorated ? f2(countOf(p)) : '1.00'}</td>
                     <td style={{ ...tdR, background: C_WAGE, fontWeight: 600 }} className="num">{f2z(wageOf(p))}</td>
                     <td style={tdR} className="num">{f2z(extraOf(p))}</td>
+                    <td style={{ ...tdR, color: '#2E7D55' }} className="num">{f2z(refundOf(p))}</td>
                     <td style={tdR} className="num">{f2z(incomeOf(p))}</td>
                     <td style={{ ...tdR, background: C_SSO }} className="num">{f2z(p.sso || 0)}</td>
                     <td style={{ ...tdR, background: C_SSO }} className="num">{f2z(p.tax || 0)}</td>
@@ -131,6 +134,7 @@ export default function PayrollSummaryDoc({ rows, periodLabel, onClose }: { rows
                 <td style={tdC} colSpan={8}>รวมทั้งสิ้น {data.length} คน</td>
                 <td style={tdR} className="num">{f2(T.wage)}</td>
                 <td style={tdR} className="num">{f2(T.other)}</td>
+                <td style={tdR} className="num">{f2(T.refund)}</td>
                 <td style={tdR} className="num">{f2(T.income)}</td>
                 <td style={tdR} className="num">{f2(T.sso)}</td>
                 <td style={tdR} className="num">{f2(T.tax)}</td>
