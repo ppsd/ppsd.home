@@ -49,6 +49,25 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const [attSum, setAttSum] = useState<{ periodLabel: string; rows: { code: string; name: string; role: string; present: number; late: number; absent: number; leave: number; came: number; adj?: number; no_attendance?: boolean }[] } | null>(null)
   const loadAttSum = () => apiClient.get<typeof attSum>('/attendance/summary?period=' + attMonth).then(setAttSum).catch(() => setAttSum(null))
   useEffect(() => { if (tab === 'attsummary') loadAttSum() /* eslint-disable-next-line */ }, [tab, attMonth])
+  // ทำงานวันหยุด (วันหยุดบริษัท/วันอาทิตย์) → สร้างค่าทำงานวันหยุดเป็นรายการ OT รออนุมัติ (ตามกฎหมาย: ปกติ +1 เท่า · เกิน 8 ชม. 3 เท่า)
+  type HwRow = { emp_code: string; emp_name: string; pay_type: string; date: string; holiday: string; check_in: string; check_out: string; time_known: boolean; normal_hours: number; extra_hours: number; normal_amount: number; extra_amount: number; created: boolean }
+  const [hw, setHw] = useState<HwRow[]>([])
+  const [hwSel, setHwSel] = useState<Set<string>>(new Set())
+  const [hwBusy, setHwBusy] = useState(false)
+  const hwKey = (r: HwRow) => r.emp_code + '|' + r.date
+  const loadHw = () => apiClient.get<{ rows: HwRow[] }>('/attendance/holiday-work?period=' + attMonth).then((r) => { setHw(r.rows); setHwSel(new Set(r.rows.filter((x) => !x.created).map(hwKey))) }).catch(() => setHw([]))
+  useEffect(() => { if (tab === 'attsummary') loadHw() /* eslint-disable-next-line */ }, [tab, attMonth])
+  const createHw = async () => {
+    const items = hw.filter((r) => !r.created && hwSel.has(hwKey(r)))
+    if (!items.length) return
+    const sum = items.reduce((t, r) => t + r.normal_amount + r.extra_amount, 0)
+    if (!window.confirm(`สร้างค่าทำงานวันหยุด ${items.length} รายการ รวม ${baht(sum)}?
+จะเป็นรายการ OT "รออนุมัติ" — ผู้จัดการอนุมัติแล้วเข้าเงินเดือนงวดนั้น`)) return
+    setHwBusy(true)
+    try { const r = await apiClient.post<{ created: number; total: number }>('/attendance/holiday-work/create', { period: attMonth, items: items.map((i) => ({ emp_code: i.emp_code, date: i.date })) }); alert(`สร้างแล้ว ${r.created} รายการ (${baht(r.total)}) — รออนุมัติที่แท็บ OT`); loadHw() }
+    catch (e) { alert((e as Error).message) }
+    setHwBusy(false)
+  }
   // รายละเอียดลงเวลารายวันต่อคน (เปิดดูว่าวันไหนมา/ขาด + เติมได้)
   type DayCell = { date: string; dow: number; status: string; check_in: string; check_out: string }
   type Detail = { code: string; name: string; role: string; no_attendance?: boolean; days: DayCell[]; counts: { came: number; late: number; adj: number; leave: number; absent: number; holiday: number } }
@@ -1089,7 +1108,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               {otRecords.map((o) => (
                 <tr key={o.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                   <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>{o.name}</td>
-                  <td className="num" style={{ ...td, color: '#5C6770' }}>{o.date}</td>
+                  <td className="num" style={{ ...td, color: '#5C6770' }}>{o.date}{o.note ? <span style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color: '#B7791F' }}>{o.note}</span> : null}</td>
                   <td className="num" style={{ ...td, textAlign: 'center' }}>{o.hours}</td>
                   <td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{o.rate}</td>
                   <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{baht(o.amount)}</td>
@@ -1169,6 +1188,36 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <input type="month" value={attMonth} onChange={(e) => setAttMonth(e.target.value)} style={{ ...field, width: 'auto', padding: '5px 9px', fontSize: 12.5 }} />
               {attSum && <span style={{ fontSize: 12, color: '#94A0A8' }}>{attSum.periodLabel} · {attSum.rows.length} คน</span>}
             </div>
+            {/* ทำงานวันหยุด → ค่าทำงานวันหยุด */}
+            {attEditOk && hw.length > 0 && (
+              <div style={{ margin: '12px 18px', border: '1px solid #ECDCB8', borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: '#FBF4E1', padding: '9px 12px' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#8A6D1F' }}>🗓 ทำงานวันหยุด ({hw.length})</span>
+                  <span style={{ fontSize: 11.5, color: '#8A6D1F' }}>ตามกฎหมาย: ชั่วโมงปกติ (≤8) ได้เพิ่ม 1 เท่า (รายวันรวมเป็น 2 เท่า) · เกิน 8 ชม. = 3 เท่า · ผู้จัดการ/CEO ไม่นับ</span>
+                  <button onClick={createHw} disabled={hwBusy || !hw.some((r) => !r.created && hwSel.has(hwKey(r)))} className="btn-primary" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#B7791F', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>{hwBusy ? 'กำลังสร้าง…' : `สร้างค่าทำงานวันหยุด (${hw.filter((r) => !r.created && hwSel.has(hwKey(r))).length})`}</button>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+                  <thead><tr style={{ textAlign: 'left', background: '#FFFCF5' }}>
+                    <th style={th} /><th style={th}>วันที่</th><th style={th}>วันหยุด</th><th style={th}>พนักงาน</th><th style={{ ...th, textAlign: 'center' }}>เข้า–ออก</th><th style={{ ...th, textAlign: 'right' }}>ชม. ปกติ (+1 เท่า)</th><th style={{ ...th, textAlign: 'right' }}>ชม. เกิน (3 เท่า)</th><th style={{ ...th, textAlign: 'right' }}>รวม</th>
+                  </tr></thead>
+                  <tbody>
+                    {hw.map((r) => (
+                      <tr key={hwKey(r)} style={{ borderTop: '1px solid #F3EAD6', opacity: r.created ? 0.6 : 1 }}>
+                        <td style={{ ...td, width: 30 }}>{r.created ? <span title="สร้างแล้ว" style={{ color: '#2E7D55' }}>✓</span> : <input type="checkbox" checked={hwSel.has(hwKey(r))} onChange={() => setHwSel((s) => { const n = new Set(s); if (n.has(hwKey(r))) n.delete(hwKey(r)); else n.add(hwKey(r)); return n })} />}</td>
+                        <td className="num" style={td}>{thMonth(r.date)}</td>
+                        <td style={td}>{r.holiday}</td>
+                        <td style={td}>{r.emp_name} <span style={{ fontSize: 11, color: '#94A0A8' }}>({r.pay_type})</span></td>
+                        <td className="num" style={{ ...td, textAlign: 'center' }}>{r.check_in}–{r.check_out || '?'}{!r.time_known && <span title="ไม่มีเวลาออก/อ่านเวลาไม่ได้ — คิด 8 ชม." style={{ color: '#C0852C' }}> *</span>}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right' }}>{r.normal_hours} · {baht(r.normal_amount)}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right' }}>{r.extra_hours ? `${r.extra_hours} · ${baht(r.extra_amount)}` : '—'}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{r.created ? <span style={{ color: '#2E7D55', fontWeight: 500 }}>สร้างแล้ว</span> : baht(r.normal_amount + r.extra_amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 11, color: '#94A0A8', padding: '6px 12px' }}>* ไม่มีเวลาออก = คิด 8 ชม. · หักพักเที่ยง 1 ชม. เมื่อทำเกิน 5 ชม. · ตัวเลขแก้ได้ที่แท็บ OT ก่อนอนุมัติ · รายวันที่กรอกวันทำงานเองในตารางเงินเดือน: ตรวจว่านับวันหยุดนี้รวมไว้แล้ว (ได้ 1 เท่า) ก่อนอนุมัติ</div>
+              </div>
+            )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
                 <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={th}>ตำแหน่ง</th>

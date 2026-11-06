@@ -2943,3 +2943,24 @@ test('วันหยุดบริษัท: แก้วันที่/ช�
   assert.equal((await PUT(`/holidays/${a.id}`, { name: 'x' })).status, 403)
   token = adminToken
 })
+
+test('ค่าทำงานวันหยุด: ลงเวลาวันหยุดบริษัท → ปกติ +1 เท่า · เกิน 8 ชม. 3 เท่า · ผู้จัดการไม่นับ · สร้างซ้ำไม่ได้ · เป็น OT รออนุมัติ', async () => {
+  await POST('/holidays', { date: '2032-07-12', name: 'วันหยุดทดสอบ' }) // จันทร์
+  const mo = (await POST('/employees', { name: 'รายเดือนวันหยุด', role: 'ช่าง', pay_type: 'รายเดือน', base: 24000 })).data
+  const da = (await POST('/employees', { name: 'รายวันวันหยุด', role: 'ช่าง', pay_type: 'รายวัน', base: 400 })).data
+  const mg = (await POST('/employees', { name: 'ผู้จัดการวันหยุด', role: 'ผู้จัดการ', pay_type: 'รายเดือน', base: 50000 })).data
+  await POST('/attendance/manual', { emp_code: mo.code, date: '2032-07-12', check_in: '08:00', check_out: '17:00' }) // 9 ชม. - พัก 1 = 8
+  await POST('/attendance/manual', { emp_code: da.code, date: '2032-07-12', check_in: '08:00', check_out: '19:00' }) // 11 - 1 = 10 → ปกติ 8 + เกิน 2
+  await POST('/attendance/manual', { emp_code: mg.code, date: '2032-07-12', check_in: '08:00', check_out: '17:00' })
+  const rows = (await GET('/attendance/holiday-work?period=2032-07')).data.rows
+  const rm = rows.find((r) => r.emp_code === mo.code), rd = rows.find((r) => r.emp_code === da.code)
+  assert.ok(!rows.some((r) => r.emp_code === mg.code), 'ผู้จัดการไม่ได้ค่าทำงานวันหยุด')
+  assert.equal(rm.normal_hours, 8); assert.equal(rm.normal_amount, 800, '24000/30/8 × 8 × 1 = 800'); assert.equal(rm.extra_hours, 0)
+  assert.equal(rd.normal_hours, 8); assert.equal(rd.normal_amount, 400); assert.equal(rd.extra_hours, 2); assert.equal(rd.extra_amount, 300, '50/ชม. × 2 × 3')
+  const c = await POST('/attendance/holiday-work/create', { period: '2032-07', items: [{ emp_code: mo.code, date: '2032-07-12' }, { emp_code: da.code, date: '2032-07-12' }] })
+  assert.equal(c.status, 200); assert.equal(c.data.created, 2); assert.equal(c.data.total, 1500)
+  const ot = (await GET('/ot')).data.filter((o) => [mo.code, da.code].includes(o.emp_code) && o.date === '2032-07-12')
+  assert.equal(ot.length, 3, 'รายเดือน 1 + รายวัน 2 (ปกติ + เกิน)'); assert.ok(ot.every((o) => o.status === 'รออนุมัติ' && /ทำงานวันหยุด/.test(o.note)))
+  assert.equal((await POST('/attendance/holiday-work/create', { period: '2032-07', items: [{ emp_code: mo.code, date: '2032-07-12' }] })).data.created, 0, 'สร้างซ้ำไม่ได้')
+  assert.ok((await GET('/attendance/holiday-work?period=2032-07')).data.rows.find((r) => r.emp_code === mo.code).created)
+})

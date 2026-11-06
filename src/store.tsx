@@ -285,6 +285,7 @@ export interface ApiOT {
   rate: string
   amount: number
   status: string
+  note?: string | null // เช่น "ทำงานวันหยุด: สงกรานต์"
 }
 export interface ApiVendor {
   id: number

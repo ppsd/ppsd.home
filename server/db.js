@@ -166,6 +166,7 @@ ensureColumn('employees', 'spouse', 'INTEGER')
 ensureColumn('employees', 'children', 'INTEGER')
 for (const c of ['area', 'design', 'start_date', 'deliver_date', 'manager']) ensureColumn('houses', c, 'TEXT')
 ensureColumn('ot', 'emp_code', 'TEXT')
+ensureColumn('ot', 'note', 'TEXT') // ที่มา เช่น "ทำงานวันหยุด: สงกรานต์" (สร้างจากปุ่มค่าทำงานวันหยุด)
 ensureColumn('leaves', 'unpaid_days', 'INTEGER')
 ensureColumn('leaves', 'hours', 'REAL') // ลารายชั่วโมง (0 = ลาเป็นวัน) · 8 ชม. = 1 วัน
 // PO เงื่อนไขชำระ (เงินสด/เครดิต) + เครดิตประจำร้าน

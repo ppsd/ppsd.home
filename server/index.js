@@ -4760,9 +4760,58 @@ api.post('/ot', canWrite, (req, res) => {
   // ไม่กรอกจำนวนเงิน → คิดจากชั่วโมง × อัตรา ให้อัตโนมัติ
   const amount = Number(b.amount) > 0 ? Number(b.amount) : otAmountOf(emp, b.hours, b.rate || '1.5x')
   if (!(amount > 0)) return res.status(400).json({ error: 'กรุณากรอกจำนวนชั่วโมง (หรือจำนวนเงิน)' })
-  const info = db.prepare('INSERT INTO ot (emp_code,name,date,hours,rate,amount,status) VALUES (?,?,?,?,?,?,?)')
-    .run(b.emp_code, emp.name || b.name || '', b.date || todayISO(), b.hours || '', b.rate || '1.5x', amount, 'รออนุมัติ')
+  const info = db.prepare('INSERT INTO ot (emp_code,name,date,hours,rate,amount,status,note) VALUES (?,?,?,?,?,?,?,?)')
+    .run(b.emp_code, emp.name || b.name || '', b.date || todayISO(), b.hours || '', b.rate || '1.5x', amount, 'รออนุมัติ', String(b.note || '').slice(0, 120))
   res.status(201).json(db.prepare('SELECT * FROM ot WHERE id=?').get(info.lastInsertRowid))
+})
+// ===== ค่าทำงานวันหยุด (ตามกฎหมายแรงงาน ม.62–63) =====
+//  ลงเวลาในวันหยุดบริษัท/วันอาทิตย์ → ชั่วโมงปกติ (≤8) ได้เพิ่ม 1 เท่า (รายเดือน: เงินเดือนครอบวันหยุดแล้ว · รายวัน: ระบบนับวันนั้นเป็นวันทำงาน 1 เท่าแล้ว → รวม 2 เท่า)
+//  ส่วนเกิน 8 ชม. = OT วันหยุด 3 เท่า · ผู้จัดการ/CEO (มีอำนาจบังคับบัญชา ม.65) ไม่ได้ค่าทำงานวันหยุด → ไม่แสดง
+const hmToMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null }
+function holidayWorkRows(period) {
+  const { from, to } = periodBounds(period)
+  const hol = new Map(db.prepare('SELECT date, name FROM holidays WHERE date>=? AND date<=?').all(from, to).map((h) => [h.date, h.name]))
+  const rows = db.prepare("SELECT a.id, a.emp_code, a.emp_name, a.date, a.check_in, a.check_out, e.pay_type, e.role, e.base, e.name AS ename FROM attendance a JOIN employees e ON e.code=a.emp_code WHERE a.date>=? AND a.date<=? AND COALESCE(a.check_in,'')<>'' ORDER BY a.date, a.emp_name").all(from, to)
+  const made = new Set(db.prepare("SELECT emp_code || '|' || date k FROM ot WHERE note LIKE 'ทำงานวันหยุด%' AND status <> 'ไม่อนุมัติ'").all().map((r) => r.k))
+  const out = []
+  for (const r of rows) {
+    const sunday = new Date(r.date + 'T00:00:00').getDay() === 0
+    const hname = hol.get(r.date) || (sunday ? 'วันอาทิตย์ (หยุดประจำสัปดาห์)' : '')
+    if (!hname || NO_ATTENDANCE_ROLES.includes(r.role)) continue
+    const a = hmToMin(r.check_in), b = hmToMin(r.check_out)
+    let worked = 8, timeKnown = false
+    if (a != null && b != null && b > a) { const span = (b - a) / 60; worked = Math.round((span > 5 ? span - 1 : span) * 2) / 2; timeKnown = true } // หักพักเที่ยง 1 ชม. ถ้าทำเกิน 5 ชม.
+    const normal = Math.min(8, worked), extra = Math.max(0, worked - 8)
+    const emp = { base: r.base, pay_type: r.pay_type }
+    out.push({ emp_code: r.emp_code, emp_name: r.ename || r.emp_name, pay_type: r.pay_type || 'รายเดือน', date: r.date, holiday: hname, check_in: r.check_in, check_out: r.check_out || '',
+      time_known: timeKnown, normal_hours: normal, extra_hours: extra,
+      normal_amount: otAmountOf(emp, normal, '1x'), extra_amount: extra > 0 ? otAmountOf(emp, extra, '3x') : 0,
+      created: made.has(r.emp_code + '|' + r.date) })
+  }
+  return out
+}
+api.get('/attendance/holiday-work', requireAttendanceEdit, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(String(req.query.period || '')) ? String(req.query.period) : currentPeriod()
+  res.json({ period, periodLabel: periodLabelTH(period), rows: holidayWorkRows(period) })
+})
+// สร้างรายการ OT "ทำงานวันหยุด" (รออนุมัติ) ให้คนที่เลือก — ไม่สร้างซ้ำวันเดิม
+api.post('/attendance/holiday-work/create', requireAttendanceEdit, (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(String(req.body?.period || '')) ? String(req.body.period) : currentPeriod()
+  const want = new Set((Array.isArray(req.body?.items) ? req.body.items : []).map((i) => `${i.emp_code}|${i.date}`))
+  if (!want.size) return res.status(400).json({ error: 'ยังไม่ได้เลือกรายการ' })
+  const ins = db.prepare('INSERT INTO ot (emp_code,name,date,hours,rate,amount,status,note) VALUES (?,?,?,?,?,?,?,?)')
+  let created = 0, total = 0
+  db.transaction(() => {
+    for (const r of holidayWorkRows(period)) {
+      if (!want.has(`${r.emp_code}|${r.date}`) || r.created) continue
+      if (r.normal_amount > 0) { ins.run(r.emp_code, r.emp_name, r.date, String(r.normal_hours), '1x', r.normal_amount, 'รออนุมัติ', `ทำงานวันหยุด: ${r.holiday}`); total += r.normal_amount }
+      if (r.extra_amount > 0) { ins.run(r.emp_code, r.emp_name, r.date, String(r.extra_hours), '3x', r.extra_amount, 'รออนุมัติ', `ทำงานวันหยุด (เกิน 8 ชม.): ${r.holiday}`); total += r.extra_amount }
+      created++
+    }
+  })()
+  audit(req, 'สร้างค่าทำงานวันหยุด', `${periodLabelTH(period)} · ${created} รายการ · ${fmtMoney(r2(total))} บาท (รออนุมัติ)`)
+  notifyChange(['ot'])
+  res.json({ ok: true, created, total: r2(total) })
 })
 // อนุมัติ / ไม่อนุมัติ — ตัดสินได้เฉพาะใบที่ยังรออนุมัติ (กันกดซ้ำ)
 function otDecide(req, res, status) {
