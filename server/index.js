@@ -4801,9 +4801,11 @@ api.post('/attendance/holiday-work/create', requireAttendanceEdit, (req, res) =>
   if (!want.size) return res.status(400).json({ error: 'ยังไม่ได้เลือกรายการ' })
   const ins = db.prepare('INSERT INTO ot (emp_code,name,date,hours,rate,amount,status,note) VALUES (?,?,?,?,?,?,?,?)')
   let created = 0, total = 0
+  const noBase = []
   db.transaction(() => {
     for (const r of holidayWorkRows(period)) {
       if (!want.has(`${r.emp_code}|${r.date}`) || r.created) continue
+      if (!(r.normal_amount + r.extra_amount > 0)) { noBase.push(r.emp_name); continue } // ยังไม่ได้ใส่ฐานเงินเดือน/ค่าแรง → คิดเงินไม่ได้
       if (r.normal_amount > 0) { ins.run(r.emp_code, r.emp_name, r.date, String(r.normal_hours), '1x', r.normal_amount, 'รออนุมัติ', `ทำงานวันหยุด: ${r.holiday}`); total += r.normal_amount }
       if (r.extra_amount > 0) { ins.run(r.emp_code, r.emp_name, r.date, String(r.extra_hours), '3x', r.extra_amount, 'รออนุมัติ', `ทำงานวันหยุด (เกิน 8 ชม.): ${r.holiday}`); total += r.extra_amount }
       created++
@@ -4811,7 +4813,7 @@ api.post('/attendance/holiday-work/create', requireAttendanceEdit, (req, res) =>
   })()
   audit(req, 'สร้างค่าทำงานวันหยุด', `${periodLabelTH(period)} · ${created} รายการ · ${fmtMoney(r2(total))} บาท (รออนุมัติ)`)
   notifyChange(['ot'])
-  res.json({ ok: true, created, total: r2(total) })
+  res.json({ ok: true, created, total: r2(total), no_base: [...new Set(noBase)] })
 })
 // อนุมัติ / ไม่อนุมัติ — ตัดสินได้เฉพาะใบที่ยังรออนุมัติ (กันกดซ้ำ)
 function otDecide(req, res, status) {

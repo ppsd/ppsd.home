@@ -55,7 +55,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const [hwSel, setHwSel] = useState<Set<string>>(new Set())
   const [hwBusy, setHwBusy] = useState(false)
   const hwKey = (r: HwRow) => r.emp_code + '|' + r.date
-  const loadHw = () => apiClient.get<{ rows: HwRow[] }>('/attendance/holiday-work?period=' + attMonth).then((r) => { setHw(r.rows); setHwSel(new Set(r.rows.filter((x) => !x.created).map(hwKey))) }).catch(() => setHw([]))
+  const loadHw = () => apiClient.get<{ rows: HwRow[] }>('/attendance/holiday-work?period=' + attMonth).then((r) => { setHw(r.rows); setHwSel(new Set(r.rows.filter((x) => !x.created && x.normal_amount + x.extra_amount > 0).map(hwKey))) }).catch(() => setHw([]))
   useEffect(() => { if (tab === 'attsummary') loadHw() /* eslint-disable-next-line */ }, [tab, attMonth])
   const createHw = async () => {
     const items = hw.filter((r) => !r.created && hwSel.has(hwKey(r)))
@@ -64,7 +64,13 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     if (!window.confirm(`สร้างค่าทำงานวันหยุด ${items.length} รายการ รวม ${baht(sum)}?
 จะเป็นรายการ OT "รออนุมัติ" — ผู้จัดการอนุมัติแล้วเข้าเงินเดือนงวดนั้น`)) return
     setHwBusy(true)
-    try { const r = await apiClient.post<{ created: number; total: number }>('/attendance/holiday-work/create', { period: attMonth, items: items.map((i) => ({ emp_code: i.emp_code, date: i.date })) }); alert(`สร้างแล้ว ${r.created} รายการ (${baht(r.total)}) — รออนุมัติที่แท็บ OT`); loadHw() }
+    try {
+      const r = await apiClient.post<{ created: number; total: number; no_base: string[] }>('/attendance/holiday-work/create', { period: attMonth, items: items.map((i) => ({ emp_code: i.emp_code, date: i.date })) })
+      alert((r.created ? `สร้างแล้ว ${r.created} รายการ (${baht(r.total)}) — รออนุมัติที่แท็บ OT` : 'ไม่ได้สร้างรายการ') + (r.no_base.length ? `
+
+ข้าม: ${r.no_base.join(', ')} — ยังไม่ได้ใส่ฐานเงินเดือน/ค่าแรง (แก้ที่แท็บพนักงานก่อน)` : ''))
+      await app.reloadData?.('ot', '/ot'); loadHw()
+    }
     catch (e) { alert((e as Error).message) }
     setHwBusy(false)
   }
@@ -1203,14 +1209,14 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <tbody>
                     {hw.map((r) => (
                       <tr key={hwKey(r)} style={{ borderTop: '1px solid #F3EAD6', opacity: r.created ? 0.6 : 1 }}>
-                        <td style={{ ...td, width: 30 }}>{r.created ? <span title="สร้างแล้ว" style={{ color: '#2E7D55' }}>✓</span> : <input type="checkbox" checked={hwSel.has(hwKey(r))} onChange={() => setHwSel((s) => { const n = new Set(s); if (n.has(hwKey(r))) n.delete(hwKey(r)); else n.add(hwKey(r)); return n })} />}</td>
+                        <td style={{ ...td, width: 30 }}>{r.created ? <span title="สร้างแล้ว" style={{ color: '#2E7D55' }}>✓</span> : r.normal_amount + r.extra_amount <= 0 ? <span title="ยังไม่ได้ใส่ฐานเงินเดือน/ค่าแรง — คิดเงินไม่ได้" style={{ color: '#C24036' }}>!</span> : <input type="checkbox" checked={hwSel.has(hwKey(r))} onChange={() => setHwSel((s) => { const n = new Set(s); if (n.has(hwKey(r))) n.delete(hwKey(r)); else n.add(hwKey(r)); return n })} />}</td>
                         <td className="num" style={td}>{thMonth(r.date)}</td>
                         <td style={td}>{r.holiday}</td>
                         <td style={td}>{r.emp_name} <span style={{ fontSize: 11, color: '#94A0A8' }}>({r.pay_type})</span></td>
                         <td className="num" style={{ ...td, textAlign: 'center' }}>{r.check_in}–{r.check_out || '?'}{!r.time_known && <span title="ไม่มีเวลาออก/อ่านเวลาไม่ได้ — คิด 8 ชม." style={{ color: '#C0852C' }}> *</span>}</td>
                         <td className="num" style={{ ...td, textAlign: 'right' }}>{r.normal_hours} · {baht(r.normal_amount)}</td>
                         <td className="num" style={{ ...td, textAlign: 'right' }}>{r.extra_hours ? `${r.extra_hours} · ${baht(r.extra_amount)}` : '—'}</td>
-                        <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{r.created ? <span style={{ color: '#2E7D55', fontWeight: 500 }}>สร้างแล้ว</span> : baht(r.normal_amount + r.extra_amount)}</td>
+                        <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{r.created ? <span style={{ color: '#2E7D55', fontWeight: 500 }}>สร้างแล้ว</span> : r.normal_amount + r.extra_amount <= 0 ? <span style={{ color: '#C24036', fontWeight: 500, fontSize: 11.5 }}>ยังไม่มีฐานเงินเดือน</span> : baht(r.normal_amount + r.extra_amount)}</td>
                       </tr>
                     ))}
                   </tbody>

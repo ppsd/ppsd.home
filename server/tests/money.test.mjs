@@ -2964,3 +2964,12 @@ test('ค่าทำงานวันหยุด: ลงเวลาวัน
   assert.equal((await POST('/attendance/holiday-work/create', { period: '2032-07', items: [{ emp_code: mo.code, date: '2032-07-12' }] })).data.created, 0, 'สร้างซ้ำไม่ได้')
   assert.ok((await GET('/attendance/holiday-work?period=2032-07')).data.rows.find((r) => r.emp_code === mo.code).created)
 })
+
+test('ค่าทำงานวันหยุด: พนักงานยังไม่มีฐานเงินเดือน = ไม่สร้าง OT ฿0 และบอกชื่อที่ข้าม', async () => {
+  await POST('/holidays', { date: '2032-08-09', name: 'วันหยุดฐาน0' })
+  const z = (await POST('/employees', { name: 'ยังไม่มีเงินเดือน', role: 'ช่าง', pay_type: 'รายเดือน', base: 0 })).data
+  await POST('/attendance/manual', { emp_code: z.code, date: '2032-08-09', check_in: '08:00', check_out: '17:00' })
+  const r = await POST('/attendance/holiday-work/create', { period: '2032-08', items: [{ emp_code: z.code, date: '2032-08-09' }] })
+  assert.equal(r.data.created, 0); assert.deepEqual(r.data.no_base, ['ยังไม่มีเงินเดือน'])
+  assert.ok(!(await GET('/ot')).data.some((o) => o.emp_code === z.code))
+})
