@@ -103,6 +103,7 @@
   - ถ้ากดแล้วไม่มีผล (หน้าต่างขออนุญาตไม่ขึ้น/กด No) ทำมือ: Start → `powershell` → คลิกขวา Run as administrator → วาง
     `netsh advfirewall firewall delete rule name="Node.js JavaScript Runtime"` แล้ว
     `netsh advfirewall firewall add rule name="PPSD ERP 3001" dir=in action=allow protocol=TCP localport=3001 profile=private,domain`
+  - **มือถือใช้ GPS ไม่ได้ (ลิงก์ http)** → เมนู LINE → การเชื่อมต่อ → ☑ "เปิดหน้าเช็คอินพนักงานผ่านลิงก์นี้" (ตั้งค่า `tunnel_checkin`) → ลิงก์ `https://…trycloudflare.com/checkin` · ด่านลิงก์สาธารณะเปิดเฉพาะ GET /checkin, GET /api/kiosk/employees, GET /api/settings/attendance, POST /api/kiosk/punch, POST /api/kiosk/location · ลิงก์เปลี่ยนเมื่อรีบูต → ส่งเข้า LINE แอดมินอัตโนมัติ
   - ทดสอบจากมือถือ: เปิด `http://192.168.1.91:3001/api/version` — ขึ้นตัวหนังสือ = ถึงเซิร์ฟเวอร์แล้ว · ค้าง = ยังโดนกั้น (ไฟร์วอลล์ หรือ Wi-Fi แยกอุปกรณ์/Wi-Fi แขก)
 
 ### 4.3 เมนูซ้ายขึ้นกล่องแดง "อัปเดตโค้ดแล้ว แต่เซิร์ฟเวอร์ยังรันตัวเก่า"

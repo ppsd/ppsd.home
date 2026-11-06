@@ -71,6 +71,11 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api/line/webhook') || req.path.startsWith('/api/pub/')) return next()
   // พอร์ทัลลูกค้า (ลิงก์ส่วนตัว) + ไฟล์ JS/CSS ของหน้าเว็บ — เปิดผ่านลิงก์สาธารณะได้โดยไม่ต้องเปิด ERP ทั้งระบบ
   if (/^\/portal\//.test(req.path) || req.path.startsWith('/assets/') || /^\/(favicon|vite\.svg|logo)/.test(req.path)) return next()
+  // หน้าเช็คอินพนักงาน (https → มือถือใช้ GPS ได้) — เปิดเฉพาะหน้า + API ที่หน้านี้ใช้ เมื่อแอดมินเปิดสวิตช์ (ค่าเริ่มต้นปิด)
+  if (getSetting('tunnel_checkin', '0') === '1' && (
+    (req.method === 'GET' && /^\/checkin\/?$/.test(req.path)) ||
+    (req.method === 'GET' && (req.path === '/api/kiosk/employees' || req.path === '/api/settings/attendance')) ||
+    (req.method === 'POST' && (req.path === '/api/kiosk/punch' || req.path === '/api/kiosk/location')))) return next()
   if (getSetting('tunnel_expose', '0') === '1') return next()
   res.status(404).type('text/plain').send('ลิงก์นี้เปิดไว้สำหรับ LINE webhook เท่านั้น — ถ้าต้องการใช้ ERP นอกออฟฟิศ ให้แอดมินเปิดที่ ผู้ใช้งาน → แจ้งเตือน LINE → "อนุญาตเปิด ERP ผ่านลิงก์นี้"')
 })
@@ -9060,11 +9065,25 @@ const tunnel = createTunnelManager({
   port: process.env.PORT || 3001,
   appDir: join(__dirname, '..'),
   stateFile: join(process.env.PPSD_DB ? dirname(process.env.PPSD_DB) : join(__dirname, 'data'), 'tunnel-proc.json'),
-  onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhookWithRetry(url) },
+  onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhookWithRetry(url); setImmediate(() => notifyCheckinLink(url)) },
   onStatus: (st) => setSetting('tunnel_state', JSON.stringify(st)),
 })
+// ลิงก์เช็คอินเปลี่ยน (เครื่องรีบูต → ลิงก์ฟรีเปลี่ยนชื่อ) → ส่งลิงก์ใหม่เข้า LINE แอดมิน ให้ส่งต่อพนักงาน (ส่งเฉพาะตอนลิงก์เปลี่ยนจริง)
+function notifyCheckinLink(url, force = false) {
+  try {
+    if (!url || getSetting('tunnel_checkin', '0') !== '1') return
+    if (!force && getSetting('tunnel_checkin_notified', '') === url) return
+    setSetting('tunnel_checkin_notified', url)
+    const admins = db.prepare("SELECT line_uid FROM users WHERE role='admin' AND status='ใช้งาน' AND line_uid IS NOT NULL").all()
+    for (const a of admins) linePush(a.line_uid, `🔗 ลิงก์เช็คอินพนักงาน${force ? '' : 'ใหม่ (เครื่องเซิร์ฟเวอร์เพิ่งเปิดใหม่ ลิงก์เก่าใช้ไม่ได้แล้ว)'}:
+${url}/checkin
+
+ส่งต่อให้พนักงานได้เลย — เปิดในมือถือ ใช้ GPS ได้ · เลือกชื่อ + ใส่ PIN แล้วกดเข้างาน/ออกงาน`)
+  } catch (e) { console.error('notify checkin link:', e.message) }
+}
 const tunnelInfo = () => ({
   enabled: getSetting('tunnel_auto', '0') === '1', expose: getSetting('tunnel_expose', '0') === '1',
+  checkin: getSetting('tunnel_checkin', '0') === '1', // เปิดหน้าเช็คอินพนักงานผ่านลิงก์สาธารณะ (https)
   ...tunnel.state, url: tunnel.state.url || '',
   webhook: (() => { try { return JSON.parse(getSetting('line_webhook_status', '') || 'null') } catch { return null } })(),
 })
@@ -9125,6 +9144,11 @@ api.get('/tunnel', adminOnly, async (_req, res) => { await refreshLineWebhookAct
 api.put('/tunnel', adminOnly, async (req, res) => {
   const b = req.body || {}
   if (b.expose !== undefined) setSetting('tunnel_expose', b.expose ? '1' : '0')
+  if (b.checkin !== undefined) {
+    setSetting('tunnel_checkin', b.checkin ? '1' : '0')
+    audit(req, b.checkin ? 'เปิดหน้าเช็คอินผ่านลิงก์สาธารณะ' : 'ปิดหน้าเช็คอินผ่านลิงก์สาธารณะ', tunnel.state.url ? tunnel.state.url + '/checkin' : '')
+    if (b.checkin) setImmediate(() => notifyCheckinLink(tunnel.state.url, true))
+  }
   if (b.enabled !== undefined) {
     setSetting('tunnel_auto', b.enabled ? '1' : '0')
     if (b.enabled) tunnel.start().catch((e) => console.error('tunnel start:', e.message)); else tunnel.stop()

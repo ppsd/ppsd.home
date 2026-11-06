@@ -26,12 +26,12 @@ export default function LineCenter() {
   const loadLine = () => api.get<LineCfg>('/line-settings').then((r) => { setLineCfg(r); setLineTo(r.to || ''); setLineHour(r.hour ?? 8) }).catch(() => {})
   useEffect(() => { if (users) loadLine() /* eslint-disable-next-line */ }, [users])
   // ลิงก์สาธารณะอัตโนมัติ (สำหรับ LINE webhook)
-  interface TunnelInfo { enabled: boolean; expose: boolean; url: string; status: string; msg: string; at: string; restarts: number; webhook: { at: string; ok: boolean; msg: string; endpoint: string; active?: boolean | null } | null }
+  interface TunnelInfo { enabled: boolean; expose: boolean; checkin?: boolean; url: string; status: string; msg: string; at: string; restarts: number; webhook: { at: string; ok: boolean; msg: string; endpoint: string; active?: boolean | null } | null }
   const [tun, setTun] = useState<TunnelInfo | null>(null)
   const [tunBusy, setTunBusy] = useState(false)
   const loadTun = () => api.get<TunnelInfo>('/tunnel').then(setTun).catch(() => {})
   useEffect(() => { if (users && isAdmin) { loadTun(); const t = setInterval(loadTun, 10000); return () => clearInterval(t) } /* eslint-disable-next-line */ }, [users])
-  const setTunnel = async (patch: { enabled?: boolean; expose?: boolean }) => {
+  const setTunnel = async (patch: { enabled?: boolean; expose?: boolean; checkin?: boolean }) => {
     if (patch.expose === true && !window.confirm('เปิดให้เข้า ERP ผ่านลิงก์สาธารณะนี้ด้วย?\nทุกคนที่รู้ลิงก์จะเห็นหน้าล็อกอิน (ยังต้องมีชื่อผู้ใช้ + PIN) — เหมาะเมื่อต้องใช้นอกออฟฟิศ')) return
     setTunBusy(true)
     try { setTun(await api.put<TunnelInfo>('/tunnel', patch)) } catch (e) { window.alert((e as Error).message) } finally { setTunBusy(false) }
@@ -181,6 +181,17 @@ export default function LineCenter() {
                       )}
                       {tun.msg && tun.url && <div style={{ color: '#94A0A8' }}>{tun.msg}</div>}
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 4, cursor: 'pointer', color: '#5C6770' }}>
+                        <input type="checkbox" checked={!!tun.checkin} disabled={tunBusy} onChange={(e) => setTunnel({ checkin: e.target.checked })} />
+                        <span><b>เปิดหน้าเช็คอินพนักงานผ่านลิงก์นี้</b> (https → มือถือใช้ GPS ได้ · เปิดเฉพาะหน้าลงเวลา ไม่ใช่ทั้ง ERP)</span>
+                      </label>
+                      {tun.checkin && tun.url && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '-2px 0 8px 24px', fontSize: 12.5 }}>
+                          <code style={{ background: '#F2F8F4', border: '1px solid #CDE3D6', borderRadius: 6, padding: '3px 8px', wordBreak: 'break-all' }}>{tun.url}/checkin</code>
+                          <button onClick={() => { navigator.clipboard?.writeText(tun.url + '/checkin').then(() => alert('คัดลอกลิงก์แล้ว — ส่งให้พนักงานได้เลย')).catch(() => prompt('คัดลอกลิงก์นี้', tun.url + '/checkin')) }} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 10px', cursor: 'pointer' }}>คัดลอก</button>
+                          <span style={{ color: '#94A0A8' }}>ลิงก์เปลี่ยนเมื่อเครื่องรีบูต — ระบบส่งลิงก์ใหม่เข้า LINE แอดมินให้เอง</span>
+                        </div>
+                      )}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: 6 }}>
                         <input type="checkbox" checked={tun.expose} disabled={tunBusy} onChange={(e) => setTunnel({ expose: e.target.checked })} />
                         อนุญาตเปิด ERP ผ่านลิงก์นี้ด้วย (ใช้นอกออฟฟิศ) — ปิดไว้ = ลิงก์รับได้เฉพาะข้อความจาก LINE
                       </label>

@@ -8,7 +8,7 @@ import Portal from './Portal.tsx'
 import { AppProvider } from './store.tsx'
 
 // standalone employee check-in app at  <url>/#checkin  (no ERP login)
-const isCheckIn = window.location.hash.replace(/^#\/?/, '').toLowerCase().startsWith('checkin')
+const isCheckIn = window.location.hash.replace(/^#\/?/, '').toLowerCase().startsWith('checkin') || /^\/checkin\/?$/i.test(window.location.pathname) // /checkin = ลิงก์ https สาธารณะ (เปิดเฉพาะหน้านี้)
 // หน้าเอกสารเปล่าสำหรับถ่ายรูปใบส่งเข้า LINE  <url>/#docview/<token>
 const isDocView = window.location.hash.replace(/^#\/?/, '').toLowerCase().startsWith('docview/')
 // พอร์ทัลลูกค้า (ไม่ต้องล็อกอิน) <url>/portal/<token> หรือ #portal/<token>
