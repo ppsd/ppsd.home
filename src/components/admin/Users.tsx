@@ -321,7 +321,6 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <th style={th}>ชื่อผู้ใช้</th>
               <th style={{ ...th, textAlign: 'center' }}>บทบาท</th>
               <th style={{ ...th, textAlign: 'center' }}>สถานะ</th>
-              <th style={th}>ใช้งานล่าสุด</th>
               <th style={th}>สิทธิ์รายโมดูล <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10.5 }}>(กดเพื่อเปิด/ปิด)</span></th>
               <th style={{ ...th, textAlign: 'center' }}>ลายเซ็น</th>
               <th style={{ ...th, textAlign: 'center' }}>LINE</th>
@@ -347,7 +346,6 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                   <td className="num" style={{ ...td, fontFamily: 'monospace', color: '#5C6770' }}>{u.username}</td>
                   <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: rs.c, background: rs.bg, padding: '3px 11px', borderRadius: 20 }}>{rs.label}</span></td>
                   <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: active ? '#2E7D55' : '#C24036', background: active ? '#E2F1EA' : '#FBEEEC', padding: '3px 11px', borderRadius: 20 }}>{u.status}</span></td>
-                  <td style={{ ...td, color: '#5C6770' }}>{u.last_active}</td>
                   <td style={td}>
                     {u.role === 'admin'
                       ? <span style={{ fontSize: 11, color: '#94A0A8' }}>ทุกโมดูล (ผู้ดูแล)</span>
