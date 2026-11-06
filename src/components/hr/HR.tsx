@@ -311,7 +311,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   })()
 
   // ----- employee form -----
-  const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '', no_sso: false }
+  const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', resign_date: '', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '', no_sso: false }
   const [addingEmp, setAddingEmp] = useState(false)
   const [empMax, setEmpMax] = useState(false) // modal ขยายเต็มจอ
   const [editId, setEditId] = useState<number | null>(null)
@@ -335,7 +335,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   }
   const startEdit = (e: typeof employees[number]) => {
     setEditId(e.id)
-    setEmp({ ...blankEmp, name: e.name, prefix: (e as { prefix?: string }).prefix || '', nickname: (e as { nickname?: string }).nickname || '', no_sso: !!(e as { no_sso?: number }).no_sso, role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0), backup_code: (e as { backup_code?: string }).backup_code || '' })
+    setEmp({ ...blankEmp, name: e.name, prefix: (e as { prefix?: string }).prefix || '', nickname: (e as { nickname?: string }).nickname || '', no_sso: !!(e as { no_sso?: number }).no_sso, role: e.role || posList[0], pay_type: e.pay_type || 'รายเดือน', base: String(e.base ?? ''), status: e.status, resign_date: (e as { resign_date?: string | null }).resign_date || '', spouse: !!(e as { spouse?: number }).spouse, children: String((e as { children?: number }).children ?? 0), bank_name: (e as { bank_name?: string }).bank_name || '', bank_acct: (e as { bank_acct?: string }).bank_acct || '', tax_id: (e as { tax_id?: string }).tax_id || '', retention: String((e as { retention?: number }).retention ?? 500), student_loan: String((e as { student_loan?: number }).student_loan ?? 0), retention_opening: String((e as { retention_opening?: number }).retention_opening ?? 0), work_days: String((e as { work_days?: number }).work_days ?? 0), backup_code: (e as { backup_code?: string }).backup_code || '' })
     setEmpSig(''); setAddingEmp(true); setEmpErr('')
   }
   const submitEmp = async () => {
@@ -705,7 +705,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     <td style={{ ...td, padding: '10px 18px', fontWeight: 500 }}>
                       {p.name} <span style={{ fontSize: 11, color: '#94A0A8' }}>({p.pay_type || 'รายเดือน'})</span>
                       {p.exempt_attendance ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#2E7D55', background: '#E7F3EC', padding: '1px 7px', borderRadius: 20 }}>ไม่ต้องลงเวลา</span> : null}
-                      {p.status === 'ลาออก' ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#C24036', background: '#FBEEEC', padding: '1px 7px', borderRadius: 20 }}>ลาออก</span> : null}
+                      {p.status === 'ลาออก' ? <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: '#C24036', background: '#FBEEEC', padding: '1px 7px', borderRadius: 20 }}>ลาออก{(p as { resign_date?: string | null }).resign_date ? ' ' + new Date((p as { resign_date?: string }).resign_date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }) : ''}</span> : null}
                       {locked
                         ? <span style={{ display: 'block', fontSize: 10.5, color: '#2E7D55', marginTop: 2 }}>✓ จ่ายแล้ว · {p.batch_no}{p.pay_date ? ' · ' + new Date(p.pay_date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : ''}</span>
                         : <button onClick={() => openPayDlg([p.code])} title="ทำจ่ายเฉพาะคนนี้ (เช่น ลาออกก่อนสิ้นเดือน)" style={{ display: 'block', marginTop: 3, fontFamily: 'inherit', fontSize: 10.5, fontWeight: 600, color: '#30506A', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>ทำจ่ายคนนี้ก่อน</button>}
@@ -1360,7 +1360,13 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <input style={field} type="number" min={0} step={0.5} placeholder="วันทำงานตั้งต้น/เดือน (เฉพาะคนที่ไม่ลงเวลา เช่น แม่บ้าน)" value={emp.work_days} onChange={(e) => setEmp({ ...emp, work_days: e.target.value })} title="ใช้เมื่อเดือนนั้นไม่มีข้อมูลลงเวลาและยังไม่ได้กรอกวัน — วันทำงานจริงแต่ละเดือนกรอก/แก้ที่ตารางเงินเดือน" />
             )}
             <input style={field} type="date" value={emp.start} onChange={(e) => setEmp({ ...emp, start: e.target.value })} />
-            <select style={field} value={emp.status} onChange={(e) => setEmp({ ...emp, status: e.target.value })}>{['ทดลองงาน', 'ทำงาน', 'ลาออก'].map((s) => <option key={s}>{s}</option>)}</select>
+            <select style={field} value={emp.status} onChange={(e) => setEmp({ ...emp, status: e.target.value, resign_date: e.target.value === 'ลาออก' ? (emp.resign_date || new Date().toISOString().slice(0, 10)) : '' })}>{['ทดลองงาน', 'ทำงาน', 'ลาออก'].map((s) => <option key={s}>{s}</option>)}</select>
+            {emp.status === 'ลาออก' && (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11.5, color: '#5C6770' }} title="หน้าเงินเดือนแสดงคนนี้ถึงเดือนที่ลาออก (จ่ายเดือนสุดท้ายได้) แล้วหยุด · เดือนก่อนหน้ายังเห็นเป็นประวัติ">
+                วันที่ลาออก (ทำงานวันสุดท้าย)
+                <input style={field} type="date" value={emp.resign_date} onChange={(e) => setEmp({ ...emp, resign_date: e.target.value })} />
+              </label>
+            )}
             <input style={field} placeholder="PIN ลงเวลา 4 หลัก (เว้นว่าง=สุ่ม)" maxLength={4} value={emp.pin} onChange={(e) => setEmp({ ...emp, pin: e.target.value.replace(/\D/g, '') })} />
             <select style={field} value={emp.backup_code} onChange={(e) => setEmp({ ...emp, backup_code: e.target.value })} title="งานด่วน: ถ้าคนนี้ไม่รับใน 5 นาที ระบบไล่ไปหาคนสำรอง">
               <option value="">คนสำรอง (งานด่วน) — ไม่ระบุ</option>

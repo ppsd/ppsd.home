@@ -2796,3 +2796,18 @@ test('พนักงานซ้ำ: ผู้ใช้ชื่อเว้น
   dbx.close()
   assert.equal(n, 0, 'ชื่อเว้นวรรคต่างกันต้องนับว่าเป็นคนเดียวกัน')
 })
+
+test('คนลาออก: หน้าเงินเดือนแสดงถึงเดือนที่ลาออก (ไม่ต้องมีข้อมูลอื่นในเดือนนั้น) แล้วหยุด · กลับมาทำงานล้างวันที่ลาออก', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบลาออกรายเดือน', role: 'ผู้จัดการ', pay_type: 'รายเดือน', base: 30000 })
+  const { id, code } = e.data
+  const inPeriod = async (p) => (await GET(`/payroll?period=${p}`)).data.rows.some((r) => r.code === code)
+  // ลาออก 15 มี.ค. 2031 (ไม่มีลงเวลา/ข้อมูลอื่นในเดือนนั้นเลย)
+  const r = await PUT(`/employees/${id}`, { status: 'ลาออก', resign_date: '2031-03-15' })
+  assert.equal(r.status, 200); assert.equal(r.data.resign_date, '2031-03-15')
+  assert.equal(await inPeriod('2031-02'), true, 'เดือนก่อนลาออก ยังขึ้น')
+  assert.equal(await inPeriod('2031-03'), true, 'เดือนที่ลาออก ต้องขึ้น (จ่ายเดือนสุดท้าย)')
+  assert.equal(await inPeriod('2031-04'), false, 'เดือนหลังลาออก ไม่ขึ้น')
+  const back = await PUT(`/employees/${id}`, { status: 'ทำงาน' })
+  assert.equal(back.data.resign_date, null)
+  assert.equal(await inPeriod('2031-04'), true)
+})

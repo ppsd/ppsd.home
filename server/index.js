@@ -3686,7 +3686,7 @@ api.get('/health', (req, res) => {
 
 // ---------- HR ----------
 // list excludes the PIN; includes signature + computed sso/tax for display
-const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname,no_sso,user_id'
+const EMP_COLS = 'id,code,name,role,dept,start,status,pay_type,base,ot,sso,tax,sick_quota,sick_used,personal_quota,personal_used,vacation_quota,vacation_used,signature,spouse,children,bank_name,bank_acct,tax_id,retention,student_loan,retention_opening,work_days,backup_code,prefix,nickname,no_sso,user_id,resign_date'
 api.get('/employees', (req, res) => {
   syncLeaveYear() // ขึ้นปีใหม่ → วันลาที่ใช้ไปเริ่มนับใหม่
   const rows = db.prepare(`SELECT ${EMP_COLS} FROM employees ORDER BY id`).all()
@@ -3821,7 +3821,11 @@ api.put('/employees/:id', requireSalary, (req, res) => {
   db.prepare('UPDATE employees SET name=?, role=?, dept=?, status=?, pay_type=?, base=?, sso=?, tax=?, spouse=?, children=?, bank_name=?, bank_acct=?, tax_id=?, retention=?, student_loan=?, retention_opening=?, work_days=?, backup_code=?, prefix=?, nickname=?, no_sso=? WHERE id=?')
     .run(b.name ?? e.name, b.role ?? e.role, b.dept ?? e.dept, b.status ?? e.status, payType, base, sso, tax, spouse, children,
       b.bank_name ?? e.bank_name, b.bank_acct ?? e.bank_acct, b.tax_id ?? e.tax_id, retention, studentLoan, retentionOpening, workDays, backupCode, b.prefix ?? e.prefix, b.nickname ?? e.nickname, noSso, e.id)
-  audit(req, 'แก้ไขพนักงาน', b.name ?? e.name)
+  // วันที่ลาออก: ตั้งเป็นลาออก → ใช้วันที่ที่กรอก (หรือเดิม / วันนี้) · กลับมาทำงาน → ล้าง
+  const nSt = b.status ?? e.status
+  const rd = /^\d{4}-\d{2}-\d{2}$/.test(String(b.resign_date || '')) ? String(b.resign_date) : (e.resign_date || isoDate(new Date()))
+  db.prepare('UPDATE employees SET resign_date=? WHERE id=?').run(nSt === 'ลาออก' ? rd : null, e.id)
+  audit(req, 'แก้ไขพนักงาน', (b.name ?? e.name) + (nSt === 'ลาออก' && e.status !== 'ลาออก' ? ` (ลาออก ${rd})` : ''))
   res.json(db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(e.id))
 })
 // upload/replace an employee's signature
@@ -4025,13 +4029,15 @@ const payrollInputsOf = (period) => new Map(db.prepare('SELECT * FROM payroll_in
 // พนักงานที่อยู่ในงวด: ยังไม่ลาออก + คนที่ลาออกแล้วแต่ยังมีข้อมูลในงวดนี้ (ลงเวลา/กรอกวัน/เบิก/หัก/รายได้) → ทำจ่ายรอบสุดท้ายได้
 function payrollEmployees(period) {
   const { from, to } = periodBounds(period)
+  // คนลาออก: ขึ้นทุกงวดจนถึงเดือนที่ลาออก (resign_date) แล้วหยุด · ไม่มีวันที่ = ขึ้นเฉพาะงวดที่มีข้อมูล (แบบเดิม)
   return db.prepare(`SELECT * FROM employees WHERE status != 'ลาออก'
+    OR (status = 'ลาออก' AND COALESCE(resign_date,'') >= ?)
     OR code IN (SELECT emp_code FROM payroll_inputs WHERE period=?)
     OR code IN (SELECT emp_code FROM attendance WHERE date>=? AND date<=?)
     OR code IN (SELECT emp_code FROM salary_advances WHERE period=?)
     OR code IN (SELECT emp_code FROM deductions WHERE period=?)
     OR code IN (SELECT emp_code FROM other_income WHERE period=?)
-    ORDER BY id`).all(period, from, to, period, period, period)
+    ORDER BY id`).all(from, period, from, to, period, period, period)
 }
 // compute payroll rows live for a period
 function computePayroll(period) {
