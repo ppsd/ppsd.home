@@ -41,6 +41,8 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const posList = data.positions.length ? data.positions : positions
   const salaryOk = payroll !== null
   const isMgr = !!user?.isManager
+  // แก้/เพิ่ม/ลบ การลงเวลา: แอดมิน · บัญชี · ผู้จัดการ/CEO · บุคคล (เซิร์ฟเวอร์บังคับซ้ำ) — คนอื่นใช้ "ปรับปรุงเวลา"
+  const attEditOk = user?.role === 'admin' || user?.role === 'accounting' || isMgr || user?.position === 'บุคคล'
   // สรุปลงเวลารายเดือน
   const nowYM = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
   const [attMonth, setAttMonth] = useState(nowYM())
@@ -1088,8 +1090,9 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <label style={{ fontSize: 12.5, color: '#5C6770', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}><input type="checkbox" checked={attAll} onChange={(e) => setAttAll(e.target.checked)} /> ดูทั้งหมดทุกเดือน</label>
               <span style={{ fontSize: 12, color: '#94A0A8' }}>{attList.length} รายการ</span>
             </div>
-            {/* เพิ่ม/แก้ไขด้วยมือ (กรณีลืมตอกบัตร หรือวันที่ระบบยังไม่เปิด) */}
-            <div style={{ padding: '12px 18px', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* เพิ่ม/แก้ไขด้วยมือ (กรณีลืมตอกบัตร หรือวันที่ระบบยังไม่เปิด) — เฉพาะผู้มีสิทธิ์ */}
+            {!attEditOk && <div style={{ padding: '10px 18px', background: '#FBF4E1', borderBottom: '1px solid #EEF1F4', fontSize: 12.5, color: '#8A6D1F' }}>ดูได้อย่างเดียว — แก้/เพิ่มการลงเวลาได้เฉพาะ แอดมิน · บัญชี · ผู้จัดการ · บุคคล · ถ้าลืมตอกบัตร ให้ยื่น <b>ปรับปรุงเวลา</b> (หน้าลงเวลา หรือแท็บปรับปรุงเวลา) ให้ผู้จัดการอนุมัติ</div>}
+            {attEditOk && <div style={{ padding: '12px 18px', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: '#5C6770' }}>เพิ่ม/แก้ไข:</span>
               <select style={{ ...field, width: 'auto', minWidth: 150 }} value={attForm.emp_code} onChange={(e) => setAttForm({ ...attForm, emp_code: e.target.value })}>
                 <option value="">เลือกพนักงาน</option>
@@ -1101,7 +1104,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <button onClick={saveManualAtt} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>บันทึกคนนี้</button>
               <button onClick={markAllPresent} title="ให้พนักงานทุกคนที่ยังไม่มีบันทึกในวันนี้ = มาทำงาน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 14px', cursor: 'pointer' }}>มาทำงานทั้งวัน (ทุกคน)</button>
               {attMsg && <span style={{ fontSize: 12, color: attMsg.includes('แล้ว') ? '#2E7D55' : '#C24036' }}>{attMsg}</span>}
-            </div>
+            </div>}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ background: '#F7F9FB', textAlign: 'left' }}>
                 <th style={{ ...th, padding: '9px 18px' }}>ชื่อ-สกุล</th><th style={th}>วันที่</th><th style={{ ...th, textAlign: 'center' }}>เข้างาน</th>
@@ -1116,8 +1119,10 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     <td className="num" style={{ ...td, textAlign: 'center' }}>{a.check_in || '—'}</td><td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{a.check_out || '—'}</td>
                     <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: s.c, background: s.bg, padding: '2px 10px', borderRadius: 20 }}>{a.status}</span></td>
                     <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
+                      {attEditOk ? <>
                       <button onClick={() => setAttEdit({ ...a, check_in: a.check_in || '', check_out: a.check_out || '' })} title="แก้วันที่ / เวลาเข้า-ออก / สถานะ" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 9px', cursor: 'pointer', marginRight: 5 }}>แก้ไข</button>
                       <button onClick={() => delAtt(a.id)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #E7CDC9', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>ลบ</button>
+                      </> : <span style={{ fontSize: 11, color: '#94A0A8' }}>—</span>}
                     </td>
                   </tr>)
                 })}
@@ -1491,7 +1496,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                       <span style={{ width: 26, fontSize: 11.5, color: '#94A0A8' }}>{wd}</span>
                       <span style={{ fontSize: 11.5, fontWeight: 600, color: col.c, background: col.bg, padding: '2px 10px', borderRadius: 20, minWidth: 62, textAlign: 'center' }}>{st === 'ยกเว้น' ? 'ไม่ต้องลงเวลา' : st}</span>
                       {d.check_in && <span className="num" style={{ fontSize: 12, color: '#5C6770' }}>{d.check_in}{d.check_out ? ' – ' + d.check_out : ''}</span>}
-                      {st === 'ขาด' && <button onClick={() => fillDay(detail.code, d.date)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 11px', cursor: 'pointer' }}>+ เติมมา</button>}
+                      {st === 'ขาด' && attEditOk && <button onClick={() => fillDay(detail.code, d.date)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 11px', cursor: 'pointer' }}>+ เติมมา</button>}
                     </div>
                   )
                 })}

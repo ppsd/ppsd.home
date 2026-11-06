@@ -4851,7 +4851,13 @@ api.get('/attendance', (req, res) => {
   res.json(db.prepare('SELECT * FROM attendance ORDER BY date DESC, id DESC LIMIT 1000').all())
 })
 // เพิ่ม/แก้ไขการลงเวลาด้วยมือ (กรณีลืมตอกบัตร/ระบบไม่ได้เปิด) — upsert ตาม พนักงาน+วันที่
-api.post('/attendance/manual', canWrite, (req, res) => {
+// แก้/เพิ่ม/ลบ บันทึกการลงเวลา = มีผลกับเงินเดือน → เฉพาะ แอดมิน · บัญชี · ผู้จัดการ/CEO · ตำแหน่งบุคคล (กลุ่มเดียวกับที่ดูเงินเดือนได้)
+//  พนักงานคนอื่นที่ลืมตอกบัตร ใช้ "ปรับปรุงเวลา" (ยื่นคำขอ → ผู้จัดการอนุมัติ) แทน · ตอกบัตรเอง (kiosk/GPS) ไม่เกี่ยว
+function requireAttendanceEdit(req, res, next) {
+  if (!canSeeSalary(req.user)) return res.status(403).json({ error: 'แก้ไขการลงเวลาได้เฉพาะ แอดมิน / บัญชี / ผู้จัดการ / บุคคล — ถ้าลืมตอกบัตร ให้ยื่น "ปรับปรุงเวลา" แทน' })
+  next()
+}
+api.post('/attendance/manual', requireAttendanceEdit, (req, res) => {
   const b = req.body || {}
   const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(b.emp_code)
   if (!emp) return res.status(400).json({ error: 'กรุณาเลือกพนักงาน' })
@@ -4871,7 +4877,7 @@ api.post('/attendance/manual', canWrite, (req, res) => {
   res.status(201).json(db.prepare('SELECT * FROM attendance WHERE id=?').get(info.lastInsertRowid))
 })
 // บันทึก "มาทำงานทั้งวัน" ให้พนักงานที่ทำงานอยู่ทุกคน (ที่ยังไม่มีบันทึกในวันนั้น) — สำหรับวันที่ระบบยังไม่ได้เปิด
-api.post('/attendance/mark-all-present', canWrite, (req, res) => {
+api.post('/attendance/mark-all-present', requireAttendanceEdit, (req, res) => {
   const b = req.body || {}
   if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date || '')) return res.status(400).json({ error: 'กรุณาเลือกวันที่ให้ถูกต้อง' })
   const checkIn = String(b.check_in || '08:00').trim()
@@ -4889,7 +4895,7 @@ api.post('/attendance/mark-all-present', canWrite, (req, res) => {
   res.json({ ok: true, added, date: b.date })
 })
 // แก้รายการลงเวลาทีละแถว (วันที่ · เวลาเข้า/ออก · สถานะ) — หน้าต่าง "แก้ไข" ในตารางบันทึกการลงเวลา
-api.put('/attendance/:id', canWrite, (req, res) => {
+api.put('/attendance/:id', requireAttendanceEdit, (req, res) => {
   const a = db.prepare('SELECT * FROM attendance WHERE id=?').get(req.params.id)
   if (!a) return res.status(404).json({ error: 'ไม่พบรายการลงเวลา' })
   const b = req.body || {}
@@ -4904,7 +4910,7 @@ api.put('/attendance/:id', canWrite, (req, res) => {
   audit(req, 'แก้ไขการลงเวลา', `${a.emp_name} ${a.date}${date !== a.date ? ' → ' + date : ''} · เข้า ${checkIn || '-'} ออก ${checkOut || '-'} · ${status}`)
   res.json(db.prepare('SELECT * FROM attendance WHERE id=?').get(a.id))
 })
-api.delete('/attendance/:id', canWrite, (req, res) => {
+api.delete('/attendance/:id', requireAttendanceEdit, (req, res) => {
   const a = db.prepare('SELECT * FROM attendance WHERE id=?').get(req.params.id)
   db.prepare('DELETE FROM attendance WHERE id=?').run(req.params.id)
   if (a) audit(req, 'ลบการลงเวลา', `${a.emp_name} ${a.date}`)

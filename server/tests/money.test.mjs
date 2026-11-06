@@ -2827,3 +2827,20 @@ test('แก้ไขการลงเวลาทีละแถว: เปล
   assert.equal((await PUT('/attendance/999999', { check_in: '08:00' })).status, 404)
   await DEL('/attendance/' + a2.id)
 })
+
+test('สิทธิ์ลงเวลา: พนักงานหน้างาน (site) แก้/เพิ่ม/ลบการลงเวลาไม่ได้ แต่ยื่นปรับปรุงเวลาได้ · บัญชีทำได้', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบสิทธิ์ลงเวลา', role: 'ช่าง', pay_type: 'รายวัน', base: 400 })
+  const a = (await POST('/attendance/manual', { emp_code: e.data.code, date: '2031-06-02', check_in: '08:00', check_out: '17:00' })).data
+  const adminToken = token
+  token = (await POST('/login', { username: 'nosal1', pin: '5151' })).data.token // site
+  assert.equal((await PUT(`/attendance/${a.id}`, { check_in: '07:00' })).status, 403)
+  assert.equal((await POST('/attendance/manual', { emp_code: e.data.code, date: '2031-06-03', check_in: '08:00' })).status, 403)
+  assert.equal((await POST('/attendance/mark-all-present', { date: '2031-06-04' })).status, 403)
+  assert.equal((await DEL(`/attendance/${a.id}`)).status, 403)
+  const yday = iso(new Date(Date.now() - 86400000))
+  const ta = await POST('/time-adjustments', { date: yday, kind: 'เข้างาน', time: '08:00', reason: 'ลืมตอก' })
+  assert.equal(ta.status, 201, 'ยื่นปรับปรุงเวลาได้ตามเดิม ' + JSON.stringify(ta.data))
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token // บัญชี
+  assert.equal((await PUT(`/attendance/${a.id}`, { check_in: '07:30' })).status, 200)
+  token = adminToken
+})
