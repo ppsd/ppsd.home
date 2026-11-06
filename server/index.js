@@ -9069,6 +9069,55 @@ api.get('/line-settings', adminOnly, (_req, res) => res.json({
   test_only: Number(getSetting('line_test_only', '')) || null, // โหมดทดสอบ: ส่งเฉพาะผู้ใช้ id นี้
   test_held: (() => { try { return JSON.parse(getSetting('line_test_held', '[]')) } catch { return [] } })(),
 }))
+// ===== ส่งการ์ดใบที่ค้างอนุมัติ/ตรวจอีกครั้ง (เช่น หลังปิดโหมดทดสอบ — การ์ดที่ระงับไว้ไม่ส่งย้อนหลัง) =====
+// ดูจากสถานะจริงตอนนี้ · ไม่ส่งซ้ำให้คนที่อนุมัติใบนั้นไปแล้ว · ไม่ส่งให้ผู้ขอเอง
+function pendingLineCards() {
+  const out = []
+  const names = (us) => us.map((u) => u.name)
+  const chk = prChecker()
+  for (const pr of db.prepare("SELECT * FROM purchase_requests WHERE status='รอตรวจสอบ' ORDER BY id DESC LIMIT 50").all())
+    out.push({ key: 'chk:' + pr.id, kind: 'ตรวจสอบใบขอซื้อ', no: pr.no, amount: pr.amount, by: pr.by || '', date: pr.date || '', progress: '', to: chk?.line_uid ? [chk.name] : [] })
+  for (const { docType, doc, st } of pendingApprovals()) {
+    const done = new Set(st.approvals.map((a) => a.approver))
+    out.push({ key: `apv:${docType}:${doc.id}`, kind: APPROVE_DOCS[docType].label, no: docNoOf(docType, doc), amount: docType === 'payment' ? doc.net : doc.amount, by: doc.by || '', date: doc.date || '', progress: `อนุมัติแล้ว ${st.count}/${st.required}`,
+      to: names(lineApprovers(doc.by).filter((u) => !done.has(u.name))) })
+  }
+  try {
+    for (const fr of db.prepare("SELECT * FROM fuel_requests WHERE status='รออนุมัติ' ORDER BY id DESC LIMIT 30").all())
+      out.push({ key: 'fuel:' + fr.id, kind: 'เบิกค่าน้ำมัน', no: fr.no, amount: fr.amount, by: fr.by || '', date: fr.date || '', progress: '', to: names(lineApprovers(fr.by)) })
+  } catch { /* ไม่มีตาราง */ }
+  return out
+}
+api.get('/line/pending-cards', adminOnly, (_req, res) => res.json({ test_only: !!lineTestUser(), token: !!getSetting('line_token', ''), items: pendingLineCards() }))
+api.post('/line/pending-cards/send', adminOnly, async (req, res) => {
+  if (!getSetting('line_token', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้ง LINE token' })
+  const want = new Set(Array.isArray(req.body?.keys) ? req.body.keys.map(String) : [])
+  const items = pendingLineCards().filter((it) => !want.size || want.has(it.key))
+  let docs = 0, pushes = 0
+  const none = []
+  for (const it of items) {
+    const [k, a, b] = it.key.split(':')
+    let n = 0
+    if (k === 'chk') {
+      const pr = db.prepare('SELECT * FROM purchase_requests WHERE id=?').get(Number(a))
+      if (pr && (await notifyChecker(pr)).startsWith('sent')) n = 1
+    } else if (k === 'apv') {
+      const doc = approvalDocById(a, b)
+      if (doc) {
+        const done = new Set(approvalState(a, doc.id).approvals.map((x) => x.approver))
+        for (const u of lineApprovers(doc.by).filter((u) => !done.has(u.name)))
+          if (await linePush(u.line_uid, [`🔁 แจ้งอีกครั้ง: มี${APPROVE_DOCS[a].label}รออนุมัติค่ะ — ${it.no} จาก ${doc.by || '-'} ยอด ${fmtMoney(it.amount)} บาท`, approvalFlex(a, doc)])) n++
+      }
+    } else if (k === 'fuel') {
+      const fr = fuelById(a)
+      if (fr && fr.status === 'รออนุมัติ') for (const u of lineApprovers(fr.by))
+        if (await linePush(u.line_uid, [`🔁 แจ้งอีกครั้ง: ${fr.by} ขอเบิกค่าน้ำมันรถ ${fr.no} ยอด ${fmtMoney(fr.amount)} บาท — กดอนุมัติในการ์ดได้เลยค่ะ`, fuelFlex(fr)])) n++
+    }
+    if (n) { docs++; pushes += n } else none.push(it.no)
+  }
+  audit(req, 'ส่งการ์ดใบที่ค้างอนุมัติอีกครั้งทาง LINE', `${docs}/${items.length} ใบ · ${pushes} ข้อความ${lineTestUser() ? ' (โหมดทดสอบ)' : ''}`)
+  res.json({ ok: true, total: items.length, docs, pushes, none, test_only: !!lineTestUser() })
+})
 // ผูก LINE ของฉัน: ขอรหัส 6 หลัก → ส่งให้บอทในแชทส่วนตัว → บอทผูกให้ (อายุ 10 นาที)
 api.post('/line-link/code', requireAuth, (req, res) => {
   // แอดมินขอรหัสแทนคนอื่นได้ (user_id) — คนที่ส่งรหัสนั้นให้บอทจะถูกผูกกับบัญชีนั้น

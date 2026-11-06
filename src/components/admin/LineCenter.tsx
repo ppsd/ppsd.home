@@ -3,6 +3,7 @@ import { useApp } from '../../store'
 import type { ApiUser } from '../../store'
 import { api } from '../../api'
 import LineTexts from './LineTexts'
+import ModalShell from '../shared/ModalShell'
 
 // ศูนย์รวม LINE (แอดมิน): การเชื่อมต่อบอท/ลิงก์สาธารณะ · ผู้รับข้อความ (ผู้ตรวจสอบใบขอซื้อ/ผู้รับใบ PR/ใครผูกแล้ว) · ข้อความบอท · ผูก LINE ของฉัน
 type Tab = 'connect' | 'people' | 'texts' | 'me'
@@ -100,6 +101,7 @@ export default function LineCenter() {
         ))}
       </div>
       <TestMode cfg={lineCfg} users={users} reload={loadLine} />
+      {isAdmin && <PendingCards testOn={!!lineCfg?.test_only} />}
       {tab === 'connect' && (
         <>
           {/* แจ้งเตือน LINE — สรุปเรื่องค้างส่งเข้ากลุ่มบริหารทุกเช้า */}
@@ -356,5 +358,74 @@ function TestMode({ cfg, users, reload }: { cfg: { test_only?: number | null; te
         </div>
       </details>
     </div>
+  )
+}
+
+// ส่งการ์ดใบที่ค้างอนุมัติ/ตรวจอีกครั้ง (ดูสถานะจริงตอนนี้ · ไม่ส่งให้คนที่อนุมัติใบนั้นแล้ว) — ใช้หลังปิดโหมดทดสอบ
+interface PendingCard { key: string; kind: string; no: string; amount: number; by: string; date: string; progress: string; to: string[] }
+function PendingCards({ testOn }: { testOn: boolean }) {
+  const [items, setItems] = useState<PendingCard[] | null>(null)
+  const [open, setOpen] = useState(false)
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+  const load = async () => {
+    try { const r = await api.get<{ items: PendingCard[] }>('/line/pending-cards'); setItems(r.items); return r.items } catch { setItems([]); return [] }
+  }
+  useEffect(() => { load() }, [])
+  const openModal = async () => { const it = await load(); setSel(new Set(it.filter((x) => x.to.length).map((x) => x.key))); setOpen(true) }
+  const toggle = (k: string) => setSel((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const sendable = (items || []).filter((x) => x.to.length)
+  const allOn = sendable.length > 0 && sendable.every((x) => sel.has(x.key))
+  const send = async () => {
+    if (!sel.size) return
+    if (!window.confirm(`ส่งการ์ดอีกครั้ง ${sel.size} ใบ ทาง LINE?${testOn ? '\n\n⚠ โหมดทดสอบเปิดอยู่ — คนอื่นจะยังไม่ได้รับ (ส่งสำเนาให้คนทดสอบดูแทน)' : ''}`)) return
+    setBusy(true)
+    try {
+      const r = await api.post<{ docs: number; pushes: number; none: string[] }>('/line/pending-cards/send', { keys: [...sel] })
+      window.alert(`ส่งการ์ดแล้ว ${r.docs} ใบ (${r.pushes} ข้อความ)${r.none.length ? '\nส่งไม่ได้: ' + r.none.join(', ') + ' — ผู้รับยังไม่ผูก LINE หรือ LINE ตอบผิดพลาด' : ''}`)
+      setOpen(false); load()
+    } catch (e) { window.alert((e as Error).message) }
+    setBusy(false)
+  }
+  const n = items?.length || 0
+  const th: React.CSSProperties = { textAlign: 'left', fontSize: 11.5, color: '#5C6770', fontWeight: 600, padding: '6px 8px', borderBottom: '1px solid #E1E5EA' }
+  const td: React.CSSProperties = { fontSize: 12.5, padding: '7px 8px', borderBottom: '1px solid #F0F2F4', verticalAlign: 'top' }
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 10, padding: '8px 14px' }}>
+        📨 ใบที่ค้างรออนุมัติ / รอตรวจ: <b style={{ color: n ? '#B7791F' : '#2E7D55' }}>{items === null ? '…' : n + ' ใบ'}</b>
+        <span style={{ color: '#94A0A8' }}>— ใช้หลังปิดโหมดทดสอบ ให้คนอนุมัติได้การ์ดใน LINE (การ์ดที่ระงับไว้ไม่ส่งย้อนหลังเอง)</span>
+        <button disabled={!n} onClick={openModal} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: n ? '#30506A' : '#B8C3CC', border: 'none', borderRadius: 8, padding: '6px 14px', cursor: n ? 'pointer' : 'default' }}>ส่งการ์ดใบที่ค้างอนุมัติอีกครั้ง</button>
+      </div>
+      {open && (
+        <ModalShell title="ส่งการ์ดใบที่ค้างอนุมัติอีกครั้ง" sub="เลือกใบที่จะส่ง · ระบบส่งเฉพาะคนที่ยังไม่ได้อนุมัติใบนั้น และไม่ส่งให้ผู้ขอเอง" width={860} onClose={() => setOpen(false)}
+          footer={<>
+            <span style={{ fontSize: 12, color: '#5C6770', marginRight: 'auto' }}>เลือก {sel.size} ใบ</span>
+            <button onClick={() => setOpen(false)} style={{ fontFamily: 'inherit', fontSize: 13, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+            <button disabled={!sel.size || busy} onClick={send} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: sel.size ? '#2E7D55' : '#9FC3AE', border: 'none', borderRadius: 9, padding: '8px 18px', cursor: sel.size ? 'pointer' : 'default' }}>{busy ? 'กำลังส่ง…' : `ส่งการ์ด ${sel.size} ใบ`}</button>
+          </>}>
+          {testOn && <div style={{ fontSize: 12.5, color: '#B7791F', background: '#FFF8EC', border: '1px solid #ECDCB8', borderRadius: 8, padding: '8px 12px', marginBottom: 10 }}>⚠ โหมดทดสอบเปิดอยู่ — ถ้าส่งตอนนี้ คนอื่นยังไม่ได้รับ (คนทดสอบได้สำเนา) · ปิดโหมดทดสอบก่อนแล้วค่อยส่ง</div>}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={th}><input type="checkbox" checked={allOn} onChange={() => setSel(allOn ? new Set() : new Set(sendable.map((x) => x.key)))} /></th>
+                <th style={th}>เอกสาร</th><th style={th}>ผู้ขอ / วันที่</th><th style={{ ...th, textAlign: 'right' }}>ยอด (บาท)</th><th style={th}>จะส่งถึง</th>
+              </tr></thead>
+              <tbody>
+                {(items || []).map((x) => (
+                  <tr key={x.key} style={{ opacity: x.to.length ? 1 : 0.55 }}>
+                    <td style={td}><input type="checkbox" disabled={!x.to.length} checked={sel.has(x.key)} onChange={() => toggle(x.key)} /></td>
+                    <td style={td}><b>{x.no}</b><div style={{ fontSize: 11.5, color: '#94A0A8' }}>{x.kind}{x.progress ? ' · ' + x.progress : ''}</div></td>
+                    <td style={td}>{x.by || '-'}<div style={{ fontSize: 11.5, color: '#94A0A8' }}>{x.date || ''}</div></td>
+                    <td style={{ ...td, textAlign: 'right' }}>{(Number(x.amount) || 0).toLocaleString('en-US')}</td>
+                    <td style={td}>{x.to.length ? x.to.join(', ') : <span style={{ color: '#C24036' }}>ไม่มีผู้รับที่ผูก LINE</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </ModalShell>
+      )}
+    </>
   )
 }

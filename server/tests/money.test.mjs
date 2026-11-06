@@ -2643,6 +2643,36 @@ test('โหมดทดสอบ LINE: คนทดสอบอนุมัต�
   assert.equal((await POST(`/approve/pr/${b.id}`)).status, 403, 'ปิดโหมดแล้วห้ามเหมือนเดิม')
 })
 
+test('ส่งการ์ดใบที่ค้างอนุมัติอีกครั้ง: รายการตามสถานะจริง · ไม่ส่งให้คนที่อนุมัติแล้ว · เฉพาะแอดมิน', async () => {
+  await PUT('/controls', { block_self_approve: false, approvers_pr: 2 })
+  const pr = (await POST('/purchase-requests', { house: 'บ้านการ์ดค้าง', items: [{ desc: 'หิน', qty: 2, unit: 'คิว', price: 700 }] })).data
+  await POST('/users', { name: 'ผจก การ์ดค้าง', username: 'pcmgr', pin: '7171', role: 'site', position: 'ผู้จัดการ' })
+  const mgr = (await GET('/users')).data.find((x) => x.username === 'pcmgr')
+  await PUT('/users/' + mgr.id, { line_uid: 'Upcmgr0000' })
+  let r = await GET('/line/pending-cards')
+  assert.equal(r.status, 200)
+  let it = r.data.items.find((x) => x.key === `apv:pr:${pr.id}`)
+  assert.ok(it, 'PR รออนุมัติอยู่ในรายการ')
+  const hasMgr = it.to.includes('ผจก การ์ดค้าง')
+  assert.equal((await POST(`/approve/pr/${pr.id}`)).status, 200) // แอดมินอนุมัติ 1/2
+  const me = (await GET('/me')).data
+  it = (await GET('/line/pending-cards')).data.items.find((x) => x.key === `apv:pr:${pr.id}`)
+  assert.ok(it && it.progress.includes('1/2'), 'ยังค้าง 1/2')
+  assert.ok(!it.to.includes(me.name), 'ไม่ส่งให้คนที่อนุมัติแล้ว')
+  if (hasMgr) assert.ok(it.to.includes('ผจก การ์ดค้าง'))
+  assert.equal((await POST('/line/pending-cards/send', { keys: [it.key] })).status, 400, 'ไม่มี token = ส่งไม่ได้')
+  await PUT('/line-settings', { token: 'test-token' })
+  const s = await POST('/line/pending-cards/send', { keys: [it.key] })
+  assert.equal(s.status, 200); assert.equal(s.data.total, 1)
+  await PUT('/line-settings', { token: '' })
+  const adminToken = token
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.equal((await GET('/line/pending-cards')).status, 403)
+  assert.equal((await POST('/line/pending-cards/send', {})).status, 403)
+  token = adminToken
+  await PUT('/controls', { approvers_pr: 1 })
+})
+
 test('LINE: พิมพ์ราคาร้านแทนส่งรูปใบเสนอราคา → เลือกร้านในการ์ด → ออก PO ร้านนั้น · พิมพ์ร้านเดิมซ้ำ = แก้ราคา', async () => {
   const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
   const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
