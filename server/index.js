@@ -3789,7 +3789,8 @@ api.post('/employees', requireSalary, (req, res) => {
       Number(b.work_days) || 0, b.backup_code || '', b.prefix || '', b.nickname || '', noSso)
   audit(req, 'เพิ่มพนักงาน', b.name)
   const created = db.prepare('SELECT * FROM employees WHERE id=?').get(info.lastInsertRowid)
-  const acct = ensureUserForEmployee(created, { status: 'ใช้งาน', by: req.user.name }) // บัญชีเข้าระบบให้ทันที (PIN เดียวกับตอกบัตร)
+  // บัญชีเข้าระบบ: ปิดใช้งานไว้ก่อน (ลงเวลา kiosk/มือถือใช้ PIN ได้เลย ไม่ต้องใช้บัญชี) · ติ๊ก "ให้เข้าใช้ระบบ ERP" = เปิดใช้ทันที
+  const acct = ensureUserForEmployee(created, { status: b.erp_access ? 'ใช้งาน' : 'ปิดใช้งาน', by: req.user.name }) // บัญชีเข้าระบบให้ทันที (PIN เดียวกับตอกบัตร)
   const out = db.prepare(`SELECT ${EMP_COLS} FROM employees WHERE id=?`).get(info.lastInsertRowid)
   res.status(201).json({ ...out, pin: pinPlain, username: acct?.username || '' }) // return the PIN once so it can be shown to the user
 })

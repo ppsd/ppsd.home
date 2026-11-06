@@ -504,7 +504,7 @@ test('คลังรหัสผ่าน: CEO ตั้งค่า/เพิ�
 
 test('พนักงาน = บัญชี: เพิ่มพนักงานได้บัญชี site อัตโนมัติ (username=รหัส, PIN เดียวกัน) · ตำแหน่งยึด HR · ลาออกปิดบัญชี · รีเซ็ต PIN ซิงก์ · sync สร้างบัญชีปิดใช้งาน', async () => {
   const adminToken = token
-  const e = await POST('/employees', { name: 'ช่างอัตโนมัติ ทดสอบ', role: 'ช่าง', base: 15000, pin: '4321' })
+  const e = await POST('/employees', { name: 'ช่างอัตโนมัติ ทดสอบ', role: 'ช่าง', base: 15000, pin: '4321', erp_access: true })
   assert.equal(e.status, 201, JSON.stringify(e.data))
   assert.equal(e.data.username, usernameOf(e.data.code), 'username ต้องมาจากรหัสพนักงาน')
   const u = (await GET('/users')).data.find((x) => x.username === e.data.username)
@@ -1313,7 +1313,7 @@ test('โฟร์แมนสั่งของผ่าน LINE: "สั่ง
   await POST('/houses', { name: 'บ้านคุณพร', code: 'H-PORN' })
   await POST('/material-prices', { name: 'ปูนซีเมนต์', unit: 'ถุง', central: 140 })
   // ผูก LINE ให้โฟร์แมน (ประยุทธ์ = site) — ขอรหัสแทนโดยแอดมิน
-  const fore = (await GET('/users')).data.find((u) => u.username === 'prayut') || (await GET('/users')).data.find((u) => u.role === 'site')
+  const fore = (await GET('/users')).data.find((u) => u.username === 'prayut') || (await GET('/users')).data.find((u) => u.role === 'site' && u.status === 'ใช้งาน')
   assert.ok(fore, 'ต้องมีผู้ใช้หน้างานในระบบทดสอบ')
   const code = await POST('/line-link/code', { user_id: fore.id })
   await msg('Ufore', code.data.code); await wait()
@@ -2855,4 +2855,16 @@ test('ลายเซ็นพนักงาน: อัปโหลด/ลบ�
   assert.equal((await PUT(`/employees/${e.data.id}/signature`, { signature: '' })).status, 200)
   assert.ok(!(await sigOf()), 'ลบแล้วต้องไม่มีลายเซ็น')
   assert.equal((await PUT('/employees/999999/signature', { signature: '' })).status, 404)
+})
+
+test('พนักงานใหม่: บัญชีเข้าระบบปิดใช้งานไว้ก่อน (เข้าเว็บไม่ได้) แต่ลงเวลา kiosk ด้วย PIN ได้ · ติ๊กให้เข้าระบบ = เปิดใช้ทันที', async () => {
+  const e = await POST('/employees', { name: 'แม่บ้านใหม่ ทดสอบ', role: 'แม่บ้าน', pay_type: 'รายวัน', base: 400, pin: '6060' })
+  assert.equal(e.status, 201)
+  const u = (await GET('/users')).data.find((x) => x.username === e.data.username)
+  assert.equal(u.status, 'ปิดใช้งาน', 'ค่าเริ่มต้น = ปิดใช้งาน')
+  assert.notEqual((await POST('/login', { username: e.data.username, pin: '6060' })).status, 200, 'เข้าเว็บไม่ได้')
+  const punch = await POST('/kiosk/punch', { emp_code: e.data.code, pin: '6060', kind: 'in' })
+  assert.ok(punch.status < 300, 'ลงเวลาที่ kiosk ได้ ' + JSON.stringify(punch.data))
+  const e2 = await POST('/employees', { name: 'บัญชีใหม่ ทดสอบ', role: 'บัญชี', pay_type: 'รายเดือน', base: 15000, pin: '6161', erp_access: true })
+  assert.equal((await GET('/users')).data.find((x) => x.username === e2.data.username).status, 'ใช้งาน')
 })

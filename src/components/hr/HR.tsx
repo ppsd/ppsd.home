@@ -321,7 +321,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   })()
 
   // ----- employee form -----
-  const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', resign_date: '', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '', no_sso: false }
+  const blankEmp = { name: '', prefix: '', nickname: '', role: posList[0], pay_type: 'รายเดือน', base: '', start: '', status: 'ทดลองงาน', resign_date: '', pin: '', spouse: false, children: '0', sick_used: '0', personal_used: '0', vacation_used: '0', bank_name: '', bank_acct: '', tax_id: '', retention: '500', student_loan: '0', retention_opening: '0', work_days: '0', backup_code: '', no_sso: false, erp_access: false }
   const [addingEmp, setAddingEmp] = useState(false)
   const [empMax, setEmpMax] = useState(false) // modal ขยายเต็มจอ
   const [editId, setEditId] = useState<number | null>(null)
@@ -358,7 +358,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
         setEmpPinShown('แก้ไขข้อมูลพนักงานเรียบร้อย (ภาษี/ประกันสังคมคำนวณใหม่ให้แล้ว)')
       } else {
         const r = await app.addEmployee(body)
-        setEmpPinShown(`เพิ่มพนักงานสำเร็จ · สร้างบัญชีเข้าระบบให้แล้ว ชื่อผู้ใช้ ${r.username || '-'} · PIN (ใช้ทั้งลงเวลาและเข้าเว็บ) คือ ${r.pin} (โปรดแจ้งพนักงาน · สิทธิ์เริ่มต้น หน้างาน ปรับได้ที่เมนูผู้ใช้งาน)`)
+        setEmpPinShown(`เพิ่มพนักงานสำเร็จ · PIN ลงเวลา คือ ${r.pin || emp.pin || '-'} · บัญชีเข้าระบบ ${r.username || '-'} ` + (emp.erp_access ? '(เปิดใช้งานแล้ว — เข้าเว็บด้วย PIN เดียวกัน)' : '(ปิดใช้งานไว้ — ลงเวลาได้ แต่เข้าเว็บไม่ได้ · เปิดได้ที่หน้าผู้ใช้งาน)'))
       }
       setAddingEmp(false); setEditId(null); setEmp(blankEmp); setEmpSig('')
     } catch (e) { setEmpErr((e as Error).message) }
@@ -1399,6 +1399,12 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11.5, color: '#5C6770' }} title="หน้าเงินเดือนแสดงคนนี้ถึงเดือนที่ลาออก (จ่ายเดือนสุดท้ายได้) แล้วหยุด · เดือนก่อนหน้ายังเห็นเป็นประวัติ">
                 วันที่ลาออก (ทำงานวันสุดท้าย)
                 <input style={field} type="date" value={emp.resign_date} onChange={(e) => setEmp({ ...emp, resign_date: e.target.value })} />
+              </label>
+            )}
+            {!editId && (
+              <label title="ปกติไม่ต้องติ๊ก: ลงเวลา (kiosk/มือถือ) ใช้รหัสพนักงาน + PIN ได้เลย · ติ๊กเฉพาะคนที่ต้องใช้หน้าเว็บ ERP (บัญชี จัดซื้อ โฟร์แมน ฯลฯ)" style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: '#3C4750', cursor: 'pointer' }}>
+                <input type="checkbox" checked={emp.erp_access} onChange={(e) => setEmp({ ...emp, erp_access: e.target.checked })} />
+                ให้เข้าใช้ระบบ ERP (หน้าเว็บ) ได้ <span style={{ color: '#94A0A8', fontSize: 11.5 }}>— ไม่ติ๊ก = ลงเวลาได้อย่างเดียว · เปิดทีหลังได้ที่หน้าผู้ใช้งาน</span>
               </label>
             )}
             <input style={field} placeholder="PIN ลงเวลา 4 หลัก (เว้นว่าง=สุ่ม)" maxLength={4} value={emp.pin} onChange={(e) => setEmp({ ...emp, pin: e.target.value.replace(/\D/g, '') })} />

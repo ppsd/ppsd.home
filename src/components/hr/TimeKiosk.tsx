@@ -27,7 +27,11 @@ export default function TimeKiosk() {
   useEffect(() => { api.get<typeof data.kioskEmployees>('/kiosk/employees').then(setEmps).catch(() => {}) }, [])
   const employees = emps.length ? emps : data.kioskEmployees
   const [now, setNow] = useState(new Date())
+  // เลือกชื่อของเจ้าของบัญชีที่ล็อกอินให้เลย (ผูกบัญชี↔พนักงาน หรือชื่อตรงกัน) — เปลี่ยนได้ถ้าใช้เครื่องร่วมกัน
+  const norm = (n?: string) => String(n || '').replace(/\s+/g, '')
+  const myCode = (data.employees.find((e) => user?.id && e.user_id === user.id) || employees.find((e) => user?.name && norm(e.name) === norm(user.name)))?.code || ''
   const [selCode, setSelCode] = useState('')
+  useEffect(() => { if (myCode && !selCode && employees.some((e) => e.code === myCode)) setSelCode(myCode) /* eslint-disable-next-line */ }, [myCode, employees.length])
   const [pin, setPin] = useState('')
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -122,7 +126,7 @@ export default function TimeKiosk() {
       }
       const r = await punch({ emp_code: emp.code, pin, kind, ...coords })
       setToast({ msg: `${r.name} ${kind === 'in' ? 'เข้างาน' : 'ออกงาน'} ${r.time} น.${r.status === 'สาย' ? ' (สาย)' : ''} เรียบร้อย`, ok: true })
-      setPin(''); setSelCode('')
+      setPin(''); setSelCode(myCode) // กลับไปที่ชื่อเจ้าของบัญชี
     } catch (e) {
       setToast({ msg: (e as Error).message || 'บันทึกไม่สำเร็จ', ok: false }); setPin('')
     } finally { setBusy(false) }
