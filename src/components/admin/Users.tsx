@@ -322,7 +322,6 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <th style={{ ...th, textAlign: 'center' }}>บทบาท</th>
               <th style={{ ...th, textAlign: 'center' }}>สถานะ</th>
               <th style={th}>สิทธิ์รายโมดูล <span style={{ fontWeight: 400, color: '#94A0A8', fontSize: 10.5 }}>(กดเพื่อเปิด/ปิด)</span></th>
-              <th style={{ ...th, textAlign: 'center' }}>ลายเซ็น</th>
               <th style={{ ...th, textAlign: 'center' }}>LINE</th>
               <th style={{ ...th, padding: '9px 18px', textAlign: 'center' }}>จัดการ</th>
             </tr>
@@ -361,7 +360,6 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                           })}
                         </div>}
                   </td>
-                  <td style={{ ...td, textAlign: 'center' }}><SignatureCell userId={u.id} signature={u.signature} /></td>
                   <td style={{ ...td, textAlign: 'center' }}>
                     {u.line_uid
                       ? <span title="ผูก LINE แล้ว — กดเพื่อยกเลิกผูก" style={{ fontSize: 10.5, fontWeight: 700, color: '#2E7D55', background: '#E2F1EA', padding: '2px 9px', borderRadius: 20, cursor: 'pointer' }} onClick={() => unlinkLine(u)}>✓ ผูกแล้ว</span>
@@ -404,6 +402,10 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
                           <option value="">— ไม่ผูกกับพนักงาน HR —</option>
                           {data.employees.filter((e) => !e.user_id || e.user_id === u.id || e.code === editU.employee_code).map((e) => <option key={e.code} value={e.code}>{e.code} · {e.name}{e.nickname ? ` (${e.nickname})` : ''}{e.user_id && e.user_id !== u.id ? ' · ผูกคนอื่น' : ''}</option>)}
                         </select>}
+                        {/* ลายเซ็น: พนักงานแก้ที่หน้าบุคลากร · บัญชีระบบ (ไม่มีทะเบียนพนักงาน) ใส่ที่นี่ */}
+                        {editU.was_system
+                          ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#5C6770' }}>ลายเซ็น (ใช้อนุมัติเอกสาร): <SignatureCell userId={u.id} signature={u.signature} /></div>
+                          : <div style={{ fontSize: 11, color: '#94A0A8' }}>ลายเซ็น: เพิ่ม/เปลี่ยน/ลบ ที่หน้า บุคลากร → พนักงาน</div>}
                         {editErr && <div style={{ fontSize: 11.5, color: '#C24036' }}>{editErr}</div>}
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                           <button onClick={() => setEditU(null)} style={{ fontFamily: 'inherit', fontSize: 11.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' }}>ยกเลิก</button>

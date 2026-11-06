@@ -403,6 +403,9 @@ api.post('/logout', requireAuth, (req, res) => {
 function sigOfUser(userId) {
   const u = db.prepare('SELECT name, signature FROM users WHERE id=?').get(userId)
   if (!u) return null
+  // ลายเซ็นหลักอยู่ที่หน้าบุคลากร (ทะเบียนพนักงาน) · บัญชีระบบ (ไม่มีทะเบียนพนักงาน) ใช้ลายเซ็นที่ใส่ในหน้าผู้ใช้งาน
+  const own = db.prepare("SELECT signature FROM employees WHERE user_id=? AND signature IS NOT NULL AND signature != '' LIMIT 1").get(userId)?.signature
+  if (own) return own
   if (u.signature) return u.signature
   const e = db.prepare("SELECT signature FROM employees WHERE signature IS NOT NULL AND signature != '' AND (user_id=? OR name=?) ORDER BY CASE WHEN user_id=? THEN 0 ELSE 1 END LIMIT 1").get(userId, u.name, userId)
   return e?.signature || null
@@ -3831,8 +3834,17 @@ api.put('/employees/:id', requireSalary, (req, res) => {
 // upload/replace an employee's signature
 api.put('/employees/:id/signature', requireSalary, (req, res) => {
   const sig = req.body?.signature
+  const emp = db.prepare('SELECT id, name FROM employees WHERE id=?').get(req.params.id)
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  // ส่งค่าว่าง = ลบลายเซ็น (เอกสารที่ออกไปแล้วยังเก็บลายเซ็นเดิมไว้ในตัวเอกสาร)
+  if (sig === null || sig === '') {
+    db.prepare('UPDATE employees SET signature=NULL WHERE id=?').run(emp.id)
+    audit(req, 'ลบลายเซ็นพนักงาน', emp.name)
+    return res.json({ ok: true })
+  }
   if (typeof sig !== 'string' || !sig.startsWith('data:image/')) return res.status(400).json({ error: 'ไฟล์ลายเซ็นไม่ถูกต้อง' })
-  db.prepare('UPDATE employees SET signature=? WHERE id=?').run(sig, req.params.id)
+  db.prepare('UPDATE employees SET signature=? WHERE id=?').run(sig, emp.id)
+  audit(req, 'อัปโหลดลายเซ็นพนักงาน', emp.name)
   backfillSignatures()
   res.json({ ok: true })
 })

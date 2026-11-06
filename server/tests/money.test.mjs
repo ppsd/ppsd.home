@@ -2844,3 +2844,15 @@ test('สิทธิ์ลงเวลา: พนักงานหน้าง
   assert.equal((await PUT(`/attendance/${a.id}`, { check_in: '07:30' })).status, 200)
   token = adminToken
 })
+
+test('ลายเซ็นพนักงาน: อัปโหลด/ลบที่หน้าบุคลากร · ส่งค่าว่าง = ลบ · ไฟล์ไม่ใช่รูป = ไม่รับ', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบลายเซ็นลบ', role: 'ช่าง', pay_type: 'รายเดือน', base: 10000 })
+  const sig = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  const sigOf = async () => (await GET('/employees')).data.find((x) => x.id === e.data.id).signature
+  assert.equal((await PUT(`/employees/${e.data.id}/signature`, { signature: 'not-an-image' })).status, 400)
+  assert.equal((await PUT(`/employees/${e.data.id}/signature`, { signature: sig })).status, 200)
+  assert.equal(await sigOf(), sig)
+  assert.equal((await PUT(`/employees/${e.data.id}/signature`, { signature: '' })).status, 200)
+  assert.ok(!(await sigOf()), 'ลบแล้วต้องไม่มีลายเซ็น')
+  assert.equal((await PUT('/employees/999999/signature', { signature: '' })).status, 404)
+})
