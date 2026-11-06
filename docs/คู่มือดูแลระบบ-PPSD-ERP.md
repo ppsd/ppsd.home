@@ -99,6 +99,11 @@
 - อยู่ Wi-Fi วงเดียวกับเซิร์ฟเวอร์ไหม?
 - IP เครื่องเซิร์ฟเวอร์เปลี่ยนไหม? (ดูบรรทัด `มือถือ/เครื่องอื่น: http://192.168.x.x:3001` ในหน้าต่างเซิร์ฟเวอร์) — ถ้าเปลี่ยนบ่อย ให้จอง IP ที่ router (DHCP Reservation)
 - Firewall: คลิกขวา `allow-network.bat` → **Run as administrator** (ทำครั้งเดียว)
+  - ไฟล์นี้ลบกฎ **"Node.js JavaScript Runtime" ที่ตั้งเป็นบล็อก** ให้ด้วย (เกิดเมื่อมีคนกด Cancel ตอน Windows ถามสิทธิ์ครั้งแรก — กฎบล็อกชนะกฎอนุญาต) · เคยเจอจริง 6 พ.ย. 69
+  - ถ้ากดแล้วไม่มีผล (หน้าต่างขออนุญาตไม่ขึ้น/กด No) ทำมือ: Start → `powershell` → คลิกขวา Run as administrator → วาง
+    `netsh advfirewall firewall delete rule name="Node.js JavaScript Runtime"` แล้ว
+    `netsh advfirewall firewall add rule name="PPSD ERP 3001" dir=in action=allow protocol=TCP localport=3001 profile=private,domain`
+  - ทดสอบจากมือถือ: เปิด `http://192.168.1.91:3001/api/version` — ขึ้นตัวหนังสือ = ถึงเซิร์ฟเวอร์แล้ว · ค้าง = ยังโดนกั้น (ไฟร์วอลล์ หรือ Wi-Fi แยกอุปกรณ์/Wi-Fi แขก)
 
 ### 4.3 เมนูซ้ายขึ้นกล่องแดง "อัปเดตโค้ดแล้ว แต่เซิร์ฟเวอร์ยังรันตัวเก่า"
 - admin กด `↻ รีสตาร์ทเซิร์ฟเวอร์` ที่ท้ายเมนู → ระบบหยุด ~10 วินาที แล้วกลับมาเอง

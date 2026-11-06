@@ -16,6 +16,9 @@ echo Adding Windows Firewall rule so phones/other PCs
 echo on the same Wi-Fi/LAN can open this server...
 echo.
 
+:: Windows asks "allow Node.js?" the first time the server starts - if someone pressed Cancel,
+:: it saves a BLOCK rule for node.exe, and a block rule beats our allow rule. Remove it.
+netsh advfirewall firewall delete rule name="Node.js JavaScript Runtime" >nul 2>&1
 netsh advfirewall firewall delete rule name="PPSD ERP 3001" >nul 2>&1
 netsh advfirewall firewall add rule name="PPSD ERP 3001" dir=in action=allow protocol=TCP localport=3001 profile=private,domain
 
