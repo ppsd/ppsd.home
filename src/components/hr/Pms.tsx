@@ -5,6 +5,7 @@ import { useApp } from '../../store'
 import { PMS_BONUS, PMS_PENALTY, RATING_MEANING, type KpiSet, type KpiSetsPayload, type PmsEmpInfo } from '../../pmsTemplates'
 import PmsPrint from './PmsPrint'
 import PmsKpiSets from './PmsKpiSets'
+import ModalShell from '../shared/ModalShell'
 
 export interface KpiItem { name: string; weight: number; target: number; actual: number; score?: number }
 export interface RateItem { name: string; weight: number; rating: number; score?: number }
@@ -173,7 +174,8 @@ export default function Pms() {
     setEdit({ id: r.id, emp_code: r.emp_code, emp_name: r.emp_name, position: r.position, template: r.template, kpi_set_id: r.kpi_set_id ?? kpiSets.sets.find((x) => x.name === r.template)?.id ?? null, month: r.month, kpi: r.kpi, competency: r.competency, behavior: r.behavior, att: { absent: 0, leave: 0, late: 0, wo_overdue: 0, ...(r.att || {}) }, strengths: r.strengths, improve: r.improve, plan: r.plan })
   }
 
-  if (edit) {
+  // ฟอร์มประเมิน = หน้าต่าง (ModalShell: ย่อพับได้ · Esc = ย่อ) ซ้อนบนรายการใบประเมิน
+  const editModal = edit ? (() => {
     const c = pmsCompute(edit)
     const setKpi = (i: number, v: number) => setEdit({ ...edit, kpi: edit.kpi.map((x, j) => j === i ? { ...x, actual: v } : x) })
     const setRate = (sec: 'competency' | 'behavior', i: number, v: number) => setEdit({ ...edit, [sec]: edit[sec].map((x, j) => j === i ? { ...x, rating: v } : x) })
@@ -201,7 +203,8 @@ export default function Pms() {
       </div>
     )
     return (
-      <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <ModalShell title={edit.id ? `แก้ไขใบประเมิน${edit.emp_name ? ' · ' + edit.emp_name : ''}` : 'ประเมินผลรายเดือนใหม่'} sub="เลือกพนักงาน → ชุด KPI ตามตำแหน่งขึ้นให้เอง → ให้คะแนน → บันทึก" width={1100} closeOnBackdrop={false} onClose={() => setEdit(null)}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {/* เลือกแค่พนักงาน — ชุด KPI มาจากตำแหน่ง (หรือที่ตั้งเฉพาะคน) อัตโนมัติ */}
         <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: 10 }}>
           <select style={field} value={edit.emp_code} onChange={(e) => pickEmployee(e.target.value)}>
@@ -313,13 +316,15 @@ export default function Pms() {
           <button onClick={save} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>บันทึกผลประเมิน</button>
         </div>
       </div>
+      </ModalShell>
     )
-  }
+  })() : null
 
   if (view === 'sets') return <PmsKpiSets payload={kpiSets} onChange={setKpiSets} onBack={() => setView('list')} />
 
   return (
     <div style={{ maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {editModal}
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>ใบประเมิน <b className="num" style={{ color: '#1C2730' }}>{rows.length}</b> ใบ</div>
         <button onClick={() => setView('sets')} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>⚙ ชุด KPI ตามตำแหน่ง</button>
