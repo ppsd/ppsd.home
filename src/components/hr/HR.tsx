@@ -228,7 +228,19 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     if (!hForm.date) return
     try { await apiClient.post('/holidays', hForm); setHForm({ date: '', name: '' }); loadHolidays() } catch (e) { alert((e as Error).message) }
   }
-  const delHoliday = async (id: number) => { try { await apiClient.del('/holidays/' + id); loadHolidays() } catch (e) { alert((e as Error).message) } }
+  const delHoliday = async (h: { id: number; date: string; name: string }) => {
+    if (!window.confirm(`ลบวันหยุด "${h.name}" (${thMonth(h.date)})?
+วันนี้จะกลับไปนับเป็นวันทำงาน (ไม่มาทำงาน = ขาด)`)) return
+    try { await apiClient.del('/holidays/' + h.id); loadHolidays() } catch (e) { alert((e as Error).message) }
+  }
+  // แก้วันหยุด (วันที่ / ชื่อ) ในหน้าต่าง
+  const [hEdit, setHEdit] = useState<{ id: number; date: string; name: string; err?: string; busy?: boolean } | null>(null)
+  const saveHoliday = async () => {
+    if (!hEdit) return
+    setHEdit({ ...hEdit, busy: true, err: '' })
+    try { await apiClient.put('/holidays/' + hEdit.id, { date: hEdit.date, name: hEdit.name }); setHEdit(null); loadHolidays() }
+    catch (e) { setHEdit({ ...hEdit, busy: false, err: (e as Error).message }) }
+  }
   const thMonth = (iso: string) => { const m = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']; const [y, mo, d] = iso.split('-'); return `${Number(d)} ${m[Number(mo) - 1]} ${(Number(y) + 543) % 100}` }
 
   // payroll period runs (closed months)
@@ -496,6 +508,23 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
 
         {/* ===== payroll ===== */}
         {/* ทำจ่ายเงินเดือน (เลือกพนักงาน) — วางนอกส่วนสลับแท็บ ย่อพับแล้วข้อมูลไม่หาย */}
+        {hEdit && (
+          <ModalShell title="แก้ไขวันหยุด" sub="เปลี่ยนวันที่หรือชื่อวันหยุด — มีผลกับการนับวันขาดของงวดที่ยังไม่ได้ทำจ่าย" width={420} closeOnBackdrop={false} onClose={() => setHEdit(null)}
+            footer={<>
+              <button onClick={() => setHEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={saveHoliday} disabled={hEdit.busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{hEdit.busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
+            </>}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label style={{ fontSize: 12, color: '#5C6770', display: 'flex', flexDirection: 'column', gap: 4 }}>วันที่
+                <input type="date" style={field} value={hEdit.date} onChange={(e) => setHEdit({ ...hEdit, date: e.target.value })} />
+                {hEdit.date && <span style={{ fontSize: 11.5, color: new Date(hEdit.date + 'T00:00:00').getDay() === 0 ? '#C0852C' : '#94A0A8' }}>{thMonth(hEdit.date)} · วัน{['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'][new Date(hEdit.date + 'T00:00:00').getDay()]}{new Date(hEdit.date + 'T00:00:00').getDay() === 0 ? ' (หยุดอยู่แล้ว)' : ''}</span>}
+              </label>
+              <label style={{ fontSize: 12, color: '#5C6770', display: 'flex', flexDirection: 'column', gap: 4 }}>ชื่อวันหยุด
+                <input style={field} value={hEdit.name} maxLength={100} onChange={(e) => setHEdit({ ...hEdit, name: e.target.value })} placeholder="เช่น สงกรานต์" /></label>
+              {hEdit.err && <div style={{ fontSize: 12.5, color: '#C24036' }}>{hEdit.err}</div>}
+            </div>
+          </ModalShell>
+        )}
         {attEdit && (
           <ModalShell title={`แก้ไขการลงเวลา · ${attEdit.emp_name}`} sub="แก้แล้วมีผลกับวันทำงาน/การหักขาด-สายของงวดนั้นทันที (ถ้ายังไม่ได้ทำจ่าย) · เก็บประวัติการแก้ทุกครั้ง" width={460} closeOnBackdrop={false} onClose={() => setAttEdit(null)}
             footer={<>
@@ -1195,7 +1224,10 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <tr key={h.id} className="hov-fafbfc" style={{ borderTop: '1px solid #F1F4F6' }}>
                     <td className="num" style={{ ...td, padding: '10px 18px', fontWeight: 600 }}>{thMonth(h.date)}<span style={{ fontSize: 10.5, color: '#94A0A8', fontFamily: 'inherit', marginLeft: 6 }}>{h.date}</span></td>
                     <td style={{ ...td }}>{h.name}</td>
-                    {isAdmin && <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}><button onClick={() => delHoliday(h.id)} style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button></td>}
+                    {isAdmin && <td style={{ ...td, padding: '10px 18px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <button onClick={() => setHEdit({ id: h.id, date: h.date, name: h.name })} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 10px', cursor: 'pointer', marginRight: 6 }}>แก้ไข</button>
+                      <button onClick={() => delHoliday(h)} title="ลบวันหยุดนี้" style={{ border: 'none', background: 'none', color: '#C24036', cursor: 'pointer', fontSize: 13 }}>✕</button>
+                    </td>}
                   </tr>
                 ))}
               </tbody>

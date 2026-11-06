@@ -2930,3 +2930,16 @@ test('เช็คอินหน้างาน: รายชื่อบ้า
   assert.equal((await GET(`/location-log/site?date=${today}`)).status, 403, 'หน้างานทั่วไปดูไม่ได้')
   token = adminToken
 })
+
+test('วันหยุดบริษัท: แก้วันที่/ชื่อได้ · วันที่ชนวันหยุดอื่น = ไม่ให้ · เฉพาะแอดมิน', async () => {
+  const a = (await POST('/holidays', { date: '2032-04-13', name: 'สงกรานต์' })).data
+  await POST('/holidays', { date: '2032-04-14', name: 'สงกรานต์' })
+  const ok = await PUT(`/holidays/${a.id}`, { date: '2032-04-12', name: 'สงกรานต์ (เลื่อน)' })
+  assert.equal(ok.status, 200); assert.equal(ok.data.date, '2032-04-12'); assert.equal(ok.data.name, 'สงกรานต์ (เลื่อน)')
+  assert.equal((await PUT(`/holidays/${a.id}`, { date: '2032-04-14' })).status, 409)
+  assert.equal((await PUT(`/holidays/${a.id}`, { date: '12/04/2032' })).status, 400)
+  const adminToken = token
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.equal((await PUT(`/holidays/${a.id}`, { name: 'x' })).status, 403)
+  token = adminToken
+})

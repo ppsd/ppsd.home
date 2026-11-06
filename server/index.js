@@ -4974,6 +4974,18 @@ api.post('/holidays', adminOnly, (req, res) => {
   audit(req, 'เพิ่มวันหยุด', `${b.date} ${b.name || ''}`)
   res.status(201).json(db.prepare('SELECT * FROM holidays WHERE date=?').get(b.date))
 })
+api.put('/holidays/:id', adminOnly, (req, res) => {
+  const h = db.prepare('SELECT * FROM holidays WHERE id=?').get(req.params.id)
+  if (!h) return res.status(404).json({ error: 'ไม่พบวันหยุด' })
+  const b = req.body || {}
+  const date = b.date !== undefined ? String(b.date) : h.date
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)' })
+  const name = b.name !== undefined ? (String(b.name).trim() || 'วันหยุด') : h.name
+  if (date !== h.date && db.prepare('SELECT 1 FROM holidays WHERE date=? AND id<>?').get(date, h.id)) return res.status(409).json({ error: `วันที่ ${date} เป็นวันหยุดอยู่แล้ว` })
+  db.prepare('UPDATE holidays SET date=?, name=? WHERE id=?').run(date, name.slice(0, 100), h.id)
+  audit(req, 'แก้ไขวันหยุด', `${h.date} ${h.name || ''} → ${date} ${name}`)
+  res.json(db.prepare('SELECT * FROM holidays WHERE id=?').get(h.id))
+})
 api.delete('/holidays/:id', adminOnly, (req, res) => {
   const h = db.prepare('SELECT * FROM holidays WHERE id=?').get(req.params.id)
   db.prepare('DELETE FROM holidays WHERE id=?').run(req.params.id)
