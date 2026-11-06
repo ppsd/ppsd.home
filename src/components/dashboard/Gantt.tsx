@@ -3,6 +3,7 @@ import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
 
 const field: React.CSSProperties = { fontFamily: 'inherit', fontSize: 13, color: '#1C2730', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '8px 11px', outline: 'none' }
+const lbl: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, fontWeight: 600, color: '#5C6770' }
 
 function statusColor(s: string) {
   if (s === 'เสร็จ') return '#2E7D55'
@@ -124,20 +125,31 @@ export default function Gantt() {
       </div>
 
       {adding && (
-        <ModalShell title="เพิ่มงานในแผน" width={760} closeOnBackdrop={false} onClose={() => setAdding(false)}
+        <ModalShell title="เพิ่มงานในแผน" width={600} closeOnBackdrop={false} onClose={() => setAdding(false)}
           footer={<>
             <button onClick={() => setAdding(false)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
             <button onClick={submit} disabled={busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
           </>}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 0.7fr 1fr', gap: 12, alignItems: 'center' }}>
-            <input style={field} placeholder="ชื่องาน *" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-            <input style={field} placeholder="รหัสบ้าน" value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })} />
-            <input style={field} type="date" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} />
-            <input style={field} type="date" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} />
-            <input style={field} type="number" placeholder="น้ำหนัก%" title="น้ำหนักงาน % (สำหรับ S-Curve)" value={f.weight} onChange={(e) => setF({ ...f, weight: e.target.value })} />
-            <select style={field} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
-              {['วางแผน', 'กำลังทำ', 'เสร็จ', 'ล่าช้า'].map((s) => <option key={s}>{s}</option>)}
-            </select>
+          {/* ฟอร์มแบบมีหัวข้อ 2 คอลัมน์ (เดิมอัด 6 ช่องแถวเดียว ไม่มีหัวข้อ วันที่ถูกตัด) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: '12px 14px' }}>
+            <label style={{ ...lbl, gridColumn: '1 / -1' }}>ชื่องาน *
+              <input style={field} placeholder="เช่น งานโครงสร้างชั้น 1" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></label>
+            <label style={{ ...lbl, gridColumn: '1 / -1' }}>บ้าน / โครงการ
+              <select style={field} value={f.house_code} onChange={(e) => setF({ ...f, house_code: e.target.value })}>
+                <option value="">— ไม่ระบุ —</option>
+                {data.houses.map((h) => <option key={h.code} value={h.code}>{h.name} ({h.code})</option>)}
+                {f.house_code && !data.houses.some((h) => h.code === f.house_code) && <option value={f.house_code}>{f.house_code}</option>}
+              </select></label>
+            <label style={lbl}>วันเริ่ม
+              <input style={field} type="date" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} /></label>
+            <label style={lbl}>วันสิ้นสุด
+              <input style={field} type="date" value={f.end} min={f.start || undefined} onChange={(e) => setF({ ...f, end: e.target.value })} /></label>
+            <label style={lbl}>น้ำหนักงาน (%) <span style={{ fontWeight: 400, color: '#94A0A8' }}>ใช้คำนวณ S-Curve</span>
+              <input style={field} type="number" min={0} max={100} placeholder="เช่น 10" value={f.weight} onChange={(e) => setF({ ...f, weight: e.target.value })} /></label>
+            <label style={lbl}>สถานะ
+              <select style={field} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
+                {['วางแผน', 'กำลังทำ', 'เสร็จ', 'ล่าช้า'].map((s) => <option key={s}>{s}</option>)}
+              </select></label>
           </div>
           {err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{err}</div>}
         </ModalShell>
