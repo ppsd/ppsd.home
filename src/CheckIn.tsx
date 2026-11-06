@@ -9,6 +9,8 @@ type Geo = { enabled: boolean; radius: number; lat: string; lng: string }
 
 function getGPS(): Promise<{ lat: number; lng: number }> {
   return new Promise((resolve, reject) => {
+    // เบราว์เซอร์ให้ใช้ GPS เฉพาะเว็บ https:// (หรือเครื่องตัวเอง) — เปิดผ่าน http://192.168.x.x จะถูกปฏิเสธทันทีโดยไม่ถามอนุญาต
+    if (!window.isSecureContext) return reject(new Error('มือถือไม่ยอมให้ใช้ GPS กับลิงก์ http:// (ต้องเป็น https://) — ตอนนี้ใช้ตำแหน่งไม่ได้ ติดต่อผู้ดูแลระบบ'))
     if (!navigator.geolocation) return reject(new Error('อุปกรณ์นี้ไม่รองรับ GPS'))
     navigator.geolocation.getCurrentPosition(
       (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
@@ -150,6 +152,7 @@ export default function CheckIn() {
       {/* ติดตามตำแหน่งงาน (โฟร์แมน) */}
       <div style={{ width: 420, maxWidth: '100%', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 14, padding: '14px 18px' }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>📍 ส่งตำแหน่งงาน (สำหรับโฟร์แมน/งานหน้างาน)</div>
+        {!window.isSecureContext && <div style={{ fontSize: 12, color: '#8A6D1F', background: '#FBF4E1', borderRadius: 8, padding: '6px 10px', margin: '4px 0 8px' }}>⚠️ ลิงก์นี้เป็น http:// — มือถือไม่ยอมให้ใช้ GPS (ต้องเป็น https://) จึงส่งตำแหน่งไม่ได้ · ปุ่มเข้างาน/ออกงานใช้ได้ปกติ</div>}
         {track ? (
           <>
             <div style={{ fontSize: 12.5, color: '#2E7D55' }}>กำลังส่งตำแหน่งของ <b>{track.name}</b> ทุก 5 นาที · ส่งแล้ว {track.count} จุด · ล่าสุด {track.last}</div>

@@ -11,6 +11,8 @@ const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.�
 type GeoSettings = { enabled: boolean; radius: number; lat: string; lng: string; start?: string; grace?: number; cutoff?: string }
 function getGPS(): Promise<{ lat: number; lng: number }> {
   return new Promise((resolve, reject) => {
+    // เบราว์เซอร์ให้ใช้ GPS เฉพาะเว็บ https:// (หรือเครื่องตัวเอง) — เปิดผ่าน http://192.168.x.x จะถูกปฏิเสธทันทีโดยไม่ถามอนุญาต
+    if (!window.isSecureContext) return reject(new Error('มือถือไม่ยอมให้ใช้ GPS กับลิงก์ http:// (ต้องเป็น https://) — ตอนนี้ใช้ตำแหน่งไม่ได้ ติดต่อผู้ดูแลระบบ'))
     if (!navigator.geolocation) return reject(new Error('อุปกรณ์นี้ไม่รองรับ GPS'))
     navigator.geolocation.getCurrentPosition(
       (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
@@ -148,6 +150,9 @@ export default function TimeKiosk() {
       {user?.role === 'admin' && cfgOpen && (
         <div style={{ width: 760, maxWidth: '100%', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: 16 }}>
           <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 12 }}>ตั้งค่าตำแหน่งเช็คอิน (ออฟฟิศ)</div>
+          {window.location.protocol === 'http:' && <div style={{ fontSize: 12.5, color: '#8A6D1F', background: '#FBF4E1', border: '1px solid #ECDCB8', borderRadius: 8, padding: '8px 12px', marginBottom: 12, lineHeight: 1.6 }}>
+            ⚠️ มือถือใช้ GPS ได้เฉพาะลิงก์ <b>https://</b> — ตอนนี้ในออฟฟิศเปิดผ่าน <b>http://</b>{typeof window !== 'undefined' && window.location.host ? ` (${window.location.host})` : ''} → <b>ถ้าเปิด "จำกัดเฉพาะในออฟฟิศ" พนักงานจะตอกบัตรผ่านมือถือไม่ได้</b> (เครื่องคอมในออฟฟิศยังได้) · เปิดได้เมื่อมีลิงก์ https แล้ว (เช่น Tailscale)
+          </div>}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, cursor: 'pointer' }}>
               <input type="checkbox" checked={geo.enabled} onChange={(e) => saveCfg({ enabled: e.target.checked })} />
