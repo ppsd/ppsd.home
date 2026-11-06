@@ -188,7 +188,7 @@ export default function LineCenter() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '-2px 0 8px 24px', fontSize: 12.5 }}>
                           <code style={{ background: '#F2F8F4', border: '1px solid #CDE3D6', borderRadius: 6, padding: '3px 8px', wordBreak: 'break-all' }}>{tun.url}/checkin</code>
                           <button onClick={() => { navigator.clipboard?.writeText(tun.url + '/checkin').then(() => alert('คัดลอกลิงก์แล้ว — ส่งให้พนักงานได้เลย')).catch(() => prompt('คัดลอกลิงก์นี้', tun.url + '/checkin')) }} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 7, padding: '3px 10px', cursor: 'pointer' }}>คัดลอก</button>
-                          <span style={{ color: '#94A0A8' }}>ลิงก์เปลี่ยนเมื่อเครื่องรีบูต — ระบบส่งลิงก์ใหม่เข้า LINE แอดมินให้เอง</span>
+                          <span style={{ color: '#94A0A8' }}>ลิงก์เปลี่ยนเมื่อเครื่องรีบูต — กดคัดลอกลิงก์ใหม่ส่งให้พนักงานเอง</span>
                         </div>
                       )}
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: 6 }}>

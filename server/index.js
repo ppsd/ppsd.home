@@ -9160,22 +9160,9 @@ const tunnel = createTunnelManager({
   port: process.env.PORT || 3001,
   appDir: join(__dirname, '..'),
   stateFile: join(process.env.PPSD_DB ? dirname(process.env.PPSD_DB) : join(__dirname, 'data'), 'tunnel-proc.json'),
-  onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhookWithRetry(url); setImmediate(() => notifyCheckinLink(url)) },
+  onUrl: (url) => { setSetting('tunnel_url', url); registerLineWebhookWithRetry(url) },
   onStatus: (st) => setSetting('tunnel_state', JSON.stringify(st)),
 })
-// ลิงก์เช็คอินเปลี่ยน (เครื่องรีบูต → ลิงก์ฟรีเปลี่ยนชื่อ) → ส่งลิงก์ใหม่เข้า LINE แอดมิน ให้ส่งต่อพนักงาน (ส่งเฉพาะตอนลิงก์เปลี่ยนจริง)
-function notifyCheckinLink(url, force = false) {
-  try {
-    if (!url || getSetting('tunnel_checkin', '0') !== '1') return
-    if (!force && getSetting('tunnel_checkin_notified', '') === url) return
-    setSetting('tunnel_checkin_notified', url)
-    const admins = db.prepare("SELECT line_uid FROM users WHERE role='admin' AND status='ใช้งาน' AND line_uid IS NOT NULL").all()
-    for (const a of admins) linePush(a.line_uid, `🔗 ลิงก์เช็คอินพนักงาน${force ? '' : 'ใหม่ (เครื่องเซิร์ฟเวอร์เพิ่งเปิดใหม่ ลิงก์เก่าใช้ไม่ได้แล้ว)'}:
-${url}/checkin
-
-ส่งต่อให้พนักงานได้เลย — เปิดในมือถือ ใช้ GPS ได้ · เลือกชื่อ + ใส่ PIN แล้วกดเข้างาน/ออกงาน`)
-  } catch (e) { console.error('notify checkin link:', e.message) }
-}
 const tunnelInfo = () => ({
   enabled: getSetting('tunnel_auto', '0') === '1', expose: getSetting('tunnel_expose', '0') === '1',
   checkin: getSetting('tunnel_checkin', '0') === '1', // เปิดหน้าเช็คอินพนักงานผ่านลิงก์สาธารณะ (https)
@@ -9242,7 +9229,6 @@ api.put('/tunnel', adminOnly, async (req, res) => {
   if (b.checkin !== undefined) {
     setSetting('tunnel_checkin', b.checkin ? '1' : '0')
     audit(req, b.checkin ? 'เปิดหน้าเช็คอินผ่านลิงก์สาธารณะ' : 'ปิดหน้าเช็คอินผ่านลิงก์สาธารณะ', tunnel.state.url ? tunnel.state.url + '/checkin' : '')
-    if (b.checkin) setImmediate(() => notifyCheckinLink(tunnel.state.url, true))
   }
   if (b.enabled !== undefined) {
     setSetting('tunnel_auto', b.enabled ? '1' : '0')
