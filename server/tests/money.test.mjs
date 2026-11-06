@@ -2811,3 +2811,19 @@ test('คนลาออก: หน้าเงินเดือนแสดง
   assert.equal(back.data.resign_date, null)
   assert.equal(await inPeriod('2031-04'), true)
 })
+
+test('แก้ไขการลงเวลาทีละแถว: เปลี่ยนเวลา/สถานะ/วันที่ได้ · วันที่ชนกับรายการเดิมของคนเดียวกัน = ไม่ให้ · เวลาผิดรูปแบบ = ไม่ให้', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบแก้ลงเวลา', role: 'ช่าง', pay_type: 'รายวัน', base: 400 })
+  const code = e.data.code
+  const a1 = (await POST('/attendance/manual', { emp_code: code, date: '2031-05-05', check_in: '08:40', check_out: '17:00' })).data
+  const a2 = (await POST('/attendance/manual', { emp_code: code, date: '2031-05-06', check_in: '08:00', check_out: '17:00' })).data
+  assert.equal(a1.status, 'สาย')
+  const ok = await PUT(`/attendance/${a1.id}`, { check_in: '07:55', check_out: '18:00', status: 'ปกติ' })
+  assert.equal(ok.status, 200); assert.equal(ok.data.check_in, '07:55'); assert.equal(ok.data.status, 'ปกติ')
+  assert.equal((await PUT(`/attendance/${a1.id}`, { date: '2031-05-06' })).status, 409, 'วันที่ซ้ำกับอีกรายการ')
+  assert.equal((await PUT(`/attendance/${a1.id}`, { check_in: '8 โมง' })).status, 400)
+  const mv = await PUT(`/attendance/${a1.id}`, { date: '2031-05-07' })
+  assert.equal(mv.status, 200); assert.equal(mv.data.date, '2031-05-07')
+  assert.equal((await PUT('/attendance/999999', { check_in: '08:00' })).status, 404)
+  await DEL('/attendance/' + a2.id)
+})

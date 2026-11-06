@@ -79,6 +79,14 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
     try { const r = await apiClient.post<{ added: number }>('/attendance/mark-all-present', { date: attForm.date, check_in: attForm.check_in, check_out: attForm.check_out }); setAttMsg(`เพิ่ม “มาทำงาน” ให้ ${r.added} คนแล้ว`); loadAttList() }
     catch (e) { setAttMsg((e as Error).message) }
   }
+  // แก้รายการลงเวลาในหน้าต่าง (เดิมกดแก้ไข = ดึงขึ้นไปช่องด้านบน มองไม่เห็นว่าเกิดอะไร)
+  const [attEdit, setAttEdit] = useState<(AttRow & { err?: string; busy?: boolean }) | null>(null)
+  const saveAttEdit = async () => {
+    if (!attEdit) return
+    setAttEdit({ ...attEdit, busy: true, err: '' })
+    try { await apiClient.put('/attendance/' + attEdit.id, { date: attEdit.date, check_in: attEdit.check_in, check_out: attEdit.check_out, status: attEdit.status }); setAttEdit(null); loadAttList(); loadAttSum() }
+    catch (e) { setAttEdit({ ...attEdit, busy: false, err: (e as Error).message }) }
+  }
   const delAtt = async (id: number) => { if (!window.confirm('ลบบันทึกการลงเวลานี้?')) return; try { await apiClient.del('/attendance/' + id); loadAttList() } catch (e) { alert((e as Error).message) } }
   // เงินเดือน: สรุปทั้งปี + เบิกล่วงหน้า
   const [annual, setAnnual] = useState<{ year: string; months: number; net: number; sso: number } | null>(null)
@@ -486,6 +494,27 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
 
         {/* ===== payroll ===== */}
         {/* ทำจ่ายเงินเดือน (เลือกพนักงาน) — วางนอกส่วนสลับแท็บ ย่อพับแล้วข้อมูลไม่หาย */}
+        {attEdit && (
+          <ModalShell title={`แก้ไขการลงเวลา · ${attEdit.emp_name}`} sub="แก้แล้วมีผลกับวันทำงาน/การหักขาด-สายของงวดนั้นทันที (ถ้ายังไม่ได้ทำจ่าย) · เก็บประวัติการแก้ทุกครั้ง" width={460} closeOnBackdrop={false} onClose={() => setAttEdit(null)}
+            footer={<>
+              <button onClick={() => setAttEdit(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 13, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 16px', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={saveAttEdit} disabled={attEdit.busy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 9, padding: '9px 18px', cursor: 'pointer' }}>{attEdit.busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
+            </>}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ gridColumn: '1 / -1', fontSize: 12, color: '#5C6770', display: 'flex', flexDirection: 'column', gap: 4 }}>วันที่
+                <input type="date" style={field} value={attEdit.date} onChange={(e) => setAttEdit({ ...attEdit, date: e.target.value })} /></label>
+              <label style={{ fontSize: 12, color: '#5C6770', display: 'flex', flexDirection: 'column', gap: 4 }}>เวลาเข้างาน
+                <input type="time" style={field} value={/^\d{1,2}:\d{2}$/.test(attEdit.check_in) ? attEdit.check_in.padStart(5, '0') : ''} onChange={(e) => setAttEdit({ ...attEdit, check_in: e.target.value })} /></label>
+              <label style={{ fontSize: 12, color: '#5C6770', display: 'flex', flexDirection: 'column', gap: 4 }}>เวลาออกงาน (ว่าง = ยังไม่ออก)
+                <input type="time" style={field} value={/^\d{1,2}:\d{2}$/.test(attEdit.check_out) ? attEdit.check_out.padStart(5, '0') : ''} onChange={(e) => setAttEdit({ ...attEdit, check_out: e.target.value })} /></label>
+              <label style={{ gridColumn: '1 / -1', fontSize: 12, color: '#5C6770', display: 'flex', flexDirection: 'column', gap: 4 }}>สถานะ
+                <select style={field} value={attEdit.status} onChange={(e) => setAttEdit({ ...attEdit, status: e.target.value })}>
+                  <option value="ปกติ">ปกติ</option><option value="สาย">สาย</option>
+                </select></label>
+            </div>
+            {attEdit.err && <div style={{ fontSize: 12.5, color: '#C24036', marginTop: 10 }}>{attEdit.err}</div>}
+          </ModalShell>
+        )}
         {lineSlipDlg && payrollMeta && <PayslipLineDialog period={payrollMeta.period} onClose={() => setLineSlipDlg(false)} />}
         {payDlg && payrollMeta && (() => {
           const sel = new Set(payDlg.sel)
@@ -1087,7 +1116,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                     <td className="num" style={{ ...td, textAlign: 'center' }}>{a.check_in || '—'}</td><td className="num" style={{ ...td, textAlign: 'center', color: '#5C6770' }}>{a.check_out || '—'}</td>
                     <td style={{ ...td, textAlign: 'center' }}><span style={{ fontSize: 11, fontWeight: 600, color: s.c, background: s.bg, padding: '2px 10px', borderRadius: 20 }}>{a.status}</span></td>
                     <td style={{ ...td, padding: '10px 18px', textAlign: 'center' }}>
-                      <button onClick={() => setAttForm({ emp_code: a.emp_code, date: a.date, check_in: a.check_in || '08:00', check_out: a.check_out || '17:00' })} title="ดึงขึ้นไปแก้ด้านบน" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 9px', cursor: 'pointer', marginRight: 5 }}>แก้ไข</button>
+                      <button onClick={() => setAttEdit({ ...a, check_in: a.check_in || '', check_out: a.check_out || '' })} title="แก้วันที่ / เวลาเข้า-ออก / สถานะ" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '3px 9px', cursor: 'pointer', marginRight: 5 }}>แก้ไข</button>
                       <button onClick={() => delAtt(a.id)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: '#C24036', background: '#fff', border: '1px solid #E7CDC9', borderRadius: 7, padding: '3px 9px', cursor: 'pointer' }}>ลบ</button>
                     </td>
                   </tr>)

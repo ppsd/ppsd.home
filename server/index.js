@@ -4888,6 +4888,22 @@ api.post('/attendance/mark-all-present', canWrite, (req, res) => {
   audit(req, 'บันทึกมาทำงานทั้งวัน', `${b.date} (${added} คน)`)
   res.json({ ok: true, added, date: b.date })
 })
+// แก้รายการลงเวลาทีละแถว (วันที่ · เวลาเข้า/ออก · สถานะ) — หน้าต่าง "แก้ไข" ในตารางบันทึกการลงเวลา
+api.put('/attendance/:id', canWrite, (req, res) => {
+  const a = db.prepare('SELECT * FROM attendance WHERE id=?').get(req.params.id)
+  if (!a) return res.status(404).json({ error: 'ไม่พบรายการลงเวลา' })
+  const b = req.body || {}
+  const date = b.date !== undefined ? String(b.date) : a.date
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง' })
+  const tm = (v, old) => { const t = v !== undefined ? String(v || '').trim() : (old || ''); return t }
+  const checkIn = tm(b.check_in, a.check_in), checkOut = tm(b.check_out, a.check_out)
+  for (const t of [checkIn, checkOut]) if (t && t !== '-' && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(t)) return res.status(400).json({ error: `เวลา "${t}" ไม่ถูกต้อง (ใช้รูปแบบ 08:00)` })
+  if (date !== a.date && db.prepare('SELECT 1 FROM attendance WHERE emp_code=? AND date=? AND id<>?').get(a.emp_code, date, a.id)) return res.status(409).json({ error: `${a.emp_name} มีบันทึกวันที่ ${date} อยู่แล้ว — แก้รายการนั้นแทน` })
+  const status = ['ปกติ', 'สาย'].includes(b.status) ? b.status : (checkIn && checkIn > lateCutoff() ? 'สาย' : 'ปกติ')
+  db.prepare('UPDATE attendance SET date=?, check_in=?, check_out=?, status=? WHERE id=?').run(date, checkIn, checkOut, status, a.id)
+  audit(req, 'แก้ไขการลงเวลา', `${a.emp_name} ${a.date}${date !== a.date ? ' → ' + date : ''} · เข้า ${checkIn || '-'} ออก ${checkOut || '-'} · ${status}`)
+  res.json(db.prepare('SELECT * FROM attendance WHERE id=?').get(a.id))
+})
 api.delete('/attendance/:id', canWrite, (req, res) => {
   const a = db.prepare('SELECT * FROM attendance WHERE id=?').get(req.params.id)
   db.prepare('DELETE FROM attendance WHERE id=?').run(req.params.id)
