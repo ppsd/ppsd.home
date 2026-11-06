@@ -13,6 +13,10 @@ export default function LocationTrack({ employees }: { employees: { code: string
   const [emp, setEmp] = useState('')
   const [summary, setSummary] = useState<Summ[]>([])
   const [points, setPoints] = useState<Pt[]>([])
+  // เช็คอินหน้างาน (พนักงานกดตอนถึงบ้าน/หน้างาน) ของวันที่เลือก
+  type SiteRow = { id: number; emp_code: string; emp_name: string; lat: number; lng: number; ts: string; note: string; house_code: string; house_name: string | null }
+  const [sites, setSites] = useState<SiteRow[]>([])
+  useEffect(() => { api.get<SiteRow[]>(`/location-log/site?date=${date}`).then(setSites).catch(() => setSites([])) }, [date])
   const [setup, setSetup] = useState(false)
   const [tconf, setTconf] = useState<TConf[]>([])
   const [base, setBase] = useState(window.location.origin)
@@ -47,6 +51,27 @@ export default function LocationTrack({ employees }: { employees: { code: string
         </select>
         {emp && points.length > 0 && <a href={mapsRoute} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#2E7D55', borderRadius: 8, padding: '8px 13px', textDecoration: 'none' }}>🗺️ ดูเส้นทางทั้งวันบนแผนที่</a>}
         <button onClick={() => setSetup((v) => !v)} className="hov-f3f5f7" style={{ marginLeft: emp && points.length > 0 ? 0 : 'auto', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '8px 13px', cursor: 'pointer' }}>⚙️ ตั้งค่าแอปติดตามเบื้องหลัง</button>
+      </div>
+
+      {/* เช็คอินหน้างานของวัน */}
+      <div style={{ border: '1px solid #CDE3D6', borderRadius: 10, marginBottom: 14, overflow: 'hidden' }}>
+        <div style={{ background: '#F2F8F4', padding: '9px 12px', fontSize: 13, fontWeight: 600, color: '#2E7D55' }}>🏠 เช็คอินหน้างาน ({sites.filter((x) => !emp || x.emp_code === emp).length}) <span style={{ fontWeight: 400, fontSize: 11.5, color: '#5C6770' }}>— พนักงานกดเช็คอินตอนถึงหน้างาน (หน้าเช็คอินมือถือ)</span></div>
+        {sites.filter((x) => !emp || x.emp_code === emp).length === 0
+          ? <div style={{ padding: 14, fontSize: 12.5, color: '#94A0A8', textAlign: 'center' }}>ยังไม่มีการเช็คอินหน้างานในวันนี้</div>
+          : <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr style={{ textAlign: 'left', background: '#FAFBFC' }}><th style={th}>เวลา</th><th style={th}>พนักงาน</th><th style={th}>หน้างาน</th><th style={th}>หมายเหตุ</th><th style={th}>ตำแหน่ง</th></tr></thead>
+              <tbody>
+                {sites.filter((x) => !emp || x.emp_code === emp).map((x) => (
+                  <tr key={x.id} style={{ borderTop: '1px solid #EEF1F4' }}>
+                    <td className="num" style={td}>{hhmm(x.ts)}</td>
+                    <td style={td}>{x.emp_name}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>{x.house_name || x.house_code}</td>
+                    <td style={{ ...td, color: '#5C6770' }}>{x.note.replace(/^เช็คอินหน้างาน: [^·]*(· )?/, '') || '—'}</td>
+                    <td style={td}><a href={`https://www.google.com/maps?q=${x.lat},${x.lng}`} target="_blank" rel="noreferrer" style={{ color: '#2E7D55', fontWeight: 600, fontSize: 12.5 }}>🗺 ดูแผนที่</a></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>}
       </div>
 
       {setup && (

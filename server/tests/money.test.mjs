@@ -2910,3 +2910,23 @@ test('ลิงก์สาธารณะ: เปิดหน้าเช็ค
   assert.equal((await ext('/api/kiosk/my-slip', { method: 'POST', body: '{}' })).status, 404, 'ดูสลิปผ่านลิงก์สาธารณะไม่ได้')
   await PUT('/tunnel', { checkin: false })
 })
+
+test('เช็คอินหน้างาน: รายชื่อบ้านต้องใส่ PIN ถูก · บันทึกตำแหน่ง+บ้าน+เวลา · ไม่มี GPS/ไม่เลือกบ้าน = ไม่รับ · ผู้จัดการดูรายการของวันได้', async () => {
+  const e = await POST('/employees', { name: 'โฟร์แมนเช็คอิน', role: 'โฟร์แมน', pay_type: 'รายเดือน', base: 20000, pin: '7373' })
+  await POST('/houses', { name: 'บ้านเช็คอินทดสอบ', code: 'H-SITE' })
+  assert.equal((await POST('/kiosk/houses', { emp_code: e.data.code, pin: '0000' })).status, 401, 'PIN ผิด = ไม่เห็นรายชื่อบ้าน')
+  const hs = await POST('/kiosk/houses', { emp_code: e.data.code, pin: '7373' })
+  assert.equal(hs.status, 200); assert.ok(hs.data.some((h) => h.code === 'H-SITE'))
+  assert.equal((await POST('/kiosk/site-checkin', { emp_code: e.data.code, pin: '7373', house_code: 'H-SITE' })).status, 400, 'ไม่มี GPS')
+  assert.equal((await POST('/kiosk/site-checkin', { emp_code: e.data.code, pin: '7373', lat: 13.5, lng: 99.8 })).status, 400, 'ไม่เลือกบ้าน')
+  const ok = await POST('/kiosk/site-checkin', { emp_code: e.data.code, pin: '7373', house_code: 'H-SITE', lat: 13.53, lng: 99.81, note: 'ตรวจโครงหลังคา' })
+  assert.equal(ok.status, 200); assert.equal(ok.data.house_name, 'บ้านเช็คอินทดสอบ')
+  const today = iso(new Date())
+  const list = (await GET(`/location-log/site?date=${today}`)).data
+  const row = list.find((x) => x.emp_code === e.data.code)
+  assert.ok(row, 'ต้องเห็นในรายการเช็คอินหน้างาน'); assert.equal(row.house_name, 'บ้านเช็คอินทดสอบ'); assert.match(row.note, /ตรวจโครงหลังคา/)
+  const adminToken = token
+  token = (await POST('/login', { username: 'nosal1', pin: '5151' })).data.token
+  assert.equal((await GET(`/location-log/site?date=${today}`)).status, 403, 'หน้างานทั่วไปดูไม่ได้')
+  token = adminToken
+})

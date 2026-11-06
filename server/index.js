@@ -75,7 +75,7 @@ app.use((req, res, next) => {
   if (getSetting('tunnel_checkin', '0') === '1' && (
     (req.method === 'GET' && /^\/checkin\/?$/.test(req.path)) ||
     (req.method === 'GET' && (req.path === '/api/kiosk/employees' || req.path === '/api/settings/attendance')) ||
-    (req.method === 'POST' && (req.path === '/api/kiosk/punch' || req.path === '/api/kiosk/location')))) return next()
+    (req.method === 'POST' && ['/api/kiosk/punch', '/api/kiosk/location', '/api/kiosk/houses', '/api/kiosk/site-checkin'].includes(req.path)))) return next()
   if (getSetting('tunnel_expose', '0') === '1') return next()
   res.status(404).type('text/plain').send('ลิงก์นี้เปิดไว้สำหรับ LINE webhook เท่านั้น — ถ้าต้องการใช้ ERP นอกออฟฟิศ ให้แอดมินเปิดที่ ผู้ใช้งาน → แจ้งเตือน LINE → "อนุญาตเปิด ERP ผ่านลิงก์นี้"')
 })
@@ -501,6 +501,33 @@ api.post('/kiosk/location', (req, res) => {
   if (bad) return res.status(bad.code).json({ error: bad.error })
   logLocation(emp, lat, lng, accuracy, note)
   res.json({ ok: true })
+})
+// ---- เช็คอินหน้างาน (กดครั้งเดียวตอนถึงบ้าน/หน้างาน → บันทึกตำแหน่ง GPS + เวลา + บ้าน) ----
+// รายชื่อบ้านให้เลือก — ต้องใส่ PIN ถูกก่อน (คนนอกที่เปิดลิงก์สาธารณะไม่เห็นชื่อบ้านลูกค้า)
+api.post('/kiosk/houses', (req, res) => {
+  const { emp_code, pin } = req.body || {}
+  const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
+  const bad = kioskPinCheck(emp_code, pin, emp, req)
+  if (bad) return res.status(bad.code).json({ error: bad.error })
+  res.json(db.prepare("SELECT code, name FROM houses WHERE COALESCE(kind,'') <> 'marketing' AND COALESCE(status,'') NOT IN ('ส่งมอบแล้ว','ยกเลิก') ORDER BY CASE WHEN kind='office' THEN 1 ELSE 0 END, name").all())
+})
+api.post('/kiosk/site-checkin', (req, res) => {
+  const { emp_code, pin, house_code, lat, lng, accuracy, note } = req.body || {}
+  const emp = db.prepare('SELECT * FROM employees WHERE code=?').get(emp_code)
+  if (!emp) return res.status(404).json({ error: 'ไม่พบพนักงาน' })
+  if (emp.status === 'ลาออก') return res.status(403).json({ error: 'บัญชีพนักงานนี้พ้นสภาพแล้ว' })
+  const bad = kioskPinCheck(emp_code, pin, emp, req)
+  if (bad) return res.status(bad.code).json({ error: bad.error })
+  const h = db.prepare('SELECT code, name FROM houses WHERE code=?').get(String(house_code || ''))
+  if (!h) return res.status(400).json({ error: 'กรุณาเลือกหน้างาน' })
+  if (typeof lat !== 'number' || typeof lng !== 'number' || !isFinite(lat) || !isFinite(lng)) return res.status(400).json({ error: 'ไม่ได้รับตำแหน่ง GPS — เปิด GPS แล้วลองใหม่' })
+  const now = new Date()
+  db.prepare('INSERT INTO location_log (emp_code,emp_name,lat,lng,accuracy,ts,date,note,house_code,kind) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(emp.code, emp.name, lat, lng, Number(accuracy) || 0, now.toISOString(), isoDate(now), ('เช็คอินหน้างาน: ' + h.name + (note ? ' · ' + String(note).slice(0, 120) : '')), h.code, 'site')
+  notifyChange(['locations'])
+  res.json({ ok: true, house_name: h.name, time: nowHM() })
 })
 // PUBLIC background-tracking endpoint for off-the-shelf GPS apps (GPSLogger ฯลฯ)
 // configured per employee with a secret token. Accepts GET or POST, lat/lng in query or body.
@@ -5030,6 +5057,11 @@ api.post('/employees/:id/track-token', adminOnly, (req, res) => {
   res.json({ token: tok })
 })
 // foreman location tracking — managers/admin only
+// เช็คอินหน้างานของวัน (ผู้จัดการ/แอดมิน) — ใคร · บ้านไหน · กี่โมง · ตำแหน่ง
+api.get('/location-log/site', requireManager, (req, res) => {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : isoDate(new Date())
+  res.json(db.prepare("SELECT l.id, l.emp_code, l.emp_name, l.lat, l.lng, l.accuracy, l.ts, l.note, l.house_code, h.name AS house_name FROM location_log l LEFT JOIN houses h ON h.code = l.house_code WHERE l.kind='site' AND l.date=? ORDER BY l.ts").all(date))
+})
 api.get('/location-log', requireManager, (req, res) => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : new Date().toISOString().slice(0, 10)
   if (req.query.emp) {

@@ -68,6 +68,27 @@ export default function CheckIn() {
       setToast({ msg: `เริ่มส่งตำแหน่งงานของ ${name} แล้ว (ทุก 5 นาที)`, ok: true })
     } catch (e) { setToast({ msg: (e as Error).message, ok: false }) }
   }
+  // เช็คอินหน้างาน: เลือกชื่อ + PIN → โหลดรายชื่อบ้าน (ต้อง PIN ถูก) → เลือกบ้าน → บันทึกตำแหน่ง GPS ครั้งเดียว
+  const [site, setSite] = useState<{ code: string; pin: string; name: string; houses: { code: string; name: string }[]; house: string; note: string; busy: boolean } | null>(null)
+  const openSite = async () => {
+    if (!emp) { setToast({ msg: 'เลือกชื่อก่อน', ok: false }); return }
+    if (pin.length !== 4) { setToast({ msg: 'ใส่ PIN 4 หลักก่อน', ok: false }); return }
+    try {
+      const houses = await api.post<{ code: string; name: string }[]>('/kiosk/houses', { emp_code: emp.code, pin })
+      setSite({ code: emp.code, pin, name: emp.name, houses, house: '', note: '', busy: false }); setToast(null)
+    } catch (e) { setToast({ msg: (e as Error).message, ok: false }); setPin('') }
+  }
+  const submitSite = async () => {
+    if (!site) return
+    if (!site.house) { setToast({ msg: 'เลือกหน้างานก่อน', ok: false }); return }
+    setSite({ ...site, busy: true })
+    try {
+      const c = await getGPS()
+      const r = await api.post<{ house_name: string; time: string }>('/kiosk/site-checkin', { emp_code: site.code, pin: site.pin, house_code: site.house, lat: c.lat, lng: c.lng, note: site.note })
+      setToast({ msg: `✅ ${site.name} เช็คอินถึง ${r.house_name} เวลา ${r.time} น.`, ok: true })
+      setSite(null); setPin(''); setSelCode('')
+    } catch (e) { setToast({ msg: (e as Error).message, ok: false }); setSite({ ...site, busy: false }) }
+  }
   const stopTrack = () => {
     if (trackRef.current) clearInterval(trackRef.current.timer)
     trackRef.current = null
@@ -147,6 +168,30 @@ export default function CheckIn() {
           </div>
           {toast && <div style={{ marginTop: 12, fontSize: 13, fontWeight: 500, textAlign: 'center', padding: '10px 12px', borderRadius: 9, color: toast.ok ? '#2E7D55' : '#C24036', background: toast.ok ? '#E2F1EA' : '#FBEEEC' }}>{toast.msg}</div>}
         </div>
+      </div>
+
+      {/* เช็คอินหน้างาน — กดครั้งเดียวตอนถึงบ้าน/หน้างาน (ไม่ต้องเปิดหน้าค้าง) */}
+      <div style={{ width: 420, maxWidth: '100%', background: '#fff', border: '1px solid #E1E5EA', borderRadius: 14, padding: '14px 18px' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>🏠 เช็คอินหน้างาน</div>
+        {!site ? (
+          <>
+            <div style={{ fontSize: 11.5, color: '#94A0A8', margin: '2px 0 10px' }}>ถึงหน้างานแล้ว: เลือกชื่อ + ใส่ PIN ด้านบน → กดปุ่มนี้ → เลือกบ้าน → ระบบบันทึกตำแหน่งและเวลาที่ถึง (กดครั้งเดียว ไม่ต้องเปิดหน้าค้าง)</div>
+            <button onClick={openSite} style={{ width: '100%', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 10, padding: '11px 0', cursor: 'pointer' }}>เลือกหน้างาน</button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12.5, color: '#3C4750', margin: '2px 0 8px' }}>{site.name} — ถึงหน้างานไหน?</div>
+            <select value={site.house} onChange={(e) => setSite({ ...site, house: e.target.value })} style={{ width: '100%', fontFamily: 'inherit', fontSize: 14, padding: '10px', borderRadius: 9, border: '1px solid #D2DAE1', marginBottom: 8, background: '#fff' }}>
+              <option value="">— เลือกบ้าน / หน้างาน —</option>
+              {site.houses.map((h) => <option key={h.code} value={h.code}>{h.name}</option>)}
+            </select>
+            <input value={site.note} onChange={(e) => setSite({ ...site, note: e.target.value })} placeholder="หมายเหตุ (ถ้ามี) เช่น ตรวจงานโครงหลังคา" maxLength={120} style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 13.5, padding: '9px 10px', borderRadius: 9, border: '1px solid #D2DAE1', marginBottom: 10 }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => { setSite(null); setPin('') }} style={{ flex: 1, fontFamily: 'inherit', fontSize: 14, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 10, padding: '11px 0', cursor: 'pointer' }}>ยกเลิก</button>
+              <button onClick={submitSite} disabled={site.busy} style={{ flex: 2, fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 10, padding: '11px 0', cursor: 'pointer' }}>{site.busy ? 'กำลังอ่านตำแหน่ง…' : '📍 เช็คอินถึงหน้างาน'}</button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* ติดตามตำแหน่งงาน (โฟร์แมน) */}

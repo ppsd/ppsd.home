@@ -809,6 +809,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS salary_advance_files (
   advance_id INTEGER, name TEXT, mime TEXT, size INTEGER, path TEXT, uploaded TEXT, uploader TEXT
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_adv_files ON salary_advance_files(advance_id)')
+ensureColumn('location_log', 'house_code', 'TEXT') // เช็คอินหน้างาน: บ้าน/โครงการที่ไปถึง
+ensureColumn('location_log', 'kind', 'TEXT')       // '' = ติดตามทุก 5 นาที · 'site' = เช็คอินหน้างาน (กดครั้งเดียวตอนถึง)
 ensureColumn('employees', 'resign_date', 'TEXT') // วันที่ลาออก (ISO) — หน้าเงินเดือนแสดงคนนี้ถึงเดือนที่ลาออก แล้วหยุด (เดือนก่อนหน้ายังเห็นเป็นประวัติ)
 ensureColumn('users', 'system_only', 'INTEGER') // 1 = บัญชีระบบ (ผู้ดูแล/เจ้าของที่ไม่ใช่พนักงาน) — ไม่สร้างพนักงาน HR · ไม่ขึ้นในเงินเดือน/ลงเวลา
 ensureColumn('users', 'must_change_pin', 'INTEGER') // 1 = ถูกรีเซ็ต PIN ต้องตั้งใหม่ตอนเข้าครั้งแรก
