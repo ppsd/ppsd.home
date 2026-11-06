@@ -2868,3 +2868,23 @@ test('พนักงานใหม่: บัญชีเข้าระบบ
   const e2 = await POST('/employees', { name: 'บัญชีใหม่ ทดสอบ', role: 'บัญชี', pay_type: 'รายเดือน', base: 15000, pin: '6161', erp_access: true })
   assert.equal((await GET('/users')).data.find((x) => x.username === e2.data.username).status, 'ใช้งาน')
 })
+
+test('ความเคลื่อนไหวบ้าน: แอดมินซ่อนเรื่องได้ (ประวัติไม่หาย) · ดูที่ซ่อน/เลิกซ่อนได้ · คนอื่นซ่อนไม่ได้', async () => {
+  await POST('/houses', { name: 'บ้านทดสอบซ่อน', code: 'H-HIDE' })
+  await new Promise((r) => setTimeout(r, 1100)) // ให้เวลาบันทึกไม่ชนวินาทีเดียวกับเรื่องอื่น
+  const feed = async (hidden) => (await GET(`/center/feed?limit=100&house=H-HIDE${hidden ? '&hidden=1' : ''}`)).data.items
+  const items = await feed(false)
+  assert.ok(items.length > 0 && items[0].key, 'ต้องมีเรื่องของบ้านนี้ + key')
+  const key = items[0].key
+  const r = await POST('/center/feed/hide', { keys: [key] })
+  assert.equal(r.status, 200)
+  assert.ok(!(await feed(false)).some((i) => i.key === key), 'ซ่อนแล้วไม่แสดงในหน้าปกติ')
+  assert.ok((await feed(true)).some((i) => i.key === key), 'ดูที่ซ่อนไว้ต้องเห็น')
+  assert.ok((await GET('/center/feed/hidden-count')).data.count >= 1)
+  const adminToken = token
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.equal((await POST('/center/feed/hide', { keys: [key] })).status, 403)
+  token = adminToken
+  await POST('/center/feed/hide', { keys: [key], unhide: true })
+  assert.ok((await feed(false)).some((i) => i.key === key), 'เลิกซ่อนแล้วกลับมาแสดง')
+})

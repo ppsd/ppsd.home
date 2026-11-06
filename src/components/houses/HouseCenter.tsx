@@ -9,7 +9,7 @@ import ModalShell from '../shared/ModalShell'
 import { LinkCodeBox, useLinkedContractors } from './ContractorLineLink'
 
 interface FeedPart { text: string; lines: string[] }
-interface FeedItem { id: number; min_id: number; ts: string; user: string; house_code: string; house_name: string; cats: string[]; flag: boolean; approval: { id: number; status: string } | null; parts: FeedPart[] }
+interface FeedItem { id: number; key: string; min_id: number; ts: string; user: string; house_code: string; house_name: string; cats: string[]; flag: boolean; approval: { id: number; status: string } | null; parts: FeedPart[] }
 interface Req { can_decide?: boolean; files?: number[]; id: number; ts: string; kind: string; house_code: string; house_name: string; title: string; lines: string[]; requested_by: string; requested_by_id: number; status: string; decided_by?: string; decided_at?: string; reason?: string; result?: string }
 interface Gate { key: string; label: string; group: string; on: boolean }
 interface Unread { unread: number; last_seen?: number; pending: number; canApprove: boolean; canCustomer: boolean }
@@ -62,9 +62,15 @@ export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number
 
 // ---------------- ความเคลื่อนไหว ----------------
 function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: boolean; onCompose: (c: { house: string; text: string; kind: 'update' | 'notice' }) => void; onSeen: () => void; onOpenHouse: (code: string) => void }) {
-  const { data } = useApp()
+  const { data, user } = useApp()
+  const isAdmin = user?.role === 'admin' // ซ่อนเรื่อง (เช่น ข้อมูลทดสอบ) ได้เฉพาะแอดมิน — ไม่ลบประวัติ
+  const canSelect = canCustomer || isAdmin
   const [house, setHouse] = useState('')
   const [cat, setCat] = useState('')
+  const [showHidden, setShowHidden] = useState(false)
+  const [hiddenCount, setHiddenCount] = useState(0)
+  const loadHiddenCount = () => { if (isAdmin) api.get<{ count: number }>('/center/feed/hidden-count').then((r) => setHiddenCount(r.count)).catch(() => {}) }
+  useEffect(() => { loadHiddenCount() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
   const [items, setItems] = useState<FeedItem[]>([])
   const [next, setNext] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -78,6 +84,7 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
     if (house) q.set('house', house)
     if (cat === 'flag') q.set('flag', '1'); else if (cat) q.set('cat', cat)
     if (before) q.set('before', String(before))
+    if (showHidden) q.set('hidden', '1')
     return '/center/feed?' + q.toString()
   }
   const load = useCallback(async (more = false) => {
@@ -85,7 +92,7 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
     try {
       const r = await api.get<{ items: FeedItem[]; next: number }>(query(more ? next : 0))
       setItems((cur) => (more ? [...cur, ...r.items] : r.items)); setNext(r.next)
-      if (!more && r.items.length) {
+      if (!more && r.items.length && !showHidden) {
         const top = r.items[0].id
         if (seenAt.current == null) { // ครั้งแรกที่เปิด: จำว่าเคยดูถึงไหน แล้วบันทึกว่าดูแล้ว
           const u = await api.get<{ last_seen: number }>('/center/unread').catch(() => ({ last_seen: top }))
@@ -97,8 +104,8 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
     } catch (e) { setErr((e as Error).message) }
     setBusy(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [house, cat, next])
-  useEffect(() => { setSel(new Set()); load(false) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [house, cat])
+  }, [house, cat, next, showHidden])
+  useEffect(() => { setSel(new Set()); load(false) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [house, cat, showHidden])
   // ข้อมูลเปลี่ยน (จากคนอื่น/บอท LINE) → โหลดใหม่เอง
   useEffect(() => {
     const on = () => load(false)
@@ -113,12 +120,21 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
   }, [items])
   const selItems = items.filter((i) => sel.has(i.id))
   const selHouse = selItems[0]?.house_code || ''
+  const oneHouse = selItems.every((i) => i.house_code === selHouse) // ส่งให้ลูกค้าได้ทีละบ้าน
   const toggle = (it: FeedItem) => setSel((s) => {
     const n = new Set(s)
-    if (n.has(it.id)) n.delete(it.id)
-    else { if (selHouse && it.house_code !== selHouse) { alert('เลือกได้ทีละบ้าน — ส่งให้ลูกค้าบ้านเดียวกันเท่านั้น'); return s } n.add(it.id) }
+    if (n.has(it.id)) n.delete(it.id); else n.add(it.id)
     return n
   })
+  const allSelected = items.length > 0 && items.every((i) => sel.has(i.id))
+  const selectAll = () => setSel(allSelected ? new Set() : new Set(items.map((i) => i.id)))
+  const hideSel = async () => {
+    const unhide = showHidden
+    if (!window.confirm(unhide ? `เลิกซ่อน ${selItems.length} เรื่อง? (กลับมาแสดงในหน้าความเคลื่อนไหว)` : `ซ่อน ${selItems.length} เรื่องจากหน้าความเคลื่อนไหว?
+เป็นการซ่อนเท่านั้น — ประวัติจริงยังเก็บไว้ครบ (เลิกซ่อนได้ที่ "ดูที่ซ่อนไว้")`)) return
+    try { await api.post('/center/feed/hide', { keys: selItems.map((i) => i.key), unhide }); setSel(new Set()); loadHiddenCount(); load(false) }
+    catch (e) { alert((e as Error).message) }
+  }
   // ร่างข้อความถึงลูกค้า — เอาแค่หัวเรื่อง ไม่เอายอดเงิน/ชื่อช่าง (คนส่งแก้ได้ก่อนส่ง)
   const draft = () => {
     const h = selItems[0]
@@ -136,8 +152,11 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {CAT_FILTERS.map((c) => <button key={c.id} style={chip(cat === c.id)} onClick={() => setCat(c.id)}>{c.label}</button>)}
         </div>
+        {canSelect && items.length > 0 && <button style={{ ...btn(), marginLeft: 'auto' }} onClick={selectAll}>{allSelected ? 'ไม่เลือกเลย' : `☑ เลือกทั้งหมด (${items.length})`}</button>}
+        {isAdmin && (hiddenCount > 0 || showHidden) && <button style={{ ...btn(), ...(showHidden ? { background: '#FFF4E0', borderColor: '#E8C98A' } : {}) }} onClick={() => setShowHidden((v) => !v)}>{showHidden ? '← กลับหน้าปกติ' : `🙈 ดูที่ซ่อนไว้ (${hiddenCount})`}</button>}
       </div>
-      {canCustomer && <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 10 }}>ติ๊ก ☐ หน้ารายการที่อยากบอกลูกค้า (บ้านเดียวกัน) แล้วกด “ส่งให้ลูกค้า” — ระบบจะร่างข้อความให้ ตรวจ/แก้ก่อนส่งได้ · ไม่มีอะไรส่งถึงลูกค้าเองอัตโนมัติ</div>}
+      {showHidden && <div style={{ fontSize: 12.5, color: '#8A6D1F', background: '#FFF4E0', borderRadius: 8, padding: '8px 12px', marginBottom: 10 }}>🙈 เรื่องที่ซ่อนไว้ — ติ๊กแล้วกด “เลิกซ่อน” เพื่อกลับไปแสดงตามปกติ</div>}
+      {canCustomer && !showHidden && <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 10 }}>ติ๊ก ☐ หน้ารายการที่อยากบอกลูกค้า (บ้านเดียวกัน) แล้วกด “ส่งให้ลูกค้า” — ระบบจะร่างข้อความให้ ตรวจ/แก้ก่อนส่งได้ · ไม่มีอะไรส่งถึงลูกค้าเองอัตโนมัติ</div>}
       {err && <div style={{ color: C.red, fontSize: 13, marginBottom: 10 }}>{err}</div>}
       {!items.length && !busy && <div style={{ ...card, padding: 30, textAlign: 'center', color: C.sub, fontSize: 14 }}>ยังไม่มีความเคลื่อนไหว{house ? 'ของบ้านนี้' : ''}</div>}
       {byDay.map(([day, its]) => (
@@ -148,7 +167,7 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
               const isNew = lastSeen > 0 && it.id > lastSeen
               return (
                 <div key={it.id} style={{ display: 'flex', gap: 10, padding: '10px 14px', borderTop: i ? `1px solid ${C.line}` : 'none', background: sel.has(it.id) ? '#EEF4F8' : isNew ? '#FFFBEA' : '#fff' }}>
-                  {canCustomer && <input type="checkbox" checked={sel.has(it.id)} onChange={() => toggle(it)} style={{ marginTop: 3, width: 16, height: 16, cursor: 'pointer' }} title="เลือกเพื่อส่งให้ลูกค้า" />}
+                  {canSelect && <input type="checkbox" checked={sel.has(it.id)} onChange={() => toggle(it)} style={{ marginTop: 3, width: 16, height: 16, cursor: 'pointer' }} title={isAdmin ? 'เลือกเพื่อส่งให้ลูกค้า / ซ่อน' : 'เลือกเพื่อส่งให้ลูกค้า'} />}
                   <div style={{ width: 44, fontSize: 12.5, color: C.sub, flexShrink: 0, paddingTop: 1 }} className="num">{hhmm(it.ts)}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
@@ -174,9 +193,10 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
       {next > 0 && <div style={{ textAlign: 'center', margin: '8px 0 70px' }}><button style={btn()} disabled={busy} onClick={() => load(true)}>{busy ? 'กำลังโหลด…' : 'ดูเก่ากว่านี้'}</button></div>}
       {sel.size > 0 && (
         <div style={{ position: 'sticky', bottom: 0, ...card, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'center', boxShadow: '0 -4px 16px rgba(0,0,0,.08)' }}>
-          <span style={{ fontSize: 13.5, color: C.ink }}>เลือก {sel.size} เรื่อง · {selItems[0]?.house_name}</span>
+          <span style={{ fontSize: 13.5, color: C.ink }}>เลือก {sel.size} เรื่อง{oneHouse ? ' · ' + (selItems[0]?.house_name || '') : ' · หลายบ้าน'}</span>
           <button style={{ ...btn(), marginLeft: 'auto' }} onClick={() => setSel(new Set())}>ล้าง</button>
-          <button style={btn(true)} onClick={() => onCompose({ house: selHouse, text: draft(), kind: 'update' })}>📨 ส่งให้ลูกค้า</button>
+          {isAdmin && <button style={btn()} onClick={hideSel}>{showHidden ? '👁 เลิกซ่อน' : '🙈 ซ่อน'} {sel.size} เรื่อง</button>}
+          {canCustomer && !showHidden && <button style={btn(true)} disabled={!oneHouse} title={oneHouse ? '' : 'ส่งให้ลูกค้าได้ทีละบ้าน — เลือกเฉพาะเรื่องของบ้านเดียวกัน'} onClick={() => onCompose({ house: selHouse, text: draft(), kind: 'update' })}>📨 ส่งให้ลูกค้า</button>}
         </div>
       )}
     </div>

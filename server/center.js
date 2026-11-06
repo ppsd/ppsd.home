@@ -63,6 +63,8 @@ export function createCenter(d) {
   )`)
   db.exec('CREATE INDEX IF NOT EXISTS idx_cr_status ON change_requests(status)')
   db.exec('CREATE TABLE IF NOT EXISTS feed_seen (user_id INTEGER PRIMARY KEY, last_id INTEGER)')
+  // ซ่อนเรื่องจากหน้าความเคลื่อนไหว (เช่น ข้อมูลทดสอบ) — ซ่อนอย่างเดียว ประวัติจริงใน change_history ยังอยู่ครบ · key = ts|user|บ้าน (กลุ่มเดียวกับที่หน้าจอรวมเป็นเรื่องเดียว)
+  db.exec('CREATE TABLE IF NOT EXISTS feed_hidden (key TEXT PRIMARY KEY, by TEXT, at TEXT)')
   db.exec(`CREATE TABLE IF NOT EXISTS customer_updates (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, house_code TEXT, text TEXT, by TEXT, sent_to TEXT, status TEXT, kind TEXT
   )`)
@@ -275,7 +277,9 @@ export function createCenter(d) {
   const FEED_TABLES = Object.values(CATS).flat()
   const houseExpr = `CASE WHEN table_name='houses' THEN COALESCE(json_extract(after,'$.code'), json_extract(before,'$.code')) ELSE COALESCE(json_extract(after,'$.house_code'), json_extract(before,'$.house_code')) END`
 
-  function feed({ house = '', cat = '', beforeId = 0, limit = 40, flagOnly = false }) {
+  const hiddenKeys = () => new Set(db.prepare('SELECT key FROM feed_hidden').all().map((r) => r.key))
+  function feed({ house = '', cat = '', beforeId = 0, limit = 40, flagOnly = false, showHidden = false }) {
+    const hidden = hiddenKeys()
     const tables = cat && CATS[cat] ? CATS[cat] : FEED_TABLES
     const ph = tables.map(() => '?').join(',')
     const out = []
@@ -293,6 +297,7 @@ export function createCenter(d) {
         if (!dsc) continue
         if (flagOnly && !dsc.flag) continue
         const key = `${r.ts}|${r.user}|${r.hc}`
+        if (hidden.has(key) !== showHidden) continue // ปกติ = ไม่แสดงที่ซ่อน · showHidden = แสดงเฉพาะที่ซ่อน
         const ex = byKey.get(key)
         if (ex) { // ทำพร้อมกัน → รวมเป็นเรื่องเดียว
           ex.parts.unshift({ text: dsc.text, lines: dsc.lines }); ex.flag = ex.flag || dsc.flag; ex.min_id = r.id
@@ -301,7 +306,7 @@ export function createCenter(d) {
           continue
         }
         if (out.length >= limit) break
-        const ev = { id: r.id, min_id: r.id, ts: r.ts, user: r.user, house_code: r.hc, house_name: houseName(r.hc), cats: [CAT_OF[r.table_name] || 'info'], flag: dsc.flag, approval: dsc.approval || null, parts: [{ text: dsc.text, lines: dsc.lines }] }
+        const ev = { id: r.id, key, min_id: r.id, ts: r.ts, user: r.user, house_code: r.hc, house_name: houseName(r.hc), cats: [CAT_OF[r.table_name] || 'info'], flag: dsc.flag, approval: dsc.approval || null, parts: [{ text: dsc.text, lines: dsc.lines }] }
         byKey.set(key, ev); out.push(ev)
       }
       if (rows.length < 500) break
@@ -315,8 +320,8 @@ export function createCenter(d) {
     if (seen == null) { seen = maxFeedId(); db.prepare('INSERT OR REPLACE INTO feed_seen (user_id,last_id) VALUES (?,?)').run(user.id, seen) }
     const ph = FEED_TABLES.map(() => '?').join(',')
     const rows = db.prepare(`SELECT ts, user, table_name, action, before, after, ${houseExpr} AS hc FROM change_history WHERE id > ? AND table_name IN (${ph}) AND user <> ? AND user NOT LIKE ? ORDER BY id DESC LIMIT 2000`).all(seen, ...FEED_TABLES, user.name, '%(อนุมัติโดย ' + user.name + ')')
-    const keys = new Set()
-    for (const r of rows) if (r.hc && describe(r)) keys.add(`${r.ts}|${r.user}|${r.hc}`)
+    const keys = new Set(), hidden = hiddenKeys()
+    for (const r of rows) { const k = `${r.ts}|${r.user}|${r.hc}`; if (r.hc && !hidden.has(k) && describe(r)) keys.add(k) }
     return { count: keys.size, seen }
   }
 
@@ -334,8 +339,20 @@ export function createCenter(d) {
   function register(api) {
     api.get('/center/feed', (req, res) => {
       const q = req.query || {}
-      res.json(feed({ house: String(q.house || ''), cat: String(q.cat || ''), beforeId: Number(q.before) || 0, limit: Math.min(100, Number(q.limit) || 40), flagOnly: q.flag === '1' }))
+      res.json(feed({ house: String(q.house || ''), cat: String(q.cat || ''), beforeId: Number(q.before) || 0, limit: Math.min(100, Number(q.limit) || 40), flagOnly: q.flag === '1', showHidden: q.hidden === '1' }))
     })
+    // ซ่อน / เลิกซ่อน เรื่องในหน้าความเคลื่อนไหว (แอดมิน) — ไม่ลบประวัติ
+    api.post('/center/feed/hide', (req, res) => {
+      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'ซ่อนได้เฉพาะผู้ดูแลระบบ' })
+      const keys = (Array.isArray(req.body?.keys) ? req.body.keys : []).map(String).filter((k) => /^[^|]+\|[^|]*\|[^|]+$/.test(k)).slice(0, 2000)
+      const unhide = !!req.body?.unhide
+      if (!keys.length) return res.status(400).json({ error: 'ยังไม่ได้เลือกเรื่อง' })
+      const ins = db.prepare('INSERT OR IGNORE INTO feed_hidden (key,by,at) VALUES (?,?,?)'), del = db.prepare('DELETE FROM feed_hidden WHERE key=?')
+      db.transaction(() => { for (const k of keys) unhide ? del.run(k) : ins.run(k, req.user.name, d.nowTS()) })()
+      d.audit(req, unhide ? 'เลิกซ่อนเรื่องในความเคลื่อนไหวบ้าน' : 'ซ่อนเรื่องในความเคลื่อนไหวบ้าน', `${keys.length} เรื่อง`)
+      res.json({ ok: true, count: keys.length, hidden_total: db.prepare('SELECT COUNT(*) c FROM feed_hidden').get().c })
+    })
+    api.get('/center/feed/hidden-count', (_req, res) => res.json({ count: db.prepare('SELECT COUNT(*) c FROM feed_hidden').get().c }))
     api.get('/center/unread', (req, res) => {
       const u = unreadFor(req.user)
       res.json({ unread: u.count, last_seen: u.seen, pending: pendingFor(req.user), canApprove: canApprove(req.user) || isConApprover(req.user), canCustomer: canCustomer(req.user) })
