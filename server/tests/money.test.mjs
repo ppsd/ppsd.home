@@ -1339,6 +1339,39 @@ test('โฟร์แมนสั่งของผ่าน LINE: "สั่ง
   await DEL('/line-link?user_id=' + fore.id)
 })
 
+test('เมนูกด LINE: กด 🛒 สั่งของ/จ้าง → เลือกสั่งของ → พิมพ์แค่รายการ → ร่างใบขอซื้อ → ตกลง · กดแล้วยกเลิกได้ · สถานะเมนูดูได้เฉพาะแอดมิน', async () => {
+  const hook = (uid, ev) => api('POST', '/line/webhook', { events: [{ replyToken: 'r1', source: { type: 'user', userId: uid }, ...ev }] })
+  const msg = (uid, text) => hook(uid, { type: 'message', message: { type: 'text', text } })
+  const tap = (uid, key) => hook(uid, { type: 'postback', postback: { data: 'menu:' + key } })
+  const wait = () => new Promise((r) => setTimeout(r, 600))
+  const st = await GET('/line/richmenu')
+  assert.equal(st.status, 200); assert.equal(st.data.installed, false); assert.equal(st.data.kinds.length, 4)
+  const fore = (await GET('/users')).data.find((u) => u.role === 'site' && u.status === 'ใช้งาน')
+  const code = await POST('/line-link/code', { user_id: fore.id })
+  await msg('Umenu1', code.data.code); await wait()
+  const n0 = (await GET('/purchase-requests')).data.length
+  await tap('Umenu1', 'buy'); await wait()
+  await tap('Umenu1', 'g_buy'); await wait()
+  await msg('Umenu1', 'ทรายหยาบ 3 คิว'); await wait() // ต่อท้ายเป็น "สั่งของ ทรายหยาบ 3 คิว"
+  await msg('Umenu1', 'ไม่ระบุ'); await wait()
+  await msg('Umenu1', 'ไม่มี'); await wait()
+  await msg('Umenu1', 'ตกลง'); await wait()
+  const prs = (await GET('/purchase-requests')).data
+  assert.equal(prs.length, n0 + 1, 'กดเมนูแล้วพิมพ์แค่รายการ ต้องได้ใบขอซื้อ')
+  assert.equal(prs[0].items[0].desc, 'ทรายหยาบ'); assert.equal(prs[0].items[0].qty, 3)
+  // กดแล้วยกเลิก → ข้อความถัดไปไม่ถูกต่อท้าย
+  await tap('Umenu1', 'g_buy'); await wait()
+  await msg('Umenu1', 'ยกเลิก'); await wait()
+  await msg('Umenu1', 'สวัสดี'); await wait()
+  assert.equal((await GET('/purchase-requests')).data.length, n0 + 1)
+  const adminToken = token
+  token = (await POST('/login', { username: 'acctest', pin: '5555' })).data.token
+  assert.equal((await GET('/line/richmenu')).status, 403)
+  assert.equal((await POST('/line/richmenu/install', {})).status, 403)
+  token = adminToken
+  await DEL('/line-link?user_id=' + fore.id)
+})
+
 test('การ์ดตรวจสอบ: บันทึกสถานะการส่ง LINE ในใบ (ยังไม่ผูก LINE = no_line) · ส่งซ้ำได้พร้อมบอกสาเหตุ', async () => {
   const som = (await GET('/users')).data.find((u) => u.username === 'somchai')
   await PUT('/procurement/flow', { checker_user_id: som.id })

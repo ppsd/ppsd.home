@@ -18,7 +18,8 @@ import { execFile } from 'node:child_process'
 import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
-import { renderElementPng, imageToJpeg } from './render.js'
+import { renderElementPng, imageToJpeg, renderHtmlJpeg } from './render.js'
+import { createRichMenu, MENU_ACTIONS, autoQuickReply, qrMsg, qrPost, menuArtHtml, RICH_MENUS } from './line-richmenu.js'
 import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
@@ -247,6 +248,8 @@ function syncEmployeePin(user, hashedPin) {
 }
 
 const api = express.Router()
+// แก้ผู้ใช้/พนักงาน/ผูก LINE สำเร็จ → ซิงก์เมนูกด LINE (ตำแหน่งเปลี่ยน = เมนูเปลี่ยน · ปิดบัญชี/ลาออก = เอาเมนูออก)
+api.use((req, res, next) => { if (req.method !== 'GET' && /^\/(users|employees|line-link|line-settings|contractor|crm)/.test(req.path)) res.on('finish', () => { if (res.statusCode < 400) { try { richMenu.scheduleSync() } catch { /* ยังไม่พร้อม */ } } }); next() })
 api.use(historyContext) // ประวัติการแก้ไขข้อมูล: ผูกคำขอ → รู้ว่าใครเป็นคนเพิ่ม/แก้/ลบ (ต้องอยู่ก่อน middleware อื่น)
 
 // access log: บันทึกคำขอที่ "แก้ข้อมูล" (POST/PUT/DELETE) และคำขอที่ผิดพลาด (4xx/5xx) — ใคร · IP · อะไร · ผลลัพธ์ · เวลา
@@ -717,7 +720,7 @@ async function lineReply(replyToken, msg) {
   try {
     const r = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: JSON.stringify({ replyToken, messages: lineMessages(msg) }), signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ replyToken, messages: autoQuickReply(lineMessages(msg)) }), signal: AbortSignal.timeout(10000), // ปุ่มตอบด่วน (ตกลง/เลือกเลข) ใส่ให้เอง
     })
     if (!r.ok) console.error('[line reply]', r.status, (await r.text()).slice(0, 200))
     return r.ok
@@ -1153,6 +1156,30 @@ const lineUidOfName = (name) => db.prepare("SELECT line_uid FROM users WHERE nam
 const empOfUser = (u) => db.prepare('SELECT code, name FROM employees WHERE user_id=? OR name=? ORDER BY CASE WHEN user_id=? THEN 0 ELSE 1 END LIMIT 1').get(u.id, u.name, u.id)
 // CEO/ผู้บริหารที่สั่งงานผ่าน LINE ได้ = แอดมิน หรือผู้จัดการ
 const lineCanCommand = (u) => u.role === 'admin' || isManager(u)
+// เมนูกดในแชท (Rich Menu) แยกตามบทบาท — server/line-richmenu.js
+const richMenu = createRichMenu({ db, getSetting, setSetting, lineTestUser, lineCanCommand, renderHtmlJpeg })
+setInterval(() => richMenu.scheduleSync(), 60 * 60 * 1000).unref?.() // กันตกหล่น (เปลี่ยนตำแหน่ง/ปิดบัญชีจากหน้าเว็บ)
+// กดปุ่มในเมนู → ส่งคำสั่งพิมพ์เดิม / ถามต่อทีละขั้น / บอกวิธี
+async function handleMenuTap(uid, data, replyToken) {
+  const key = String(data || '').slice(5)
+  const a = MENU_ACTIONS[key]
+  if (!a) return lineReply(replyToken, "เมนูนี้ใช้ไม่ได้แล้วค่ะ พิมพ์ 'ช่วย' เพื่อดูคำสั่ง")
+  if (getLineCtx(uid)?.kind === 'menu_prefix') setLineCtx(uid, null)
+  if (a.cmd) return handleLineUserMessage(uid, a.cmd, replyToken)
+  if (a.prefix) {
+    setLineCtx(uid, { kind: 'menu_prefix', prefix: a.prefix, ttl: 15 * 60 * 1000 })
+    return lineReply(replyToken, { type: 'text', text: a.ask, quickReply: { items: [qrMsg('✖ ยกเลิก', 'ยกเลิก')] } })
+  }
+  if (a.choose) return lineReply(replyToken, { type: 'text', text: a.choose[0], quickReply: { items: a.choose[1].map(([label, k]) => qrPost(label, 'menu:' + k)) } })
+  if (a.checkin) {
+    const url = getSetting('tunnel_checkin', '0') === '1' && tunnel.state.url ? tunnel.state.url.replace(/\/$/, '') + '/checkin' : ''
+    return lineReply(replyToken, url ? `⏰ ลงเวลาเข้า/ออกงาน — เปิดลิงก์นี้ในมือถือ (ใช้ GPS ได้):
+${url}
+
+เลือกชื่อ + ใส่ PIN แล้วกดเข้างาน/ออกงานค่ะ` : '⏰ ตอนนี้ยังไม่ได้เปิดลิงก์ลงเวลาผ่านมือถือค่ะ — ลงเวลาที่เครื่องในออฟฟิศ หรือแจ้งแอดมินให้เปิด (เมนู LINE → การเชื่อมต่อ)')
+  }
+  return lineReply(replyToken, a.hint || "พิมพ์ 'ช่วย' เพื่อดูคำสั่งค่ะ")
+}
 // ---- ร่างคำสั่งงานที่รอ CEO ยืนยัน (ต่อคน) ----
 function lineDrafts() { try { return JSON.parse(getSetting('line_drafts', '{}')) || {} } catch { return {} } }
 function setLineDraft(uid, draft) { const d = lineDrafts(); if (draft) d[uid] = { ...draft, ts: Date.now() }; else delete d[uid]; setSetting('line_drafts', JSON.stringify(d)) }
@@ -1615,6 +1642,13 @@ function myOpenWorkOrders(u) {
   return db.prepare("SELECT * FROM work_orders WHERE (executor=? OR esc_name=?) AND status IN ('สั่งงาน','รับทราบ','กำลังทำ','เกินเวลา') ORDER BY urgent DESC, id DESC LIMIT 10").all(name, name)
 }
 async function handleLineUserMessage(uid, text, replyToken) {
+  // กดเมนู (เช่น 🛒 สั่งของ) แล้วพิมพ์ต่อ → ต่อท้ายคำสั่งให้ ("ปูน 50 ถุง" → "สั่งของ ปูน 50 ถุง")
+  const mp = getLineCtx(uid)
+  if (mp?.kind === 'menu_prefix') {
+    setLineCtx(uid, null)
+    if (/^(ยกเลิก|cancel)$/i.test(String(text || '').trim())) return lineReply(replyToken, 'ยกเลิกแล้วค่ะ')
+    text = mp.prefix + String(text || '').trim()
+  }
   const t = String(text || '').trim()
   const u = userByLine(uid)
   // ช่วงทดสอบบอทช่าง: ผู้ทดสอบ (พนักงาน) ส่งรหัสช่าง → คุยในฐานะช่าง จนพิมพ์ 'ออกโหมดช่าง'
@@ -2039,6 +2073,8 @@ async function handleLineOrder(uid, u, t, replyToken, ctx, pre) {
   if (ctx?.kind !== 'order') clearOrderFiles(uid) // เริ่มร่างใหม่ → ทิ้งรูปค้างของร่างเก่า
   return finishOrderAsk(uid, { kind: 'order', ...d, images: ctx?.kind === 'order' ? ctx.images || [] : [], pending: null, house_asked: false }, replyToken)
 }
+// ปุ่มเลือกบ้าน (ตอบด่วน) — บ้านที่ยังทำงานอยู่ ล่าสุดก่อน
+const houseQuickItems = () => db.prepare("SELECT code, name FROM houses WHERE COALESCE(status,'') NOT IN ('test','Test','ส่งมอบแล้ว','ยกเลิก') ORDER BY id DESC LIMIT 12").all().map((h) => qrMsg('🏠 ' + h.name, h.name))
 const OFFICE_CATS = [['fuel', 'เบิกค่าน้ำมัน'], ['repair', 'ซ่อมแซมออฟฟิศ'], ['supplies', 'ของใช้สำนักงาน'], ['other', 'อื่นๆ']]
 // โครงการการตลาด / สื่อโฆษณา (kind=marketing) — หมวดเดียวกับหน้าเว็บ (src/data.ts MARKETING_CATS)
 const MARKETING_CATS = [['ads_online', 'โฆษณาออนไลน์ (Facebook / Google / TikTok)'], ['print', 'ป้าย / สิ่งพิมพ์'], ['event', 'บูธ / งานแสดงบ้าน'], ['media', 'ถ่ายภาพ / วิดีโอ / กราฟิก'], ['show_home', 'บ้านตัวอย่าง'], ['mkt_other', 'การตลาดอื่นๆ']]
@@ -2113,7 +2149,7 @@ async function parseOrderSmart(text, sender, pre) {
 // โครงการภายใน (ออฟฟิศ / การตลาด) → ถามหมวดค่าใช้จ่าย · คืนค่า kind หรือ '' ถ้าเป็นบ้านลูกค้า
 const internalKindOf = (code) => { const k = code ? db.prepare('SELECT kind FROM houses WHERE code=?').get(code)?.kind : ''; return k === 'office' || k === 'marketing' ? k : '' }
 function finishOrderAsk(uid, d, replyToken) {
-  if (!d.house_name && !d.house_asked && db.prepare('SELECT COUNT(*) c FROM houses').get().c) { setLineCtx(uid, { ...d, pending: 'house' }); return lineReply(replyToken, `📝 รับรายการ ${d.items.length} รายการแล้ว — ของบ้านไหนคะ? (พิมพ์ชื่อบ้าน หรือ 'ไม่ระบุ')`) }
+  if (!d.house_name && !d.house_asked && db.prepare('SELECT COUNT(*) c FROM houses').get().c) { setLineCtx(uid, { ...d, pending: 'house' }); return lineReply(replyToken, { type: 'text', text: `📝 รับรายการ ${d.items.length} รายการแล้ว — ของบ้านไหนคะ? (พิมพ์ชื่อบ้าน หรือกดเลือกด้านล่าง หรือ 'ไม่ระบุ')`, quickReply: { items: [...houseQuickItems(), qrMsg('ไม่ระบุ', 'ไม่ระบุ')] } }) }
   // โครงการออฟฟิศ → ถามหมวด (น้ำมัน/ซ่อมแซม/ของใช้/อื่นๆ) เพื่อแยกค่าใช้จ่าย
   const ik = internalKindOf(d.house_code)
   if (ik && !d.category) { setLineCtx(uid, { ...d, pending: 'ocat' }); return lineReply(replyToken, `${ik === 'marketing' ? '📣 ค่าการตลาด / โฆษณา' : '🏢 ของออฟฟิศ'} — หมวดไหนคะ? ตอบตัวเลข\n${catsForKind(ik).map(([, l], i) => `${i + 1}. ${l}`).join('\n')}`) }
@@ -2232,6 +2268,7 @@ api.post('/line/webhook', async (req, res) => {
       if (type === 'user' && text) { await handleLineUserMessage(id, text, ev.replyToken); continue }
       if (type === 'user' && ev.type === 'message' && ev.message?.type === 'image') { await handleLineUserImage(id, ev.message, ev.replyToken); continue }
       if (type === 'user' && ev.type === 'message' && ev.message?.type === 'file') { await handleLineUserFile(id, ev.message, ev.replyToken); continue }
+      if (type === 'user' && ev.type === 'postback' && /^menu:/.test(String(ev.postback?.data || ''))) { await handleMenuTap(id, ev.postback.data, ev.replyToken); continue }
       if (type === 'user' && ev.type === 'postback') { await handleLinePostback(id, ev.postback?.data, ev.replyToken); continue }
       const name = await lineSourceName(type, id, token)
       seen = seen.filter((s) => s.id !== id)
@@ -2243,6 +2280,7 @@ api.post('/line/webhook', async (req, res) => {
       }
     }
     setSetting('line_seen', JSON.stringify(seen.slice(0, 20)))
+    richMenu.scheduleSync() // เพิ่งผูก LINE / ผูกเป็นลูกค้า/ช่าง → ได้เมนูของตัวเอง
     notifyChange(['prs', 'purchaseOrders', 'payments', 'expenses', 'workOrders', 'notifications', 'users'])
   } catch (e) { console.error('line webhook:', e.message) }
 })
@@ -9281,6 +9319,29 @@ api.post('/line-texts/:key/test', adminOnly, async (req, res) => {
   const ok = await linePush(uid, '🧪 ทดสอบข้อความ: ' + row.label + '\n────────\n' + text.replace(/\{(\w+)\}/g, (m, k) => (k in sample ? sample[k] : m)))
   res.status(ok ? 200 : 502).json(ok ? { ok: true } : { error: 'ส่ง LINE ไม่สำเร็จ — ' + (lineLastError?.reason || 'ตรวจ token') })
 })
+// ---- เมนูกดในแชท LINE (Rich Menu) ----
+api.get('/line/richmenu', adminOnly, (_req, res) => res.json(richMenu.status()))
+const richPreviewCache = new Map()
+api.get('/line/richmenu/preview/:kind', adminOnly, async (req, res) => {
+  const kind = req.params.kind
+  if (!RICH_MENUS[kind]) return res.status(404).json({ error: 'ไม่มีเมนูแบบนี้' })
+  try {
+    if (!richPreviewCache.has(kind)) richPreviewCache.set(kind, await renderHtmlJpeg(menuArtHtml(kind), { width: 2500, height: 1686, selector: '#rm', quality: 70 }))
+    res.json({ img: 'data:image/jpeg;base64,' + richPreviewCache.get(kind).toString('base64') })
+  } catch (e) { res.status(500).json({ error: 'สร้างรูปเมนูไม่ได้: ' + e.message }) }
+})
+api.post('/line/richmenu/install', adminOnly, async (req, res) => {
+  if (!getSetting('line_token', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้ง LINE token' })
+  try { const r = await richMenu.install(); audit(req, 'ติดตั้งเมนูกด LINE (Rich Menu)', `ผูกเมนู ${r.linked} คน`); res.json({ ...richMenu.status(), result: r }) }
+  catch (e) { res.status(502).json({ error: 'ติดตั้งเมนูไม่สำเร็จ — ' + e.message }) }
+})
+api.post('/line/richmenu/sync', adminOnly, async (_req, res) => {
+  try { const r = await richMenu.sync(); res.json({ ...richMenu.status(), result: r }) } catch (e) { res.status(502).json({ error: e.message }) }
+})
+api.post('/line/richmenu/remove', adminOnly, async (req, res) => {
+  try { await richMenu.remove(); audit(req, 'เอาเมนูกด LINE ออก', ''); res.json(richMenu.status()) } catch (e) { res.status(502).json({ error: e.message }) }
+})
+api.put('/line/richmenu/preview', adminOnly, (req, res) => { richMenu.setPreview(String(req.body?.kind || '')); res.json(richMenu.status()) })
 api.get('/tunnel', adminOnly, async (_req, res) => { await refreshLineWebhookActive(); res.json(tunnelInfo()) })
 api.put('/tunnel', adminOnly, async (req, res) => {
   const b = req.body || {}

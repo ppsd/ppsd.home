@@ -6,8 +6,8 @@ import LineTexts from './LineTexts'
 import ModalShell from '../shared/ModalShell'
 
 // ศูนย์รวม LINE (แอดมิน): การเชื่อมต่อบอท/ลิงก์สาธารณะ · ผู้รับข้อความ (ผู้ตรวจสอบใบขอซื้อ/ผู้รับใบ PR/ใครผูกแล้ว) · ข้อความบอท · ผูก LINE ของฉัน
-type Tab = 'connect' | 'people' | 'texts' | 'me'
-const TABS: [Tab, string][] = [['connect', '🔌 การเชื่อมต่อ / สรุปเช้า'], ['people', '👥 ผู้รับข้อความ / ผูก LINE'], ['texts', '✏️ ข้อความบอท'], ['me', '📱 ผูก LINE ของฉัน']]
+type Tab = 'connect' | 'menu' | 'people' | 'texts' | 'me'
+const TABS: [Tab, string][] = [['connect', '🔌 การเชื่อมต่อ / สรุปเช้า'], ['menu', '🔘 เมนูกดในแชท'], ['people', '👥 ผู้รับข้อความ / ผูก LINE'], ['texts', '✏️ ข้อความบอท'], ['me', '📱 ผูก LINE ของฉัน']]
 
 export default function LineCenter() {
   const { data, user } = useApp()
@@ -255,6 +255,7 @@ export default function LineCenter() {
           <LinkedPeople users={users} onCode={codeFor} onUnlink={unlinkLine} />
         </>
       )}
+      {tab === 'menu' && <RichMenuPanel />}
       {tab === 'texts' && <LineTexts />}
       {tab === 'me' && (
         <>
@@ -427,5 +428,74 @@ function PendingCards({ testOn }: { testOn: boolean }) {
         </ModalShell>
       )}
     </>
+  )
+}
+
+// เมนูกดในแชท (Rich Menu) — แถบปุ่มใต้แชทส่วนตัวกับบอท แยกตามบทบาท · ติดตั้ง/อัปเดต/เอาออก · ดูตัวอย่างรูป
+interface RichStatus { installed: boolean; at: string; synced: string; error: string; counts: Record<string, number>; preview: string; test_user: string | null; kinds: { kind: string; label: string; buttons: string[] }[] }
+function RichMenuPanel() {
+  const [st, setSt] = useState<RichStatus | null>(null)
+  const [busy, setBusy] = useState('')
+  const [imgs, setImgs] = useState<Record<string, string>>({})
+  const load = () => api.get<RichStatus>('/line/richmenu').then(setSt).catch((e) => window.alert((e as Error).message))
+  useEffect(() => { load() }, [])
+  const showImg = async (kind: string) => {
+    if (imgs[kind]) return
+    setImgs((m) => ({ ...m, [kind]: 'loading' }))
+    try { const r = await api.get<{ img: string }>('/line/richmenu/preview/' + kind); setImgs((m) => ({ ...m, [kind]: r.img })) }
+    catch (e) { setImgs((m) => ({ ...m, [kind]: '' })); window.alert((e as Error).message) }
+  }
+  const act = async (what: 'install' | 'sync' | 'remove') => {
+    if (what === 'remove' && !window.confirm('เอาเมนูกดออกจาก LINE ของทุกคน? (คำสั่งแบบพิมพ์ยังใช้ได้)')) return
+    setBusy(what)
+    try {
+      const r = await api.post<RichStatus & { result?: { linked: number; unlinked: number } }>('/line/richmenu/' + what, {})
+      setSt(r)
+      if (what === 'install') window.alert(`ติดตั้งเมนูแล้ว — ผูกเมนูให้ ${r.result?.linked ?? 0} คน\nเปิดแชทบอทในมือถือ จะเห็นแถบ "เมนู PPSD" ด้านล่าง (ถ้ายังไม่ขึ้น ปิดแล้วเปิดแชทใหม่)`)
+      if (what === 'sync') window.alert(`ซิงก์แล้ว — ผูกใหม่ ${r.result?.linked ?? 0} · เอาออก ${r.result?.unlinked ?? 0}`)
+    } catch (e) { window.alert((e as Error).message) }
+    setBusy('')
+  }
+  const setPreview = async (kind: string) => { try { setSt(await api.put<RichStatus>('/line/richmenu/preview', { kind })) } catch (e) { window.alert((e as Error).message) } }
+  const btn = (bg: string): React.CSSProperties => ({ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', background: bg, border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer' })
+  if (!st) return <div style={{ padding: 20, color: '#94A0A8', fontSize: 13 }}>กำลังโหลด…</div>
+  return (
+    <div style={{ background: '#fff', border: '1px solid #E1E5EA', borderRadius: 12, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#1C2730' }}>🔘 เมนูกดในแชท (Rich Menu)</div>
+        <div style={{ fontSize: 12.5, color: '#5C6770', marginTop: 4, lineHeight: 1.6 }}>แถบปุ่มใหญ่ด้านล่างแชทส่วนตัวกับบอท — กดแล้วบอทถามต่อทีละขั้น ไม่ต้องจำคำสั่ง · ระบบเลือกเมนูให้เองตามบัญชีที่ผูก LINE (ผู้บริหาร/ผู้จัดการ · พนักงาน · ช่าง · ลูกค้า) · คำสั่งแบบพิมพ์เดิมยังใช้ได้ · ใต้ข้อความบอทมีปุ่มตอบด่วน (ตกลง / ยกเลิก / เลือกบ้าน / เลือกเลข) ให้เองอยู่แล้ว · เมนูไม่ขึ้นในกลุ่ม LINE</div>
+      </div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+        สถานะ: {st.installed ? <b style={{ color: '#2E7D55' }}>ติดตั้งแล้ว</b> : <b style={{ color: '#B7791F' }}>ยังไม่ได้ติดตั้ง</b>}
+        {st.installed && <span style={{ color: '#5C6770' }}>· มีเมนูแล้ว: {st.kinds.map((k) => `${k.label.split(' ')[0]} ${st.counts[k.kind] || 0}`).join(' · ')} คน</span>}
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button disabled={!!busy} onClick={() => act('install')} className="btn-primary" style={btn('#2E7D55')}>{busy === 'install' ? 'กำลังติดตั้ง… (ประมาณ 1 นาที)' : st.installed ? 'อัปเดตเมนู' : 'ติดตั้งเมนู'}</button>
+          {st.installed && <button disabled={!!busy} onClick={() => act('sync')} style={btn('#30506A')}>{busy === 'sync' ? 'กำลังซิงก์…' : 'ซิงก์ผู้รับ'}</button>}
+          {st.installed && <button disabled={!!busy} onClick={() => act('remove')} style={btn('#C24036')}>เอาเมนูออก</button>}
+        </span>
+      </div>
+      {st.error && <div style={{ fontSize: 12.5, color: '#C24036' }}>⚠ ผูกเมนูบางคนไม่สำเร็จ: {st.error}</div>}
+      {st.test_user && (
+        <div style={{ fontSize: 12.5, color: '#B7791F', background: '#FFF8EC', border: '1px solid #ECDCB8', borderRadius: 8, padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          🧪 โหมดทดสอบ: เมนูขึ้นเฉพาะ {st.test_user} · ให้เห็นเมนูแบบ
+          <select value={st.preview} onChange={(e) => setPreview(e.target.value)} style={{ fontFamily: 'inherit', fontSize: 12.5, padding: '3px 8px', borderRadius: 7, border: '1px solid #D2DAE1' }}>
+            <option value="">ตามบัญชีตัวเอง</option>
+            {st.kinds.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+          </select>
+          <span style={{ color: '#94A0A8' }}>(เมนูช่าง/ลูกค้า ใช้ดูหน้าตา — ปุ่มจะทำงานตามบัญชีของคุณ) · ปิดโหมดทดสอบแล้วทุกคนได้เมนูของตัวเองภายในไม่กี่วินาที</span>
+        </div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))', gap: 12 }}>
+        {st.kinds.map((k) => (
+          <div key={k.kind} style={{ border: '1px solid #E1E5EA', borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700 }}>{k.label}</div>
+            <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.7 }}>{k.buttons.join(' · ')}</div>
+            {imgs[k.kind] && imgs[k.kind] !== 'loading'
+              ? <img src={imgs[k.kind]} alt={'เมนู ' + k.label} style={{ width: '100%', borderRadius: 8, border: '1px solid #E1E5EA' }} />
+              : <button onClick={() => showImg(k.kind)} disabled={imgs[k.kind] === 'loading'} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 10px', cursor: 'pointer', alignSelf: 'flex-start' }}>{imgs[k.kind] === 'loading' ? 'กำลังสร้างรูป…' : 'ดูรูปเมนู'}</button>}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }

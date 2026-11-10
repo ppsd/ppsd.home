@@ -24,7 +24,7 @@ HR/เงินเดือน/ลงเวลา, CRM, บอท LINE, ฟี�
 - `src/components/<หมวดงาน>/` — accounting, admin, auth, cost, dashboard, docreview, houses, hr, materials, procurement, sales, shared, site
 - `src/store.tsx` (state + SSE อัปเดตสด), `src/api.ts` (เรียก API), `src/App.tsx` (เมนู/หน้า)
 - `server/`: `db.js` (schema+migration), `auth.js`, `accounting.js`, `crm.js`, `takeoff.js` (ถอด BOQ),
-  `doc-review.js` (AI ตรวจเอกสาร), `line-receive.js`/`line-texts.js` (บอท LINE), `tunnel.js` (ลิงก์สาธารณะ), `efiling.js`
+  `doc-review.js` (AI ตรวจเอกสาร), `line-receive.js`/`line-texts.js`/`line-richmenu.js` (บอท LINE · เมนูกด+ปุ่มตอบด่วน), `tunnel.js` (ลิงก์สาธารณะ), `efiling.js`
 - ค่าตั้งค่า (LINE token, AI key, ฯลฯ) เก็บในตาราง `settings` ของฐานข้อมูล ตั้งผ่านหน้า "ผู้ใช้งาน" — ไม่ได้อยู่ใน `.env`
 
 ## คำสั่ง
