@@ -462,7 +462,8 @@ function distanceM(lat1, lon1, lat2, lon2) {
 }
 api.get('/kiosk/employees', (req, res) => {
   // แสดงพนักงานทุกคนที่ยังไม่ลาออก (COALESCE กัน status ที่เป็น NULL หลุดจากรายชื่อ)
-  const rows = db.prepare("SELECT code,name FROM employees WHERE COALESCE(status,'') != 'ลาออก' ORDER BY name").all()
+  // เรียงแบบเดียวกับหน้า HR → พนักงาน (ตามลำดับที่เพิ่มเข้าระบบ)
+  const rows = db.prepare("SELECT code,name FROM employees WHERE COALESCE(status,'') != 'ลาออก' ORDER BY id").all()
   // เปิดจากนอกออฟฟิศโดยไม่ล็อกอิน → ส่งรหัสอ้างอิงแทนรหัสพนักงานจริง (ลงเวลาได้เหมือนเดิม แต่คนนอกไม่เห็นชื่อผู้ใช้)
   const loggedIn = !!userFromToken(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''))
   res.json(isExternalReq(req) && !loggedIn ? rows.map((r) => ({ code: kioskRef(r.code), name: r.name })) : rows)
