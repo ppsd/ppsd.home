@@ -2842,6 +2842,17 @@ test('คนลาออก: หน้าเงินเดือนแสดง
   assert.equal(await inPeriod('2031-04'), true)
 })
 
+test('คนลาออก: เบิกล่วงหน้า/รายได้อื่น/หักอื่น บันทึกได้ถึงเดือนที่ลาออก · เดือนหลังจากนั้นไม่ได้', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบลาออกรายการ', role: 'ช่าง', pay_type: 'รายเดือน', base: 15000 })
+  await PUT(`/employees/${e.data.id}`, { status: 'ลาออก', resign_date: '2032-03-10' })
+  const code = e.data.code
+  for (const [path, extra] of [['/salary-advances', {}], ['/other-income', { reason: 'โบนัส' }], ['/deductions', { reason: 'ของหาย' }]]) {
+    assert.equal((await POST(path, { emp_code: code, amount: 100, period: '2032-03', ...extra })).status, 201, path + ' เดือนที่ลาออกได้')
+    const r = await POST(path, { emp_code: code, amount: 100, period: '2032-04', ...extra })
+    assert.equal(r.status, 400, path + ' เดือนหลังลาออกไม่ได้'); assert.match(r.data.error, /ลาออกแล้ว/)
+  }
+})
+
 test('แก้ไขการลงเวลาทีละแถว: เปลี่ยนเวลา/สถานะ/วันที่ได้ · วันที่ชนกับรายการเดิมของคนเดียวกัน = ไม่ให้ · เวลาผิดรูปแบบ = ไม่ให้', async () => {
   const e = await POST('/employees', { name: 'ทดสอบแก้ลงเวลา', role: 'ช่าง', pay_type: 'รายวัน', base: 400 })
   const code = e.data.code

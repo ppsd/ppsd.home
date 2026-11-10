@@ -4072,6 +4072,12 @@ function suggestWorkDays(e, period) {
 }
 const payrollInputsOf = (period) => new Map(db.prepare('SELECT * FROM payroll_inputs WHERE period=?').all(period).map((r) => [r.emp_code, r]))
 // พนักงานที่อยู่ในงวด: ยังไม่ลาออก + คนที่ลาออกแล้วแต่ยังมีข้อมูลในงวดนี้ (ลงเวลา/กรอกวัน/เบิก/หัก/รายได้) → ทำจ่ายรอบสุดท้ายได้
+// คนลาออกไปแล้วก่อนงวดนี้ → ห้ามบันทึกเบิก/หัก/รายได้เข้างวดนี้ (ตรงกับหน้าเงินเดือนที่แสดงถึงเดือนที่ลาออก)
+function resignedBefore(emp, period) {
+  if (!emp || emp.status !== 'ลาออก') return null
+  const { from } = periodBounds(period)
+  return String(emp.resign_date || '') >= from ? null : `${emp.name} ลาออกแล้ว${emp.resign_date ? ' (' + emp.resign_date + ')' : ''} — บันทึกเข้างวด ${periodLabelTH(period)} ไม่ได้ เลือกงวดที่ยังทำงานอยู่`
+}
 function payrollEmployees(period) {
   const { from, to } = periodBounds(period)
   // คนลาออก: ขึ้นทุกงวดจนถึงเดือนที่ลาออก (resign_date) แล้วหยุด · ไม่มีวันที่ = ขึ้นเฉพาะงวดที่มีข้อมูล (แบบเดิม)
@@ -4424,6 +4430,7 @@ api.post('/salary-advances', financeOnly, (req, res) => {
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod() // งวดที่เลือก (เช่น ปิดงวด ส.ค. ต้นเดือน ก.ย.)
   if (periodClosed(period, emp.code)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — บันทึกเบิกเข้างวดนี้ไม่ได้ (จะไม่ถูกหักในเงินเดือน) กรุณาเลือกงวดที่ยังไม่ปิด` })
+  { const rb = resignedBefore(emp, period); if (rb) return res.status(400).json({ error: rb }) }
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
   const info = db.prepare('INSERT INTO salary_advances (emp_code,emp_name,period,date,amount,note,by,created) VALUES (?,?,?,?,?,?,?,?)')
@@ -4607,6 +4614,7 @@ api.post('/deductions', financeOnly, (req, res) => {
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod()
   if (periodClosed(period, emp.code)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — บันทึกหักเข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
+  { const rb = resignedBefore(emp, period); if (rb) return res.status(400).json({ error: rb }) }
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงินที่หัก' })
   const reason = String(b.reason || '').trim()
@@ -4635,6 +4643,7 @@ api.post('/other-income', financeOnly, (req, res) => {
   if (!emp) return res.status(404).json({ error: 'กรุณาเลือกพนักงาน' })
   const period = /^\d{4}-\d{2}$/.test(b.period) ? b.period : currentPeriod()
   if (periodClosed(period, emp.code)) return res.status(400).json({ error: `งวด ${periodLabelTH(period)} ปิดแล้ว (คนนี้ทำจ่ายเดือนนี้แล้ว — เปิดแก้ไขรอบจ่ายก่อน) — บันทึกรายได้เข้างวดนี้ไม่ได้ กรุณาเลือกงวดที่ยังไม่ปิด` })
+  { const rb = resignedBefore(emp, period); if (rb) return res.status(400).json({ error: rb }) }
   const amount = Number(b.amount) || 0
   if (amount <= 0) return res.status(400).json({ error: 'กรุณากรอกจำนวนเงิน' })
   const reason = String(b.reason || '').trim()

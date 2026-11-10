@@ -38,6 +38,15 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const app = useApp()
   const { data, user } = app
   const { employees, payroll, payrollMeta, ot: otRecords, leaves, timeAdjustments } = data
+  // คนลาออก: เลือกในฟอร์มเงินเดือน (เบิก/รายได้อื่น/หักอื่น/OT) ได้ถึงเดือนที่ลาออก แล้วไม่ขึ้นอีก · ต่อท้าย (ลาออก …) และเรียงไว้ท้าย
+  const resignOf = (e: { resign_date?: string | null }) => e.resign_date || ''
+  const thShortDate = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })
+  const payFrom = (payrollMeta?.period || new Date().toISOString().slice(0, 7)) + '-01'
+  const payEmps = employees.filter((e) => e.status !== 'ลาออก' || resignOf(e as { resign_date?: string | null }) >= payFrom)
+    .sort((a, b) => (a.status === 'ลาออก' ? 1 : 0) - (b.status === 'ลาออก' ? 1 : 0))
+  const empOptLabel = (e: (typeof employees)[number]) => { const rd = resignOf(e as { resign_date?: string | null }); return e.name + (e.status === 'ลาออก' ? ` (ลาออก${rd ? ' ' + thShortDate(rd) : ''})` : '') }
+  const resignedTag = (code: string) => employees.find((x) => x.code === code)?.status === 'ลาออก'
+    ? <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#C24036', background: '#FBEEEC', padding: '1px 7px', borderRadius: 20 }}>ลาออก</span> : null
   const posList = data.positions.length ? data.positions : positions
   const salaryOk = payroll !== null
   const isMgr = !!user?.isManager
@@ -645,7 +654,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
               <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}><span>พนักงาน <span style={{ color: '#C24036' }}>*</span></span>
                 <select style={field} value={otForm.emp_code} onChange={(e) => setOtForm({ ...otForm, emp_code: e.target.value })}>
                   <option value="">— เลือกพนักงาน —</option>
-                  {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
+                  {payEmps.map((e) => <option key={e.code} value={e.code}>{empOptLabel(e)}</option>)}
                 </select>
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: '#3C4750' }}>วันที่
@@ -918,7 +927,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             {!payrollMeta?.locked && <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
               <select style={{ ...field, width: 'auto', minWidth: 180 }} value={advForm.emp_code} onChange={(e) => setAdvForm({ ...advForm, emp_code: e.target.value })}>
                 <option value="">เลือกพนักงาน</option>
-                {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
+                {payEmps.map((e) => <option key={e.code} value={e.code}>{empOptLabel(e)}</option>)}
               </select>
               <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนเงิน" value={advForm.amount} onChange={(v) => setAdvForm({ ...advForm, amount: v })} />
               <input style={{ ...field, flex: 1, minWidth: 140 }} placeholder="หมายเหตุ (ถ้ามี)" value={advForm.note} onChange={(e) => setAdvForm({ ...advForm, note: e.target.value })} />
@@ -936,7 +945,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                 <div key={g.emp_code} style={{ borderTop: '1px solid #EEF1F4' }}>
                   {/* หัวข้อรายคน — เบิกกี่รอบ/รวม/เหลือ */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px', flexWrap: 'wrap', background: '#FBFCFD' }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 600, minWidth: 140 }}>{g.emp_name}</span>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, minWidth: 140 }}>{g.emp_name}{resignedTag(g.emp_code)}</span>
                     <span style={{ fontSize: 12, color: '#5C6770' }}>เงินเดือนงวดนี้ประมาณ {baht(g.est)}{g.worked != null ? ` (${g.worked} วัน)` : ''}</span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#30506A', background: '#E9EFF3', padding: '2px 10px', borderRadius: 20 }}>เบิกแล้ว {g.count} รอบ = {baht(g.taken)}</span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: g.left >= 0 ? '#2E7D55' : '#C24036' }}>{g.left >= 0 ? `คงเหลือรับประมาณ ${baht(g.left)}` : `⚠ เบิกเกินเงินเดือน ${baht(-g.left)}`}</span>
@@ -971,7 +980,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             {!payrollMeta?.locked && <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
               <select style={{ ...field, width: 'auto', minWidth: 180 }} value={incForm.emp_code} onChange={(e) => setIncForm({ ...incForm, emp_code: e.target.value })}>
                 <option value="">เลือกพนักงาน</option>
-                {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
+                {payEmps.map((e) => <option key={e.code} value={e.code}>{empOptLabel(e)}</option>)}
               </select>
               <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนเงิน" value={incForm.amount} onChange={(v) => setIncForm({ ...incForm, amount: v })} />
               <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="รายละเอียด * (เช่น โบนัส / เบี้ยขยัน / ค่าคอม)" value={incForm.reason} onChange={(e) => setIncForm({ ...incForm, reason: e.target.value })} />
@@ -992,7 +1001,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <tbody>
                     {incs.map((d) => (
                       <tr key={d.id} style={{ borderTop: '1px solid #EEF1F4' }}>
-                        <td style={{ ...td, padding: '9px 18px', fontWeight: 500 }}>{d.emp_name}</td>
+                        <td style={{ ...td, padding: '9px 18px', fontWeight: 500 }}>{d.emp_name}{resignedTag(d.emp_code)}</td>
                         <td style={{ ...td, color: '#5C6770' }}>{d.reason}</td>
                         <td className="num" style={{ ...td, textAlign: 'right', color: '#94A0A8' }}>{d.date}</td>
                         <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#2E7D55' }}>+{baht(d.amount)}</td>
@@ -1013,7 +1022,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
             {!payrollMeta?.locked && <div style={{ padding: '12px 18px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#FAFBFC', borderBottom: '1px solid #EEF1F4' }}>
               <select style={{ ...field, width: 'auto', minWidth: 180 }} value={dedForm.emp_code} onChange={(e) => setDedForm({ ...dedForm, emp_code: e.target.value })}>
                 <option value="">เลือกพนักงาน</option>
-                {employees.map((e) => <option key={e.code} value={e.code}>{e.name}</option>)}
+                {payEmps.map((e) => <option key={e.code} value={e.code}>{empOptLabel(e)}</option>)}
               </select>
               <MoneyInput style={{ ...field, width: 130 }} placeholder="จำนวนที่หัก" value={dedForm.amount} onChange={(v) => setDedForm({ ...dedForm, amount: v })} />
               <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder="เหตุผลการหัก *" value={dedForm.reason} onChange={(e) => setDedForm({ ...dedForm, reason: e.target.value })} />
@@ -1034,7 +1043,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                   <tbody>
                     {deds.map((d) => (
                       <tr key={d.id} style={{ borderTop: '1px solid #EEF1F4' }}>
-                        <td style={{ ...td, padding: '9px 18px', fontWeight: 500 }}>{d.emp_name}</td>
+                        <td style={{ ...td, padding: '9px 18px', fontWeight: 500 }}>{d.emp_name}{resignedTag(d.emp_code)}</td>
                         <td style={{ ...td, color: '#5C6770' }}>{d.reason}</td>
                         <td className="num" style={{ ...td, textAlign: 'right', color: '#94A0A8' }}>{d.date}</td>
                         <td className="num" style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#C24036' }}>-{baht(d.amount)}</td>
