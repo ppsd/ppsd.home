@@ -379,6 +379,7 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
   const [empPage, setEmpPage] = useState(1)
   const EMP_PAGE = 25
   const empList = employees.filter((e) => `${e.name} ${e.code} ${e.role}`.toLowerCase().includes(empQuery.trim().toLowerCase()))
+    .sort((a, b) => (a.status === 'ลาออก' ? 1 : 0) - (b.status === 'ลาออก' ? 1 : 0)) // คนลาออกไว้ล่างสุด (ลำดับเดิมคงไว้)
   const empPaged = empList.slice((empPage - 1) * EMP_PAGE, empPage * EMP_PAGE)
   // leave entitlement computed from start date: ลากิจ 3 always; พักร้อน 6 if ≥1yr else 3
   const tenureYears = emp.start ? (Date.now() - new Date(emp.start).getTime()) / (365.25 * 86400000) : 0
