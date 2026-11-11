@@ -256,3 +256,5 @@ details .in{padding:0 14px 14px;display:grid;gap:10px;color:var(--ink)}
 /* ปกแบบบ้านที่ PPSD ร่างเอง (ยังไม่มีรูปถ่าย) */
 .pcover{aspect-ratio:3/2;display:grid;place-items:center;align-content:center;gap:6px;background:linear-gradient(160deg,#F6F0E2,#E4EEF5);color:var(--ink,#1F3550);font-size:14px}
 .pcover svg{width:56%;max-width:220px}
+/* ภาพนิ่งตกแต่งของแบบบ้าน: แสดงเต็มภาพ ไม่ครอปหลังคา */
+.bigimg.shot{max-height:none;aspect-ratio:3/2;object-fit:cover;margin-bottom:6px}

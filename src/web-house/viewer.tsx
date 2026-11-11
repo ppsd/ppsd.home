@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import HousePlan from '../components/sales/HousePlan'
 import House3D from '../components/sales/House3D'
 import type { Layout } from '../components/sales/houseGeom'
+import { renderStill } from './pretty'
 
 function Viewer({ layout, title, land }: { layout: Layout; title: string; land?: { w: number; d: number } }) {
   const [view, setView] = useState<'3d' | number>('3d')
@@ -28,4 +29,8 @@ function mount(el: HTMLElement, layout: Layout, title: string, land?: { w: numbe
   if (!r) { r = createRoot(el); roots.set(el, r) }
   r.render(<Viewer layout={layout} title={title} land={land} />)
 }
-;(window as unknown as { PPSDHouse: unknown }).PPSDHouse = { mount }
+// ภาพนิ่งตกแต่ง (ใช้สร้างรูปปกแบบสำเร็จรูปในเครื่อง แล้วเก็บเป็นไฟล์ jpg ในเว็บ) — ดู pretty.ts
+function still(layout: Layout, w?: number, h?: number, seed?: number, caption?: string) {
+  return renderStill(layout, w, h, seed, caption)
+}
+;(window as unknown as { PPSDHouse: unknown }).PPSDHouse = { mount, still }
