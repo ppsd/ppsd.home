@@ -168,6 +168,17 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
     try { const r = await api.post<{ model: string; reply: string; ms: number }>('/ai-settings/test', {}); setAiMsg({ ok: true, text: `✓ ใช้งานได้ · รุ่น ${r.model} · ตอบว่า “${r.reply}” (${(r.ms / 1000).toFixed(1)} วิ)` }) }
     catch (e) { setAiMsg({ ok: false, text: '✗ ' + (e as Error).message }) } finally { setAiBusy(false) }
   }
+  // ดู/คัดลอกกุญแจ AI — ต้องใส่ PIN ซ้ำ · ซ่อนเองใน 60 วินาที
+  const [revealPin, setRevealPin] = useState<string | null>(null)
+  const [revealed, setRevealed] = useState('')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { if (!revealed) return; const t = setTimeout(() => { setRevealed(''); setCopied(false) }, 60000); return () => clearTimeout(t) }, [revealed])
+  const revealAi = async () => {
+    setAiBusy(true); setAiMsg(null)
+    try { const r = await api.post<{ key: string }>('/ai-settings/reveal', { pin: revealPin || '' }); setRevealed(r.key); setRevealPin(null); setCopied(false) }
+    catch (e) { setAiMsg({ ok: false, text: '✗ ' + (e as Error).message }) } finally { setAiBusy(false) }
+  }
+  const copyAiKey = async () => { try { await navigator.clipboard.writeText(revealed); setCopied(true) } catch { setAiMsg({ ok: false, text: 'คัดลอกอัตโนมัติไม่ได้ — คลิกในช่องแล้วกด Ctrl+A, Ctrl+C' }) } }
   const loadMirror = () => api.get<{ dir: string; status: MirrorStatus | null; last?: BackupLast | null }>('/backup-mirror').then((r) => { setMirrorDir(r.dir || ''); setMirrorStat(r.status); setBkLast(r.last || null) }).catch(() => {})
   useEffect(() => { if (users) loadMirror() /* eslint-disable-next-line */ }, [users])
   const saveMirror = async () => {
@@ -273,6 +284,24 @@ export default function Users({ onAddUser }: { onAddUser: () => void }) {
               <button onClick={saveAi} disabled={aiBusy} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#30506A', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>บันทึก</button>
               <button onClick={testAi} disabled={aiBusy || !aiCfg.hasKey} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#6B4E9E', background: '#fff', border: '1px solid #D9D2EA', borderRadius: 8, padding: '9px 15px', cursor: aiCfg.hasKey ? 'pointer' : 'default', opacity: aiCfg.hasKey ? 1 : 0.5 }}>{aiBusy ? 'กำลังทดสอบ…' : '🧪 ทดสอบ'}</button>
             </div>
+            {aiCfg.hasKey && !aiCfg.fromEnv && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+                {revealed ? (<>
+                  <input readOnly value={revealed} onFocus={(e) => e.currentTarget.select()} aria-label="กุญแจ AI"
+                    style={{ flex: 2, minWidth: 260, fontFamily: 'monospace', fontSize: 12.5, border: '1px solid #D9D2EA', borderRadius: 8, padding: '9px 11px', background: '#FBFAFE' }} />
+                  <button onClick={copyAiKey} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#6B4E9E', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>{copied ? '✓ คัดลอกแล้ว' : '📋 คัดลอก'}</button>
+                  <button onClick={() => { setRevealed(''); setCopied(false) }} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 13px', cursor: 'pointer' }}>ซ่อน</button>
+                  <span style={{ fontSize: 11.5, color: '#94A0A8' }}>ซ่อนเองใน 1 นาที · ห้ามส่งกุญแจในแชท/LINE</span>
+                </>) : revealPin != null ? (<>
+                  <input type="password" inputMode="numeric" autoFocus value={revealPin} onChange={(e) => setRevealPin(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') revealAi() }} placeholder="ใส่ PIN ของคุณเพื่อยืนยัน"
+                    style={{ width: 200, fontFamily: 'inherit', fontSize: 12.5, border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 11px' }} />
+                  <button onClick={revealAi} disabled={aiBusy || !revealPin} className="btn-primary" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: '#6B4E9E', border: 'none', borderRadius: 8, padding: '9px 15px', cursor: 'pointer' }}>แสดงกุญแจ</button>
+                  <button onClick={() => setRevealPin(null)} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, color: '#5C6770', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '9px 13px', cursor: 'pointer' }}>ยกเลิก</button>
+                </>) : (
+                  <button onClick={() => setRevealPin('')} className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#6B4E9E', background: '#fff', border: '1px solid #D9D2EA', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>👁 ดู/คัดลอกกุญแจ</button>
+                )}
+              </div>
+            )}
             {aiMsg && <div style={{ fontSize: 12, marginTop: 10, color: aiMsg.ok ? '#2E7D55' : '#C24036' }}>{aiMsg.text}</div>}
             <AiUsage />
           </div>

@@ -255,6 +255,7 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 **อัปเดตเว็บ:** `npm run build` แล้ว `node scripts/deploy-web.mjs` (ใช้ wrangler 4.20.0 เท่านั้น — รุ่นใหม่จะพยายามย้ายไป Workers)
 
 **ปุ่ม "ออกแบบบ้านให้ดูเลย" บน Cloudflare** — ตัวเรียก AI อยู่ที่ `cloudflare/ppsd-web/functions/` ใช้กติกาจัดผังห้องจาก `server/house-concept.js` (คัดลอกตอนอัปเดตเว็บ)
+- ใช้กุญแจเดียวกับ ERP ได้ (เจ้าของเลือก 11 พ.ย. 69): คัดลอกจาก ERP หน้าผู้ใช้งาน → ตั้งค่า AI → `👁 ดู/คัดลอกกุญแจ` (ใส่ PIN) · ถ้าเปลี่ยนกุญแจใน ERP ต้องเปลี่ยนใน Cloudflare ด้วย
 - ตั้งกุญแจ AI: เข้า dash.cloudflare.com → Workers & Pages → `ppsd-web` → Settings → Variables and Secrets → Add → ชนิด **Secret** ชื่อ `ANTHROPIC_API_KEY` ใส่กุญแจ → Save → แล้วอัปเดตเว็บ 1 ครั้ง (หรือกด Retry deployment ล่าสุด) ให้ค่าใหม่มีผล
 - แนะนำสร้างกุญแจแยกสำหรับเว็บนี้ที่ console.anthropic.com และตั้งเพดานค่าใช้จ่ายต่อเดือนของ workspace นั้น — ถ้าหลุดหรือโดนใช้เกิน เสียหายไม่เกินเพดาน และลบกุญแจทิ้งได้โดยไม่กระทบ ERP
 - ค่าที่ปรับได้ (ชนิด Text ในหน้าเดียวกัน): `PER_IP` ครั้งต่อเครื่องต่อวัน (ค่าเริ่ม 3) · `PER_DAY` ครั้งรวมต่อวัน (40) · `AI_MODEL` (claude-sonnet-5-5) · ปิดปุ่มชั่วคราว: `HOUSE_OFF` = 1

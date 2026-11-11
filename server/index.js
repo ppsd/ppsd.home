@@ -3188,6 +3188,24 @@ api.post('/ai-settings', adminOnly, (req, res) => {
   audit(req, 'ตั้งค่า AI', aiModel())
   res.json({ ok: true, hasKey: !!aiKey(), model: aiModel() })
 })
+// ดูกุญแจ AI (แอดมินเท่านั้น + ต้องใส่ PIN ตัวเองซ้ำ) — ใช้คัดลอกไปตั้งที่อื่น เช่น เว็บลูกค้าบน Cloudflare · บันทึกในบันทึกการใช้งานทุกครั้ง ไม่บันทึกตัวกุญแจ
+const aiRevealFails = new Map() // id ผู้ใช้ → { n, until }
+api.post('/ai-settings/reveal', adminOnly, (req, res) => {
+  const f = aiRevealFails.get(req.user.id)
+  if (f && f.until > Date.now()) return res.status(429).json({ error: 'ใส่ PIN ผิดหลายครั้ง ลองใหม่ในอีก 5 นาที' })
+  const u = db.prepare('SELECT pin FROM users WHERE id=?').get(req.user.id)
+  if (!u || !u.pin || !verifyPin(String(req.body?.pin || ''), u.pin)) {
+    const n = (f?.n || 0) + 1
+    aiRevealFails.set(req.user.id, { n: n >= 5 ? 0 : n, until: n >= 5 ? Date.now() + 300000 : 0 })
+    audit(req, 'ดูกุญแจ AI ไม่สำเร็จ', 'PIN ไม่ถูกต้อง')
+    return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' })
+  }
+  aiRevealFails.delete(req.user.id)
+  const key = aiKey()
+  if (!key) return res.status(404).json({ error: 'ยังไม่ได้ตั้งกุญแจ AI' })
+  audit(req, 'ดูกุญแจ AI', 'แสดงกุญแจให้คัดลอก')
+  res.json({ key })
+})
 api.post('/ai-settings/test', adminOnly, async (_req, res) => {
   const t0 = Date.now()
   const ai = await aiAsk({ feature: 'ทดสอบกุญแจ AI', media: null, prompt: 'ตอบสั้นๆ คำเดียวว่า "พร้อมใช้งาน"', maxTokens: 400 })
