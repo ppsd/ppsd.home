@@ -4,6 +4,7 @@ import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
 import HousePlan, { saveSvgPng } from './HousePlan'
 import { fmtBaht, fmtM, type Layout } from './houseGeom'
+import HouseIdeas, { Credit, type Idea } from './HouseIdeas'
 
 // ออกแบบบ้านเบื้องต้น (AI) — กรอกความต้องการลูกค้า (ชั้น/ห้องนอน/ห้องน้ำ/งบ/ที่ดิน/สไตล์ + รูปตัวอย่าง)
 // → AI จัดผังห้อง → ระบบวาดแปลนแต่ละชั้น + ภาพ 3D หมุนดูได้ · สั่งแก้เป็นข้อความ · ย้อนฉบับก่อนได้ · บันทึกภาพส่งลูกค้า
@@ -40,6 +41,9 @@ export default function HouseConcept() {
   const [sel, setSel] = useState<number | null>(null)
   const [openNew, setOpenNew] = useState(false)
   const [q, setQ] = useState('')
+  const [tab, setTab] = useState<'designs' | 'ideas'>('designs')
+  const [picked, setPicked] = useState<Idea[]>([]) // ไอเดียที่กด "ชอบแบบนี้" (ส่งให้ AI ตอนออกแบบ)
+  const [fromIdeas, setFromIdeas] = useState(false)
   const load = useCallback(() => api.get<Concept[]>('/house-concepts').then(setList).catch(() => {}), [])
   useEffect(() => { load() }, [load])
 
@@ -50,7 +54,18 @@ export default function HouseConcept() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {sel == null ? (
+      {sel == null && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          {([['designs', '🏠 แบบที่ออกแบบแล้ว'], ['ideas', `💡 ห้องรวมไอเดีย${picked.length ? ` (♥ ${picked.length})` : ''}`]] as const).map(([k, t]) => (
+            <button key={k} onClick={() => setTab(k)} style={{ ...btn2, fontSize: 13, padding: '8px 14px', ...(tab === k ? { background: '#30506A', color: '#fff', borderColor: '#30506A' } : {}) }}>{t}</button>
+          ))}
+        </div>
+      )}
+      {/* ห้องรวมไอเดียซ่อนด้วย display (ไม่ unmount) — ผลค้นและหน้าต่างแก้ไขไม่หายตอนสลับแท็บ */}
+      <div style={{ display: sel == null && tab === 'ideas' ? 'block' : 'none' }}>
+        <HouseIdeas canEdit={canEdit} picked={picked} setPicked={setPicked} onDesign={() => { setFromIdeas(true); setOpenNew(true) }} />
+      </div>
+      {sel == null && tab === 'ideas' ? null : sel == null ? (
         <>
           <div style={{ ...card, padding: '14px 16px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
             <div style={{ flex: '1 1 320px' }}>
@@ -58,7 +73,7 @@ export default function HouseConcept() {
               <div style={{ fontSize: 12.5, color: '#5C6770', marginTop: 3 }}>กรอกจำนวนชั้น ห้องนอน ห้องน้ำ งบประมาณ (แนบรูปบ้านที่ลูกค้าชอบได้) → AI จัดผังห้อง แล้วระบบวาดแปลนกับภาพ 3D หมุนดูได้ · เป็นแบบร่างไว้คุยกับลูกค้า ไม่ใช่แบบก่อสร้าง</div>
             </div>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาชื่อแบบ / ลูกค้า" style={{ ...field, width: 220 }} />
-            {canEdit && <button style={btn1} onClick={() => setOpenNew(true)}>+ ออกแบบใหม่</button>}
+            {canEdit && <button style={btn1} onClick={() => { setFromIdeas(false); setOpenNew(true) }}>+ ออกแบบใหม่</button>}
           </div>
           {!shown.length && <div style={{ ...card, padding: 30, textAlign: 'center', color: '#94A0A8', fontSize: 13 }}>{list.length ? 'ไม่พบแบบที่ค้นหา' : 'ยังไม่มีแบบ — กด “+ ออกแบบใหม่” เพื่อเริ่ม'}</div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
@@ -79,7 +94,8 @@ export default function HouseConcept() {
       ) : (
         <Detail id={sel} canEdit={canEdit} onBack={() => { setSel(null); load() }} onChanged={load} />
       )}
-      {openNew && <NewConcept onClose={() => setOpenNew(false)} onCreated={(id) => { setOpenNew(false); load(); setSel(id) }} />}
+      {openNew && <NewConcept ideas={fromIdeas ? picked : []} onRemoveIdea={(id) => setPicked((o) => o.filter((x) => x.id !== id))} onClose={() => setOpenNew(false)}
+        onCreated={(id) => { setOpenNew(false); if (fromIdeas) setPicked([]); load(); setTab('designs'); setSel(id) }} />}
     </div>
   )
 }
@@ -105,8 +121,10 @@ async function shrinkImage(f: File): Promise<string> {
 const numIn = (s: string) => Number(String(s).replace(/[^\d.]/g, '')) || 0
 const money = (s: string) => { const n = numIn(s); return n ? fmtBaht(n) : '' }
 
-function NewConcept({ onClose, onCreated }: { onClose: () => void; onCreated: (id: number) => void }) {
-  const [f, setF] = useState({ title: '', customer: '', floors: 2, bedrooms: '3', bathrooms: '2', parking: '1', budget: '', price: '20,000', land_w: '', land_d: '', style: '', extras: '', notes: '' })
+function NewConcept({ ideas, onRemoveIdea, onClose, onCreated }: { ideas: Idea[]; onRemoveIdea: (id: number) => void; onClose: () => void; onCreated: (id: number) => void }) {
+  const [f, setF] = useState({ title: '', customer: '', floors: 2, bedrooms: '3', bathrooms: '2', parking: '1', budget: '', price: '20,000', land_w: '', land_d: '', style: ideas.find((x) => x.style)?.style || '', extras: '', notes: '' })
+  const ideaImgs = ideas.filter((x) => x.image_url).length
+  const maxUpload = Math.max(0, 3 - ideaImgs)
   const [imgs, setImgs] = useState<string[]>([])
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
@@ -116,8 +134,8 @@ function NewConcept({ onClose, onCreated }: { onClose: () => void; onCreated: (i
   const addImgs = async (files: FileList | null) => {
     if (!files) return
     const out: string[] = []
-    for (const file of Array.from(files).slice(0, 3 - imgs.length)) { if (file.type.startsWith('image/')) { try { out.push(await shrinkImage(file)) } catch { /* ข้ามไฟล์เสีย */ } } }
-    setImgs((o) => [...o, ...out].slice(0, 3))
+    for (const file of Array.from(files).slice(0, maxUpload - imgs.length)) { if (file.type.startsWith('image/')) { try { out.push(await shrinkImage(file)) } catch { /* ข้ามไฟล์เสีย */ } } }
+    setImgs((o) => [...o, ...out].slice(0, maxUpload))
   }
   const submit = async () => {
     setErr('')
@@ -126,7 +144,7 @@ function NewConcept({ onClose, onCreated }: { onClose: () => void; onCreated: (i
     try {
       const r = await api.post<Concept>('/house-concepts', {
         title: f.title, customer: f.customer, floors: f.floors, bedrooms: numIn(f.bedrooms), bathrooms: numIn(f.bathrooms), parking: numIn(f.parking),
-        budget: numIn(f.budget), price_per_sqm: numIn(f.price), land_w: numIn(f.land_w), land_d: numIn(f.land_d), style: f.style, extras: f.extras, notes: f.notes, images: imgs,
+        budget: numIn(f.budget), price_per_sqm: numIn(f.price), land_w: numIn(f.land_w), land_d: numIn(f.land_d), style: f.style, extras: f.extras, notes: f.notes, images: imgs.slice(0, maxUpload), idea_ids: ideas.map((x) => x.id),
       })
       onCreated(r.id)
     } catch (e) { setErr((e as Error).message); setSaving(false) }
@@ -136,6 +154,21 @@ function NewConcept({ onClose, onCreated }: { onClose: () => void; onCreated: (i
     <ModalShell title="ออกแบบบ้านใหม่" sub="กรอกความต้องการของลูกค้า แล้ว AI จะจัดผังห้องให้ (ใช้เวลาประมาณ 1–3 นาที)" onClose={onClose} width={640} closeOnBackdrop={false}
       footer={<><button style={btn2} onClick={onClose}>ยกเลิก</button><button style={{ ...btn1, opacity: saving ? 0.6 : 1 }} disabled={saving} onClick={submit}>{saving ? 'กำลังส่ง…' : '✨ ให้ AI ออกแบบ'}</button></>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {ideas.length > 0 && (
+          <div style={{ background: '#FBF4F3', border: '1px solid #F1D9D6', borderRadius: 10, padding: '10px 12px' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#1C2730', marginBottom: 6 }}>♥ แบบที่ลูกค้าชอบจากห้องรวมไอเดีย — AI จะดูเป็นแนวทาง ไม่ลอกแบบ</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {ideas.map((x) => (
+                <div key={x.id} style={{ width: 150, position: 'relative' }}>
+                  {x.thumb_url ? <img src={x.thumb_url} alt="" referrerPolicy="no-referrer" style={{ width: 150, height: 96, objectFit: x.kind === 'plan' ? 'contain' : 'cover', background: '#fff', borderRadius: 8, border: '1px solid #E3E8EC' }} /> : <div style={{ width: 150, height: 96, borderRadius: 8, background: '#EEF3F7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>🔗</div>}
+                  <button onClick={() => onRemoveIdea(x.id)} title="เอาออก" style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, border: 'none', background: '#C24036', color: '#fff', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                  <div style={{ fontSize: 11.5, color: '#1C2730', marginTop: 3, lineHeight: 1.3 }}>{x.title}</div>
+                  <Credit x={x} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={row}>
           <div><div style={lbl}>ชื่อลูกค้า</div><input style={field} value={f.customer} onChange={(e) => set('customer', e.target.value)} placeholder="เช่น คุณสมชาย" /></div>
           <div><div style={lbl}>ชื่อแบบ (ไม่ใส่ก็ได้)</div><input style={field} value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="ระบบตั้งให้อัตโนมัติ" /></div>
@@ -170,7 +203,7 @@ function NewConcept({ onClose, onCreated }: { onClose: () => void; onCreated: (i
         <div><div style={lbl}>ห้อง / พื้นที่พิเศษ</div><input style={field} value={f.extras} onChange={(e) => set('extras', e.target.value)} placeholder="เช่น ห้องพระ, ห้องทำงาน, ครัวไทยแยก, ห้องนอนชั้นล่างสำหรับผู้สูงอายุ" /></div>
         <div><div style={lbl}>ความต้องการอื่นๆ</div><textarea style={{ ...field, minHeight: 60, resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="เช่น อยากได้ห้องนั่งเล่นโปร่ง เพดานสูง หน้าบ้านหันทิศเหนือ" /></div>
         <div>
-          <div style={lbl}>รูปบ้านตัวอย่างที่ลูกค้าชอบ (ไม่เกิน 3 รูป · ใช้ให้ AI ดูสไตล์ ระบบไม่เก็บรูป)</div>
+          <div style={lbl}>รูปบ้านตัวอย่างที่ลูกค้าชอบ (รวมรูปจากห้องรวมไอเดียไม่เกิน 3 รูป · ใช้ให้ AI ดูสไตล์ ระบบไม่เก็บรูป){maxUpload === 0 ? ' — ครบ 3 รูปแล้ว' : ''}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             {imgs.map((s, i) => (
               <div key={i} style={{ position: 'relative' }}>
@@ -178,7 +211,7 @@ function NewConcept({ onClose, onCreated }: { onClose: () => void; onCreated: (i
                 <button onClick={() => setImgs((o) => o.filter((_x, k) => k !== i))} title="เอาออก" style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, border: 'none', background: '#C24036', color: '#fff', cursor: 'pointer', fontSize: 11 }}>✕</button>
               </div>
             ))}
-            {imgs.length < 3 && <button style={btn2} onClick={() => fileRef.current?.click()}>+ แนบรูป</button>}
+            {imgs.length < maxUpload && <button style={btn2} onClick={() => fileRef.current?.click()}>+ แนบรูป</button>}
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImgs(e.target.files); e.target.value = '' }} />
           </div>
         </div>

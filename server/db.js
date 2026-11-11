@@ -586,6 +586,14 @@ db.exec(`CREATE TABLE IF NOT EXISTS house_concepts (
   at TEXT, by TEXT, by_id INTEGER, title TEXT, customer TEXT, req TEXT, layout TEXT, versions TEXT,
   status TEXT, error TEXT, model TEXT, cost_usd REAL, updated TEXT, updated_by TEXT
 )`)
+// ห้องรวมไอเดียแบบบ้าน — ดู server/house-ideas.js · เก็บแค่ลิงก์รูปต้นทาง + เครดิต/ใบอนุญาต (ไม่เก็บไฟล์รูป)
+//  kind = photo | render | plan | link · public = 1 แสดงบนเว็บลูกค้าได้ · used = จำนวนครั้งที่ถูกเลือกให้ AI · seed = มาจากชุดตั้งต้น
+db.exec(`CREATE TABLE IF NOT EXISTS house_ideas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT, by TEXT, by_id INTEGER, kind TEXT, title TEXT, image_url TEXT, thumb_url TEXT, page_url TEXT,
+  author TEXT, license TEXT, license_url TEXT, source TEXT, style TEXT, country TEXT, note TEXT,
+  public INTEGER DEFAULT 0, used INTEGER DEFAULT 0, seed INTEGER DEFAULT 0
+)`)
 // ชื่อเรียกอื่นของรายการมาตรฐาน — มาจาก "รวมรายการซ้ำ" หรือ "ถอดแบบ" (คนเลือกจับคู่ไว้) · nkey = ชื่อแบบตัดช่องว่าง/ตรา/สะกดต่าง
 db.exec(`CREATE TABLE IF NOT EXISTS material_aliases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

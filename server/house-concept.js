@@ -236,6 +236,10 @@ export function createHouseConcept(d) {
       const q = normalizeReq(req.body || {})
       if (!q.bedrooms && !q.bathrooms) return res.status(400).json({ error: 'ระบุจำนวนห้องนอนหรือห้องน้ำอย่างน้อย 1 อย่าง' })
       const media = parseImages(req.body?.images)
+      // ไอเดียจาก "ห้องรวมไอเดีย" — บอก AI เป็นข้อความ และดึงรูปจากต้นทางตอนออกแบบ (รวมกับรูปแนบไม่เกิน 3 รูป)
+      const ideaIds = Array.isArray(req.body?.idea_ids) ? req.body.idea_ids.slice(0, 6) : []
+      const ideaNote = ideaIds.length && d.ideas ? d.ideas.ideaText(ideaIds) : ''
+      if (ideaNote) { q.notes = txt([q.notes, ideaNote].filter(Boolean).join(' · '), 1500); q.idea_ids = ideaIds.map(Number) }
       const title = txt(req.body?.title, 120) || `บ้าน ${q.floors} ชั้น ${q.bedrooms} ห้องนอน ${q.bathrooms} ห้องน้ำ`
       const now = d.nowTS()
       const info = db.prepare('INSERT INTO house_concepts (at,by,by_id,title,customer,req,layout,versions,status,updated,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
@@ -243,7 +247,8 @@ export function createHouseConcept(d) {
       const id = info.lastInsertRowid
       d.audit(req, 'ออกแบบบ้านเบื้องต้น (AI)', `#${id} ${title}`)
       res.json(row(get(id)))
-      askLayout({ prompt: buildPrompt(q, media.length > 0), media, by: req.user?.name }).then((r) => {
+      const withIdeas = ideaNote && media.length < MAX_IMAGES && !process.env.PPSD_AI_MOCK_HOUSECONCEPT ? d.ideas.ideaMedia(ideaIds, { max: MAX_IMAGES - media.length }).catch(() => []) : Promise.resolve([])
+      withIdeas.then((more) => { const all = [...media, ...more]; return askLayout({ prompt: buildPrompt(q, all.length > 0), media: all, by: req.user?.name }) }).then((r) => {
         if (r.ok) db.prepare("UPDATE house_concepts SET layout=?, status='เสร็จ', error=NULL, model=?, cost_usd=?, updated=? WHERE id=?").run(JSON.stringify(r.layout), r.model, addCost(0, r.cost_usd), d.nowTS(), id)
         else db.prepare("UPDATE house_concepts SET status='ผิดพลาด', error=?, model=?, cost_usd=? WHERE id=?").run(r.error, r.model || null, addCost(0, r.cost_usd), id)
       }).catch((e) => db.prepare("UPDATE house_concepts SET status='ผิดพลาด', error=? WHERE id=?").run('ออกแบบไม่สำเร็จ: ' + e.message, id))

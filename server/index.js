@@ -25,6 +25,7 @@ import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
 import { createDocReview } from './doc-review.js'
 import { createHouseConcept } from './house-concept.js'
+import { createHouseIdeas } from './house-ideas.js'
 import { createPublicHouseConcept } from './house-concept-public.js'
 import { lt, listLineTexts, setLineText } from './line-texts.js'
 import { createCenter, FIELD_LABEL as CENTER_FIELD_LABEL } from './center.js'
@@ -2362,6 +2363,8 @@ registerCrmPublic(api, () => crmDeps) // พอร์ทัลลูกค้า
 // เว็บลูกค้า: ออกแบบบ้านให้ดูทันที (ไม่ต้องล็อกอิน · จำกัดจำนวนครั้ง) — ตัวจริงสร้างด้านล่างหลังเตรียมตัวเรียก AI แล้ว · ดู server/house-concept-public.js
 let publicHouseConcept = null
 api.use('/public', (req, res, next) => (publicHouseConcept ? publicHouseConcept(req, res, next) : next()))
+let publicHouseIdeas = null // ห้องรวมไอเดีย: รูปที่เปิดให้เว็บลูกค้าเห็น · ดู server/house-ideas.js
+api.use('/public', (req, res, next) => (publicHouseIdeas ? publicHouseIdeas(req, res, next) : next()))
 
 api.use(requireAuth)
 
@@ -2373,7 +2376,7 @@ const MODULE_PATHS = [
   ['accounting', [/^\/accounting/, /^\/journal/, /^\/gl\//, /^\/trial-balance/, /^\/accounts/, /^\/expenses/, /^\/petty-cash/, /^\/closing/, /^\/tax-summary/, /^\/income-statement/, /^\/balance-sheet/, /^\/cash-flow/, /^\/project-pnl/, /^\/ar-aging/, /^\/ap-aging/, /^\/reconcile/, /^\/cash-accounts/, /^\/acct-defaults/, /^\/assets/, /^\/export\/express/, /^\/efiling/, /^\/repair/]],
   // ใบจ่ายเงิน (payments) ใช้งานในหน้าจัดซื้อ → คุมด้วยโมดูลจัดซื้อ
   ['procurement', [/^\/purchase-requests/, /^\/purchase-orders/, /^\/pr-quotes/, /^\/goods-receipts/, /^\/payables/, /^\/payments/, /^\/vendors/, /^\/material-prices/, /^\/procurement/, /^\/stock/]],
-  ['sales', [/^\/sales-docs/, /^\/customers/, /^\/house-concepts/]],
+  ['sales', [/^\/sales-docs/, /^\/customers/, /^\/house-concepts/, /^\/house-ideas/]],
   ['reports', [/^\/reports/]],
 ]
 // เส้นทางอนุมัติ/ปฏิเสธ ระบุโมดูลตามชนิดเอกสาร (ไม่งั้นคนถูกปิดโมดูลยังอนุมัติเอกสารของโมดูลนั้นได้)
@@ -5598,7 +5601,10 @@ const lineReceive = createLineReceive({
 const docReview = createDocReview({ db, uploadsDir: () => uploadsDir, lineReply, linePush, setLineCtx, aiAsk, aiKey, AI_NO_KEY, extractJsonBlock, isManager, audit, nowTS, publicBaseUrl })
 docReview.register(api, { canWrite })
 // ออกแบบบ้านเบื้องต้น (AI จัดผังห้อง → หน้าเว็บวาดแปลน + 3D) — ดู server/house-concept.js
-createHouseConcept({ db, aiAsk, aiKey, AI_NO_KEY, extractJsonBlock, isManager, audit, nowTS }).register(api, { canWrite })
+const houseIdeas = createHouseIdeas({ db, isManager, audit, nowTS })
+houseIdeas.register(api, { canWrite })
+publicHouseIdeas = houseIdeas.publicRouter
+createHouseConcept({ db, aiAsk, aiKey, AI_NO_KEY, extractJsonBlock, isManager, audit, nowTS, ideas: houseIdeas }).register(api, { canWrite })
 publicHouseConcept = createPublicHouseConcept({ db, aiAsk, aiKey, extractJsonBlock, nowTS, clientIp })
 
 // ล้างข้อมูลจัดซื้อทั้งหมด (PR/PO) — เริ่มใช้ระบบใหม่ (ผู้ดูแลเท่านั้น) · ไม่แตะราคากลางวัสดุ/ผู้ขาย/รายจ่ายที่ไม่ได้มาจาก PO
