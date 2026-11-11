@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>PPSD บ้านดี ดวงดี</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="proto"><div class="w">เว็บตัวอย่างเพื่อให้ทีมตรวจ · ราคา ขนาด ระยะเวลา และข้อมูลการเงินเป็นค่าตัวอย่าง · ฟอร์มยังไม่ส่งข้อมูลไปที่ใด</div></div>
+<header class="top">
+  <div class="w bar">
+    <a class="brand" href="#home">บ้านดี ดวงดี<small>By PPSD</small></a>
+    <button type="button" id="menuBtn" class="menu-btn" aria-expanded="false" aria-controls="mainNav">เมนู</button>
+    <nav id="mainNav" aria-label="เมนูหลัก">
+      <a data-nav="home" href="#home">หน้าแรก</a>
+      <a data-nav="designs" href="#designs">แบบบ้าน</a>
+      <a data-nav="works" href="#works">ผลงาน</a>
+      <a data-nav="reviews" href="#reviews">รีวิว</a>
+      <a data-nav="finance" href="#loan">สินเชื่อและการเงิน</a>
+      <a data-nav="contact" href="#contact">ติดต่อเรา</a>
+      <a data-nav="myhome" class="me" href="#myhome">บ้านของฉัน</a>
+    </nav>
+  </div>
+</header>
+<main id="app" tabindex="-1"></main>
+<footer class="foot">
+  <div class="w foot-grid">
+    <div><b>เริ่มสร้างบ้าน</b><a href="#estimate">ประเมินราคาฟรี</a><a href="#budget">งบรวมทั้งโครงการ</a><a href="#land">เช็กที่ดินเบื้องต้น</a><a href="#process">ขั้นตอนสร้างบ้าน</a><a href="#documents">เอกสารที่ต้องเตรียม</a></div>
+    <div><b>รู้จัก PPSD</b><a href="#why">ทำไมต้อง PPSD</a><a href="#spec">สเปคและวัสดุ</a><a href="#about">เกี่ยวกับเรา</a><a href="#areas">พื้นที่ให้บริการ</a><a href="#services">ต่อเติม บิ้วอิน รีโนเวท</a></div>
+    <div><b>ช่วยเหลือ</b><a href="#faq">คำถามที่พบบ่อย</a><a href="#knowledge">ความรู้ก่อนสร้างบ้าน</a><a href="#offer">ตัวอย่างข้อเสนอเฉพาะคุณ</a><a href="#homebook">สมุดบ้านและแจ้งซ่อม</a><a href="#privacy">นโยบายความเป็นส่วนตัว</a></div>
+    <div><b>ติดต่อ</b><span>โทร 089 999 2474</span><span>จันทร์–เสาร์ 8:00–18:00 น.</span><span>126 ม.9 ถ.เพชรเกษม ต.บ้านสิงห์ อ.โพธาราม จ.ราชบุรี 70120</span></div>
+  </div>
+</footer>
+<button type="button" id="chatBtn" class="chat-btn">ถามเรา</button>
+<section id="chat" class="chat" hidden aria-label="ผู้ช่วยตอบคำถาม">
+  <div class="chat-h"><b>ผู้ช่วยอัตโนมัติ (ตัวอย่าง)</b><button type="button" id="chatClose">ปิด</button></div>
+  <div class="chat-log" id="chatLog" aria-live="polite"></div>
+  <form id="chatForm" class="chat-f"><label class="sr" for="chatQ">พิมพ์คำถาม</label><input id="chatQ" autocomplete="off" placeholder="เช่น แก้แบบได้กี่ครั้ง"><button type="submit">ส่ง</button></form>
+</section>
+<script src="app.js"></script>
+</body>
+</html>
