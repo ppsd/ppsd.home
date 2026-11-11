@@ -102,6 +102,12 @@ export const api = {
     if (!res.ok) throw await uploadError(res)
     return res.json() as Promise<T>
   },
+  // โหลดรูปที่ต้องล็อกอินมาแสดงในหน้า (<img src=...>) — คนเรียกต้อง URL.revokeObjectURL เมื่อเลิกใช้
+  blobUrl: async (p: string) => {
+    const res = await fetch('/api' + p, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+    if (!res.ok) throw new ApiError(res.status, res.status === 403 ? 'ไม่มีสิทธิ์เปิดไฟล์นี้' : 'เปิดไฟล์ไม่สำเร็จ')
+    return URL.createObjectURL(await res.blob())
+  },
   // เปิดดูไฟล์ในเบราว์เซอร์ทันที (แท็บใหม่) — ไม่บังคับดาวน์โหลด
   openFile: async (p: string) => {
     const res = await fetch('/api' + p, { headers: token ? { Authorization: 'Bearer ' + token } : {} })

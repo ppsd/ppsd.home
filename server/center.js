@@ -278,7 +278,7 @@ export function createCenter(d) {
   const houseExpr = `CASE WHEN table_name='houses' THEN COALESCE(json_extract(after,'$.code'), json_extract(before,'$.code')) ELSE COALESCE(json_extract(after,'$.house_code'), json_extract(before,'$.house_code')) END`
 
   const hiddenKeys = () => new Set(db.prepare('SELECT key FROM feed_hidden').all().map((r) => r.key))
-  function feed({ house = '', cat = '', beforeId = 0, limit = 40, flagOnly = false, showHidden = false }) {
+  function feed({ house = '', cat = '', beforeId = 0, limit = 40, flagOnly = false, showHidden = false, user = null }) {
     const hidden = hiddenKeys()
     const tables = cat && CATS[cat] ? CATS[cat] : FEED_TABLES
     const ph = tables.map(() => '?').join(',')
@@ -300,13 +300,13 @@ export function createCenter(d) {
         if (hidden.has(key) !== showHidden) continue // ปกติ = ไม่แสดงที่ซ่อน · showHidden = แสดงเฉพาะที่ซ่อน
         const ex = byKey.get(key)
         if (ex) { // ทำพร้อมกัน → รวมเป็นเรื่องเดียว
-          ex.parts.unshift({ text: dsc.text, lines: dsc.lines }); ex.flag = ex.flag || dsc.flag; ex.min_id = r.id
+          ex.parts.unshift({ text: dsc.text, lines: dsc.lines, ...attachCount(r, user) }); ex.flag = ex.flag || dsc.flag; ex.min_id = r.id
           if (dsc.approval) ex.approval = dsc.approval
           if (!ex.cats.includes(CAT_OF[r.table_name])) ex.cats.push(CAT_OF[r.table_name])
           continue
         }
         if (out.length >= limit) break
-        const ev = { id: r.id, key, min_id: r.id, ts: r.ts, user: r.user, house_code: r.hc, house_name: houseName(r.hc), cats: [CAT_OF[r.table_name] || 'info'], flag: dsc.flag, approval: dsc.approval || null, parts: [{ text: dsc.text, lines: dsc.lines }] }
+        const ev = { id: r.id, key, min_id: r.id, ts: r.ts, user: r.user, house_code: r.hc, house_name: houseName(r.hc), cats: [CAT_OF[r.table_name] || 'info'], flag: dsc.flag, approval: dsc.approval || null, parts: [{ text: dsc.text, lines: dsc.lines, ...attachCount(r, user) }] }
         byKey.set(key, ev); out.push(ev)
       }
       if (rows.length < 500) break
@@ -325,6 +325,187 @@ export function createCenter(d) {
     return { count: keys.size, seen }
   }
 
+  // ---- กดรายการความเคลื่อนไหว → เปิดดูเรื่องนั้น + รูปแนบ ----
+  //  สิทธิ์เท่ากับหน้าต้นทาง (บังคับที่นี่ ไม่ใช่แค่ซ่อนปุ่ม) · รูปทุกชนิดส่งผ่านเส้นทางเดียว ที่ตรวจสิทธิ์ทุกครั้ง
+  const isAudit = (u) => u.role === 'admin' || u.role === 'accounting' || d.isManager(u)
+  const isFinance = (u) => u.role === 'admin' || u.role === 'accounting'
+  const isWriter = (u) => ['admin', 'accounting', 'site'].includes(u.role)
+  // ตารางที่ไม่อยู่ในนี้ = หน้าต้นทางเปิดให้พนักงานทุกคน
+  const ACCESS = {
+    purchase_requests: { mod: 'procurement', allow: isWriter }, purchase_orders: { mod: 'procurement', allow: isFinance }, payments: { mod: 'procurement', allow: isFinance },
+    stock_moves: { mod: 'procurement' }, expenses: { mod: 'accounting' }, petty_expenses: { mod: 'accounting', allow: isFinance }, sales_docs: { mod: 'sales' }, nps: { mod: 'sales' },
+    boqs: { allow: isAudit }, doc_register: { allow: isAudit }, cashflows: { allow: isAudit },
+    fuel_requests: { allow: (u, r) => isAudit(u) || (r.user_id && r.user_id === u.id) || r.by === u.name },
+  }
+  function canOpen(user, table, row) {
+    const a = ACCESS[table]
+    if (!a) return true
+    if (a.mod && user.role !== 'admin' && (user.deny_mods || []).includes(a.mod)) return false
+    return a.allow ? !!a.allow(user, row || {}) : true
+  }
+  // ยอดเงินฝั่งช่าง/ต้นทุน — เห็นเฉพาะผู้จัดการ (เหมือนหน้าบ้าน/แฟ้มบ้าน)
+  const COST_ROW = { installments: (r) => r.side === 'contractor', house_contracts: (r) => r.side === 'contractor', house_money_log: (r) => r.side === 'contractor', contractors: () => true, contractor_advances: () => true, contractor_reports: () => true }
+  const COST_FIELD = new Set(['contractor_value', 'house_contractor', 'carport_contractor', 'road_contractor'])
+
+  const DETAIL_LABEL = {
+    ...FIELD_LABEL, type: 'ชนิด', by: 'ผู้บันทึก', date: 'วันที่', category: 'หมวด', cat: 'หมวด', zone: 'โซน', inspector: 'ผู้ตรวจ', remark: 'หมายเหตุ', discipline: 'สาขางาน',
+    response: 'คำตอบ', responded_by: 'ผู้ตอบ', assignee: 'ผู้รับผิดชอบ', scope: 'ขอบเขตงาน', issued_date: 'วันที่สั่งงาน', due_date: 'กำหนดเสร็จ', submit_note: 'ข้อความตอนส่งงาน', obstacle: 'อุปสรรค',
+    acceptance: 'ผลตรวจรับ', acceptance_note: 'หมายเหตุตรวจรับ', uploader: 'ผู้อัปโหลด', uploaded: 'วันที่อัปโหลด', start: 'เริ่ม', end: 'สิ้นสุด', requester: 'ผู้เบิก', payee: 'ผู้รับเงิน', gross: 'ยอดก่อนหัก', net: 'ยอดสุทธิ',
+    requested_by: 'ผู้ขอ', case_no: 'เลขเคส', comment: 'ความเห็น', grade: 'เกรด', customer: 'ลูกค้า', project: 'โครงการ', total: 'ยอดรวม', inst_detail: 'งวด', method: 'วิธีจ่าย', ref_no: 'อ้างอิง', worker: 'ผู้ทำงาน',
+  }
+  const DETAIL_MONEY = new Set([...MONEY_FIELDS, 'gross', 'net', 'total', 'cost_impact'])
+  const DATE_FIELD = new Set(['date', 'due', 'due_date', 'issued_date', 'start', 'end', 'start_date', 'deliver_date', 'uploaded'])
+  const TH_MON = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+  const thaiDate = (v) => { const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${Number(m[3])} ${TH_MON[Number(m[2]) - 1]} ${(Number(m[1]) + 543) % 100}` : v }
+  function detailFields(table, row, user) {
+    const hideCost = !d.isManager(user)
+    const hideAllMoney = hideCost && COST_ROW[table]?.(row)
+    const out = []
+    for (const [k, v] of Object.entries(row)) {
+      if (NOISE_FIELDS.has(k) || !DETAIL_LABEL[k] || v == null || v === '') continue
+      if (table === 'change_requests' && k === 'title') continue // หัวเรื่องแสดงด้านบนอยู่แล้ว
+      if (table === 'installments' && k === 'category') continue // ค่าเป็นรหัสภายใน (house/carport/road)
+      if (DETAIL_MONEY.has(k)) {
+        if (hideAllMoney || (hideCost && COST_FIELD.has(k)) || !Number(v)) continue
+        out.push({ k: DETAIL_LABEL[k], v: `${money(v)} บาท` }); continue
+      }
+      const s = String(v)
+      if (/^[[{]/.test(s) || s.startsWith('data:') || s === '***') continue // JSON/รูป/ค่าลับ ไม่ใช่ข้อความให้คนอ่าน
+      out.push({ k: DETAIL_LABEL[k], v: DATE_FIELD.has(k) ? thaiDate(s) : short(s, k === 'text' || k === 'note' || k === 'detail' ? 2000 : 300) })
+      if (out.length >= 18) break
+    }
+    return out
+  }
+
+  // ---- ไฟล์/รูปของแต่ละเรื่อง (เก็บได้ 2 แบบ: ไฟล์ของบ้าน [files] หรือฝังเป็น data URL ในแถว) ----
+  const FILE_IMAGE = /^image\/(png|jpe?g|gif|webp|bmp)$/i
+  const DATA_URL = /^data:(image\/(?:png|jpe?g|gif|webp|bmp)|application\/pdf);base64,/i
+  const fileAtt = (f) => ({ kind: 'file', id: f.id, name: f.name || 'ไฟล์', image: FILE_IMAGE.test(String(f.mime || '').split(';')[0].trim()) })
+  const fileRefs = (list) => (Array.isArray(list) ? list : [list]).map((x) => Number(x?.id ?? x)).filter(Boolean).flatMap((id) => {
+    const f = db.prepare('SELECT id,name,mime FROM files WHERE id=?').get(id)
+    return f ? [fileAtt(f)] : []
+  })
+  function inlineAtts(...vals) {
+    const urls = new Set()
+    const walk = (v, depth = 0) => {
+      if (depth > 6 || v == null) return
+      if (typeof v === 'string') {
+        if (DATA_URL.test(v)) urls.add(v)
+        else if (/^[[{]/.test(v)) { const j = jparse(v); if (j) walk(j, depth + 1) }
+      } else if (Array.isArray(v)) v.forEach((x) => walk(x, depth + 1))
+      else if (typeof v === 'object') Object.values(v).forEach((x) => walk(x, depth + 1))
+    }
+    vals.forEach((v) => walk(v))
+    return [...urls].slice(0, 40).map((url, i) => { const mime = url.match(DATA_URL)[1].toLowerCase(); return { kind: 'data', url, mime, name: `${mime === 'application/pdf' ? 'เอกสาร' : 'รูป'} ${i + 1}`, image: mime !== 'application/pdf' } })
+  }
+  const ATTACH = {
+    files: (r) => [fileAtt(r)],
+    contractor_reports: (r) => fileRefs(jparse(r.files) || []),
+    change_requests: (r) => fileRefs((jparse(r.body) || {}).files || []),
+    work_orders: (r) => fileRefs(jparse(r.submit_files) || []),
+    house_contracts: (r) => (r.file_id ? fileRefs([r.file_id]) : []),
+    sales_docs: (r) => (r.attachment_file_id ? fileRefs([r.attachment_file_id]) : []),
+    qc_inspections: (r) => inlineAtts(r.images, r.items),
+    site_docs: (r) => inlineAtts(r.image),
+    issues: (r) => inlineAtts(r.photo),
+    purchase_requests: (r) => inlineAtts(r.image, r.images),
+    purchase_orders: (r) => inlineAtts(r.image),
+    houses: (r) => inlineAtts(r.photo),
+    site_reports: (r) => inlineAtts(r.data),
+    safety_records: (r) => inlineAtts(r.data),
+    handover_docs: (r) => inlineAtts(r.data),
+  }
+  // แถวปัจจุบันของเรื่องนี้ (ถูกลบไปแล้ว = null) · files ไม่ดึงคอลัมน์ data เก่าที่ใหญ่มาก
+  function currentRow(r) {
+    try {
+      const row = db.prepare(`SELECT ${r.table_name === 'files' ? 'id,house_code,name,mime,size,category,uploaded,uploader' : '*'} FROM "${r.table_name}" WHERE id=?`).get(Number(r.row_key))
+      return row && (r.table_name === 'houses' ? row.code : row.house_code) === r.hc ? row : null // เลขเดิมแต่เป็นคนละเรื่อง (ลบแล้วเลขถูกใช้ซ้ำ) ไม่นับ
+    } catch { return null }
+  }
+  const snapshotOf = (r) => jparse(r.action === 'delete' ? r.before : r.after) || {}
+  function attachmentsOf(r, row) {
+    if (!row || !ATTACH[r.table_name]) return []
+    try { return ATTACH[r.table_name](row) } catch { return [] }
+  }
+  // จำนวนรูป/ไฟล์ของรายการ (ป้ายบนหน้ารายการ) — คนที่เปิดเรื่องนั้นไม่ได้จะไม่เห็นตัวเลข
+  function attachCount(r, user) {
+    const out = { hid: r.id, photos: 0, docs: 0 }
+    if (!user || !ATTACH[r.table_name]) return out
+    const row = currentRow(r)
+    if (!row || !canOpen(user, r.table_name, row)) return out
+    for (const a of attachmentsOf(r, row)) { if (a.image) out.photos++; else out.docs++ }
+    return out
+  }
+
+  // ---- ปุ่ม "ไปหน้าต้นทาง" ของแต่ละชนิด ----
+  const HOUSE_TAB = {
+    installments: ['installments', 'งวดงาน'], house_categories: ['installments', 'งวดงาน'], inst_acceptance: ['installments', 'งวดงาน'], houses: ['installments', 'งวดงาน'], files: ['installments', 'งวดงาน และไฟล์ของบ้าน'],
+    house_contracts: ['money', 'การเงิน & สัญญา'], house_money_log: ['money', 'การเงิน & สัญญา'], contractors: ['contractors', 'ช่าง / ผู้รับเหมา'], contractor_advances: ['contractors', 'ช่าง / ผู้รับเหมา'], contractor_evals: ['contractors', 'ช่าง / ผู้รับเหมา'],
+    site_reports: ['sitereport', 'รายงานหน้างาน'], qc_inspections: ['qc', 'QC ตรวจงาน'], work_orders: ['workorders', 'ใบสั่งงาน'], site_docs: ['sitedocs', 'เอกสารหน้างาน'], issues: ['issues', 'ปัญหา'], safety_records: ['safety', 'ความปลอดภัย'],
+    handover_docs: ['handover', 'ส่งมอบงาน'], boqs: ['boq', 'BOQ'], purchase_requests: ['procurement', 'จัดซื้อ'], purchase_orders: ['procurement', 'จัดซื้อ'], payments: ['procurement', 'จัดซื้อ'], expenses: ['expenses', 'รายจ่าย'],
+  }
+  const PAGE_OF = { tasks: ['gantt', 'แผนงาน'], stock_moves: ['stock', 'สต๊อก'], doc_register: ['docreg', 'ทะเบียนเอกสาร'], sales_docs: ['sales', 'เอกสารขาย'], nps: ['customers', 'ลูกค้า'], cashflows: ['costing', 'ต้นทุน / กระแสเงินสด'], petty_expenses: ['accounting', 'บัญชี'], fuel_requests: ['accounting', 'บัญชี'] }
+  const canSeeRequest = (user, cr) => canApprove(user) || (cr.kind === 'contractor_line' && isConApprover(user)) || (cr.requested_by_id && cr.requested_by_id === user.id)
+  const approvalTarget = (user, cr) => {
+    if (!cr || !canSeeRequest(user, cr)) return null
+    return { type: 'approval', status: ['รออนุมัติ', 'อนุมัติ', 'ตีกลับ'].includes(cr.status) ? cr.status : 'all', label: 'รออนุมัติ' }
+  }
+  function targetOf(r, row, user) {
+    const t = r.table_name
+    if (t === 'change_requests') return row ? approvalTarget(user, row) : null
+    if (t === 'contractor_reports') {
+      const a = row?.request_id ? approvalTarget(user, db.prepare('SELECT * FROM change_requests WHERE id=?').get(row.request_id)) : null
+      return a || (row ? { type: 'house', tab: 'installments', label: 'งวดงาน และไฟล์ของบ้าน' } : null)
+    }
+    if (t === 'fuel_requests' && !isFinance(user)) return null // หน้าเบิกน้ำมันอยู่ในบัญชี
+    if (HOUSE_TAB[t]) return { type: 'house', tab: HOUSE_TAB[t][0], label: HOUSE_TAB[t][1] }
+    if (PAGE_OF[t]) return { type: 'page', page: PAGE_OF[t][0], label: PAGE_OF[t][1] }
+    return null
+  }
+
+  const FEED_ROW_COLS = `id, ts, user, table_name, row_key, action, before, after, ${houseExpr} AS hc`
+  const feedRowById = (id) => {
+    const r = db.prepare(`SELECT ${FEED_ROW_COLS} FROM change_history WHERE id=? AND table_name IN (${FEED_TABLES.map(() => '?').join(',')})`).get(Number(id), ...FEED_TABLES)
+    return r && r.hc ? r : null
+  }
+  function feedDetail(id, user) {
+    const base = feedRowById(id)
+    if (!base) return null
+    if (user.role !== 'admin' && hiddenKeys().has(`${base.ts}|${base.user}|${base.hc}`)) return null // เรื่องที่แอดมินซ่อน
+    const rows = db.prepare(`SELECT ${FEED_ROW_COLS} FROM change_history WHERE ts=? AND user=? AND table_name IN (${FEED_TABLES.map(() => '?').join(',')}) ORDER BY id`).all(base.ts, base.user, ...FEED_TABLES).filter((r) => r.hc === base.hc)
+    const parts = []
+    let flag = false, approval = null
+    for (const r of rows) {
+      const dsc = describe(r)
+      if (!dsc) continue
+      flag = flag || dsc.flag
+      if (dsc.approval) approval = dsc.approval
+      const row = currentRow(r)
+      const view = row || snapshotOf(r)
+      const part = { hid: r.id, label: TABLE_LABEL[r.table_name] || r.table_name, action: r.action, text: dsc.text, lines: dsc.lines, exists: !!row, restricted: false, fields: [], attachments: [], target: null }
+      if (!canOpen(user, r.table_name, view)) { parts.push({ ...part, restricted: true }); continue }
+      part.fields = detailFields(r.table_name, view, user)
+      part.attachments = attachmentsOf(r, row).map((a, n) => ({ n, name: a.name, image: a.image }))
+      part.target = targetOf(r, row, user)
+      parts.push(part)
+    }
+    return { id: base.id, ts: base.ts, user: base.user, house_code: base.hc, house_name: houseName(base.hc), flag, approval, parts }
+  }
+  function sendAttachment(req, res) {
+    const r = feedRowById(req.params.id)
+    if (!r) return res.status(404).json({ error: 'ไม่พบรายการ' })
+    const row = currentRow(r)
+    if (!row) return res.status(404).json({ error: 'รายการนี้ถูกลบไปแล้ว' })
+    if (!canOpen(req.user, r.table_name, row)) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เปิดไฟล์ของรายการนี้' })
+    const a = attachmentsOf(r, row)[Number(req.params.n)]
+    if (!a) return res.status(404).json({ error: 'ไม่พบไฟล์' })
+    if (a.kind === 'file') return d.sendStoredFile(res, a.id)
+    res.setHeader('Content-Type', a.mime)
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(a.name)}`)
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.send(Buffer.from(a.url.slice(a.url.indexOf(',') + 1), 'base64'))
+  }
+
   function customersOfHouse(code) {
     const h = db.prepare('SELECT * FROM houses WHERE code=?').get(code)
     if (!h) return { house: null, list: [] }
@@ -339,8 +520,15 @@ export function createCenter(d) {
   function register(api) {
     api.get('/center/feed', (req, res) => {
       const q = req.query || {}
-      res.json(feed({ house: String(q.house || ''), cat: String(q.cat || ''), beforeId: Number(q.before) || 0, limit: Math.min(100, Number(q.limit) || 40), flagOnly: q.flag === '1', showHidden: q.hidden === '1' }))
+      res.json(feed({ house: String(q.house || ''), cat: String(q.cat || ''), beforeId: Number(q.before) || 0, limit: Math.min(100, Number(q.limit) || 40), flagOnly: q.flag === '1', showHidden: q.hidden === '1', user: req.user }))
     })
+    // กดรายการ → รายละเอียดเรื่อง · รูป/ไฟล์ของเรื่อง (ตรวจสิทธิ์ตามหน้าต้นทางทุกครั้ง)
+    api.get('/center/feed/:id/detail', (req, res) => {
+      const r = feedDetail(req.params.id, req.user)
+      if (!r) return res.status(404).json({ error: 'ไม่พบรายการนี้ (อาจถูกซ่อนหรือไม่มีแล้ว)' })
+      res.json(r)
+    })
+    api.get('/center/feed/:id/file/:n', sendAttachment)
     // ซ่อน / เลิกซ่อน เรื่องในหน้าความเคลื่อนไหว (แอดมิน) — ไม่ลบประวัติ
     api.post('/center/feed/hide', (req, res) => {
       if (req.user?.role !== 'admin') return res.status(403).json({ error: 'ซ่อนได้เฉพาะผู้ดูแลระบบ' })

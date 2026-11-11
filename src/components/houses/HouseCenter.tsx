@@ -8,7 +8,11 @@ import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
 import { LinkCodeBox, useLinkedContractors } from './ContractorLineLink'
 
-interface FeedPart { text: string; lines: string[] }
+interface FeedPart { text: string; lines: string[]; hid: number; photos: number; docs: number }
+interface DetailAttachment { n: number; name: string; image: boolean }
+type DetailTarget = { type: 'house'; tab: string; label: string } | { type: 'page'; page: string; label: string } | { type: 'approval'; status: string; label: string }
+interface DetailPart { hid: number; label: string; action: string; text: string; lines: string[]; exists: boolean; restricted: boolean; fields: { k: string; v: string }[]; attachments: DetailAttachment[]; target: DetailTarget | null }
+interface FeedDetailData { id: number; ts: string; user: string; house_code: string; house_name: string; flag: boolean; approval: { id: number; status: string } | null; parts: DetailPart[] }
 interface FeedItem { id: number; key: string; min_id: number; ts: string; user: string; house_code: string; house_name: string; cats: string[]; flag: boolean; approval: { id: number; status: string } | null; parts: FeedPart[] }
 interface Req { can_decide?: boolean; files?: number[]; id: number; ts: string; kind: string; house_code: string; house_name: string; title: string; lines: string[]; requested_by: string; requested_by_id: number; status: string; decided_by?: string; decided_at?: string; reason?: string; result?: string }
 interface Gate { key: string; label: string; group: string; on: boolean }
@@ -27,12 +31,21 @@ const thDay = (ts: string) => { const [y, m, d] = ts.slice(0, 10).split('-').map
 const hhmm = (ts: string) => ts.slice(11, 16)
 const STATUS_COLOR: Record<string, string> = { 'รออนุมัติ': C.amber, 'อนุมัติ': C.green, 'ตีกลับ': C.red, 'ยกเลิก': C.sub }
 
-export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number) => void }) {
+export default function HouseCenter({ onOpenHouse, onGoPage }: { onOpenHouse?: (id: number, tab?: string) => void; onGoPage?: (page: string) => void }) {
   const { user, data } = useApp()
   const [tab, setTab] = useState<'feed' | 'approvals' | 'gates' | 'cline'>('feed')
   const [linked, reloadLinked] = useLinkedContractors() // null = ไม่มีสิทธิ์จัดการช่าง LINE
   const [info, setInfo] = useState<Unread>({ unread: 0, pending: 0, canApprove: false, canCustomer: false })
   const [compose, setCompose] = useState<{ house: string; text: string; kind: 'update' | 'notice' } | null>(null)
+  const [detail, setDetail] = useState<FeedItem | null>(null) // วางนอกแท็บ — สลับแท็บแล้ว modal ไม่หาย
+  const [approvalStatus, setApprovalStatus] = useState('รออนุมัติ') // ตัวกรองแท็บรออนุมัติ (กดมาจากรายการความเคลื่อนไหวจะตั้งให้ตรงกับเรื่องนั้น)
+  const openHouseByCode = (code: string, houseTab?: string) => { const h = data.houses.find((x) => x.code === code); if (h && onOpenHouse) onOpenHouse(h.id, houseTab) }
+  const goTarget = (code: string, t: DetailTarget) => {
+    setDetail(null)
+    if (t.type === 'house') openHouseByCode(code, t.tab)
+    else if (t.type === 'page') onGoPage?.(t.page)
+    else { setApprovalStatus(t.status); setTab('approvals') }
+  }
   const loadInfo = useCallback(() => api.get<Unread>('/center/unread').then(setInfo).catch(() => {}), [])
   useEffect(() => { loadInfo() }, [loadInfo])
 
@@ -51,17 +64,114 @@ export default function HouseCenter({ onOpenHouse }: { onOpenHouse?: (id: number
           <div key={id} onClick={() => setTab(id)} style={{ padding: '9px 14px', fontSize: 14, cursor: 'pointer', color: tab === id ? C.brand : C.sub, fontWeight: tab === id ? 600 : 500, borderBottom: `2px solid ${tab === id ? C.brand : 'transparent'}`, marginBottom: -1 }}>{label}</div>
         ))}
       </div>
-      {tab === 'feed' && <Feed canCustomer={info.canCustomer} onCompose={setCompose} onSeen={loadInfo} onOpenHouse={(code) => { const h = data.houses.find((x) => x.code === code); if (h && onOpenHouse) onOpenHouse(h.id) }} />}
-      {tab === 'approvals' && <Approvals canApprove={info.canApprove} onChanged={loadInfo} />}
+      {tab === 'feed' && <Feed canCustomer={info.canCustomer} onCompose={setCompose} onSeen={loadInfo} onOpenHouse={(code) => openHouseByCode(code)} onOpenDetail={setDetail} />}
+      {tab === 'approvals' && <Approvals key={approvalStatus} initialStatus={approvalStatus} canApprove={info.canApprove} onChanged={loadInfo} />}
       {tab === 'gates' && <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}><TestModeSettings /><ConApproverSettings /><Gates /><AlertSettings /></div>}
       {tab === 'cline' && linked && <ContractorLine linked={linked} reload={reloadLinked} />}
       {compose && <ComposeModal init={compose} onClose={() => setCompose(null)} />}
+      {detail && <FeedDetailModal key={detail.id} item={detail} onClose={() => setDetail(null)} hasHouse={data.houses.some((h) => h.code === detail.house_code)} onOpenHouse={() => { const code = detail.house_code; setDetail(null); openHouseByCode(code) }} onGo={(t) => goTarget(detail.house_code, t)} />}
     </div>
   )
 }
 
+// ---------------- กดรายการ → ดูรายละเอียดเรื่อง + รูปแนบ ----------------
+function useAttachmentUrl(path: string) {
+  const [url, setUrl] = useState('')
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    let alive = true, made = ''
+    setUrl(''); setErr('')
+    api.blobUrl(path).then((u) => { if (alive) { made = u; setUrl(u) } else URL.revokeObjectURL(u) }).catch((e) => { if (alive) setErr((e as Error).message) })
+    return () => { alive = false; if (made) URL.revokeObjectURL(made) }
+  }, [path])
+  return { url, err }
+}
+function Thumb({ path, name, onClick }: { path: string; name: string; onClick: () => void }) {
+  const { url, err } = useAttachmentUrl(path)
+  return (
+    <button onClick={onClick} disabled={!url} title={err || name} style={{ width: 112, height: 112, padding: 0, border: `1px solid ${C.line}`, borderRadius: 9, background: C.bg, overflow: 'hidden', cursor: url ? 'zoom-in' : 'default', fontFamily: 'inherit', fontSize: 11.5, color: err ? C.red : C.sub }}>
+      {url ? <img src={url} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : err || 'กำลังโหลด…'}
+    </button>
+  )
+}
+function PhotoViewer({ photos, index, onIndex, onClose }: { photos: { path: string; name: string }[]; index: number; onIndex: (i: number) => void; onClose: () => void }) {
+  const cur = photos[index]
+  const { url, err } = useAttachmentUrl(cur.path)
+  const many = photos.length > 1
+  useEffect(() => {
+    if (!many) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') onIndex((index + 1) % photos.length)
+      else if (e.key === 'ArrowLeft') onIndex((index - 1 + photos.length) % photos.length)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [many, index, photos.length, onIndex])
+  return (
+    <ModalShell title={`รูป ${index + 1} / ${photos.length}`} sub={cur.name} width={960} zIndex={60} onClose={onClose} bodyStyle={{ padding: 12, background: '#1E2E3B', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 260 }}
+      footer={<>
+        {many && <button style={btn()} onClick={() => onIndex((index - 1 + photos.length) % photos.length)}>‹ รูปก่อนหน้า</button>}
+        {many && <button style={btn()} onClick={() => onIndex((index + 1) % photos.length)}>รูปถัดไป ›</button>}
+        <button style={btn()} onClick={() => api.openFile(cur.path).catch((e) => alert((e as Error).message))}>เปิดในแท็บใหม่</button>
+        <button style={btn(true)} onClick={onClose}>ปิด</button>
+      </>}>
+      {url ? <img src={url} alt={cur.name} style={{ maxWidth: '100%', maxHeight: '68vh', display: 'block', objectFit: 'contain' }} /> : <div style={{ color: err ? '#F2B8B2' : '#D8E3EC', fontSize: 13.5 }}>{err || 'กำลังโหลดรูป…'}</div>}
+    </ModalShell>
+  )
+}
+function FeedDetailModal({ item, hasHouse, onClose, onOpenHouse, onGo }: { item: FeedItem; hasHouse: boolean; onClose: () => void; onOpenHouse: () => void; onGo: (t: DetailTarget) => void }) {
+  const [d, setD] = useState<FeedDetailData | null>(null)
+  const [err, setErr] = useState('')
+  const [viewing, setViewing] = useState<number | null>(null)
+  useEffect(() => { api.get<FeedDetailData>(`/center/feed/${item.id}/detail`).then(setD).catch((e) => setErr((e as Error).message)) }, [item.id])
+  const fileUrl = (hid: number, n: number) => `/center/feed/${hid}/file/${n}`
+  // รูปซ้ำในเรื่องเดียวกัน (เช่น คำขอจากช่าง + รายงานจากช่าง ชี้ไฟล์เดียวกัน) ก็ยังดูเรียงต่อกันได้
+  const photos = useMemo(() => (d?.parts || []).flatMap((p) => p.attachments.filter((a) => a.image).map((a) => ({ path: fileUrl(p.hid, a.n), name: a.name }))), [d])
+  return (
+    <>
+      <ModalShell title={item.house_name} sub={`${thDay(item.ts)} ${hhmm(item.ts)} น. · โดย ${item.user}`} width={680} onClose={onClose}
+        footer={<>
+          <button style={btn()} onClick={onClose}>ปิด</button>
+          {hasHouse && <button style={btn(true)} onClick={onOpenHouse}>เปิดหน้าบ้านนี้</button>}
+        </>}>
+        {err && <div style={{ color: C.red, fontSize: 13.5 }}>{err}</div>}
+        {!d && !err && <div style={{ color: C.sub, fontSize: 13.5, padding: 20, textAlign: 'center' }}>กำลังโหลด…</div>}
+        {d && !d.parts.length && <div style={{ color: C.sub, fontSize: 13.5 }}>ไม่มีรายละเอียดของเรื่องนี้แล้ว</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {d?.parts.map((p) => (
+            <div key={p.hid} style={{ ...card, padding: 14 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: C.sub, marginBottom: 2 }}>{p.label}</div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>{p.text}</div>
+              {p.lines.length > 0 && <div style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>{p.lines.map((l, j) => <div key={j}>· {l}</div>)}</div>}
+              {p.restricted && <div style={{ fontSize: 13, color: C.amber, background: '#FDF3E1', borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>🔒 คุณไม่มีสิทธิ์เปิดรายละเอียดและไฟล์ของเรื่องนี้</div>}
+              {!p.restricted && !p.exists && <div style={{ fontSize: 13, color: C.sub, background: C.bg, borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>รายการนี้ถูกลบไปแล้ว — แสดงข้อมูลล่าสุดจากประวัติ (รูปและไฟล์เปิดไม่ได้แล้ว)</div>}
+              {p.fields.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(96px, max-content) 1fr', gap: '3px 12px', marginTop: 10, fontSize: 13 }}>
+                  {p.fields.map((f, j) => <div key={j} style={{ display: 'contents' }}><div style={{ color: C.sub }}>{f.k}</div><div style={{ color: C.ink, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{f.v}</div></div>)}
+                </div>
+              )}
+              {p.attachments.some((a) => a.image) && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                  {p.attachments.filter((a) => a.image).map((a) => <Thumb key={a.n} path={fileUrl(p.hid, a.n)} name={a.name} onClick={() => setViewing(photos.findIndex((x) => x.path === fileUrl(p.hid, a.n)))} />)}
+                </div>
+              )}
+              {p.attachments.some((a) => !a.image) && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                  {p.attachments.filter((a) => !a.image).map((a) => <button key={a.n} style={chip(false)} onClick={() => api.openFile(fileUrl(p.hid, a.n)).catch((e) => alert((e as Error).message))}>📎 {a.name}</button>)}
+                </div>
+              )}
+              {p.target && <div style={{ marginTop: 10 }}><button style={{ ...btn(), color: C.brand, borderColor: C.brand }} onClick={() => onGo(p.target as DetailTarget)}>ไปที่ “{p.target.label}” ›</button></div>}
+            </div>
+          ))}
+        </div>
+      </ModalShell>
+      {viewing != null && photos[viewing] && <PhotoViewer photos={photos} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
+    </>
+  )
+}
+
 // ---------------- ความเคลื่อนไหว ----------------
-function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: boolean; onCompose: (c: { house: string; text: string; kind: 'update' | 'notice' }) => void; onSeen: () => void; onOpenHouse: (code: string) => void }) {
+function Feed({ canCustomer, onCompose, onSeen, onOpenHouse, onOpenDetail }: { canCustomer: boolean; onCompose: (c: { house: string; text: string; kind: 'update' | 'notice' }) => void; onSeen: () => void; onOpenHouse: (code: string) => void; onOpenDetail: (it: FeedItem) => void }) {
   const { data, user } = useApp()
   const isAdmin = user?.role === 'admin' // ซ่อนเรื่อง (เช่น ข้อมูลทดสอบ) ได้เฉพาะแอดมิน — ไม่ลบประวัติ
   const canSelect = canCustomer || isAdmin
@@ -166,16 +276,18 @@ function Feed({ canCustomer, onCompose, onSeen, onOpenHouse }: { canCustomer: bo
             {its.map((it, i) => {
               const isNew = lastSeen > 0 && it.id > lastSeen
               return (
-                <div key={it.id} style={{ display: 'flex', gap: 10, padding: '10px 14px', borderTop: i ? `1px solid ${C.line}` : 'none', background: sel.has(it.id) ? '#EEF4F8' : isNew ? '#FFFBEA' : '#fff' }}>
-                  {canSelect && <input type="checkbox" checked={sel.has(it.id)} onChange={() => toggle(it)} style={{ marginTop: 3, width: 16, height: 16, cursor: 'pointer' }} title={isAdmin ? 'เลือกเพื่อส่งให้ลูกค้า / ซ่อน' : 'เลือกเพื่อส่งให้ลูกค้า'} />}
+                <div key={it.id} role="button" tabIndex={0} title="กดเพื่อดูรายละเอียดและรูป" onClick={() => { if (!window.getSelection()?.toString()) onOpenDetail(it) }} onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpenDetail(it) }} className={sel.has(it.id) || isNew ? undefined : 'hov-fafbfc'} style={{ display: 'flex', gap: 10, padding: '10px 14px', cursor: 'pointer', borderTop: i ? `1px solid ${C.line}` : 'none', ...(sel.has(it.id) ? { background: '#EEF4F8' } : isNew ? { background: '#FFFBEA' } : {}) }}>
+                  {canSelect && <input type="checkbox" checked={sel.has(it.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(it)} style={{ marginTop: 3, width: 16, height: 16, cursor: 'pointer' }} title={isAdmin ? 'เลือกเพื่อส่งให้ลูกค้า / ซ่อน' : 'เลือกเพื่อส่งให้ลูกค้า'} />}
                   <div style={{ width: 44, fontSize: 12.5, color: C.sub, flexShrink: 0, paddingTop: 1 }} className="num">{hhmm(it.ts)}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
-                      <span onClick={() => onOpenHouse(it.house_code)} style={{ fontSize: 13.5, fontWeight: 600, color: C.brand, cursor: 'pointer' }} title="เปิดบ้านนี้">{it.house_name}</span>
+                      <span onClick={(e) => { e.stopPropagation(); onOpenHouse(it.house_code) }} style={{ fontSize: 13.5, fontWeight: 600, color: C.brand, cursor: 'pointer' }} title="เปิดบ้านนี้">{it.house_name}</span>
                       {isNew && <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: C.red, borderRadius: 10, padding: '1px 7px' }}>ใหม่</span>}
                       {it.flag && <span style={{ fontSize: 11, fontWeight: 600, color: C.amber, background: '#FDF3E1', borderRadius: 10, padding: '1px 8px' }}>เพิ่ม-ลดงาน / เงิน</span>}
                       {it.approval && <span style={{ fontSize: 11, fontWeight: 600, color: STATUS_COLOR[it.approval.status] || C.sub, border: `1px solid ${STATUS_COLOR[it.approval.status] || C.line}`, borderRadius: 10, padding: '0 7px' }}>{it.approval.status}</span>}
-                      <span style={{ fontSize: 12.5, color: C.sub, marginLeft: 'auto' }}>โดย {it.user}</span>
+                      {it.parts.some((p) => p.photos) && <span style={{ fontSize: 11.5, fontWeight: 600, color: C.brand, background: '#E2E9EF', borderRadius: 10, padding: '1px 8px' }}>📷 {it.parts.reduce((n, p) => n + p.photos, 0)} รูป</span>}
+                      {it.parts.some((p) => p.docs) && <span style={{ fontSize: 11.5, fontWeight: 600, color: C.sub, background: '#EEF1F4', borderRadius: 10, padding: '1px 8px' }}>📎 {it.parts.reduce((n, p) => n + p.docs, 0)} ไฟล์</span>}
+                      <span style={{ fontSize: 12.5, color: C.sub, marginLeft: 'auto' }}>โดย {it.user} <span style={{ color: C.brand, fontWeight: 600 }}>›</span></span>
                     </div>
                     {it.parts.map((p, k) => (
                       <div key={k} style={{ fontSize: 13, color: C.ink, marginTop: k ? 4 : 0 }}>
@@ -268,9 +380,9 @@ function ComposeModal({ init, onClose }: { init: { house: string; text: string; 
 }
 
 // ---------------- รออนุมัติ ----------------
-function Approvals({ canApprove, onChanged }: { canApprove: boolean; onChanged: () => void }) {
+function Approvals({ canApprove, onChanged, initialStatus = 'รออนุมัติ' }: { canApprove: boolean; onChanged: () => void; initialStatus?: string }) {
   const { user } = useApp()
-  const [status, setStatus] = useState('รออนุมัติ')
+  const [status, setStatus] = useState(initialStatus)
   const [rows, setRows] = useState<Req[]>([])
   const [reason, setReason] = useState<Record<number, string>>({})
   const [busy, setBusy] = useState(0)

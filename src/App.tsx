@@ -409,7 +409,7 @@ export default function App() {
       case 'pms': return <Pms />
       case 'ceovoice': return <CeoVoice />
       case 'docreview': return <DocReview />
-      case 'center': return <HouseCenter onOpenHouse={openHouse} />
+      case 'center': return <HouseCenter onOpenHouse={openHouse} onGoPage={onNavigate} />
       case 'search': return <GlobalSearch initialQ={globalQ} onOpen={openSearchHit} onOpenHouse={(id, type) => openHouse(id, HOUSE_TAB[type] || 'installments')} />
       default: return null
     }
