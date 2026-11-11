@@ -7,7 +7,7 @@
     "dev": "concurrently -k -n api,web -c blue,green \"node server/index.js\" \"vite\"",
     "dev:web": "vite",
     "server": "node server/index.js",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && vite build -c vite.house.config.ts",
     "start": "npm run build && node server/index.js",
     "test": "node --test server/tests/*.test.mjs",
     "preview": "vite preview"

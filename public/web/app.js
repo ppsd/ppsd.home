@@ -156,18 +156,18 @@ P.designs = () => ({ nav: 'designs', t: 'แบบบ้าน', html: `${head('
 
 P.custom = () => ({ nav: 'designs', t: 'ออกแบบตามความต้องการ', html: `${head('แบบบ้าน', 'เลือกแบบบ้านที่ใช่', 'เลือกจากแบบสำเร็จรูป หรือให้สถาปนิกออกแบบตามความต้องการและงบของคุณ')}${designTabs('custom')}
 <div class="w sec"><div class="opts">${opt('แบบสำเร็จรูป', 'เลือกจากแบบที่มี ปรับเล็กน้อยได้ เห็นราคาเร็ว')}${opt('ออกแบบตามความต้องการ', 'สถาปนิกออกแบบใหม่ตามความต้องการ งบ และที่ดินของคุณ')}${opt('ค่าจองแบบ (ออกแบบตามความต้องการ)', '30,000–40,000 บาท')}</div>
-<div class="split" style="margin-top:24px"><form class="panel" id="cf" data-demo><fieldset><legend>งบและที่ดิน</legend><div class="two"><div class="f"><label for="cBud">งบค่าก่อสร้าง (บาท)</label><input id="cBud" type="number" min="500000" step="100000" value="4000000"></div><div class="f"><label for="cLand">ที่ดินที่มี (ตร.ว.)</label><input id="cLand" type="number" min="0" placeholder="ไม่ระบุ"></div></div></fieldset><hr>
+<div class="split" style="margin-top:24px"><form class="panel" id="cf" data-demo><fieldset><legend>งบและที่ดิน</legend><div class="two"><div class="f"><label for="cBud">งบค่าก่อสร้าง (บาท)</label><input id="cBud" type="number" min="500000" step="100000" value="4000000"></div><div class="f"><label for="cPkg">สเปค</label><select id="cPkg"><option value="18000">Premium</option><option value="23000">Elite</option></select></div></div><div class="two"><div class="f"><label for="cLw">ที่ดินหน้ากว้าง (ม.)</label><input id="cLw" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div><div class="f"><label for="cLd">ที่ดินลึก (ม.)</label><input id="cLd" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div></div></fieldset><hr>
 <fieldset><legend>บ้านที่อยากได้</legend><div class="two"><div class="f"><label for="cSty">สไตล์</label><select id="cSty"><option value="">ยังไม่แน่ใจ</option><option>คลาสสิก</option><option>โมเดิร์น</option><option>มินิมอล</option></select></div><div class="f"><label for="cFl">จำนวนชั้น</label><select id="cFl"><option value="">ยังไม่แน่ใจ</option><option value="1">ชั้นเดียว</option><option value="2">2 ชั้น</option><option value="3">3 ชั้น</option></select></div><div class="f"><label for="cBed">ห้องนอน</label><input id="cBed" type="number" min="1" max="10" value="3"></div><div class="f"><label for="cBath">ห้องน้ำ</label><input id="cBath" type="number" min="1" max="10" value="2"></div></div>
 <div class="f"><span class="lbl">สิ่งที่อยากได้ (เลือกได้หลายข้อ)</span>${['ห้องนอนชั้นล่างสำหรับผู้สูงอายุ', 'ห้องพระ', 'ครัวไทยแยกจากครัวฝรั่ง', 'ห้องทำงาน', 'ที่จอดรถ 2 คันขึ้นไป', 'สระว่ายน้ำ', 'ดูฮวงจุ้ยและทิศ'].map((t, i) => `<div class="chk"><label><input type="checkbox" name="cNeed" value="${t}"> ${t}</label></div>`).join('')}</div>
 <div class="f"><label for="cMore">เล่าเพิ่มเติม</label><textarea id="cMore" rows="3" placeholder="เช่น อยู่กัน 5 คน มีพ่อแม่สูงอายุ อยากได้บ้านไม่ร้อน"></textarea></div></fieldset><hr>
 <div class="two"><div class="f"><label for="cName">ชื่อเล่น</label><input id="cName" autocomplete="given-name"></div><div class="f"><label for="cTel">เบอร์โทร</label><input id="cTel" type="tel" autocomplete="tel"></div></div>${consent('cOk')}
-<button class="btn" type="submit">ส่งความต้องการให้สถาปนิก</button>${sent()}</form>
+<button class="btn" type="button" id="cGo" hidden>ออกแบบบ้านให้ดูเลย</button><button class="btn line" type="submit">ส่งความต้องการให้สถาปนิก</button>${sent()}</form>
 <section class="res" aria-live="polite"><div class="sum"><p class="msg" id="cMsg"></p><div class="nums"><div><div class="k">พื้นที่ใช้สอยที่งบนี้สร้างได้ (Premium)</div><div class="v" id="cAreaP"></div></div><div><div class="k">ถ้าเลือก Elite</div><div class="v" id="cAreaE"></div></div><div><div class="k">ผ่อนต่อเดือนโดยประมาณ</div><div class="v" id="cPay"></div></div></div></div>
-<h2 style="font-size:22px">ตัวอย่างบ้านในงบใกล้เคียง</h2><p class="fine">ใช้เป็นภาพตั้งต้นคุยกับสถาปนิกได้ แบบจริงจะออกแบบใหม่ให้เข้ากับความต้องการและที่ดินของคุณ</p><div class="cards" id="cEx"></div>
+<div id="cGen" class="panel" hidden aria-live="polite"></div><h2 style="font-size:22px">ตัวอย่างบ้านในงบใกล้เคียง</h2><p class="fine">ใช้เป็นภาพตั้งต้นคุยกับสถาปนิกได้ แบบจริงจะออกแบบใหม่ให้เข้ากับความต้องการและที่ดินของคุณ</p><div class="cards" id="cEx"></div>
 <p class="fine">อัตราต่อ ตร.ม. เป็นตัวอย่าง (Premium 18,000 · Elite 23,000 บาท) คิดผ่อนจากวงเงิน 90% ดอกเบี้ย 6% 30 ปี · ค่าจองแบบตามหนังสือจองแบบ</p></section></div></div>
 <div class="band"><div class="w sec"><h2>ออกแบบตามความต้องการ ทำอย่างไร</h2><ol class="proc">${[['บอกความต้องการและงบ', 'กรอกฟอร์มนี้ หรือนัดคุยกับสถาปนิก', 'ฟรี'], ['สำรวจที่ดิน', 'ทีมดูขนาด ทิศ แสง ลม', 'ฟรี'], ['จองแบบ', 'ชำระค่าจองแบบ', '30,000–40,000 บาท'], ['ออกแบบและแก้แบบ', 'ตรวจผังและภาพ 3D ปรับจนพอใจ', 'ตามสิทธิ์แก้แบบในหนังสือจอง'], ['สรุปราคาและเซ็นสัญญา', 'ยืนยันแบบ สเปค และงวดเงิน', 'ตามงวดในสัญญา']].map(([t, a, b]) => `<li><div><b>${t}</b><dl><div><dt>คุณต้องทำ: </dt><dd>${a}</dd></div><div><dt>เรื่องเงิน: </dt><dd>${b}</dd></div></dl></div></li>`).join('')}</ol><div><a class="btn" href="#contact">นัดคุยกับสถาปนิกฟรี</a></div></div></div>`, init() {
     const draw = () => {
-      const bud = num('cBud'), land = Number($('cLand').value) || Infinity;
+      const bud = num('cBud'), land = num('cLw') && num('cLd') ? num('cLw') * num('cLd') / 4 : Infinity;
       $('cAreaP').textContent = fmt(Math.floor(bud / 18000)) + ' ตร.ม.'; $('cAreaE').textContent = fmt(Math.floor(bud / 23000)) + ' ตร.ม.';
       $('cPay').textContent = fmt(up100(monthly(bud * 0.9, 6, 30))) + ' บาท';
       $('cMsg').innerHTML = `งบ <b>${mil(bud)} ล้านบาท</b> สร้างบ้านได้ประมาณ <b>${fmt(Math.floor(bud / 23000))}–${fmt(Math.floor(bud / 18000))} ตร.ม.</b> ขึ้นกับสเปคที่เลือก`;
@@ -176,8 +176,57 @@ P.custom = () => ({ nav: 'designs', t: 'ออกแบบตามความ�
       $('cEx').innerHTML = ex.map(x => designCard(x.d)).join('') || '<p>ยังไม่มีตัวอย่างที่ลงที่ดินขนาดนี้ได้ สถาปนิกออกแบบให้พอดีที่ดินได้</p>';
     };
     $('cf').addEventListener('input', draw); $('cf').addEventListener('change', draw); draw();
+    houseGen();
   }
 });
+
+/* ออกแบบบ้านอัตโนมัติ: ส่งความต้องการให้ AI จัดผังห้อง แล้ววาดแปลน + 3D (ใช้ได้เมื่อเว็บต่อกับระบบ PPSD) */
+const API = window.PPSD_API || (location.pathname.startsWith('/web/') ? '../api' : '/api');
+let viewerLoad;
+const loadViewer = () => viewerLoad || (viewerLoad = new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'house/viewer.js'; sc.onload = ok; sc.onerror = () => { viewerLoad = null; no(new Error('โหลดตัวแสดงแบบไม่ได้')); }; document.head.appendChild(sc); }));
+async function houseGen() {
+  let st;
+  try { st = await fetch(API + '/public/house-concept/status').then(r => r.ok ? r.json() : null); } catch { st = null; }
+  if (!st || !st.ok || !$('cGo')) return;
+  $('cGo').hidden = false;
+  $('cGo').onclick = async () => {
+    const box = $('cGen'), bud = num('cBud');
+    const needs = [...document.querySelectorAll('input[name=cNeed]:checked')].map(x => x.value);
+    const body = { floors: Number($('cFl').value) || 1, bedrooms: num('cBed'), bathrooms: num('cBath'), budget: bud, price_per_sqm: Number($('cPkg').value), land_w: num('cLw'), land_d: num('cLd'),
+      parking: needs.some(t => t.startsWith('ที่จอดรถ')) ? 2 : 1, style: $('cSty').value, extras: needs.filter(t => !t.startsWith('ที่จอดรถ')).join(', '), notes: $('cMore').value, name: $('cName').value, phone: $('cTel').value };
+    box.hidden = false; $('cGo').disabled = true;
+    box.innerHTML = '<h2 style="font-size:22px">กำลังออกแบบบ้านของคุณ</h2><p>ระบบกำลังจัดผังห้องตามความต้องการ ใช้เวลาประมาณ 1–3 นาที ไม่ต้องปิดหน้านี้</p>';
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const fail = t => { box.innerHTML = `<p class="msg">${t}</p><p class="fine">ส่งความต้องการให้สถาปนิกช่วยออกแบบได้ด้วยปุ่มด้านซ้าย</p>`; $('cGo').disabled = false; };
+    try {
+      const r = await fetch(API + '/public/house-concept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.text().then(t => JSON.parse(t)).catch(() => ({}));
+      if (!r.ok) return fail(j.error || 'ออกแบบไม่สำเร็จ ลองใหม่อีกครั้ง');
+      const t0 = Date.now();
+      for (;;) {
+        let x = j; // เว็บบน Cloudflare ตอบผลในคำตอบเดียว · เซิร์ฟเวอร์ออฟฟิศให้รหัสมาถามผลซ้ำ
+        if (j.token) {
+          await new Promise(ok => setTimeout(ok, 4000));
+          if (!document.body.contains(box)) return;
+          x = await fetch(API + '/public/house-concept/' + j.token).then(q => q.json()).catch(() => ({ status: 'working' }));
+        }
+        if (!document.body.contains(box)) return;
+        if (x.status === 'working') { if (Date.now() - t0 > 420000) return fail('ใช้เวลานานเกินไป ลองใหม่อีกครั้ง'); continue; }
+        if (x.status !== 'done') return fail(x.error || 'ออกแบบไม่สำเร็จ ลองใหม่อีกครั้ง');
+        const s = x.stats, title = `บ้าน ${x.layout.floors.length} ชั้น ${s.bedrooms} ห้องนอน ${s.bathrooms} ห้องน้ำ`;
+        box.innerHTML = `<h2 style="font-size:22px">แบบร่างบ้านของคุณ</h2>${x.layout.summary ? `<p>${x.layout.summary.replace(/[<>&]/g, '')}</p>` : ''}
+<div class="opts">${opt('พื้นที่รวม', fmt(s.total) + ' ตร.ม.')}${opt('ราคาประมาณ', mil(s.estimate) + ' ล้านบาท')}${opt('ห้องนอน · ห้องน้ำ', s.bedrooms + ' · ' + s.bathrooms)}</div>
+<div id="cView"></div><p class="fine">แบบร่างเบื้องต้นจากระบบอัตโนมัติ ไม่ใช่แบบก่อสร้าง ขนาดและราคาเป็นค่าประมาณ สถาปนิกจะปรับให้เหมาะกับที่ดินและงบจริงอีกครั้ง</p>
+<div class="row"><a class="btn" href="#contact">นัดคุยกับสถาปนิกเรื่องแบบนี้</a><button class="btn line" type="button" id="cAgain">ออกแบบใหม่</button></div>`;
+        $('cAgain').onclick = () => $('cGo').click();
+        $('cGo').disabled = false;
+        try { await loadViewer(); window.PPSDHouse.mount($('cView'), x.layout, title, body.land_w && body.land_d ? { w: body.land_w, d: body.land_d } : undefined); }
+        catch { $('cView').innerHTML = '<p class="fine">เปิดภาพแปลนและ 3D ไม่ได้ในเครื่องนี้</p>'; }
+        return;
+      }
+    } catch { fail('เชื่อมต่อระบบไม่ได้ ลองใหม่อีกครั้ง'); }
+  };
+}
 
 P.design = id => {
   const d = byId(id); if (!d) return P.designs();

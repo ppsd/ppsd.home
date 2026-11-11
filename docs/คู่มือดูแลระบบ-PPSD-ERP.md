@@ -248,3 +248,16 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 | backup | ไฟล์สำรองข้อมูล |
 | log | บันทึกการทำงานของโปรแกรม ใช้หาสาเหตุเวลาพัง |
 | Claude Code | Claude ที่ทำงานกับไฟล์ในเครื่องได้ — ใช้แก้โปรแกรมนี้ |
+
+## เว็บลูกค้าบน Cloudflare (ppsd-web.pages.dev)
+เว็บลูกค้าตัวอย่าง (`public/web/`) ขึ้นที่ Cloudflare Pages โปรเจกต์ `ppsd-web` แยกจากเซิร์ฟเวอร์ ERP
+
+**อัปเดตเว็บ:** `npm run build` แล้ว `node scripts/deploy-web.mjs` (ใช้ wrangler 4.20.0 เท่านั้น — รุ่นใหม่จะพยายามย้ายไป Workers)
+
+**ปุ่ม "ออกแบบบ้านให้ดูเลย" บน Cloudflare** — ตัวเรียก AI อยู่ที่ `cloudflare/ppsd-web/functions/` ใช้กติกาจัดผังห้องจาก `server/house-concept.js` (คัดลอกตอนอัปเดตเว็บ)
+- ตั้งกุญแจ AI: เข้า dash.cloudflare.com → Workers & Pages → `ppsd-web` → Settings → Variables and Secrets → Add → ชนิด **Secret** ชื่อ `ANTHROPIC_API_KEY` ใส่กุญแจ → Save → แล้วอัปเดตเว็บ 1 ครั้ง (หรือกด Retry deployment ล่าสุด) ให้ค่าใหม่มีผล
+- แนะนำสร้างกุญแจแยกสำหรับเว็บนี้ที่ console.anthropic.com และตั้งเพดานค่าใช้จ่ายต่อเดือนของ workspace นั้น — ถ้าหลุดหรือโดนใช้เกิน เสียหายไม่เกินเพดาน และลบกุญแจทิ้งได้โดยไม่กระทบ ERP
+- ค่าที่ปรับได้ (ชนิด Text ในหน้าเดียวกัน): `PER_IP` ครั้งต่อเครื่องต่อวัน (ค่าเริ่ม 3) · `PER_DAY` ครั้งรวมต่อวัน (40) · `AI_MODEL` (claude-sonnet-5-5) · ปิดปุ่มชั่วคราว: `HOUSE_OFF` = 1
+- ตัวนับจำนวนครั้งอยู่ใน KV `ppsd-web-limits` (ผูกใน `cloudflare/ppsd-web/wrangler.toml`)
+- แบบที่ลูกค้าสร้างบน Cloudflare ยังไม่เข้า ERP · ค่า AI ดูได้ที่ console.anthropic.com (ไม่อยู่ในหน้าสรุปค่า AI ของ ERP)
+

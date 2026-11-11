@@ -1,0 +1,10 @@
+# เว็บลูกค้าบน Cloudflare Pages (https://ppsd-web.pages.dev) — อัปเดตด้วย `node scripts/deploy-web.mjs` หลัง npm run build
+# ต้องใช้ wrangler 4.20.0 เท่านั้น (รุ่นใหม่จะพยายามย้ายไป Workers)
+name = "ppsd-web"
+pages_build_output_dir = "./web"
+compatibility_date = "2025-06-01"
+
+# ตัวนับจำนวนครั้ง "ออกแบบบ้านให้ดูทันที" ต่อวัน (ไม่ใช่ความลับ)
+[[kv_namespaces]]
+binding = "LIMITS"
+id = "1048758dc3e64a0790fb4cef835eabf4"

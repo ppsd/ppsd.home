@@ -25,6 +25,7 @@ import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
 import { createDocReview } from './doc-review.js'
 import { createHouseConcept } from './house-concept.js'
+import { createPublicHouseConcept } from './house-concept-public.js'
 import { lt, listLineTexts, setLineText } from './line-texts.js'
 import { createCenter, FIELD_LABEL as CENTER_FIELD_LABEL } from './center.js'
 import { createContractorBot } from './contractor-line.js'
@@ -2358,6 +2359,10 @@ api.get('/pub/doc/:kind/:id/:key.png', (req, res) => {
   res.send(row.png)
 })
 registerCrmPublic(api, () => crmDeps) // พอร์ทัลลูกค้า (ไม่ต้องล็อกอิน · ใช้โทเคนส่วนตัว)
+// เว็บลูกค้า: ออกแบบบ้านให้ดูทันที (ไม่ต้องล็อกอิน · จำกัดจำนวนครั้ง) — ตัวจริงสร้างด้านล่างหลังเตรียมตัวเรียก AI แล้ว · ดู server/house-concept-public.js
+let publicHouseConcept = null
+api.use('/public', (req, res, next) => (publicHouseConcept ? publicHouseConcept(req, res, next) : next()))
+
 api.use(requireAuth)
 
 // ===== สิทธิ์รายโมดูล: แอดมินปิดการเข้าถึงบางส่วนของระบบต่อผู้ใช้แต่ละคนได้ (users.deny_mods) =====
@@ -5576,6 +5581,7 @@ const docReview = createDocReview({ db, uploadsDir: () => uploadsDir, lineReply,
 docReview.register(api, { canWrite })
 // ออกแบบบ้านเบื้องต้น (AI จัดผังห้อง → หน้าเว็บวาดแปลน + 3D) — ดู server/house-concept.js
 createHouseConcept({ db, aiAsk, aiKey, AI_NO_KEY, extractJsonBlock, isManager, audit, nowTS }).register(api, { canWrite })
+publicHouseConcept = createPublicHouseConcept({ db, aiAsk, aiKey, extractJsonBlock, nowTS, clientIp })
 
 // ล้างข้อมูลจัดซื้อทั้งหมด (PR/PO) — เริ่มใช้ระบบใหม่ (ผู้ดูแลเท่านั้น) · ไม่แตะราคากลางวัสดุ/ผู้ขาย/รายจ่ายที่ไม่ได้มาจาก PO
 api.post('/procurement/clear', adminOnly, (req, res) => {
