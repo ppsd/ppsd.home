@@ -579,6 +579,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS doc_reviews (
   template_id INTEGER, template_name TEXT, text TEXT, status TEXT, error TEXT, summary TEXT, issues TEXT, model TEXT, cost_usd REAL, done_at TEXT
 )`)
 db.exec('CREATE INDEX IF NOT EXISTS idx_doc_reviews_by ON doc_reviews(by_id, id)')
+// ออกแบบบ้านเบื้องต้น (AI จัดผังห้อง → ระบบวาดแปลน + 3D) — ดู server/house-concept.js
+//  req = ความต้องการ (JSON) · layout = ผังห้องปัจจุบัน (JSON) · versions = ฉบับก่อนหน้า (JSON array ไม่เกิน 10) ไว้ย้อนกลับ
+db.exec(`CREATE TABLE IF NOT EXISTS house_concepts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT, by TEXT, by_id INTEGER, title TEXT, customer TEXT, req TEXT, layout TEXT, versions TEXT,
+  status TEXT, error TEXT, model TEXT, cost_usd REAL, updated TEXT, updated_by TEXT
+)`)
 // ชื่อเรียกอื่นของรายการมาตรฐาน — มาจาก "รวมรายการซ้ำ" หรือ "ถอดแบบ" (คนเลือกจับคู่ไว้) · nkey = ชื่อแบบตัดช่องว่าง/ตรา/สะกดต่าง
 db.exec(`CREATE TABLE IF NOT EXISTS material_aliases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

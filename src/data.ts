@@ -144,6 +144,7 @@ export const nav: NavDef[] = [
   { id: 'express', label: 'ส่งออกบัญชี (Express)', icon: 'M4 4h16v16H4z M4 9h16 M9 9v11 M12 13h5 M12 16h5', gate: 'finance' },
   { id: 'expenses', label: 'รายจ่าย', icon: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6' },
   { id: 'sales', label: 'เอกสารขาย', icon: 'M7 3h10l2 4v14H5V7z M9 12h6 M9 16h6' },
+  { id: 'concept', label: 'ออกแบบบ้านเบื้องต้น (AI)', icon: 'M3 21h18 M5 21V10l7-6 7 6v11 M9 21v-6h6v6 M12 4V2' },
   { id: 'procurement', label: 'จัดซื้อ / จ่าย', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01' },
   { id: 'matprices', label: 'ราคากลาง (วัสดุ / ค่าแรง)', icon: 'M3 5v6.6a2 2 0 00.6 1.4l8 8 7-7-8-8A2 2 0 009.6 3H4a1 1 0 00-1 1z M7.5 7.5h.01', gate: 'finance' },
   { id: 'stock', label: 'สต๊อกวัสดุ', icon: 'M21 8l-9-5-9 5v8l9 5 9-5z M3.3 8.4L12 13l8.7-4.6 M12 13v8.5' },
@@ -166,7 +167,7 @@ export const MODULES: { key: string; label: string; pages: string[] }[] = [
   { key: 'hr', label: 'บุคลากร / เงินเดือน', pages: ['hr'] }, // ไม่รวมหน้า 'ลงเวลา' — ตอกบัตร/ดูสลิปต้องใช้ได้เสมอ
   { key: 'accounting', label: 'บัญชี / รายจ่าย', pages: ['accounting', 'expenses', 'costing', 'express', 'docreg'] },
   { key: 'procurement', label: 'จัดซื้อ / จ่าย', pages: ['procurement', 'matprices', 'stock'] },
-  { key: 'sales', label: 'เอกสารขาย / ลูกค้า', pages: ['sales', 'customers'] },
+  { key: 'sales', label: 'เอกสารขาย / ลูกค้า', pages: ['sales', 'customers', 'concept'] },
   { key: 'reports', label: 'รายงาน', pages: ['reports'] },
 ]
 export const deniedPages = (deny?: string[]) => new Set((deny || []).flatMap((k) => MODULES.find((m) => m.key === k)?.pages || []))
@@ -182,7 +183,7 @@ export const navGroups: NavGroup[] = [
   { id: 'site', label: 'งานหน้างาน (ข้ามบ้าน)', icon: 'M3 21h18 M5 21V7l7-4 7 4v14 M9 21v-6h6v6', items: ['issues', 'workorders', 'qc', 'sitedocs', 'sitereport', 'safety', 'handover'] },
   { id: 'procure', label: 'จัดซื้อ', icon: 'M3 5h2l2.4 11h10l2-8H6 M9 20.5a.5 .5 0 100-.01 M17 20.5a.5 .5 0 100-.01', items: ['procurement', 'matprices', 'stock'] },
   { id: 'finance', label: 'บัญชี / การเงิน', icon: 'M3 3v18h18 M7 14l4-4 3 3 5-6', items: ['installments', 'sales', 'expenses', 'costing', 'accounting', 'express', 'docreg'] },
-  { id: 'central', label: 'ส่วนกลางบริษัท', icon: 'M16 19c0-2.8-2.2-5-5-5s-5 2.2-5 5 M11 11a3 3 0 100-6 3 3 0 000 6 M18 13.2a3 3 0 10-2.4-5.4', items: ['hr', 'time', 'customers', 'docreview', 'users'] },
+  { id: 'central', label: 'ส่วนกลางบริษัท', icon: 'M16 19c0-2.8-2.2-5-5-5s-5 2.2-5 5 M11 11a3 3 0 100-6 3 3 0 000 6 M18 13.2a3 3 0 10-2.4-5.4', items: ['hr', 'time', 'customers', 'concept', 'docreview', 'users'] },
 ]
 
 export const titles: Record<string, [string, string]> = {
@@ -203,6 +204,7 @@ export const titles: Record<string, [string, string]> = {
   safety: ['หน้างาน', 'ความปลอดภัย (PPE / Toolbox / JHA)'],
   handover: ['หน้างาน', 'ส่งมอบงาน / หนังสือรับรองผลงาน'],
   docreg: ['เอกสาร', 'ทะเบียนควบคุมเอกสาร (สัญญา/แบบ/สเปก)'],
+  concept: ['ลูกค้า', 'ออกแบบบ้านเบื้องต้น (AI) — แปลน + ภาพ 3D จากความต้องการลูกค้า'],
   docreview: ['เอกสาร', 'ตรวจเอกสาร (คำผิด · คำแปลก · ประโยคไม่เหมาะ · เทียบแบบมาตรฐาน)'],
   express: ['การเงิน', 'ส่งออกบัญชีเข้าโปรแกรม Express'],
   expenses: ['การเงิน', 'รายจ่าย'],

@@ -22,6 +22,7 @@ import Crm from './components/sales/Crm'
 import Reports from './components/dashboard/Reports'
 import Gantt from './components/dashboard/Gantt'
 import Sales from './components/sales/Sales'
+import HouseConcept from './components/sales/HouseConcept'
 import AuditCenter from './components/admin/AuditCenter'
 import BizIntel from './components/admin/BizIntel'
 import SiteDocs from './components/site/SiteDocs'
@@ -51,7 +52,7 @@ type Page =
   | 'dashboard' | 'houses' | 'houseDetail' | 'installments' | 'procurement' | 'matprices'
   | 'hr' | 'time' | 'issues' | 'expenses' | 'users' | 'stock'
   | 'customers' | 'gantt' | 'sales' | 'reports' | 'audit' | 'sitedocs' | 'qc' | 'sitereport' | 'costing' | 'pms' | 'workorders'
-  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview' | 'center' | 'search' | 'bizintel'
+  | 'safety' | 'handover' | 'docreg' | 'express' | 'qcsummary' | 'ceovoice' | 'accounting' | 'vault' | 'line' | 'docreview' | 'center' | 'search' | 'bizintel' | 'concept'
 
 const NAV_TO_PAGE: Record<string, Page> = {
   dashboard: 'dashboard', houses: 'houses', installments: 'installments',
@@ -61,7 +62,7 @@ const NAV_TO_PAGE: Record<string, Page> = {
   sitedocs: 'sitedocs', qc: 'qc', sitereport: 'sitereport',
   costing: 'costing', audit: 'audit', pms: 'pms', workorders: 'workorders',
   safety: 'safety', handover: 'handover', docreg: 'docreg', express: 'express', qcsummary: 'qcsummary',
-  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line', docreview: 'docreview', center: 'center', bizintel: 'bizintel',
+  ceovoice: 'ceovoice', accounting: 'accounting', vault: 'vault', line: 'line', docreview: 'docreview', center: 'center', bizintel: 'bizintel', concept: 'concept',
 }
 
 export default function App() {
@@ -391,6 +392,7 @@ export default function App() {
       case 'customers': return <Crm />
       case 'gantt': return <Gantt />
       case 'sales': return <Sales />
+      case 'concept': return <HouseConcept />
       case 'reports': return <Reports />
       case 'vault': return <Vault />
       case 'audit': return <AuditCenter />
