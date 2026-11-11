@@ -312,7 +312,7 @@ P.knowledge = () => ({ nav: 'home', t: 'ความรู้ก่อนสร�
 <div class="w sec" style="padding-top:8px"><div class="stack">${[['เตรียมเงินสร้างบ้านอย่างไร', 'นอกจากค่าก่อสร้าง ควรเผื่อเงินจอง เงินดาวน์ ค่าถมดิน รั้ว น้ำไฟ และเงินสำรองก่อนธนาคารเบิก', 'plan', 'วางแผนการเงิน'], ['เลือกวัสดุอย่างไรให้คุ้ม', 'ดูอายุการใช้งาน ความร้อน และการดูแลรักษา ไม่ดูแค่ราคาเริ่มต้น', 'spec', 'ดูสเปค'], ['ฮวงจุ้ยกับการวางผังบ้าน', 'เริ่มจากทิศหน้าที่ดิน แล้วดูตำแหน่งประตู เจ้าบ้าน และเตาไฟ ควบคู่กับแสงและลม', 'why', 'ดูแนวทางของเรา'], ['กันโดนทิ้งงานต้องดูอะไร', 'ดูผลงานจริง จ่ายเงินตามงานที่เสร็จ และมีเอกสารแบบกับสเปคชัดเจน', 'works-live', 'ดูบ้านที่กำลังสร้าง'], ['ก่อนปิดผนังควรถ่ายอะไร', 'ถ่ายท่อน้ำและสายไฟทุกผนัง เพื่อใช้ตอนเจาะหรือซ่อมในอนาคต', 'homebook', 'ดูสมุดบ้าน']].map(([t, b, h, l]) => `<details><summary>${t}</summary><div class="in"><p>${b}</p><div><a class="btn line" href="#${h}">${l}</a></div></div></details>`).join('')}</div></div>` });
 
 P.privacy = () => ({ nav: '', t: 'นโยบายความเป็นส่วนตัว', html: `${head('ช่วยเหลือ', 'นโยบายความเป็นส่วนตัว', 'ร่างนี้ต้องให้ผู้บริหารและฝ่ายกฎหมายตรวจก่อนใช้จริง')}
-<div class="w sec" style="padding-top:8px;max-width:800px"><div class="stack"><h3>ข้อมูลที่เก็บ</h3><p>ชื่อ เบอร์โทร และข้อมูลบ้านที่คุณกรอกในฟอร์ม เครื่องคำนวณรายได้และการเงินทำงานบนเครื่องของคุณ และไม่ส่งข้อมูลเข้าระบบหากคุณไม่กดส่ง</p><h3>ใช้ทำอะไร</h3><p>ติดต่อกลับ ประเมินราคา นัดหมาย และให้บริการหลังการขาย</p><h3>สิทธิ์ของคุณ</h3><p>ขอดู แก้ไข ลบข้อมูล หรือเลิกรับข่าวสารได้ โดยติดต่อ 089 999 2474</p><h3>ระยะเวลาการเก็บ</h3><p>รอผู้บริหารกำหนด</p></div></div>` });
+<div class="w sec" style="padding-top:8px;max-width:800px"><div class="stack"><h3>ข้อมูลที่เก็บ</h3><p>ชื่อ เบอร์โทร และข้อมูลบ้านที่คุณกรอกในฟอร์ม เครื่องคำนวณรายได้และการเงินทำงานบนเครื่องของคุณ และไม่ส่งข้อมูลเข้าระบบหากคุณไม่กดส่ง</p><h3>ใช้ทำอะไร</h3><p>ติดต่อกลับ ประเมินราคา นัดหมาย และให้บริการหลังการขาย</p><h3>สิทธิ์ของคุณ</h3><p>ขอดู แก้ไข ลบข้อมูล หรือเลิกรับข่าวสารได้ โดยติดต่อ 089 999 2474</p><h3>ระยะเวลาการเก็บ</h3><p>รอผู้บริหารกำหนด</p><h3>คุกกี้และข้อมูลในเบราว์เซอร์</h3><p>คุกกี้ที่จำเป็นใช้จำการตั้งค่าคุกกี้และรายการเอกสารที่คุณติ๊กไว้ คุกกี้วิเคราะห์และการตลาดจะเปิดใช้เมื่อคุณยินยอมเท่านั้น เว็บนี้โหลดฟอนต์จาก Google และรูปบางส่วนจาก Wix ซึ่งผู้ให้บริการอาจเห็นหมายเลขเครือข่ายของคุณ</p><div><button type="button" class="btn line" data-cookie-settings>ตั้งค่าคุกกี้</button></div></div></div>` });
 
 const STAGES = [['ฐานราก', 1], ['โครงสร้าง', 1], ['หลังคา', 1], ['ก่อผนัง ฉาบ', 0.4], ['งานระบบ', 0], ['ฝ้า พื้น กระเบื้อง', 0], ['สี สุขภัณฑ์', 0], ['ตรวจรับ', 0], ['ส่งมอบ', 0]];
 const PAYS = [['งวด 1 จองแบบและเซ็นสัญญา', 550000, 1], ['งวด 2 ฐานราก', 800000, 1], ['งวด 3 โครงสร้างและหลังคา', 1100000, 1], ['งวด 4 ก่อผนัง ฉาบ', 1000000, 0], ['งวด 5 งานระบบและพื้น', 1100000, 0], ['งวด 6 ส่งมอบ', 950000, 0]];
@@ -350,7 +350,9 @@ function route() {
   document.title = page.t + ' | PPSD บ้านดี ดวงดี';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === page.nav));
   $('mainNav').classList.remove('open'); $('menuBtn').setAttribute('aria-expanded', 'false');
-  window.scrollTo(0, 0);
+  document.querySelectorAll('[data-dock]').forEach(a => a.classList.toggle('on', a.dataset.dock.split(' ').includes(name)));
+  document.querySelector('.top').classList.remove('hide');
+  window.scrollTo({ top: 0, behavior: 'instant' });
   if (page.init) page.init();
   app.focus({ preventScroll: true });
 }
@@ -364,6 +366,34 @@ document.addEventListener('click', e => {
   if (b) { const s = b.parentElement.querySelector('[data-sent]'); if (s) s.hidden = false; }
 });
 $('menuBtn').addEventListener('click', () => { const o = $('mainNav').classList.toggle('open'); $('menuBtn').setAttribute('aria-expanded', String(o)); });
+
+/* แถบเมนูลอย: เลื่อนลงซ่อนเมนูบน เลื่อนขึ้นแสดง */
+let lastY = window.scrollY;
+window.addEventListener('scroll', () => {
+  const y = window.scrollY, top = document.querySelector('.top');
+  if ($('mainNav').classList.contains('open') || Math.abs(y - lastY) < 6) return;
+  top.classList.toggle('hide', y > lastY && y > 160);
+  lastY = y;
+}, { passive: true });
+
+/* ความยินยอมคุกกี้: สคริปต์วิเคราะห์หรือโฆษณาที่เพิ่มในอนาคตต้องเช็ก window.ppsdConsent ก่อนโหลด */
+const CK = 'ppsdCookieConsent';
+const consentNow = () => store.get(CK, null);
+function saveConsent(analytics, marketing) {
+  const c = { v: 1, analytics, marketing, at: new Date().toISOString() };
+  store.set(CK, c); window.ppsdConsent = c;
+  $('ckBar').hidden = true;
+  if ($('ckDlg').open) $('ckDlg').close();
+}
+function openCookie() { const c = consentNow(); $('ckA').checked = !!(c && c.analytics); $('ckM').checked = !!(c && c.marketing); $('ckDlg').showModal(); }
+window.ppsdConsent = consentNow();
+$('ckBar').hidden = !!window.ppsdConsent;
+$('ckYes').addEventListener('click', () => saveConsent(true, true));
+$('ckNo').addEventListener('click', () => saveConsent(false, false));
+$('ckSet').addEventListener('click', openCookie);
+$('ckSave').addEventListener('click', () => saveConsent($('ckA').checked, $('ckM').checked));
+$('ckCancel').addEventListener('click', () => $('ckDlg').close());
+document.addEventListener('click', e => { if (e.target.closest('[data-cookie-settings]')) openCookie(); });
 
 /* ผู้ช่วยตัวอย่าง: ค้นจากคำถามที่พบบ่อยเท่านั้น ไม่เดาคำตอบ */
 const addMsg = (t, u) => { const p = document.createElement('p'); if (u) p.className = 'u'; p.textContent = t; $('chatLog').appendChild(p); $('chatLog').scrollTop = 1e6; };
