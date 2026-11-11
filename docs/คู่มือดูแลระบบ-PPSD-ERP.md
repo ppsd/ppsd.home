@@ -267,4 +267,6 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 - โค้ด: `server/house-ideas.js` · ตาราง `house_ideas` (เก็บแค่ลิงก์รูปต้นทาง + เครดิต/ใบอนุญาต ไม่เก็บไฟล์รูป) · ชุดตั้งต้น `server/house-ideas-seed.json` ใส่ครั้งเดียวตอนเปิดระบบครั้งแรก (ค่า `house_ideas_seeded` ในตาราง settings — ลบทิ้งแล้วไม่กลับมาเอง)
 - รับรูปเฉพาะจาก Flickr / Wikimedia / Pexels และเฉพาะใบอนุญาตที่ใช้เชิงพาณิชย์ได้ (CC0, Public Domain, CC BY, CC BY-SA, Pexels License) — ห้ามแก้ให้รับรูปจากเว็บอื่น (เสี่ยงลิขสิทธิ์)
 - กุญแจ Pexels: แอดมินตั้งในหน้า (แท็บค้นรูป) → เก็บใน settings ชื่อ `pexels_key` · ประวัติเก็บเป็น *** · ถ้ากุญแจเสีย ระบบแจ้งให้ตั้งใหม่ · ไม่มีกุญแจ = ใช้ Openverse (ช้า ~15 วิ บางครั้งล่ม → ใช้ Wikimedia แทนเอง)
-- เว็บลูกค้าอ่านรูปที่ติ๊ก "แสดงบนเว็บลูกค้า" ได้ที่ `GET /api/public/house-ideas` (ไม่ต้องล็อกอิน · ไม่มีลิงก์โครงการดัง)
+- เว็บลูกค้าอ่านรูปที่ติ๊ก "แสดงบนเว็บลูกค้า" ได้ที่ `GET /api/public/house-ideas` (ไม่ต้องล็อกอิน · เฉพาะรายการที่มีรูป) → หน้า `/web/#ideas`
+- เว็บบน Cloudflare (ppsd-web.pages.dev) เรียก ERP ไม่ได้ → `node scripts/deploy-web.mjs` ส่งออกรายการจาก ERP ที่รันอยู่ (พอร์ต 3001) เป็นไฟล์ `ideas.json` ไปกับเว็บ (ถ้าเปิด ERP ไม่ได้ ใช้ชุดตั้งต้น) · พนักงานเพิ่ม/ลบไอเดียแล้ว ต้องอัปเดตเว็บใหม่ Cloudflare จึงเห็น
+- ลูกค้ากดชอบได้ 3 แบบ · ส่งรูปให้ AI ไม่เกิน 2 รูปต่อครั้ง (คุมค่าใช้จ่าย) · ฝั่งออฟฟิศ: `server/house-concept-public.js` · ฝั่ง Cloudflare: `cloudflare/ppsd-web/functions/api/public/house-concept.js` อ่าน `/ideas.json`

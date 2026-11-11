@@ -108,7 +108,7 @@ const designCard = d => `<a class="hcard" href="#design/${d.id}"><img loading="l
 const workCard = h => `<a class="hcard" href="#work/${h.id}"><img loading="lazy" src="${L(h.img)}" alt="${h.name}"><div class="b"><span class="tag ${h.status === 'live' ? 'live' : 'ok'}">${h.status === 'live' ? 'กำลังสร้าง · สัปดาห์ที่ ' + h.week : 'ส่งมอบแล้ว'}</span><h3>${h.name}</h3><div class="meta">ราชบุรี · ${h.type}${h.area ? ' · ' + h.area : ''}</div></div></a>`;
 const head = (crumb, title, lead) => `<div class="w sec tight"><div class="crumb">${crumb}</div><h1>${title}</h1>${lead ? `<p class="lead">${lead}</p>` : ''}</div>`;
 const tabs = (items, cur) => `<div class="w"><div class="tabs">${items.map(([h, t]) => `<a href="#${h}" class="${h === cur ? 'on' : ''}">${t}</a>`).join('')}</div></div>`;
-const designTabs = cur => tabs([['designs', 'แบบสำเร็จรูป'], ['custom', 'ออกแบบตามความต้องการ']], cur);
+const designTabs = cur => tabs([['designs', 'แบบสำเร็จรูป'], ['ideas', 'ห้องรวมไอเดีย'], ['custom', 'ออกแบบตามความต้องการ']], cur);
 const finTabs = cur => tabs([['loan', 'ประเมินสินเชื่อบ้าน'], ['plan', 'วางแผนการเงิน'], ['budget', 'งบรวมทั้งโครงการ']], cur);
 const workTabs = cur => tabs([['works', 'ผลงานสร้างจริง'], ['works-3d', 'ผลงานออกแบบ'], ['works-live', 'บ้านที่กำลังสร้าง']], cur);
 const homeTabs = cur => tabs([['myhome', 'บ้านของฉัน'], ['homebook', 'สมุดบ้านและแจ้งซ่อม']], cur);
@@ -156,6 +156,7 @@ P.designs = () => ({ nav: 'designs', t: 'แบบบ้าน', html: `${head('
 
 P.custom = () => ({ nav: 'designs', t: 'ออกแบบตามความต้องการ', html: `${head('แบบบ้าน', 'เลือกแบบบ้านที่ใช่', 'เลือกจากแบบสำเร็จรูป หรือให้สถาปนิกออกแบบตามความต้องการและงบของคุณ')}${designTabs('custom')}
 <div class="w sec"><div class="opts">${opt('แบบสำเร็จรูป', 'เลือกจากแบบที่มี ปรับเล็กน้อยได้ เห็นราคาเร็ว')}${opt('ออกแบบตามความต้องการ', 'สถาปนิกออกแบบใหม่ตามความต้องการ งบ และที่ดินของคุณ')}${opt('ค่าจองแบบ (ออกแบบตามความต้องการ)', '30,000–40,000 บาท')}</div>
+<div id="cLiked">${likedBox()}</div>
 <div class="split" style="margin-top:24px"><form class="panel" id="cf" data-demo><fieldset><legend>งบและที่ดิน</legend><div class="two"><div class="f"><label for="cBud">งบค่าก่อสร้าง (บาท)</label><input id="cBud" type="number" min="500000" step="100000" value="4000000"></div><div class="f"><label for="cPkg">สเปค</label><select id="cPkg"><option value="18000">Premium</option><option value="23000">Elite</option></select></div></div><div class="two"><div class="f"><label for="cLw">ที่ดินหน้ากว้าง (ม.)</label><input id="cLw" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div><div class="f"><label for="cLd">ที่ดินลึก (ม.)</label><input id="cLd" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div></div></fieldset><hr>
 <fieldset><legend>บ้านที่อยากได้</legend><div class="two"><div class="f"><label for="cSty">สไตล์</label><select id="cSty"><option value="">ยังไม่แน่ใจ</option><option>คลาสสิก</option><option>โมเดิร์น</option><option>มินิมอล</option></select></div><div class="f"><label for="cFl">จำนวนชั้น</label><select id="cFl"><option value="">ยังไม่แน่ใจ</option><option value="1">ชั้นเดียว</option><option value="2">2 ชั้น</option><option value="3">3 ชั้น</option></select></div><div class="f"><label for="cBed">ห้องนอน</label><input id="cBed" type="number" min="1" max="10" value="3"></div><div class="f"><label for="cBath">ห้องน้ำ</label><input id="cBath" type="number" min="1" max="10" value="2"></div></div>
 <div class="f"><span class="lbl">สิ่งที่อยากได้ (เลือกได้หลายข้อ)</span>${['ห้องนอนชั้นล่างสำหรับผู้สูงอายุ', 'ห้องพระ', 'ครัวไทยแยกจากครัวฝรั่ง', 'ห้องทำงาน', 'ที่จอดรถ 2 คันขึ้นไป', 'สระว่ายน้ำ', 'ดูฮวงจุ้ยและทิศ'].map((t, i) => `<div class="chk"><label><input type="checkbox" name="cNeed" value="${t}"> ${t}</label></div>`).join('')}</div>
@@ -193,7 +194,7 @@ async function houseGen() {
     const box = $('cGen'), bud = num('cBud');
     const needs = [...document.querySelectorAll('input[name=cNeed]:checked')].map(x => x.value);
     const body = { floors: Number($('cFl').value) || 1, bedrooms: num('cBed'), bathrooms: num('cBath'), budget: bud, price_per_sqm: Number($('cPkg').value), land_w: num('cLw'), land_d: num('cLd'),
-      parking: needs.some(t => t.startsWith('ที่จอดรถ')) ? 2 : 1, style: $('cSty').value, extras: needs.filter(t => !t.startsWith('ที่จอดรถ')).join(', '), notes: $('cMore').value, name: $('cName').value, phone: $('cTel').value };
+      parking: needs.some(t => t.startsWith('ที่จอดรถ')) ? 2 : 1, style: $('cSty').value, extras: needs.filter(t => !t.startsWith('ที่จอดรถ')).join(', '), notes: $('cMore').value, name: $('cName').value, phone: $('cTel').value, idea_ids: liked().map(x => x.id) };
     box.hidden = false; $('cGo').disabled = true;
     box.innerHTML = '<h2 style="font-size:22px">กำลังออกแบบบ้านของคุณ</h2><p>ระบบกำลังจัดผังห้องตามความต้องการ ใช้เวลาประมาณ 1–3 นาที ไม่ต้องปิดหน้านี้</p>';
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -227,6 +228,80 @@ async function houseGen() {
     } catch { fail('เชื่อมต่อระบบไม่ได้ ลองใหม่อีกครั้ง'); }
   };
 }
+
+/* ---------- ห้องรวมไอเดียแบบบ้าน ----------
+   ลูกค้าดูรูปบ้าน ภาพ 3D แปลน และบ้านดัง → กด ♡ ได้ 3 แบบ → หน้า "ออกแบบตามความต้องการ" ส่งแบบที่ชอบให้ระบบร่างแบบตาม
+   รายการมาจาก ERP (/api/public/house-ideas — พนักงานเลือกว่ารูปไหนแสดง) · บน Cloudflare ใช้ ideas.json ที่ส่งออกตอนอัปเดตเว็บ
+   รูปทั้งหมดเป็นรูปใบอนุญาตเสรี (CC0 / CC BY / CC BY-SA / Pexels) ระบบไม่ได้เก็บรูป แสดงจากต้นทาง + ต้องแสดงเครดิตใต้รูปเสมอ */
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ESC[c]);
+const safeUrl = u => /^https?:\/\//i.test(String(u || '')) ? esc(u) : '';
+const IDEA_KIND = { photo: 'รูปบ้าน', render: 'ภาพ 3D', plan: 'แปลนบ้าน', link: 'บ้านดังระดับโลก' };
+const MAX_LIKE = 3;
+let ideasLoad;
+const loadIdeas = () => ideasLoad || (ideasLoad = fetch(API + '/public/house-ideas').then(r => { if (!r.ok) throw new Error(); return r.json(); })
+  .catch(() => fetch('ideas.json').then(r => (r.ok ? r.json() : [])))
+  .catch(() => []).then(l => (Array.isArray(l) ? l.filter(x => x && x.id && x.thumb_url) : [])));
+const liked = () => { const v = store.get('ppsdIdeas', []); return Array.isArray(v) ? v : []; };
+const setLiked = v => store.set('ppsdIdeas', v.slice(0, MAX_LIKE));
+const credit = x => `<div class="credit">ภาพ: ${esc(x.author) || 'ไม่ระบุชื่อ'} · ${safeUrl(x.license_url) ? `<a href="${safeUrl(x.license_url)}" target="_blank" rel="noopener">${esc(x.license)}</a>` : esc(x.license)}${safeUrl(x.page_url) ? ` · <a href="${safeUrl(x.page_url)}" target="_blank" rel="noopener">ที่มา</a>` : ''}</div>`;
+const ideaImg = x => `<img loading="lazy" referrerpolicy="no-referrer" src="${safeUrl(x.thumb_url)}" alt="${esc(x.title)}">`;
+
+P.ideas = () => ({ nav: 'designs', t: 'ห้องรวมไอเดียแบบบ้าน', html: `${head('แบบบ้าน', 'ห้องรวมไอเดียแบบบ้าน', 'ดูรูปบ้าน ภาพ 3D แปลนบ้าน และบ้านดังทั้งไทยและต่างประเทศ กด ♡ แบบที่ชอบได้ ' + MAX_LIKE + ' แบบ แล้วให้ระบบร่างแบบบ้านของคุณตามแนวนั้น สถาปนิกจะเกลาให้อีกครั้ง')}${designTabs('ideas')}
+<div class="w sec"><div class="chips" id="iKind"></div><div class="chips" id="iStyle"></div><p class="meta" id="iCount" aria-live="polite">กำลังโหลดไอเดีย…</p><div class="igrid" id="iList"></div><div style="text-align:center"><button class="btn line" type="button" id="iMore" hidden>ดูเพิ่ม</button></div>
+<p class="fine">รูปเป็นของเจ้าของภาพตามเครดิตใต้รูป อนุญาตให้นำไปใช้ได้ (Creative Commons / Pexels) ใช้เป็นแรงบันดาลใจเท่านั้น ไม่ใช่ผลงานของ PPSD · กดที่รูปเพื่อดูหน้าต้นทาง</p></div>
+<div class="itray" id="iTray" hidden></div>`, async init() {
+    const all = await loadIdeas();
+    if (!$('iList')) return;
+    let kind = 'all', style = '', shown = 24;
+    const kinds = ['all', 'photo', 'render', 'plan', 'link'].filter(k => k === 'all' || all.some(x => x.kind === k));
+    const styles = [...new Set(all.map(x => x.style).filter(Boolean))];
+    const chips = () => {
+      $('iKind').innerHTML = kinds.map(k => `<button type="button" class="chip ${kind === k ? 'on' : ''}" data-k="${k}">${k === 'all' ? 'ทั้งหมด' : IDEA_KIND[k]} (${k === 'all' ? all.length : all.filter(x => x.kind === k).length})</button>`).join('');
+      $('iStyle').innerHTML = styles.length ? ['', ...styles].map(s => `<button type="button" class="chip ${style === s ? 'on' : ''}" data-s="${esc(s)}">${s ? esc(s) : 'ทุกสไตล์'}</button>`).join('') : '';
+    };
+    const tray = () => {
+      const l = liked(), t = $('iTray'); if (!t) return;
+      t.hidden = !l.length;
+      t.innerHTML = l.length ? `<b>♥ แบบที่ชอบ ${l.length}/${MAX_LIKE}</b>${l.map(ideaImg).join('')}<span style="flex:1"></span><button type="button" class="btn line" data-clear>ล้าง</button><a class="btn gold" href="#custom">ออกแบบบ้านจากแบบที่ชอบ</a>` : '';
+    };
+    const draw = () => {
+      const ids = new Set(liked().map(x => x.id));
+      const r = all.filter(x => (kind === 'all' || x.kind === kind) && (!style || x.style === style));
+      $('iCount').textContent = r.length ? `${r.length} ไอเดีย` : 'ยังไม่มีไอเดียในหมวดนี้';
+      $('iList').innerHTML = r.slice(0, shown).map(x => `<div class="icard ${ids.has(x.id) ? 'on' : ''}"><a class="ithumb ${x.kind === 'plan' ? 'plan' : ''}" href="${safeUrl(x.page_url) || safeUrl(x.image_url)}" target="_blank" rel="noopener">${ideaImg(x)}</a>
+<div class="b"><b>${esc(x.title)}</b><div class="meta">${[IDEA_KIND[x.kind], x.style, x.country].filter(Boolean).map(esc).join(' · ')}</div>${x.note ? `<div class="meta">${esc(x.note)}</div>` : ''}${credit(x)}
+<button type="button" class="heart" data-like="${x.id}" aria-pressed="${ids.has(x.id)}">${ids.has(x.id) ? '♥ ชอบแล้ว' : '♡ ชอบแบบนี้'}</button></div></div>`).join('');
+      $('iList').querySelectorAll('img').forEach(im => { im.onerror = () => { const c = im.closest('.icard'); if (c) c.remove(); }; });
+      $('iMore').hidden = r.length <= shown;
+      chips(); tray();
+    };
+    $('iKind').onclick = e => { const b = e.target.closest('[data-k]'); if (b) { kind = b.dataset.k; shown = 24; draw(); } };
+    $('iStyle').onclick = e => { const b = e.target.closest('[data-s]'); if (b) { style = b.dataset.s; shown = 24; draw(); } };
+    $('iMore').onclick = () => { shown += 24; draw(); };
+    $('iList').onclick = e => {
+      const b = e.target.closest('[data-like]'); if (!b) return;
+      const id = Number(b.dataset.like), l = liked();
+      if (l.some(x => x.id === id)) setLiked(l.filter(x => x.id !== id));
+      else if (l.length >= MAX_LIKE) { alert('เลือกได้ไม่เกิน ' + MAX_LIKE + ' แบบ เอาแบบเดิมออกก่อน'); return; }
+      else { const x = all.find(y => y.id === id); if (x) setLiked([...l, { id: x.id, kind: x.kind, title: x.title, thumb_url: x.thumb_url, author: x.author, license: x.license, license_url: x.license_url, page_url: x.page_url }]); }
+      draw();
+    };
+    $('iTray').onclick = e => { if (e.target.closest('[data-clear]')) { setLiked([]); draw(); } };
+    draw();
+  }
+});
+const likedBox = () => {
+  const l = liked();
+  return l.length ? `<div class="panel" style="margin-top:20px"><b style="font-weight:500">แบบที่คุณชอบ (${l.length}/${MAX_LIKE})</b><p class="fine" style="margin:4px 0 10px">ระบบจะใช้เป็นแนวทางตอนกด “ออกแบบบ้านให้ดูเลย” (ไม่ลอกแบบ) แล้วสถาปนิกจะเกลาให้อีกครั้ง</p>
+<div class="liked">${l.map(x => `<div class="it">${ideaImg(x)}<div class="credit">${esc(x.title)}</div><button type="button" class="link" data-unlike="${x.id}">เอาออก</button></div>`).join('')}</div><a class="link" href="#ideas">เลือกแบบเพิ่ม</a></div>`
+    : `<p class="fine" style="margin-top:16px">ยังนึกไม่ออกว่าชอบแบบไหน? <a href="#ideas">ดูห้องรวมไอเดียแบบบ้าน</a> แล้วกด ♡ แบบที่ชอบ</p>`;
+};
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-unlike]'); if (!b) return;
+  setLiked(liked().filter(x => x.id !== Number(b.dataset.unlike)));
+  if ($('cLiked')) $('cLiked').innerHTML = likedBox();
+});
 
 P.design = id => {
   const d = byId(id); if (!d) return P.designs();

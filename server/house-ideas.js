@@ -100,13 +100,16 @@ export function createHouseIdeas(d) {
     o.page_url = url(o.page_url); o.author = txt(o.author, 120); o.license = txt(o.license, 60); o.license_url = url(o.license_url)
     o.source = txt(o.source, 30); o.style = txt(o.style, 40); o.country = txt(o.country, 40); o.note = txt(o.note, 500)
     if (!o.title) return { error: 'ใส่ชื่อไอเดียก่อน' }
-    if (o.kind === 'link') { if (!o.page_url) return { error: 'ใส่ลิงก์หน้าเว็บต้นทาง (ขึ้นต้นด้วย http)' } }
+    if (o.kind === 'link') {
+      if (!o.page_url) return { error: 'ใส่ลิงก์หน้าเว็บต้นทาง (ขึ้นต้นด้วย http)' }
+      if (o.image_url && !FREE_LIC(o.license)) { o.image_url = ''; o.thumb_url = '' } // ลิงก์มีรูปได้เฉพาะรูปใบอนุญาตเสรี (เช่น รูปบ้านดังจาก Wikimedia)
+    }
     else {
       if (!o.image_url) return { error: 'ใช้ได้เฉพาะรูปจากแหล่งรูปฟรีที่ระบบค้นให้ (Flickr / Wikimedia)' }
       if (!FREE_LIC(o.license)) return { error: 'รูปนี้ไม่มีใบอนุญาตที่ใช้เชิงพาณิชย์ได้' }
     }
-    // เว็บลูกค้าแสดงได้เฉพาะรูปใบอนุญาตเสรี — ลิงก์โครงการดังไม่แสดง
-    o.public = o.kind !== 'link' && (o.public === true || o.public === 1 || o.public === '1') ? 1 : 0
+    // เว็บลูกค้าแสดงได้เฉพาะรายการที่มีรูปใบอนุญาตเสรี (ลิงก์ที่ไม่มีรูป เช่น เว็บนิตยสาร ไม่แสดง)
+    o.public = !!o.image_url && (o.public === true || o.public === 1 || o.public === '1') ? 1 : 0
     return { o }
   }
   const insert = (o, by, byId, seed = 0) => db.prepare(`INSERT INTO house_ideas (at,by,by_id,${COLS},used,seed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)`)
@@ -120,8 +123,17 @@ export function createHouseIdeas(d) {
     let list = []
     try { list = JSON.parse(readFileSync(f, 'utf8')) } catch { return }
     db.transaction(() => {
-      for (const x of list) { const c = clean({ ...x, public: x.kind === 'photo' || x.kind === 'render' ? 1 : 0 }); if (c.o) insert(c.o, 'ชุดตั้งต้น', null, 1) }
+      for (const x of list) { const c = clean({ ...x, public: 1 }); if (c.o) insert(c.o, 'ชุดตั้งต้น', null, 1) }
       db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').run('house_ideas_seeded', d.nowTS())
+    })()
+  }
+
+  // 11 พ.ย. 69: เจ้าของให้ลูกค้าเห็นทั้งรูป แปลน และบ้านดังบนเว็บ → เปิดแสดงชุดตั้งต้นที่มีรูปทั้งหมด (ครั้งเดียว)
+  function publicV2() {
+    if (getSetting('house_ideas_public_v2')) return
+    db.transaction(() => {
+      db.prepare("UPDATE house_ideas SET public=1 WHERE seed=1 AND image_url<>'' AND public=0").run()
+      db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').run('house_ideas_public_v2', d.nowTS())
     })()
   }
 
@@ -156,7 +168,7 @@ export function createHouseIdeas(d) {
 
   const cache = new Map() // คำค้น → { at, data }
   function register(api, { canWrite }) {
-    try { seed() } catch (e) { console.error('house_ideas seed:', e.message) }
+    try { seed(); publicV2() } catch (e) { console.error('house_ideas seed:', e.message) }
     api.get('/house-ideas', (_req, res) => {
       res.json(db.prepare("SELECT * FROM house_ideas ORDER BY seed ASC, CASE kind WHEN 'photo' THEN 0 WHEN 'render' THEN 1 WHEN 'plan' THEN 2 ELSE 3 END, CASE WHEN seed=1 THEN id ELSE -id END").all())
     })
@@ -233,7 +245,7 @@ export function createHouseIdeas(d) {
   const publicRouter = express.Router()
   publicRouter.get('/house-ideas', (_req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=300')
-    res.json(db.prepare('SELECT * FROM house_ideas WHERE public=1 ORDER BY used DESC, id DESC LIMIT 500').all().map(pub))
+    res.json(db.prepare("SELECT * FROM house_ideas WHERE public=1 AND image_url<>'' ORDER BY seed ASC, CASE kind WHEN 'photo' THEN 0 WHEN 'render' THEN 1 WHEN 'link' THEN 2 ELSE 3 END, CASE WHEN seed=1 THEN id ELSE -id END LIMIT 600").all().map((r) => ({ ...pub(r), country: r.country, note: r.note })))
   })
 
   return { register, publicRouter, ideaText, ideaMedia }

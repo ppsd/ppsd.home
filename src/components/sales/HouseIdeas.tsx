@@ -251,7 +251,7 @@ function EditIdea({ idea, onClose, onSaved }: { idea: Idea | null; onClose: () =
         <div><div style={lbl}>สไตล์</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{STYLES.map((s) => <button key={s} style={chip(f.style === s)} onClick={() => set('style', f.style === s ? '' : s)}>{s}</button>)}</div></div>
         <div><div style={lbl}>ประเทศ</div><input style={field} value={f.country} onChange={(e) => set('country', e.target.value)} placeholder="เช่น ไทย, ญี่ปุ่น" /></div>
         <div><div style={lbl}>จุดเด่น / หมายเหตุ (AI จะอ่านข้อความนี้ด้วย)</div><textarea style={{ ...field, minHeight: 60, resize: 'vertical' }} value={f.note} onChange={(e) => set('note', e.target.value)} placeholder="เช่น หลังคาแบนยื่นยาว ผนังไม้ระแนง ลานกลางบ้าน" /></div>
-        {!isLink && <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.public} onChange={(e) => set('public', e.target.checked)} /> แสดงรูปนี้บนเว็บลูกค้า (พร้อมเครดิตเจ้าของภาพ)</label>}
+        {(!isLink || !!idea?.image_url) && <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.public} onChange={(e) => set('public', e.target.checked)} /> แสดงรูปนี้บนเว็บลูกค้า (พร้อมเครดิตเจ้าของภาพ)</label>}
         {err && <div style={{ color: '#C24036', fontSize: 13 }}>{err}</div>}
       </div>
     </ModalShell>

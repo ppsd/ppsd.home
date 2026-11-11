@@ -26,13 +26,14 @@ export function createPublicHouseConcept(d) {
     for (const [k, j] of jobs) if (j.at < cut) jobs.delete(k)
   }
 
-  async function design(id, q) {
+  async function design(id, q, ideaIds = []) {
     running++
     try {
       let layout, model = null, cost = 0
       if (process.env.PPSD_AI_MOCK_HOUSECONCEPT) { layout = normalizeLayout(JSON.parse(process.env.PPSD_AI_MOCK_HOUSECONCEPT)); model = 'mock' }
       else {
-        const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า)', by: BY, prompt: buildPrompt(q, false), maxTokens: 32000, timeoutMs: 300000, effort: 'medium' })
+        const media = ideaIds.length && d.ideas ? await d.ideas.ideaMedia(ideaIds, { publicOnly: true, max: 2 }).catch(() => []) : []
+        const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า)', by: BY, media, prompt: buildPrompt(q, media.length > 0), maxTokens: 32000, timeoutMs: 300000, effort: 'medium' })
         model = ai.model || null; cost = ai.cost_usd || 0
         if (!ai.ok) throw new Error(ai.error || 'AI ไม่ตอบ')
         layout = normalizeLayout(d.extractJsonBlock(ai.text))
@@ -58,6 +59,10 @@ export function createPublicHouseConcept(d) {
     if (running >= RUNNING) return res.status(429).json({ error: 'ระบบกำลังออกแบบให้ลูกค้าท่านอื่นอยู่ ลองใหม่ในอีก 1–2 นาที' })
     const b = req.body || {}
     const q = normalizeReq({ ...b, images: undefined })
+    // แบบที่ลูกค้ากดชอบในห้องรวมไอเดีย (เฉพาะที่เปิดให้เว็บเห็น · ส่งรูปให้ AI ไม่เกิน 2 รูปเพื่อคุมค่าใช้จ่าย)
+    const ideaIds = Array.isArray(b.idea_ids) ? b.idea_ids.slice(0, 3) : []
+    const ideaNote = ideaIds.length && d.ideas ? d.ideas.ideaText(ideaIds, { publicOnly: true }) : ''
+    if (ideaNote) q.notes = txt([q.notes, ideaNote].filter(Boolean).join(' · '), 1500)
     if (!q.bedrooms && !q.bathrooms) return res.status(400).json({ error: 'ระบุจำนวนห้องนอนหรือห้องน้ำอย่างน้อย 1 อย่าง' })
     ipCount.set(key, (ipCount.get(key) || 0) + 1)
     const now = d.nowTS()
@@ -67,7 +72,7 @@ export function createPublicHouseConcept(d) {
       .run(now, BY, null, title, contact, JSON.stringify(q), null, '[]', 'กำลังออกแบบ', now, BY).lastInsertRowid
     const token = crypto.randomBytes(16).toString('hex')
     jobs.set(token, { id, at: Date.now() })
-    design(id, q)
+    design(id, q, ideaNote ? ideaIds : [])
     res.json({ token })
   })
   r.get('/house-concept/:token', (req, res) => {

@@ -5605,7 +5605,7 @@ const houseIdeas = createHouseIdeas({ db, isManager, audit, nowTS })
 houseIdeas.register(api, { canWrite })
 publicHouseIdeas = houseIdeas.publicRouter
 createHouseConcept({ db, aiAsk, aiKey, AI_NO_KEY, extractJsonBlock, isManager, audit, nowTS, ideas: houseIdeas }).register(api, { canWrite })
-publicHouseConcept = createPublicHouseConcept({ db, aiAsk, aiKey, extractJsonBlock, nowTS, clientIp })
+publicHouseConcept = createPublicHouseConcept({ db, aiAsk, aiKey, extractJsonBlock, nowTS, clientIp, ideas: houseIdeas })
 
 // ล้างข้อมูลจัดซื้อทั้งหมด (PR/PO) — เริ่มใช้ระบบใหม่ (ผู้ดูแลเท่านั้น) · ไม่แตะราคากลางวัสดุ/ผู้ขาย/รายจ่ายที่ไม่ได้มาจาก PO
 api.post('/procurement/clear', adminOnly, (req, res) => {

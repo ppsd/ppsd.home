@@ -80,6 +80,12 @@ test('เพิ่ม/แก้/ลบไอเดีย · ตรวจใบ�
   const after1 = (await call('GET', '/house-ideas')).data.find((x) => x.id === p.data.id)
   assert.equal(after1.used, 1)
 
+  // เว็บลูกค้า: ส่งแบบที่ชอบ — ใช้ได้เฉพาะไอเดียที่เปิดให้เว็บเห็น (ลิงก์ที่ไม่มีรูปถูกข้าม)
+  const pc = await call('POST', '/public/house-concept', { floors: 1, bedrooms: 2, bathrooms: 1, idea_ids: [p.data.id, l.data.id] }, false)
+  assert.equal(pc.status, 200)
+  const last = (await call('GET', '/house-concepts')).data[0]
+  assert.match(last.req.notes, /Modern house/)
+  assert.doesNotMatch(last.req.notes, /บ้านดังตัวอย่าง/)
   assert.equal((await call('DELETE', '/house-ideas/' + l.data.id)).status, 200)
   assert.ok(!(await call('GET', '/house-ideas')).data.some((x) => x.id === l.data.id))
 })
