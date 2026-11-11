@@ -24,7 +24,9 @@ const DESIGNS = [
   D(9, 'โมเดิร์น', 2, 0, 'โมเดิร์น 2 ชั้น ระแนงไม้', 5900000, 270, 85, 'ห้องนอนชั้นล่าง 1 ห้อง หน้าบ้านตกแต่งไม้ระแนงโทนน้ำตาล เหมาะกับบ้านที่มีผู้สูงอายุ', ['385c97db90fe461db5a5fce00c5ee9dc~mv2.jpg', 'dc50aaf9231a4e00bb012a8dde035351~mv2.jpg', '319cb8965b5a43b7bd53f3700183c04d~mv2.jpg', '7369d027cae6490ba075521298fea562~mv2.jpg']),
   D(10, 'มินิมอล', 1, 3, 'มินิมอล ชั้นเดียว สไตล์ญี่ปุ่น', 3600000, 170, 70, 'โทนสีขาวอบอุ่น 3 ห้องนอน หลังคาจั่ว หน้าต่างทรงกลม เหมาะกับครอบครัวขนาดกลางที่เลี้ยงแมว', ['2a6f2b0e416e4a56857a86b34ec609cc~mv2.jpg', '899e8d8914e245a79676d5a880472c62~mv2.jpg', 'cd826f8539374d78ad0f920a9cbfa88d~mv2.jpg', 'f35c3c2e4a7d49bb822277a1c1dfd9be~mv2.jpg']),
   D(11, 'มินิมอล', 0, 0, 'มินิมอล No.02', 2900000, 150, 60, 'เน้นโครงสร้างแข็งแรงตั้งแต่เริ่มสร้าง ควบคุมโดยช่างผู้มีประสบการณ์', ['cd907ebcae3f49168e02e1f75d15e71f~mv2.jpg', '84619220bd0e4d82a35f14dffee97f66~mv2.jpg', 'c415b15afbcb4303956f0c2312405a7a~mv2.jpg', '7ee19d044b1d49fbb0d208e1a28437ea~mv2.jpg']),
-  D(12, 'มินิมอล', 2, 2, 'มินิมอล 2 ชั้น ระแนงขาว', 3400000, 150, 55, '2 ห้องนอนชั้นบน หลังคาจั่ว ไม้ระแนงสีขาว ที่จอดรถ 2 คัน มีพื้นที่รอบบ้านให้เด็กทำกิจกรรม', ['6c9c3544ffe64b1e9c33e90179fcca16~mv2.jpg', '82faf1e61f7f498ea27749db39e0a8cc~mv2.jpg', '5559394387764169af06349b2fcf4329~mv2.jpg', '878e4bc5442d49baa06edd576f337f29~mv2.jpg'])
+  D(12, 'มินิมอล', 2, 2, 'มินิมอล 2 ชั้น ระแนงขาว', 3400000, 150, 55, '2 ห้องนอนชั้นบน หลังคาจั่ว ไม้ระแนงสีขาว ที่จอดรถ 2 คัน มีพื้นที่รอบบ้านให้เด็กทำกิจกรรม', ['6c9c3544ffe64b1e9c33e90179fcca16~mv2.jpg', '82faf1e61f7f498ea27749db39e0a8cc~mv2.jpg', '5559394387764169af06349b2fcf4329~mv2.jpg', '878e4bc5442d49baa06edd576f337f29~mv2.jpg']),
+  /* แบบที่ PPSD ร่างเอง (ระบบออกแบบบ้าน AI + คนตรวจ) — ไม่มีรูปถ่าย ใช้ภาพ 3D หมุนดูได้และแปลนจากไฟล์ plans/ · แหล่งแนวทางเก็บใน ERP ห้องรวมไอเดีย (ไม่แสดงบนเว็บ) */
+  { ...D(13, 'ไทยร่วมสมัย', 2, 2, 'ไทยร่วมสมัย 2 ชั้น หลังคาปั้นหยา', 2900000, 159, 49, 'ลงที่ดินหน้าแคบได้ (กว้าง 11.3 ม. ลึก 17.2 ม.) ชั้นล่างเป็นห้องนั่งเล่นโถงสูง ห้องทานข้าว ครัวไทยแยกหลังบ้าน และห้องอเนกประสงค์ที่ปรับเป็นห้องนอนผู้สูงอายุได้ ชั้นบนมีห้องนอนใหญ่พร้อมห้องน้ำในตัว ห้องนอนที่ 2 และระเบียง รวม 2 ห้องนอน 3 ห้องน้ำ ช่องเปิดเรียงแนวเหนือ-ใต้ให้ลมผ่าน ชายคายื่นกันแดดฝน', []), plan: 'plans/ppsd-13.json' }
 ];
 const floorText = d => d.floors ? (d.floors === 1 ? 'ชั้นเดียว' : d.floors + ' ชั้น') : 'รอข้อมูลจำนวนชั้น';
 const bedText = d => d.beds ? ' · ' + d.beds + ' ห้องนอน' : '';
@@ -104,7 +106,8 @@ function cashPlan(i) {
 }
 
 /* ---------- ชิ้นส่วนหน้า ---------- */
-const designCard = d => `<a class="hcard" href="#design/${d.id}"><img loading="lazy" src="${wx(d.imgs[0], 640, 430)}" alt="${d.name}"><div class="b"><h3>${d.name}</h3><div class="meta">${floorText(d)}${bedText(d)} · ${d.area} ตร.ม.</div><div class="price">ประมาณ ${mil(d.price)} ล้านบาท</div></div></a>`;
+const planCover = () => `<div class="pcover"><svg viewBox="0 0 120 80" aria-hidden="true"><path d="M10 42 L60 14 L110 42 Z" fill="#4A2C20"/><rect x="22" y="42" width="76" height="30" fill="#EFE6D2" stroke="#1F3550"/><rect x="30" y="50" width="13" height="10" fill="#9FC3DA"/><rect x="77" y="50" width="13" height="10" fill="#9FC3DA"/><rect x="54" y="54" width="12" height="18" fill="#8A5A3C"/></svg><span>ภาพ 3D หมุนดูได้ + แปลนทุกชั้น</span></div>`;
+const designCard = d => `<a class="hcard" href="#design/${d.id}">${d.plan ? planCover() : `<img loading="lazy" src="${wx(d.imgs[0], 640, 430)}" alt="${d.name}">`}<div class="b"><h3>${d.name}</h3><div class="meta">${floorText(d)}${bedText(d)} · ${d.area} ตร.ม.</div><div class="price">ประมาณ ${mil(d.price)} ล้านบาท</div></div></a>`;
 const workCard = h => `<a class="hcard" href="#work/${h.id}"><img loading="lazy" src="${L(h.img)}" alt="${h.name}"><div class="b"><span class="tag ${h.status === 'live' ? 'live' : 'ok'}">${h.status === 'live' ? 'กำลังสร้าง · สัปดาห์ที่ ' + h.week : 'ส่งมอบแล้ว'}</span><h3>${h.name}</h3><div class="meta">ราชบุรี · ${h.type}${h.area ? ' · ' + h.area : ''}</div></div></a>`;
 const head = (crumb, title, lead) => `<div class="w sec tight"><div class="crumb">${crumb}</div><h1>${title}</h1>${lead ? `<p class="lead">${lead}</p>` : ''}</div>`;
 const tabs = (items, cur) => `<div class="w"><div class="tabs">${items.map(([h, t]) => `<a href="#${h}" class="${h === cur ? 'on' : ''}">${t}</a>`).join('')}</div></div>`;
@@ -137,7 +140,7 @@ P.home = () => ({ nav: 'home', t: 'หน้าแรก', html: `
 
 P.designs = () => ({ nav: 'designs', t: 'แบบบ้าน', html: `${head('แบบบ้าน', 'เลือกแบบบ้านที่ใช่', 'เลือกจากแบบสำเร็จรูป หรือให้สถาปนิกออกแบบตามความต้องการและงบของคุณ')}${designTabs('designs')}
 <div class="w sec"><form class="filters" id="fl" onsubmit="return false">
-<div class="f"><label for="fStyle">สไตล์</label><select id="fStyle"><option value="">ทั้งหมด</option><option>คลาสสิก</option><option>โมเดิร์น</option><option>มินิมอล</option></select></div>
+<div class="f"><label for="fStyle">สไตล์</label><select id="fStyle"><option value="">ทั้งหมด</option><option>คลาสสิก</option><option>โมเดิร์น</option><option>มินิมอล</option><option>ไทยร่วมสมัย</option></select></div>
 <div class="f"><label for="fFloor">จำนวนชั้น</label><select id="fFloor"><option value="">ทั้งหมด</option><option value="1">ชั้นเดียว</option><option value="2">2 ชั้น</option></select></div>
 <div class="f"><label for="fBudget">งบไม่เกิน</label><select id="fBudget"><option value="">ไม่จำกัด</option><option value="3000000">3 ล้านบาท</option><option value="4000000">4 ล้านบาท</option><option value="6000000">6 ล้านบาท</option><option value="10000000">10 ล้านบาท</option></select></div>
 <div class="f"><label for="fLand">ที่ดินที่มี (ตร.ว.)</label><input id="fLand" type="number" min="0" placeholder="ไม่ระบุ"></div>
@@ -306,10 +309,14 @@ document.addEventListener('click', e => {
 P.design = id => {
   const d = byId(id); if (!d) return P.designs();
   return { nav: 'designs', t: d.name, html: `${head('<a href="#designs">แบบบ้าน</a> › ' + d.style, d.name, d.desc)}
-<div class="w sec" style="padding-top:10px"><img class="bigimg" src="${wx(d.imgs[0], 1200, 720)}" alt="${d.name}">
+<div class="w sec" style="padding-top:10px">${d.plan ? '<div id="dView" class="panel">กำลังโหลดภาพ 3D และแปลน…</div><p class="fine">ลากเพื่อหมุนดูรอบบ้าน กดปุ่มด้านบนเพื่อดูแปลนแต่ละชั้นพร้อมขนาดห้อง · ปรับห้องและขนาดตามที่ดินได้ตอนออกแบบจริง</p>' : `<img class="bigimg" src="${wx(d.imgs[0], 1200, 720)}" alt="${d.name}">`}
 <div class="facts"><div><b>${floorText(d)}</b><span>จำนวนชั้น</span></div><div><b>${d.area} ตร.ม.</b><span>พื้นที่ใช้สอย (ตัวอย่าง)</span></div><div><b>${d.land} ตร.ว.</b><span>ที่ดินขั้นต่ำ (ตัวอย่าง)</span></div><div><b>${mil(d.price)} ล้านบาท</b><span>ราคาประมาณ (ตัวอย่าง)</span></div><div><b>${fmt(up100(monthly(d.price * 0.9, 6, 30)))}</b><span>ผ่อนต่อเดือนโดยประมาณ</span></div></div>
 <div class="gal">${d.imgs.slice(1).map(x => `<img loading="lazy" src="${wx(x, 640, 480)}" alt="${d.name}">`).join('')}</div>
-<div class="row"><a class="btn" href="#estimate/${d.id}">อยากได้แบบนี้ ประเมินราคาให้หน่อย</a><a class="btn line" href="#loan/${d.id}">เช็กว่าผ่อนไหวไหม</a></div></div>` };
+<div class="row"><a class="btn" href="#estimate/${d.id}">อยากได้แบบนี้ ประเมินราคาให้หน่อย</a><a class="btn line" href="#loan/${d.id}">เช็กว่าผ่อนไหวไหม</a></div></div>`, init() {
+    if (!d.plan) return;
+    fetch(d.plan).then(r => r.json()).then(async x => { await loadViewer(); window.PPSDHouse.mount($('dView'), x.layout, d.name); })
+      .catch(() => { const v = $('dView'); if (v) v.textContent = 'โหลดภาพ 3D ไม่สำเร็จ ลองรีเฟรชหน้า'; });
+  } };
 };
 
 const workList = (crumb, title, lead, tab, list, pick) => ({ nav: 'works', t: title, html: `${head('ผลงาน', title, lead)}${workTabs(tab)}<div class="w sec"><div class="cards">${list.map(pick).join('')}</div></div>` });
