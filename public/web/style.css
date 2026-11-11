@@ -1,5 +1,5 @@
 /* เว็บลูกค้า PPSD: โทนกรมท่า-ทอง · ข้อความอยู่บนพื้นทึบเสมอ ไม่วางบนรูป · แต่ละช่วงบอกเรื่องเดียว */
-:root{
+:root{--wmax:1440px;
   --navy:#0E2A47;--navy2:#163A5F;--gold:#8F6B1F;--gold2:#E9C977;
   --ivory:#F6F1E6;--sand:#EFE7D3;--card:#FFFDF8;--line:#E3D3A8;--ink:#1C2730;--mute:#5F5647;
   --ok:#22683F;--ok-bg:#E2F1E6;--warn:#9A3D12;--warn-bg:#FBE8DC;
@@ -13,11 +13,11 @@ body{margin:0;background:var(--ivory);color:var(--ink);font-family:var(--font);f
 img{max-width:100%;display:block}
 a{color:var(--navy2)}
 main:focus{outline:0}
-.w{max-width:1140px;margin-inline:auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.w{max-width:var(--wmax);margin-inline:auto;padding-left:max(clamp(16px,2.5vw,40px),env(safe-area-inset-left,0px));padding-right:max(clamp(16px,2.5vw,40px),env(safe-area-inset-right,0px))}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .proto{background:var(--gold2);color:var(--navy);font-size:13.5px;font-weight:400}
 .proto .w{padding-block:6px}
-.top{background:var(--navy);color:#fff;position:sticky;top:calc(env(safe-area-inset-top,0px) + 10px);z-index:30;width:min(1140px,calc(100% - 24px));margin:10px auto 0;border-radius:14px;box-shadow:0 6px 20px rgba(14,42,71,.28);transition:transform .25s ease}
+.top{background:var(--navy);color:#fff;position:sticky;top:calc(env(safe-area-inset-top,0px) + 10px);z-index:30;width:min(var(--wmax),calc(100% - 24px));margin:10px auto 0;border-radius:14px;box-shadow:0 6px 20px rgba(14,42,71,.28);transition:transform .25s ease}
 .top.hide{transform:translateY(calc(-100% - 24px))}
 .top .w{max-width:none;padding-left:18px;padding-right:18px}
 .bar{display:flex;align-items:center;gap:12px 28px;padding-block:12px;flex-wrap:wrap}
@@ -64,7 +64,7 @@ p{margin:0}
 .btn.block{display:block;width:100%}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .link{font-weight:400;color:var(--navy2)}
-.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);background:var(--navy);width:min(1140px,calc(100% - 24px));margin:12px auto 0;border-radius:14px;overflow:hidden}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);background:var(--navy);width:min(var(--wmax),calc(100% - 24px));margin:12px auto 0;border-radius:14px;overflow:hidden}
 .hero .txt{padding:clamp(32px,6vw,76px) max(20px,5vw);display:grid;gap:16px;align-content:center;color:#fff}
 .hero h1{color:#fff;font-size:clamp(36px,6vw,60px)}
 .hero p{font-size:clamp(17px,2vw,20px);color:#E2E8EF;max-width:30ch}
@@ -244,7 +244,7 @@ details .in{padding:0 14px 14px;display:grid;gap:10px;color:var(--ink)}
 .credit{font-size:12px;color:var(--mute);line-height:1.45;overflow-wrap:anywhere}
 .heart{margin-top:auto;align-self:flex-start;border:1px solid var(--navy);background:transparent;color:var(--navy);border-radius:6px;padding:5px 12px;font:inherit;font-size:14px;cursor:pointer}
 .icard.on .heart{background:var(--gold2);border-color:var(--gold2)}
-.itray{position:sticky;bottom:calc(88px + env(safe-area-inset-bottom,0px));padding-right:122px !important;z-index:20;width:min(1140px,calc(100% - 24px));margin:0 auto 12px;background:var(--navy);color:#fff;border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 6px 20px rgba(14,42,71,.3)}
+.itray{position:sticky;bottom:calc(88px + env(safe-area-inset-bottom,0px));padding-right:122px !important;z-index:20;width:min(var(--wmax),calc(100% - 24px));margin:0 auto 12px;background:var(--navy);color:#fff;border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 6px 20px rgba(14,42,71,.3)}
 .itray img{width:56px;height:42px;object-fit:cover;border-radius:6px}
 .itray .btn{padding:8px 16px}
 .itray .btn.line{color:#fff;box-shadow:inset 0 0 0 1px #fff}
