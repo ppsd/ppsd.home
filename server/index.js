@@ -9342,6 +9342,20 @@ api.post('/line/richmenu/remove', adminOnly, async (req, res) => {
   try { await richMenu.remove(); audit(req, 'เอาเมนูกด LINE ออก', ''); res.json(richMenu.status()) } catch (e) { res.status(502).json({ error: e.message }) }
 })
 api.put('/line/richmenu/preview', adminOnly, (req, res) => { richMenu.setPreview(String(req.body?.kind || '')); res.json(richMenu.status()) })
+// ทดลองเมนูแบบกำหนดจุดกดเอง — ผูกเฉพาะ LINE ของแอดมินที่กดเท่านั้น
+const myLineUid = (req) => db.prepare('SELECT line_uid FROM users WHERE id=?').get(req.user.id)?.line_uid || ''
+api.get('/line/richmenu/brand', adminOnly, (req, res) => res.json(richMenu.brandStatus(myLineUid(req))))
+api.post('/line/richmenu/brand', adminOnly, async (req, res) => {
+  const uid = myLineUid(req)
+  if (!uid) return res.status(400).json({ error: 'บัญชีนี้ยังไม่ได้ผูก LINE — ผูก LINE ก่อนจึงจะลองเมนูได้' })
+  if (!getSetting('line_token', '')) return res.status(400).json({ error: 'ยังไม่ได้ตั้ง LINE token' })
+  const kind = String(req.body?.kind || '')
+  try {
+    if (kind) await richMenu.brandTry(uid, kind); else await richMenu.brandClear(uid)
+    audit(req, 'ทดลองเมนูกด LINE แบบใหม่', kind || 'กลับเมนูเดิม')
+    res.json(richMenu.brandStatus(uid))
+  } catch (e) { res.status(502).json({ error: 'ทำรายการไม่สำเร็จ — ' + e.message }) }
+})
 api.get('/tunnel', adminOnly, async (_req, res) => { await refreshLineWebhookActive(); res.json(tunnelInfo()) })
 api.put('/tunnel', adminOnly, async (req, res) => {
   const b = req.body || {}

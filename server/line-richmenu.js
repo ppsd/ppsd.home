@@ -1,3 +1,7 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 // เมนูกดในแชท LINE (Rich Menu) — แถบปุ่มใหญ่ใต้แชทส่วนตัวกับบอท แยกตามบทบาท
 // + ปุ่มตอบด่วน (Quick Reply) ใต้ข้อความบอท ให้กดแทนพิมพ์ (ตกลง/ยกเลิก/เลือกเลข/เลือกบ้าน)
 // คำสั่งแบบพิมพ์เดิมยังใช้ได้ทุกอย่าง — ปุ่มแค่ส่งคำสั่งเดิมให้ หรือถามต่อทีละขั้น
@@ -54,6 +58,16 @@ export const MENU_ACTIONS = {
   u_repair: { prefix: 'แจ้งซ่อม ', ask: '🔧 พิมพ์ปัญหาที่พบได้เลยค่ะ เช่น "น้ำรั่วห้องน้ำชั้น 2" แล้วส่งรูปตามมาได้' },
 }
 
+// เมนูแบบกำหนดจุดกดเอง (แถบบน 1 + ปุ่มย่อย 6) ตามรูปใน docs/rich-menu-ลูกค้า — ตอนนี้ใช้ทดลองรายคนเท่านั้น ปุ่มตอบชื่อปุ่มกลับเพื่อเช็กว่ากดถูกจุด
+export const BRAND_MENUS = {
+  prospect: { label: 'ผู้ที่สนใจ', prefix: 'richmenu-1-', buttons: ['ผลงานของเรา', 'บ้านที่กำลังสร้าง', 'รีวิวลูกค้า', 'ทำไมต้อง PPSD', 'วัสดุที่เราใช้', 'ประเมินราคาฟรี', 'นัดคุย / ดูบ้านจริง'] },
+  current: { label: 'ลูกค้าปัจจุบัน', prefix: 'richmenu-2-', buttons: ['บ้านของฉันถึงไหนแล้ว', 'งวดเงิน', 'เอกสาร', 'สเปคบ้านฉัน', 'นัดดูหน้างาน', 'สอบถาม', 'ติดต่อผู้ดูแล'] },
+  handover: { label: 'หลังส่งมอบ', prefix: 'richmenu-3-', buttons: ['แจ้งซ่อม', 'รับประกัน', 'สมุดบ้าน', 'คู่มือบ้าน', 'นัดตรวจบ้าน', 'แนะนำเพื่อน', 'ติดต่อเรา'] },
+}
+for (const [kind, m] of Object.entries(BRAND_MENUS)) {
+  m.buttons.forEach((label, i) => { MENU_ACTIONS[`b_${kind}_${i}`] = { hint: `🧪 กดถูกจุด: "${label}" (เมนู${m.label})\nตอนใช้จริงปุ่มนี้จะพาไปหน้าที่เกี่ยวข้องค่ะ` } })
+}
+
 // ---- ปุ่มตอบด่วน ----
 export const qrMsg = (label, text) => ({ type: 'action', action: { type: 'message', label: String(label).slice(0, 20), text: String(text ?? label).slice(0, 300) } })
 export const qrPost = (label, data) => ({ type: 'action', action: { type: 'postback', label: String(label).slice(0, 20), data, displayText: String(label).replace(/^\W+\s*/u, '').slice(0, 300) || label } })
@@ -105,6 +119,29 @@ export function menuDef(kind) {
   }
 }
 
+// ผังจุดกด: แถบบนเต็มความกว้าง สูง 562 + ปุ่มย่อย 3×2 ช่องละ 833×562
+const BRAND_ROWS = [562, 1124, 1686]
+export function brandMenuDef(kind) {
+  const m = BRAND_MENUS[kind]
+  const action = (i) => ({ type: 'postback', data: `menu:b_${kind}_${i}`, displayText: m.buttons[i] })
+  return {
+    size: { width: W, height: H }, selected: true, name: 'PPSD ทดลอง ' + kind, chatBarText: 'เมนู PPSD',
+    areas: [
+      { bounds: { x: 0, y: 0, width: W, height: BRAND_ROWS[0] }, action: action(0) },
+      ...m.buttons.slice(1).map((_, i) => {
+        const col = i % 3, row = Math.floor(i / 3)
+        return { bounds: { x: COLS[col], y: BRAND_ROWS[row], width: COLS[col + 1] - COLS[col], height: BRAND_ROWS[row + 1] - BRAND_ROWS[row] }, action: action(i + 1) }
+      }),
+    ],
+  }
+}
+const BRAND_DIR = fileURLToPath(new URL('../docs/rich-menu-ลูกค้า/', import.meta.url))
+function brandImage(kind) {
+  const f = readdirSync(BRAND_DIR).find((n) => n.startsWith(BRAND_MENUS[kind].prefix) && n.endsWith('.jpg'))
+  if (!f) throw new Error('ไม่พบไฟล์รูปเมนู ' + BRAND_MENUS[kind].label)
+  return readFileSync(join(BRAND_DIR, f))
+}
+
 // ---- ติดตั้ง / ผูกเมนูกับแต่ละคน ----
 // d: { db, getSetting, setSetting, lineTestUser, lineCanCommand, renderHtmlJpeg }
 export function createRichMenu(d) {
@@ -138,18 +175,20 @@ export function createRichMenu(d) {
   async function sync() {
     if (syncing) return syncing
     syncing = (async () => {
+      await pruneBrandTry()
       const s = state()
       if (!s.menus || !Object.keys(s.menus).length) return { linked: 0, unlinked: 0 }
       const links = s.links || {}
+      const trying = s.brandTry || {}
       const want = targets()
       let linked = 0, unlinked = 0
       const errors = []
       for (const [uid, kind] of want) {
-        if (links[uid] === kind || !s.menus[kind]) continue
+        if (trying[uid] || links[uid] === kind || !s.menus[kind]) continue
         try { await lineApi('POST', `https://api.line.me/v2/bot/user/${uid}/richmenu/${s.menus[kind]}`); links[uid] = kind; linked++ } catch (e) { errors.push(e.message) }
       }
       for (const uid of Object.keys(links)) {
-        if (want.has(uid)) continue
+        if (want.has(uid) || trying[uid]) continue
         try { await lineApi('DELETE', `https://api.line.me/v2/bot/user/${uid}/richmenu`) } catch (e) { if (!/404/.test(e.message)) errors.push(e.message) }
         delete links[uid]; unlinked++
       }
@@ -159,7 +198,7 @@ export function createRichMenu(d) {
     try { return await syncing } finally { syncing = null }
   }
   let timer = null
-  const scheduleSync = () => { if (!state().menus) return; clearTimeout(timer); timer = setTimeout(() => sync().catch((e) => console.error('richmenu sync:', e.message)), 3000) }
+  const scheduleSync = () => { const s = state(); if (!s.menus && !Object.keys(s.brandTry || {}).length) return; clearTimeout(timer); timer = setTimeout(() => sync().catch((e) => console.error('richmenu sync:', e.message)), 3000) }
   async function install() {
     const old = state()
     const menus = {}
@@ -169,15 +208,64 @@ export function createRichMenu(d) {
       await lineApi('POST', `https://api-data.line.me/v2/bot/richmenu/${r.richMenuId}/content`, img, 'image/jpeg')
       menus[kind] = r.richMenuId
     }
-    save({ menus, at: new Date().toISOString(), links: {}, preview: old.preview || '' })
+    save({ menus, at: new Date().toISOString(), links: {}, preview: old.preview || '', brand: old.brand, brandTry: old.brandTry })
     for (const id of Object.values(old.menus || {})) { try { await lineApi('DELETE', `https://api.line.me/v2/bot/richmenu/${id}`) } catch { /* ลบไปแล้ว */ } }
     return sync()
   }
   async function remove() {
     const s = state()
     for (const uid of Object.keys(s.links || {})) { try { await lineApi('DELETE', `https://api.line.me/v2/bot/user/${uid}/richmenu`) } catch { /* ไม่มีแล้ว */ } }
-    for (const id of Object.values(s.menus || {})) { try { await lineApi('DELETE', `https://api.line.me/v2/bot/richmenu/${id}`) } catch { /* ลบไปแล้ว */ } }
+    for (const uid of Object.keys(s.brandTry || {})) { try { await lineApi('DELETE', `https://api.line.me/v2/bot/user/${uid}/richmenu`) } catch { /* ไม่มีแล้ว */ } }
+    for (const id of [...Object.values(s.menus || {}), ...Object.values(s.brand || {})]) { try { await lineApi('DELETE', `https://api.line.me/v2/bot/richmenu/${id}`) } catch { /* ลบไปแล้ว */ } }
     save({ preview: s.preview || '' })
+  }
+  // ---- ทดลองเมนูกำหนดจุดกดเอง: ผูกเฉพาะคนที่กดลอง คนอื่นไม่เห็น ----
+  async function brandInstall() {
+    const old = state().brand || {}
+    const brand = {}
+    for (const kind of Object.keys(BRAND_MENUS)) {
+      const r = await lineApi('POST', 'https://api.line.me/v2/bot/richmenu', brandMenuDef(kind))
+      await lineApi('POST', `https://api-data.line.me/v2/bot/richmenu/${r.richMenuId}/content`, brandImage(kind), 'image/jpeg')
+      brand[kind] = r.richMenuId
+    }
+    save({ ...state(), brand })
+    for (const id of Object.values(old)) { try { await lineApi('DELETE', `https://api.line.me/v2/bot/richmenu/${id}`) } catch { /* ลบไปแล้ว */ } }
+    return brand
+  }
+  async function brandTry(uid, kind) {
+    if (!BRAND_MENUS[kind]) throw new Error('ไม่มีเมนูแบบนี้')
+    const have = state().brand || {}
+    const brand = Object.keys(BRAND_MENUS).every((k) => have[k]) ? have : await brandInstall()
+    await lineApi('POST', `https://api.line.me/v2/bot/user/${uid}/richmenu/${brand[kind]}`)
+    const s = state()
+    save({ ...s, brandTry: { ...(s.brandTry || {}), [uid]: kind } })
+  }
+  async function brandClear(uid) {
+    const s = state()
+    const brandTryNext = { ...(s.brandTry || {}) }
+    delete brandTryNext[uid]
+    const links = { ...(s.links || {}) }
+    delete links[uid] // ให้ sync ผูกเมนูประจำของคนนี้กลับ (ถ้าติดตั้งไว้)
+    save({ ...s, brandTry: brandTryNext, links })
+    try { await lineApi('DELETE', `https://api.line.me/v2/bot/user/${uid}/richmenu`) } catch (e) { if (!/404/.test(e.message)) throw e }
+    await sync()
+  }
+  // คนที่ลาออก/ถูกปิดบัญชีระหว่างทดลอง ต้องไม่ค้างเมนู
+  async function pruneBrandTry() {
+    const s = state()
+    const active = d.db.prepare("SELECT 1 FROM users WHERE line_uid=? AND status='ใช้งาน'")
+    const gone = Object.keys(s.brandTry || {}).filter((uid) => !active.get(uid))
+    if (!gone.length) return
+    for (const uid of gone) { try { await lineApi('DELETE', `https://api.line.me/v2/bot/user/${uid}/richmenu`) } catch { /* ไม่มีแล้ว */ } }
+    const cur = state()
+    const next = { ...(cur.brandTry || {}) }
+    for (const uid of gone) delete next[uid]
+    save({ ...cur, brandTry: next })
+  }
+  function brandStatus(uid) {
+    const t = d.lineTestUser()
+    return { linked: !!uid, mine: (uid && state().brandTry?.[uid]) || '', test_user: t ? t.name : null, is_test_user: !!(t && uid && t.line_uid === uid),
+      kinds: Object.entries(BRAND_MENUS).map(([kind, m]) => ({ kind, label: m.label, buttons: m.buttons })) }
   }
   function status() {
     const s = state()
@@ -188,5 +276,5 @@ export function createRichMenu(d) {
       kinds: Object.entries(RICH_KINDS).map(([k, label]) => ({ kind: k, label, buttons: RICH_MENUS[k].map((b) => `${b.icon} ${b.label}`) })) }
   }
   function setPreview(kind) { save({ ...state(), preview: RICH_MENUS[kind] ? kind : '' }); scheduleSync() }
-  return { install, remove, sync, scheduleSync, status, setPreview }
+  return { install, remove, sync, scheduleSync, status, setPreview, brandTry, brandClear, brandStatus }
 }

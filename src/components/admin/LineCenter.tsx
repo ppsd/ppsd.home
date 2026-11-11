@@ -431,6 +431,36 @@ function PendingCards({ testOn }: { testOn: boolean }) {
   )
 }
 
+// ทดลองเมนูแบบใหม่ (แถบบน 1 + ปุ่มย่อย 6) — ขึ้นเฉพาะ LINE ของคนที่กด คนอื่นไม่เห็น
+interface BrandStatus { linked: boolean; mine: string; test_user: string | null; is_test_user: boolean; kinds: { kind: string; label: string; buttons: string[] }[] }
+function BrandMenuTry() {
+  const [st, setSt] = useState<BrandStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { api.get<BrandStatus>('/line/richmenu/brand').then(setSt).catch((e) => window.alert((e as Error).message)) }, [])
+  const choose = async (kind: string) => {
+    setBusy(true)
+    try { setSt(await api.post<BrandStatus>('/line/richmenu/brand', { kind })) } catch (e) { window.alert((e as Error).message) }
+    setBusy(false)
+  }
+  if (!st) return null
+  const current = st.kinds.find((k) => k.kind === st.mine)
+  const btn = (on: boolean): React.CSSProperties => ({ fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: on ? '#fff' : '#0E2A47', background: on ? '#0E2A47' : '#fff', border: '1px solid #0E2A47', borderRadius: 9, padding: '7px 14px', cursor: busy ? 'wait' : 'pointer' })
+  return (
+    <div style={{ border: '1px solid #E3D3A8', background: '#FFFDF8', borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700, color: '#0E2A47' }}>🧪 ทดลองเมนูแบบใหม่ (ปุ่มใหญ่ 1 + ปุ่มย่อย 6)</div>
+      <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.6 }}>เมนูขึ้นเฉพาะ LINE ของคุณ พนักงานคนอื่นไม่เห็น · กดเลือกแล้วเปิดแชทบอทในมือถือ (ถ้ายังไม่เปลี่ยน ปิดแล้วเปิดแชทใหม่) · กดให้ครบทุกปุ่ม บอทจะตอบชื่อปุ่มที่กด ให้เช็กว่าตรงกับรูป</div>
+      {!st.linked && <div style={{ fontSize: 12.5, color: '#C24036' }}>⚠ บัญชีนี้ยังไม่ได้ผูก LINE จึงลองไม่ได้</div>}
+      {st.linked && st.test_user && !st.is_test_user && <div style={{ fontSize: 12.5, color: '#B7791F' }}>⚠ โหมดทดสอบเปิดอยู่ (เฉพาะ {st.test_user}) — ถ้ากดปุ่มแล้วบอทไม่ตอบ ให้ {st.test_user} เป็นคนลอง</div>}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {st.kinds.map((k) => <button key={k.kind} disabled={busy || !st.linked} onClick={() => choose(k.kind)} style={btn(st.mine === k.kind)}>{k.label}</button>)}
+        {st.mine && <button disabled={busy} onClick={() => choose('')} style={{ ...btn(false), borderColor: '#C24036', color: '#C24036' }}>กลับเมนูเดิม</button>}
+      </div>
+      {busy && <div style={{ fontSize: 12.5, color: '#5C6770' }}>กำลังส่งเมนูเข้า LINE…</div>}
+      {current && <div style={{ fontSize: 12.5, color: '#5C6770', lineHeight: 1.7 }}>กำลังลอง: <b>{current.label}</b> · {current.buttons.join(' · ')}</div>}
+    </div>
+  )
+}
+
 // เมนูกดในแชท (Rich Menu) — แถบปุ่มใต้แชทส่วนตัวกับบอท แยกตามบทบาท · ติดตั้ง/อัปเดต/เอาออก · ดูตัวอย่างรูป
 interface RichStatus { installed: boolean; at: string; synced: string; error: string; counts: Record<string, number>; preview: string; test_user: string | null; kinds: { kind: string; label: string; buttons: string[] }[] }
 function RichMenuPanel() {
@@ -485,6 +515,7 @@ function RichMenuPanel() {
           <span style={{ color: '#94A0A8' }}>(เมนูช่าง/ลูกค้า ใช้ดูหน้าตา — ปุ่มจะทำงานตามบัญชีของคุณ) · ปิดโหมดทดสอบแล้วทุกคนได้เมนูของตัวเองภายในไม่กี่วินาที</span>
         </div>
       )}
+      <BrandMenuTry />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))', gap: 12 }}>
         {st.kinds.map((k) => (
           <div key={k.kind} style={{ border: '1px solid #E1E5EA', borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
