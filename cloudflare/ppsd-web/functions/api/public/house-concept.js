@@ -1,4 +1,4 @@
-import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages, seriousIssues, buildRepairPrompt } from '../../_lib/house-concept.js'
+import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages, seriousIssues, buildRepairPrompt, readAiStream } from '../../_lib/house-concept.js'
 import { json, enabled, day, limits, count, bump } from '../../_house.js'
 
 // ลูกค้ากรอกความต้องการ → AI จัดผังห้อง → ส่งผังกลับในคำตอบเดียว (ใช้เวลา 1–3 นาที)
@@ -37,12 +37,13 @@ async function askLayout(env, q, ideas = [], own = []) {
   const model = env.AI_MODEL || 'claude-sonnet-5-5'
   const imgs = [...own, ...(own.length < 3 ? await ideaImages(ideas, Math.min(2, 3 - own.length)) : [])]
   const ask = async (content) => {
-    const body = { model, max_tokens: 32000, messages: [{ role: 'user', content }] }
+    const body = { model, max_tokens: 32000, messages: [{ role: 'user', content }], stream: true }
     if (!/haiku/.test(model)) body.output_config = { effort: 'medium' }
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300000) })
-    const data = await r.json().catch(() => ({}))
-    if (!r.ok || data.stop_reason === 'refusal') throw new Error(data?.error?.message || 'HTTP ' + r.status)
-    const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join('')
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(540000) })
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e?.error?.message || 'HTTP ' + r.status) }
+    const x = await readAiStream(r) // อ่านแบบทยอย — งานคิดนานไม่หลุด
+    if (x.error || x.stop_reason === 'refusal') throw new Error(x.error || 'refusal')
+    const text = x.text
     const m = text.match(/\{[\s\S]*\}/)
     return normalizeLayout(m ? JSON.parse(m[0]) : null, q)
   }

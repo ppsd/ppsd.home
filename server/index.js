@@ -28,7 +28,7 @@ import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
 import { createLineReceive } from './line-receive.js'
 import { createDocReview } from './doc-review.js'
-import { createHouseConcept } from './house-concept.js'
+import { createHouseConcept, readAiStream } from './house-concept.js'
 import { createHouseIdeas } from './house-ideas.js'
 import { createPublicHouseConcept } from './house-concept-public.js'
 import { lt, listLineTexts, setLineText } from './line-texts.js'
@@ -3080,13 +3080,14 @@ function logAiUsage(feature, model, by, ok, u = {}) {
     return cost
   } catch { return 0 }
 }
-async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools, timeoutMs = 180000, feature = 'อื่นๆ', by = '', effort = 'low' }) {
+async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = aiModel(), tools, timeoutMs = 180000, feature = 'อื่นๆ', by = '', effort = 'low', stream = false }) {
   if (!key) return { ok: false, error: AI_NO_KEY, code: 400 }
   const mediaArr = Array.isArray(media) ? media : media ? [media] : []
   const content = [...mediaArr, { type: 'text', text: prompt }]
   const body = { model, max_tokens: maxTokens, messages: [{ role: 'user', content }] }
   if (Array.isArray(tools) && tools.length) body.tools = tools // เช่น web_search (AI ค้นเว็บเอง)
   if (!/haiku/.test(model)) body.output_config = { effort }
+  if (stream) body.stream = true // งานคิดนาน (> 5 นาที) ต้องอ่านแบบทยอย ไม่งั้น fetch ตัดสายเองที่ 5 นาที
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -3094,7 +3095,12 @@ async function aiAsk({ media, prompt, maxTokens = 16000, key = aiKey(), model = 
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     })
-    const data = await r.json().catch(() => ({}))
+    let data
+    if (stream && r.ok) {
+      const x = await readAiStream(r)
+      if (x.error) return { ok: false, code: 502, error: 'AI: ' + x.error, model }
+      data = { content: [{ type: 'text', text: x.text }], usage: x.usage, stop_reason: x.stop_reason }
+    } else data = await r.json().catch(() => ({}))
     // บันทึกการใช้ทุกครั้งที่มี usage (รวมกรณี AI ตอบไม่ครบ/ปฏิเสธ — token ถูกคิดเงินแล้ว)
     const cost = data?.usage ? logAiUsage(feature, model, by, r.ok && data.stop_reason !== 'refusal', data.usage) : 0
     if (!r.ok) return { ok: false, code: 502, error: 'AI: ' + (data?.error?.message || ('HTTP ' + r.status)), model }

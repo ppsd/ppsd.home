@@ -235,6 +235,30 @@ export function parsePublicImages(list, max = 3) {
   return out
 }
 
+/** อ่านคำตอบ AI แบบทยอยส่ง (stream) — ใช้กับงานคิดนานเกิน 5 นาที (fetch ปกติตัดสายที่ 5 นาทีถ้ายังไม่ได้หัวคำตอบ)
+ *  คืน { text, usage, stop_reason, error } · ใช้ได้ทั้ง Node และ Cloudflare */
+export async function readAiStream(res) {
+  const dec = new TextDecoder(), reader = res.body.getReader()
+  let buf = '', text = '', usage = {}, stop_reason = null, error = null
+  const take = (line) => {
+    if (!line.startsWith('data:')) return
+    let ev; try { ev = JSON.parse(line.slice(5).trim()) } catch { return }
+    if (ev.type === 'message_start') usage = { ...(ev.message?.usage || {}) }
+    else if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') text += ev.delta.text || ''
+    else if (ev.type === 'message_delta') { if (ev.usage) usage = { ...usage, ...ev.usage }; if (ev.delta?.stop_reason) stop_reason = ev.delta.stop_reason }
+    else if (ev.type === 'error') error = ev.error?.message || 'AI error'
+  }
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    let i
+    while ((i = buf.indexOf('\n')) >= 0) { take(buf.slice(0, i).replace(/\r$/, '')); buf = buf.slice(i + 1) }
+  }
+  if (buf) take(buf)
+  return { text, usage, stop_reason, error }
+}
+
 /** ปัญหาร้ายแรงในผังที่ควรให้ AI แก้อีกรอบ (ห้องทับ ห้องลอย ไม่มีประตู บันได จำนวนห้อง/ชั้นไม่ตรง) */
 export function seriousIssues(a) {
   return (a?.warnings || []).filter((w) => /ทับกับ|ยื่นเกินชั้นล่าง|ยังไม่มีประตู|ไม่มีบันได|ห้องนอน \d+ ห้อง \(|ห้องน้ำ \d+ ห้อง \(|ชั้น \(ลูกค้า/.test(w)).slice(0, 15)
@@ -275,7 +299,7 @@ export function createHouseConcept(d) {
       return { ok: true, layout, model: 'mock', cost_usd: 0 }
     }
     if (!d.aiKey()) return { ok: false, error: d.AI_NO_KEY }
-    const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น', by, media, prompt, maxTokens: 32000, timeoutMs: 300000, effort: 'medium' })
+    const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น', by, media, prompt, maxTokens: 32000, timeoutMs: 540000, effort: 'medium', stream: true })
     if (!ai.ok) return { ok: false, error: ai.error }
     const raw = d.extractJsonBlock(ai.text)
     const layout = normalizeLayout(raw, q)

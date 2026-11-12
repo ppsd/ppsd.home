@@ -34,14 +34,14 @@ export function createPublicHouseConcept(d) {
       else {
         const more = ideaIds.length && d.ideas && own.length < 3 ? await d.ideas.ideaMedia(ideaIds, { publicOnly: true, max: Math.min(2, 3 - own.length) }).catch(() => []) : []
         const media = [...own, ...more]
-        const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า)', by: BY, media, prompt: buildPrompt(q, media.length > 0), maxTokens: 32000, timeoutMs: 300000, effort: 'medium' })
+        const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า)', by: BY, media, prompt: buildPrompt(q, media.length > 0), maxTokens: 32000, timeoutMs: 540000, effort: 'medium', stream: true })
         model = ai.model || null; cost = ai.cost_usd || 0
         if (!ai.ok) throw new Error(ai.error || 'AI ไม่ตอบ')
         layout = normalizeLayout(d.extractJsonBlock(ai.text), q)
         // ผังมีปัญหาร้ายแรง (ห้องทับ ห้องลอย ไม่มีประตู จำนวนห้องไม่ตรง) → ให้ AI แก้อีก 1 รอบ
         const issues = layout.floors.length ? seriousIssues(analyze(layout, q)) : []
         if (issues.length) {
-          const fix = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า · แก้ผัง)', by: BY, prompt: buildRepairPrompt(q, layout, issues), maxTokens: 32000, timeoutMs: 300000, effort: 'medium' }).catch(() => null)
+          const fix = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า · แก้ผัง)', by: BY, prompt: buildRepairPrompt(q, layout, issues), maxTokens: 32000, timeoutMs: 420000, effort: 'medium', stream: true }).catch(() => null)
           cost += fix?.cost_usd || 0
           const l2 = fix?.ok ? normalizeLayout(d.extractJsonBlock(fix.text), q) : null
           if (l2?.floors.length && seriousIssues(analyze(l2, q)).length < issues.length) layout = l2

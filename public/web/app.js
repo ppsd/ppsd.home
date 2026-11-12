@@ -364,7 +364,7 @@ async function houseGen() {
           x = await fetch(API + '/public/house-concept/' + j.token).then(q => q.json()).catch(() => ({ status: 'working' }));
         }
         if (!document.body.contains(box)) return;
-        if (x.status === 'working') { if (Date.now() - t0 > 720000) return fail('ใช้เวลานานเกินไป ลองใหม่อีกครั้ง'); continue; }
+        if (x.status === 'working') { if (Date.now() - t0 > 900000) return fail('ใช้เวลานานเกินไป ลองใหม่อีกครั้ง'); continue; }
         if (x.status !== 'done') return fail(x.error || 'ออกแบบไม่สำเร็จ ลองใหม่อีกครั้ง');
         const s = x.stats, title = `บ้าน ${x.layout.floors.length} ชั้น ${s.bedrooms} ห้องนอน ${s.bathrooms} ห้องน้ำ`;
         box.innerHTML = `<h2 style="font-size:22px">แบบร่างบ้านของคุณ</h2>${x.layout.summary ? `<p>${x.layout.summary.replace(/[<>&]/g, '')}</p>` : ''}
