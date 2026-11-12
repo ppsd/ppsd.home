@@ -113,11 +113,11 @@ const HousePlan = forwardRef<SVGSVGElement, Props>(function HousePlan({ layout, 
       {xs.length > 1 && hDim([fb.x0, fb.x1], ext.y0 - 1.7, true)}
       {ys.length > 1 && vDim(ys, ext.x0 - 0.9)}
       {ys.length > 1 && vDim([fb.y0, fb.y1], ext.x0 - 1.7, true)}
-      {/* ทิศเหนือ */}
-      <g transform={`translate(${W - 1.2 * S} ${0.9 * S})`} fontFamily={FONT}>
+      {/* ทิศเหนือ — ด้านล่างของแปลน = หน้าบ้าน หันไปทิศ layout.facing (องศา · ไม่ระบุ = ใต้) → หมุนลูกศรให้ชี้ทิศเหนือจริง */}
+      <g transform={`translate(${W - 1.2 * S} ${0.9 * S}) rotate(${180 - (layout.facing ?? 180)})`} fontFamily={FONT}>
         <circle r={20} fill="none" stroke="#5C6770" strokeWidth={1.2} />
         <path d="M0 -17 L7 8 L0 3 L-7 8 Z" fill="#26313A" />
-        <text y={-24} textAnchor="middle" fontSize={13} fontWeight={600} fill="#26313A">N</text>
+        <text y={-24} textAnchor="middle" fontSize={13} fontWeight={600} fill="#26313A" transform={`rotate(${(layout.facing ?? 180) - 180} 0 -28)`}>N</text>
       </g>
       <text x={X((ext.x0 + ext.x1) / 2)} y={Y(ext.y1 + 0.75)} textAnchor="middle" fontSize={14} fill="#6B7A86" fontFamily={FONT}>▼ ด้านหน้าบ้าน (ทางเข้า / ถนน) ▼</text>
       {/* กรอบชื่อแบบ */}

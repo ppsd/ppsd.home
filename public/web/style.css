@@ -277,3 +277,18 @@ details .in{padding:0 14px 14px;display:grid;gap:10px;color:var(--ink)}
 .ref button{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:16px;line-height:1;cursor:pointer}
 .refadd{justify-self:start}
 
+
+/* รายการห้องรายชั้น · ทิศหน้าบ้าน */
+.ftabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.ftabs button{font:inherit;font-size:14px;border:1px solid #B9AA82;background:var(--card);color:var(--ink);border-radius:999px;padding:6px 14px;cursor:pointer}
+.ftabs button.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.ftabs small{opacity:.75;margin-left:2px}
+.rgrp{border:1px solid var(--line);border-radius:8px;background:var(--card);margin:0 0 6px}
+.rgrp summary{cursor:pointer;padding:8px 12px;font-weight:400;font-size:15px}
+.rgrp summary small{color:var(--gold);font-weight:500;margin-left:4px}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px;padding:6px 12px;border-top:1px solid var(--line)}
+.prow span{font-size:14.5px;min-width:0}
+.prow select{grid-column:1/-1;font-size:14px;padding:6px 8px}
+.fgrp{margin:4px 0 6px}.fgrp b{display:block;font-weight:400;font-size:13.5px;color:var(--mute);margin-bottom:4px}
+.dirbox{display:flex;gap:12px;align-items:flex-end}
+.comp{flex:none;color:var(--navy)}

@@ -3,7 +3,7 @@
 export type Side = 'N' | 'S' | 'E' | 'W'
 export interface Room { name: string; type: string; x: number; y: number; w: number; d: number; doors: Side[]; windows: Side[] }
 export interface Floor { level: number; height: number; rooms: Room[] }
-export interface Layout { summary: string; style: string; roof: 'gable' | 'hip' | 'flat'; wall_color: string; roof_color: string; floors: Floor[]; notes: string[] }
+export interface Layout { summary: string; style: string; roof: 'gable' | 'hip' | 'flat'; wall_color: string; roof_color: string; floors: Floor[]; notes: string[]; facing?: number }
 
 export const OUTDOOR = new Set(['porch', 'carport', 'terrace', 'balcony'])
 export const ROOM_COLOR: Record<string, string> = {

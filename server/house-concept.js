@@ -36,14 +36,25 @@ export function normalizeReq(b = {}) {
     land_d: clamp(r2(num(b.land_d, 0)), 0, 500),
     parking: clamp(Math.round(num(b.parking, 0)), 0, 6),
     style: txt(b.style, 120),
-    extras: txt(b.extras, 400),
-    notes: txt(b.notes, 1000),
+    extras: txt(b.extras, 1500),
+    notes: txt(b.notes, 1500),
+    // ทิศที่หน้าบ้านหันไป (องศา 0 = เหนือ 90 = ตะวันออก 180 = ใต้ 270 = ตะวันตก) · null = ไม่ระบุ
+    facing: b.facing === null || b.facing === undefined || b.facing === '' || !Number.isFinite(Number(b.facing)) ? null : ((Math.round(Number(b.facing)) % 360) + 360) % 360,
+    // ห้องที่ต้องการแยกตามชั้น [{ floor: 0=ชั้นไหนก็ได้|1|2|3, name, count, pos }]
+    program: (Array.isArray(b.program) ? b.program : []).slice(0, 80).map((x) => ({
+      floor: clamp(Math.round(num(x?.floor, 0)), 0, MAX_FLOORS), name: txt(x?.name, 50), count: clamp(Math.round(num(x?.count, 1)), 1, 12), pos: txt(x?.pos, 40),
+    })).filter((x) => x.name),
   }
 }
 
+const DIRS = ['เหนือ', 'ตะวันออกเฉียงเหนือ', 'ตะวันออก', 'ตะวันออกเฉียงใต้', 'ใต้', 'ตะวันตกเฉียงใต้', 'ตะวันตก', 'ตะวันตกเฉียงเหนือ']
+/** องศา → ชื่อทิศ (8 ทิศ) */
+export const dirName = (deg) => DIRS[Math.round((((deg % 360) + 360) % 360) / 45) % 8]
+
 /** ผังห้องจาก AI (หรือจากคน) → ตัวเลขที่ปลอดภัยสำหรับวาด · พิกัดทุกชั้นเลื่อนให้มุมซ้ายบนสุดอยู่ที่ (0,0) ร่วมกัน */
-export function normalizeLayout(raw) {
+export function normalizeLayout(raw, q) {
   const src = raw && typeof raw === 'object' ? raw : {}
+  const facingIn = q && q.facing !== null && q.facing !== undefined ? q.facing : (Number.isFinite(Number(src.facing)) && src.facing !== null && src.facing !== '' ? Number(src.facing) : null)
   const floorsIn = Array.isArray(src.floors) ? src.floors.slice(0, MAX_FLOORS) : []
   const floors = floorsIn.map((f, i) => ({
     level: i + 1,
@@ -73,6 +84,7 @@ export function normalizeLayout(raw) {
     roof_color: hex(src.roof_color, '#5B4A42'),
     floors,
     notes: (Array.isArray(src.notes) ? src.notes : []).map((s) => txt(s, 200)).filter(Boolean).slice(0, 10),
+    ...(facingIn === null ? {} : { facing: ((Math.round(facingIn) % 360) + 360) % 360 }),
   }
 }
 
@@ -139,7 +151,7 @@ const SCHEMA_TEXT = `รูปแบบ JSON (ตอบเป็น JSON อย�
  "floors":[{"height":3.0,"rooms":[{"name":"ห้องนั่งเล่น","type":"living","x":0,"y":0,"w":5,"d":4.5,"doors":["S"],"windows":["S","W"]}]}],
  "notes":["ข้อสังเกตสำหรับพนักงานขาย"]}
 กติกาพิกัด:
-- หน่วยเมตร ห้องทุกห้องเป็นสี่เหลี่ยมผืนผ้า x = ระยะจากซ้าย (ไปทางขวา = ทิศตะวันออก) y = ระยะจากบน (ลงล่าง = ทิศใต้) w = กว้างตามแกน x, d = ลึกตามแกน y
+- หน่วยเมตร ห้องทุกห้องเป็นสี่เหลี่ยมผืนผ้า x = ระยะจากซ้าย (ไปทางขวา = ด้าน E ของผัง) y = ระยะจากบน (ลงล่าง = ด้าน S ของผัง = หน้าบ้าน) w = กว้างตามแกน x, d = ลึกตามแกน y
 - ทุกชั้นใช้จุดอ้างอิงเดียวกัน ห้องชั้นบนต้องวางอยู่เหนือห้องชั้นล่าง (ยกเว้น balcony ยื่นได้ไม่เกิน 1.5 ม.) · บันไดอยู่ตำแหน่งเดียวกันทุกชั้น
 - ห้องในชั้นเดียวกันห้ามทับกัน และต่อกันแน่นเป็นตัวบ้านกะทัดรัด ไม่มีช่องว่างในตัวบ้าน (ใช้ hall เป็นทางเดิน/โถงเชื่อมห้อง) · ใช้ตัวเลขทีละ 0.5 ม.
 - ด้านหน้าบ้าน (ทางเข้า ติดถนน) คือด้าน S (ล่าง)
@@ -148,6 +160,32 @@ const SCHEMA_TEXT = `รูปแบบ JSON (ตอบเป็น JSON อย�
 - type ที่ใช้ได้: ${Object.entries(ROOM_TYPES).map(([k, v]) => `${k}=${v}`).join(', ')}
 - porch/carport/terrace/balcony = พื้นที่นอกตัวบ้าน (ไม่มีผนัง) ไม่ต้องใส่ windows
 - ขนาดอ้างอิงบ้านไทย: ห้องนอน ≥ 3×3.5 · ห้องนอนใหญ่ ≥ 4×4 · ห้องน้ำ ≥ 1.5×2.2 · บันไดตรง 1.2×4.5 หรือบันไดหักกลับ 2.5×3 · ที่จอดรถคันละ 3×5.5 · ทางเดิน ≥ 1.2 · ความสูงชั้น 3 ม.`
+
+/** หลักคิดของสถาปนิกบ้านเมืองร้อนที่ดี — ใส่ในทุกคำสั่งออกแบบ/แก้แบบ */
+const ARCH_TEXT = `หลักออกแบบของสถาปนิกที่ดี (ใช้ทุกข้อ เว้นแต่ขัดกับสิ่งที่ลูกค้าระบุชัด):
+1. แบ่งโซนชัด — สาธารณะ (ชาน โถงทางเข้า นั่งเล่น รับแขก ทานข้าว) ด้านหน้า/ติดสวน · ส่วนตัว (ห้องนอน) ด้านหลังหรือชั้นบน เงียบ ไม่ต้องเดินผ่านห้องนั่งเล่นเพื่อเข้าห้องนอน · บริการ (ครัวไทย ซักล้าง เก็บของ ห้องแม่บ้าน) รวมกลุ่มด้านหลัง/ด้านข้าง มีประตูออกนอกบ้านของตัวเอง
+2. ลำดับการเข้าบ้าน — ที่จอดรถ → ชาน → โถงทางเข้า → นั่งเล่น · ครัวเดินจากที่จอดรถได้สั้น (ขนของ) · ประตูหน้ากับประตูหลังไม่อยู่แนวตรงกัน
+3. แดดและลมแบบไทย — แดดบ่ายทิศตะวันตกร้อนที่สุด: ใช้ห้องน้ำ บันได ห้องเก็บของ ซักล้าง ที่จอดรถ เป็นกันชนด้านตะวันตก ห้องนอนเลี่ยงผนังตะวันตก · ห้องนอนดีสุดทิศเหนือ/ตะวันออก · ลมประจำมาจากทิศใต้และตะวันตกเฉียงใต้: เปิดหน้าต่างรับลมด้านนั้น และมีช่องเปิดฝั่งตรงข้ามให้ลมผ่านทะลุ · ห้องนั่งเล่นเปิดรับทิศเหนือ/ตะวันออก/ใต้ · ชายคายื่นกันแดดฝน
+4. ห้องน้ำ — ทุกห้องติดผนังภายนอก (ระบายอากาศ) · ประตูห้องน้ำไม่เปิดเข้าห้องทานข้าว/ครัว/ห้องนั่งเล่นตรง ๆ · ชั้นล่างมีห้องน้ำส่วนกลางที่แขกใช้ได้
+5. บ้านหลายชั้น — ห้องน้ำชั้นบนซ้อนตรงห้องน้ำ/ครัวชั้นล่าง (งานท่อ) · ผนังชั้นบนพยายามตรงผนังชั้นล่าง · ห้องพระอยู่ชั้นบนสุดและไม่อยู่ใต้ห้องน้ำ · บันไดอยู่ค่อนกลางบ้าน ไม่หันตรงประตูหน้าบ้าน · หน้าบันไดชั้นบนมีโถง/นั่งเล่นครอบครัวเล็ก ๆ ถ้าพื้นที่พอ
+6. โครงสร้างประหยัด — ผังตามกริดเสา ช่วงเสา 3.5–5 ม. รูปทรงตัวบ้านเรียบ (สี่เหลี่ยม ตัว L ตัว U) ไม่หยักเกินจำเป็น · ทางเดินรวมไม่เกินราว 12–15% ของพื้นที่
+7. สัดส่วนห้องน่าใช้ — ด้านยาวไม่เกิน 1.5 เท่าด้านสั้น (ยกเว้นทางเดิน ระเบียง ที่จอดรถ) · ห้องนอนใหญ่ ≥ 4×4.5 พร้อมห้องน้ำในตัว · ห้องนั่งเล่น ≥ 4.5×5 · ห้องนอนทุกห้องมีหน้าต่างอย่างน้อย 1 ด้าน
+8. ฮวงจุ้ยพื้นฐานแบบไทย — ประตูหน้าบ้านเปิดเข้าโถงที่โล่งสว่าง ไม่ชนผนัง/บันได · ห้องน้ำไม่อยู่กลางบ้าน · ครัวไม่อยู่ตรงประตูหน้า
+9. รูปตัวอย่างของลูกค้า (ถ้ามี) — ยึดรูปเป็นหลักเรื่องหน้าตาบ้าน จำนวนชั้น ทรงหลังคา สัดส่วนอาคาร และสี แล้วจัดภายในตามข้อ 1–8
+ก่อนตอบ ตรวจซ้ำ: มีห้องครบตามรายการทุกชั้นและอยู่ตำแหน่งที่ขอ · ห้องไม่ทับกัน · ทุกห้องมีประตูเดินถึง · ห้องชั้นบนมีห้องรองรับข้างล่าง · บันไดตรงกันทุกชั้น · พื้นที่ใกล้เคียงงบ`
+
+function orientText(q) {
+  if (q.facing === null || q.facing === undefined) return '- ทิศหน้าบ้าน: ไม่ระบุ (ถือว่าหน้าบ้านหันทิศใต้ ด้าน S ของผัง = ทิศใต้จริง)'
+  const a = q.facing
+  return `- หน้าบ้านหันไปทิศ${dirName(a)} (${a}°) — ในผัง ด้าน S (ล่าง) = หน้าบ้าน = ทิศ${dirName(a)} จริง · ด้าน N (บน) = ทิศ${dirName(a + 180)} · ด้าน E (ขวา) = ทิศ${dirName(a - 90)} · ด้าน W (ซ้าย) = ทิศ${dirName(a + 90)} — ใช้ทิศจริงนี้ตัดสินเรื่องแดด ลม และตำแหน่งที่ลูกค้าระบุเป็นทิศ (ตัวอักษร N/S/E/W ใน JSON ยังหมายถึงด้านของผัง)`
+}
+function programText(q) {
+  if (!q.program || !q.program.length) return ''
+  const by = new Map()
+  for (const x of q.program) { if (!by.has(x.floor)) by.set(x.floor, []); by.get(x.floor).push(`${x.name} ${x.count}${x.pos ? ` (${x.pos})` : ''}`) }
+  const rows = [...by.keys()].sort((a, b) => (a || 9) - (b || 9)).map((k) => `  ${k ? 'ชั้น ' + k : 'ชั้นไหนก็ได้'}: ${by.get(k).join(' · ')}`)
+  return `- รายการห้องที่ลูกค้ากำหนด (ต้องมีครบตามจำนวน อยู่ในชั้นที่ระบุ และวางตามตำแหน่งที่ขอ · ตำแหน่งมองจากถนนเข้าหาบ้าน: ด้านหน้า = ใกล้ด้าน S · ด้านหลัง = ใกล้ด้าน N · ด้านซ้าย = ใกล้ด้าน W · ด้านขวา = ใกล้ด้าน E · ห้องน้ำในตัว/ทางเดิน/บันไดเพิ่มได้ตามจำเป็น):\n${rows.join('\n')}`
+}
 
 function reqText(q) {
   const target = q.budget && q.price_per_sqm ? Math.round(q.budget / q.price_per_sqm) : 0
@@ -158,7 +196,9 @@ function reqText(q) {
     q.land_w && q.land_d ? `- ที่ดินหน้ากว้าง ${q.land_w} ม. ลึก ${q.land_d} ม. → ตัวบ้านรวมที่จอดรถต้องเว้นจากแนวเขตที่ดินอย่างน้อย 2 ม. ทุกด้าน (กว้างไม่เกิน ${Math.max(0, q.land_w - 4)} ม. ลึกไม่เกิน ${Math.max(0, q.land_d - 4)} ม.)` : '- ที่ดิน: ไม่ระบุ',
     q.parking ? `- ที่จอดรถ: ${q.parking} คัน` : '',
     q.style ? `- สไตล์ที่ชอบ: ${q.style}` : '',
-    q.extras ? `- ห้อง/พื้นที่พิเศษ: ${q.extras}` : '',
+    orientText(q),
+    programText(q),
+    q.extras ? `- ความต้องการ/ห้องพิเศษเพิ่มเติม: ${q.extras}` : '',
     q.notes ? `- ความต้องการอื่น: ${q.notes}` : '',
   ].filter(Boolean).join('\n')
 }
@@ -167,6 +207,8 @@ export function buildPrompt(q, hasImages) {
   return `คุณเป็นสถาปนิกของบริษัทรับสร้างบ้านในไทย ออกแบบ "ผังห้องเบื้องต้น" ตามความต้องการลูกค้าด้านล่าง ให้ใช้งานได้จริง สัดส่วนห้องเหมาะสม ทางเดินสั้น ห้องนอนเป็นส่วนตัว ครัวอยู่ด้านหลังหรือด้านข้าง ระบายอากาศดี
 ความต้องการ:
 ${reqText(q)}
+
+${ARCH_TEXT}
 ${hasImages ? '\nรูปที่แนบคือรูปตัวอย่างที่ลูกค้าชอบ — ถ้าเป็นภาพบ้าน ให้ใช้เป็นแนวทางสไตล์ จำนวนชั้น รูปทรงหลังคา และสีภายนอก (บอกใน style/roof/wall_color/roof_color ให้สีใกล้เคียงรูป) · ถ้าเป็นแปลนหรือผังห้อง ให้ใช้แนวการจัดห้องนั้นเป็นฐานแล้วปรับให้ตรงความต้องการ · ถ้าเป็นภาพภายใน ให้ใช้บรรยากาศและการเปิดโล่งเป็นแนวทาง · อธิบายใน summary ว่าเอาอะไรจากรูปมาใช้ ไม่ต้องลอกแบบทั้งหมด\n' : ''}
 ${SCHEMA_TEXT}`
 }
@@ -175,6 +217,8 @@ export function buildRevisePrompt(q, layout, instruction) {
   return `คุณเป็นสถาปนิกของบริษัทรับสร้างบ้านในไทย นี่คือผังห้องเบื้องต้นของลูกค้า ให้แก้ตามคำสั่ง แล้วคืนผังทั้งหลัง (ทุกชั้น ทุกห้อง) ในรูปแบบเดิม ส่วนที่ไม่ได้สั่งให้คงไว้ให้มากที่สุด
 ความต้องการเดิมของลูกค้า:
 ${reqText(q)}
+
+${ARCH_TEXT}
 ผังปัจจุบัน:
 ${JSON.stringify(layout)}
 คำสั่งแก้: ${instruction}
@@ -189,6 +233,15 @@ export function parsePublicImages(list, max = 3) {
     if (m && m[2].length < 2_000_000) out.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } })
   }
   return out
+}
+
+/** ปัญหาร้ายแรงในผังที่ควรให้ AI แก้อีกรอบ (ห้องทับ ห้องลอย ไม่มีประตู บันได จำนวนห้อง/ชั้นไม่ตรง) */
+export function seriousIssues(a) {
+  return (a?.warnings || []).filter((w) => /ทับกับ|ยื่นเกินชั้นล่าง|ยังไม่มีประตู|ไม่มีบันได|ห้องนอน \d+ ห้อง \(|ห้องน้ำ \d+ ห้อง \(|ชั้น \(ลูกค้า/.test(w)).slice(0, 15)
+}
+/** คำสั่งให้ AI แก้ปัญหาที่ตรวจพบในผังรอบแรก */
+export function buildRepairPrompt(q, layout, issues) {
+  return buildRevisePrompt(q, layout, 'ผังนี้มีปัญหาที่ต้องแก้ให้หมด โดยคงแนวคิด หน้าตาบ้าน และตำแหน่งห้องเดิมไว้ให้มากที่สุด: ' + issues.join(' · '))
 }
 
 function parseImages(list) {
@@ -216,20 +269,31 @@ export function createHouseConcept(d) {
   const get = (id) => db.prepare('SELECT * FROM house_concepts WHERE id=?').get(Number(id))
 
   // เรียก AI (หรือค่าจำลองตอนเทสต์) → ผังห้องที่ตรวจแล้ว
-  async function askLayout({ prompt, media, by }) {
+  async function askLayout({ prompt, media, by, q }) {
     if (process.env.PPSD_AI_MOCK_HOUSECONCEPT) {
-      const layout = normalizeLayout(JSON.parse(process.env.PPSD_AI_MOCK_HOUSECONCEPT))
+      const layout = normalizeLayout(JSON.parse(process.env.PPSD_AI_MOCK_HOUSECONCEPT), q)
       return { ok: true, layout, model: 'mock', cost_usd: 0 }
     }
     if (!d.aiKey()) return { ok: false, error: d.AI_NO_KEY }
     const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น', by, media, prompt, maxTokens: 32000, timeoutMs: 300000, effort: 'medium' })
     if (!ai.ok) return { ok: false, error: ai.error }
     const raw = d.extractJsonBlock(ai.text)
-    const layout = normalizeLayout(raw)
+    const layout = normalizeLayout(raw, q)
     if (!layout.floors.length) return { ok: false, error: 'AI ตอบผังห้องไม่ครบ — ลองกดออกแบบใหม่อีกครั้ง', model: ai.model, cost_usd: ai.cost_usd }
     return { ok: true, layout, model: ai.model, cost_usd: ai.cost_usd }
   }
   const addCost = (a, b) => Math.round(((a || 0) + (b || 0)) * 10000) / 10000
+  // ออกแบบ → ถ้าผังมีปัญหาร้ายแรง ให้ AI แก้อีก 1 รอบ (ใช้ผลรอบใหม่ถ้าปัญหาน้อยลง)
+  async function designWithRepair({ prompt, media, by, q }) {
+    const r = await askLayout({ prompt, media, by, q })
+    if (!r.ok || process.env.PPSD_AI_MOCK_HOUSECONCEPT) return r
+    const issues = seriousIssues(analyze(r.layout, q))
+    if (!issues.length) return r
+    const x = await askLayout({ prompt: buildRepairPrompt(q, r.layout, issues), by, q }).catch(() => null)
+    const cost = addCost(r.cost_usd, x?.cost_usd)
+    if (x?.ok && seriousIssues(analyze(x.layout, q)).length < issues.length) return { ...x, cost_usd: cost }
+    return { ...r, cost_usd: cost }
+  }
 
   function register(api, { canWrite }) {
     api.get('/house-concepts', (_req, res) => {
@@ -258,7 +322,7 @@ export function createHouseConcept(d) {
       d.audit(req, 'ออกแบบบ้านเบื้องต้น (AI)', `#${id} ${title}`)
       res.json(row(get(id)))
       const withIdeas = ideaNote && media.length < MAX_IMAGES && !process.env.PPSD_AI_MOCK_HOUSECONCEPT ? d.ideas.ideaMedia(ideaIds, { max: MAX_IMAGES - media.length }).catch(() => []) : Promise.resolve([])
-      withIdeas.then((more) => { const all = [...media, ...more]; return askLayout({ prompt: buildPrompt(q, all.length > 0), media: all, by: req.user?.name }) }).then((r) => {
+      withIdeas.then((more) => { const all = [...media, ...more]; return designWithRepair({ prompt: buildPrompt(q, all.length > 0), media: all, by: req.user?.name, q }) }).then((r) => {
         if (r.ok) db.prepare("UPDATE house_concepts SET layout=?, status='เสร็จ', error=NULL, model=?, cost_usd=?, updated=? WHERE id=?").run(JSON.stringify(r.layout), r.model, addCost(0, r.cost_usd), d.nowTS(), id)
         else db.prepare("UPDATE house_concepts SET status='ผิดพลาด', error=?, model=?, cost_usd=? WHERE id=?").run(r.error, r.model || null, addCost(0, r.cost_usd), id)
       }).catch((e) => db.prepare("UPDATE house_concepts SET status='ผิดพลาด', error=? WHERE id=?").run('ออกแบบไม่สำเร็จ: ' + e.message, id))
@@ -277,7 +341,7 @@ export function createHouseConcept(d) {
       d.audit(req, 'สั่งแก้แบบบ้านเบื้องต้น (AI)', `#${r.id} ${instruction}`)
       res.json(row(get(r.id)))
       const q = parse(r.req, {})
-      askLayout({ prompt: buildRevisePrompt(q, layout, instruction), by: req.user?.name }).then((x) => {
+      askLayout({ prompt: buildRevisePrompt(q, layout, instruction), by: req.user?.name, q }).then((x) => {
         const cur = get(r.id)
         if (x.ok) {
           const versions = [{ at: cur.updated, by: cur.updated_by, note: 'ก่อนแก้: ' + instruction, layout }, ...parse(cur.versions, [])].slice(0, MAX_VERSIONS)

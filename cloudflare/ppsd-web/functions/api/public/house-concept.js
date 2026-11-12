@@ -1,4 +1,4 @@
-import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages } from '../../_lib/house-concept.js'
+import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages, seriousIssues, buildRepairPrompt } from '../../_lib/house-concept.js'
 import { json, enabled, day, limits, count, bump } from '../../_house.js'
 
 // ลูกค้ากรอกความต้องการ → AI จัดผังห้อง → ส่งผังกลับในคำตอบเดียว (ใช้เวลา 1–3 นาที)
@@ -32,18 +32,28 @@ async function ideaImages(rows, max = 2) {
 async function askLayout(env, q, ideas = [], own = []) {
   if (env.MOCK_LAYOUT) { // ทดสอบในเครื่องเท่านั้น (wrangler pages dev --binding MOCK_LAYOUT=...)
     await new Promise((ok) => setTimeout(ok, 12000))
-    return normalizeLayout(JSON.parse(env.MOCK_LAYOUT))
+    return normalizeLayout(JSON.parse(env.MOCK_LAYOUT), q)
   }
   const model = env.AI_MODEL || 'claude-sonnet-5-5'
   const imgs = [...own, ...(own.length < 3 ? await ideaImages(ideas, Math.min(2, 3 - own.length)) : [])]
-  const body = { model, max_tokens: 32000, messages: [{ role: 'user', content: [...imgs, { type: 'text', text: buildPrompt(q, imgs.length > 0) }] }] }
-  if (!/haiku/.test(model)) body.output_config = { effort: 'medium' }
-  const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300000) })
-  const data = await r.json().catch(() => ({}))
-  if (!r.ok || data.stop_reason === 'refusal') throw new Error(data?.error?.message || 'HTTP ' + r.status)
-  const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join('')
-  const m = text.match(/\{[\s\S]*\}/)
-  return normalizeLayout(m ? JSON.parse(m[0]) : null)
+  const ask = async (content) => {
+    const body = { model, max_tokens: 32000, messages: [{ role: 'user', content }] }
+    if (!/haiku/.test(model)) body.output_config = { effort: 'medium' }
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300000) })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok || data.stop_reason === 'refusal') throw new Error(data?.error?.message || 'HTTP ' + r.status)
+    const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text || '').join('')
+    const m = text.match(/\{[\s\S]*\}/)
+    return normalizeLayout(m ? JSON.parse(m[0]) : null, q)
+  }
+  let layout = await ask([...imgs, { type: 'text', text: buildPrompt(q, imgs.length > 0) }])
+  // ผังมีปัญหาร้ายแรง → ให้ AI แก้อีก 1 รอบ (ใช้ผลใหม่ถ้าปัญหาน้อยลง)
+  const issues = layout.floors.length ? seriousIssues(analyze(layout, q)) : []
+  if (issues.length) {
+    const l2 = await ask([{ type: 'text', text: buildRepairPrompt(q, layout, issues) }]).catch(() => null)
+    if (l2?.floors.length && seriousIssues(analyze(l2, q)).length < issues.length) layout = l2
+  }
+  return layout
 }
 
 export async function onRequestPost({ request, env, waitUntil }) {

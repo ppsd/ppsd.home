@@ -221,9 +221,52 @@ P.designs = () => ({ nav: 'designs', t: 'แบบบ้าน', html: `${head('
 /* ช่วงงบค่าก่อสร้าง [ต่ำสุด, สูงสุด, ข้อความ] — ลูกค้าเลือกเป็นช่วง ไม่ต้องพิมพ์ตัวเลข */
 const BUD_RANGES = [[800000, 1500000, 'ไม่เกิน 1.5 ล้านบาท'], [1500000, 2000000, '1.5–2 ล้านบาท'], [2000000, 3000000, '2–3 ล้านบาท'], [3000000, 4000000, '3–4 ล้านบาท'], [4000000, 5000000, '4–5 ล้านบาท'], [5000000, 7000000, '5–7 ล้านบาท'], [7000000, 10000000, '7–10 ล้านบาท'], [10000000, 15000000, 'มากกว่า 10 ล้านบาท']];
 const budRange = () => { const [lo, hi] = ($('cBud').value || '3000000-4000000').split('-').map(Number); return { lo, hi, t: (BUD_RANGES.find(r => r[0] === lo) || [, , ''])[2] }; };
-/* ห้องที่ลูกค้าใส่จำนวนได้ [id, ชื่อ, ค่าเริ่ม, สูงสุด] · สิ่งที่ติ๊กเลือก */
-const ROOMS = [['cBed', 'ห้องนอน', 3, 8], ['cBath', 'ห้องน้ำ', 2, 8], ['cWork', 'ห้องทำงาน', 0, 3], ['cPray', 'ห้องพระ', 0, 2], ['cStore', 'ห้องเก็บของ', 0, 3], ['cMaid', 'ห้องแม่บ้าน', 0, 2], ['cMulti', 'ห้องอเนกประสงค์/ห้องดูหนัง', 0, 2], ['cCar', 'ที่จอดรถ (คัน)', 1, 4]];
-const NEEDS = ['ห้องนอนชั้นล่างสำหรับผู้สูงอายุ', 'ครัวไทยแยกจากครัวฝรั่ง', 'ห้องนั่งเล่นเพดานสูง', 'ห้องซักล้าง', 'ระเบียงชั้นบน', 'สระว่ายน้ำ', 'สวนในบ้าน', 'ดูฮวงจุ้ยและทิศ'];
+/* รายการห้องให้ลูกค้าเลือกแยกชั้น: [หมวด, [[รหัส, ชื่อ, นับเป็น b=ห้องนอน t=ห้องน้ำ bt=ห้องนอน+ห้องน้ำในตัว]]] */
+const RCAT = [
+  ['ห้องนอน', [['master', 'ห้องนอนใหญ่ (มีห้องน้ำ+ที่แต่งตัว)', 'bt'], ['bedBath', 'ห้องนอนมีห้องน้ำในตัว', 'bt'], ['bed', 'ห้องนอน', 'b'], ['elder', 'ห้องนอนผู้สูงอายุ', 'b'], ['kid', 'ห้องนอนเด็ก', 'b'], ['guest', 'ห้องนอนแขก', 'b'], ['maid', 'ห้องแม่บ้าน']]],
+  ['ห้องน้ำ', [['bath', 'ห้องน้ำรวม', 't'], ['guestBath', 'ห้องน้ำแขก/ส่วนกลาง', 't'], ['powder', 'ห้องน้ำเล็ก (สุขภัณฑ์+อ่างล้างมือ)', 't'], ['outBath', 'ห้องน้ำนอกบ้าน/ห้องน้ำแม่บ้าน', 't']]],
+  ['นั่งเล่น รับแขก ทานข้าว', [['foyer', 'โถงทางเข้า'], ['living', 'ห้องนั่งเล่น'], ['formal', 'ห้องรับแขก'], ['family', 'ห้องนั่งเล่นครอบครัว'], ['dining', 'ห้องทานข้าว'], ['double', 'โถงสูงสองชั้น (ฝ้าสูงโปร่ง)']]],
+  ['ครัว', [['thaiK', 'ครัวไทย (ปิด แยกกลิ่น)'], ['openK', 'ครัวฝรั่ง/แพนทรีเปิดโล่ง'], ['island', 'เคาน์เตอร์ไอส์แลนด์'], ['pantry', 'ห้องเก็บอาหาร']]],
+  ['ห้องใช้งานอื่น', [['pray', 'ห้องพระ'], ['work', 'ห้องทำงาน'], ['library', 'ห้องอ่านหนังสือ'], ['movie', 'ห้องดูหนัง/คาราโอเกะ'], ['gym', 'ห้องออกกำลังกาย'], ['play', 'ห้องเด็กเล่น'], ['multi', 'ห้องอเนกประสงค์'], ['walkin', 'ห้องแต่งตัว (walk-in closet)'], ['store', 'ห้องเก็บของ'], ['laundry', 'ห้องซักรีด'], ['mech', 'ห้องเครื่อง/ปั๊มน้ำ'], ['lift', 'ลิฟต์บ้าน']]],
+  ['นอกตัวบ้าน', [['car', 'ที่จอดรถ (คัน)'], ['porch', 'ชานหน้าบ้าน'], ['terrace', 'ลาน/เทอเรสนั่งเล่น'], ['balcony', 'ระเบียง'], ['dry', 'ลานซักล้าง-ตากผ้า (มีหลังคา)'], ['court', 'คอร์ทสวนกลางบ้าน'], ['pool', 'สระว่ายน้ำ'], ['bbq', 'ลานบาร์บีคิว']]],
+];
+const RINFO = Object.fromEntries(RCAT.flatMap(([, list]) => list.map(([k, t, c]) => [k, { t, c: c || '' }])));
+const POS = ['ด้านหน้า', 'ด้านหลัง', 'ด้านซ้าย', 'ด้านขวา', 'กลางบ้าน', 'มุมหน้าซ้าย', 'มุมหน้าขวา', 'มุมหลังซ้าย', 'มุมหลังขวา', 'ทิศเหนือ', 'ทิศใต้', 'ทิศตะวันออก', 'ทิศตะวันตก', 'ติดสวน', 'ใกล้บันได', 'ใกล้ที่จอดรถ'];
+/* ค่าเริ่มต้นตามจำนวนชั้น (0 = ยังไม่แน่ใจ ให้ระบบเลือกชั้นเอง) */
+const PRESET = {
+  0: { 0: { master: 1, bed: 2, bath: 1, living: 1, dining: 1, thaiK: 1, car: 1, porch: 1 } },
+  1: { 1: { master: 1, bed: 2, bath: 1, living: 1, dining: 1, thaiK: 1, car: 1, porch: 1 } },
+  2: { 1: { living: 1, dining: 1, thaiK: 1, guestBath: 1, car: 2, porch: 1, dry: 1 }, 2: { master: 1, bed: 2, bath: 1, family: 1, balcony: 1 } },
+  3: { 1: { living: 1, dining: 1, thaiK: 1, guestBath: 1, car: 2, dry: 1 }, 2: { master: 1, bed: 1, bath: 1, family: 1 }, 3: { bed: 2, bath: 1, pray: 1, balcony: 1 } },
+};
+/* ความต้องการเพิ่มเติมให้ติ๊ก */
+const FEAT = [
+  ['แสง ลม ความสบาย', ['บ้านไม่ร้อน ห้องนอนหลบแดดบ่าย', 'ลมผ่านทะลุทุกห้อง', 'หน้าต่างบานใหญ่รับวิว', 'ฝ้าสูงโปร่ง', 'ชายคายื่นกันแดดฝน', 'ยกพื้นสูง/ใต้ถุนกันน้ำท่วม']],
+  ['ครอบครัว', ['ห้องนอนลูกใกล้ห้องพ่อแม่', 'แยกโซนพ่อแม่กับลูก', 'ทางลาดสำหรับวีลแชร์', 'ห้องน้ำผู้สูงอายุมีราวจับ', 'บันไดชันน้อย', 'พื้นที่สัตว์เลี้ยง']],
+  ['ครัวและงานบ้าน', ['ครัวใกล้ที่จอดรถ', 'ประตูหลังบ้านเข้าครัว', 'ห้องน้ำแยกส่วนเปียก-แห้ง', 'ซักล้างใกล้ครัว', 'ห้องแม่บ้านมีทางเข้าแยก']],
+  ['ความเชื่อ', ['ดูฮวงจุ้ยและทิศ', 'ห้องพระอยู่ชั้นบนสุด', 'ประตูหน้ากับหลังไม่ตรงกัน', 'บันไดไม่หันเข้าประตูใหญ่']],
+  ['อื่น ๆ', ['เผื่อต่อเติมในอนาคต', 'เผื่อติดโซลาร์เซลล์', 'ที่จอดรถมีหลังคา', 'สวนหน้าบ้าน', 'สวนหลังบ้าน', 'รั้วและประตูรั้ว']],
+];
+const DIR8 = [['เหนือ', 0], ['ตะวันออกเฉียงเหนือ', 45], ['ตะวันออก', 90], ['ตะวันออกเฉียงใต้', 135], ['ใต้', 180], ['ตะวันตกเฉียงใต้', 225], ['ตะวันตก', 270], ['ตะวันตกเฉียงเหนือ', 315]];
+let prog = {}, progTouched = false, progFloor = 0; // prog['ชั้น|รหัส'] = { n, pos }
+const progFloors = () => { const n = Number($('cFl')?.value) || 0; return n ? Array.from({ length: n }, (_, i) => i + 1) : [0]; };
+const progSet = (fl) => { prog = {}; for (const [lv, rooms] of Object.entries(PRESET[fl] || {})) for (const [k, n] of Object.entries(rooms)) prog[lv + '|' + k] = { n, pos: '' }; };
+const progItems = () => { const fls = progFloors(); return Object.entries(prog).filter(([k, v]) => v.n > 0 && fls.includes(Number(k.split('|')[0]))).map(([k, v]) => { const [lv, key] = k.split('|'); return { floor: Number(lv), key, name: RINFO[key].t.replace(' (คัน)', ''), count: v.n, pos: v.pos }; }); };
+const progTotals = () => { let beds = 0, baths = 0, cars = 0; for (const x of progItems()) { const c = RINFO[x.key].c; if (c.includes('b')) beds += x.count; if (c.includes('t')) baths += x.count; if (x.key === 'car') cars += x.count; } return { beds, baths, cars }; };
+const drawProg = () => {
+  const box = $('cProg'); if (!box) return;
+  const fls = progFloors();
+  if (!fls.includes(progFloor)) progFloor = fls[0];
+  const tot = progTotals();
+  box.innerHTML = `<div class="ftabs" role="tablist">${fls.map(lv => `<button type="button" role="tab" data-pfl="${lv}" aria-selected="${lv === progFloor}" class="${lv === progFloor ? 'on' : ''}">${lv ? 'ชั้น ' + lv : 'ทั้งบ้าน (ให้ระบบเลือกชั้น)'} <small>${Object.entries(prog).filter(([k, v]) => v.n > 0 && Number(k.split('|')[0]) === lv).reduce((a, [, v]) => a + v.n, 0)}</small></button>`).join('')}</div>
+${RCAT.map(([g, list], gi) => `<details class="rgrp"${gi < 3 ? ' open' : ''}><summary>${g} <small>${list.reduce((a, [k]) => a + ((prog[progFloor + '|' + k] || {}).n || 0), 0) || ''}</small></summary>${list.map(([k, t]) => { const v = prog[progFloor + '|' + k] || { n: 0, pos: '' }; return `<div class="prow"><span>${t}</span><div class="cnt"><button type="button" data-pk="${k}" data-pd="-1" aria-label="ลด${t}">−</button><input type="number" min="0" max="12" value="${v.n}" data-pk="${k}" inputmode="numeric" aria-label="${t}"><button type="button" data-pk="${k}" data-pd="1" aria-label="เพิ่ม${t}">+</button></div><select data-pp="${k}" aria-label="ตำแหน่ง${t}"${v.n ? '' : ' hidden'}><option value="">ตำแหน่ง: ให้ระบบเลือก</option>${POS.map(p => `<option${p === v.pos ? ' selected' : ''}>${p}</option>`).join('')}</select></div>`; }).join('')}</details>`).join('')}
+<p class="fine" style="margin:6px 0 0">รวมทั้งบ้าน: ห้องนอน <b>${tot.beds}</b> · ห้องน้ำ <b>${tot.baths}</b> (นับห้องน้ำในห้องนอนแล้ว) · ที่จอดรถ <b>${tot.cars}</b> คัน · ทางเดินและบันไดระบบใส่ให้เอง</p>`;
+};
+const drawCompass = () => {
+  const el = $('cComp'); if (!el) return;
+  const v = $('cDeg').value, deg = v === '' ? null : ((Number(v) % 360) + 360) % 360;
+  el.innerHTML = `<svg viewBox="-50 -50 100 100" width="96" height="96" aria-hidden="true"><circle r="40" fill="none" stroke="currentColor" stroke-opacity=".35"/>${[['N', 0, -44], ['E', 44, 0], ['S', 0, 44], ['W', -44, 0]].map(([t, x, y]) => `<text x="${x}" y="${y}" font-size="10" text-anchor="middle" dominant-baseline="middle" fill="currentColor" opacity=".7">${t === 'N' ? 'น' : t === 'E' ? 'อ' : t === 'S' ? 'ต' : 'ตก'}</text>`).join('')}${deg === null ? '<text y="4" font-size="9" text-anchor="middle" fill="currentColor" opacity=".6">ไม่ระบุ</text>' : `<g transform="rotate(${deg})"><rect x="-11" y="-11" width="22" height="22" rx="2" fill="var(--sand)" stroke="var(--navy)"/><path d="M0 -12 L0 -32 M-6 -25 L0 -33 L6 -25" stroke="var(--gold)" stroke-width="3" fill="none"/></g>`}</svg>`;
+};
 /* รูปตัวอย่างที่ลูกค้าแนบ — ย่อในเครื่องให้ไม่เกิน 1280 จุดภาพ แล้วส่งให้ระบบออกแบบดู (ไม่อัปโหลดเก็บ) */
 let refImgs = [];
 const shrinkImg = file => new Promise(ok => {
@@ -240,10 +283,11 @@ const drawRefs = () => {
 P.custom = () => ({ nav: 'designs', t: 'ออกแบบตามความต้องการ', html: `${head('แบบบ้าน', 'เลือกแบบบ้านที่ใช่', 'เลือกจากแบบสำเร็จรูป หรือให้สถาปนิกออกแบบตามความต้องการและงบของคุณ')}${designTabs('custom')}
 <div class="w sec"><div class="opts">${opt('แบบสำเร็จรูป', 'เลือกจากแบบที่มี ปรับเล็กน้อยได้ เห็นราคาเร็ว')}${opt('ออกแบบตามความต้องการ', 'สถาปนิกออกแบบใหม่ตามความต้องการ งบ และที่ดินของคุณ')}${opt('ค่าจองแบบ (ออกแบบตามความต้องการ)', '30,000–40,000 บาท')}</div>
 <div id="cLiked">${likedBox()}</div>
-<div class="split" style="margin-top:24px"><form class="panel" id="cf" data-demo><fieldset><legend>งบและที่ดิน</legend><div class="two"><div class="f"><label for="cBud">งบค่าก่อสร้าง</label><select id="cBud">${BUD_RANGES.map(([lo, hi, t]) => `<option value="${lo}-${hi}"${lo === 3000000 ? ' selected' : ''}>${t}</option>`).join('')}</select></div><div class="f"><label for="cPkg">สเปค</label><select id="cPkg"><option value="18000">Premium</option><option value="23000">Elite</option></select></div></div><div class="two"><div class="f"><label for="cLw">ที่ดินหน้ากว้าง (ม.)</label><input id="cLw" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div><div class="f"><label for="cLd">ที่ดินลึก (ม.)</label><input id="cLd" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div></div></fieldset><hr>
+<div class="split" style="margin-top:24px"><form class="panel" id="cf" data-demo><fieldset><legend>งบและที่ดิน</legend><div class="two"><div class="f"><label for="cBud">งบค่าก่อสร้าง</label><select id="cBud">${BUD_RANGES.map(([lo, hi, t]) => `<option value="${lo}-${hi}"${lo === 3000000 ? ' selected' : ''}>${t}</option>`).join('')}</select></div><div class="f"><label for="cPkg">สเปค</label><select id="cPkg"><option value="18000">Premium</option><option value="23000">Elite</option></select></div></div><div class="two"><div class="f"><label for="cLw">ที่ดินหน้ากว้าง (ม.)</label><input id="cLw" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div><div class="f"><label for="cLd">ที่ดินลึก (ม.)</label><input id="cLd" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div></div>
+<div class="f"><span class="lbl">หน้าบ้าน (ด้านติดถนน) หันไปทางทิศไหน</span><span class="h">ใช้วางห้องให้หลบแดดบ่ายและรับลม · ไม่ทราบก็เว้นไว้ได้ · ดูทิศได้จากเข็มทิศในมือถือขณะยืนหันหน้าออกถนน</span><div class="dirbox"><div class="two" style="flex:1"><div class="f"><label for="cDir">ทิศ</label><select id="cDir"><option value="">ไม่ทราบ</option>${DIR8.map(([t, d]) => `<option value="${d}">${t}</option>`).join('')}</select></div><div class="f"><label for="cDeg">องศา (0–359)</label><input id="cDeg" type="number" min="0" max="359" step="1" placeholder="เช่น 200" inputmode="numeric"></div></div><div id="cComp" class="comp"></div></div></div></fieldset><hr>
 <fieldset><legend>บ้านที่อยากได้</legend><div class="two"><div class="f"><label for="cSty">สไตล์</label><select id="cSty"><option value="">ยังไม่แน่ใจ</option><option>คลาสสิก</option><option>โมเดิร์น</option><option>มินิมอล</option></select></div><div class="f"><label for="cFl">จำนวนชั้น</label><select id="cFl"><option value="">ยังไม่แน่ใจ</option><option value="1">ชั้นเดียว</option><option value="2">2 ชั้น</option><option value="3">3 ชั้น</option></select></div></div>
-<div class="f"><span class="lbl">จำนวนห้องที่ต้องการ</span><span class="h">กด + หรือ − (0 = ไม่ต้องการ)</span><div class="rooms">${ROOMS.map(([id, t, v, max]) => `<div class="room"><label for="${id}">${t}</label><div class="cnt"><button type="button" data-step="-1" data-for="${id}" aria-label="ลด${t}">−</button><input id="${id}" type="number" min="0" max="${max}" value="${v}" inputmode="numeric"><button type="button" data-step="1" data-for="${id}" aria-label="เพิ่ม${t}">+</button></div></div>`).join('')}</div></div>
-<div class="f"><span class="lbl">ติ๊กสิ่งที่อยากได้เพิ่ม (เลือกได้หลายข้อ)</span><div class="ticks">${NEEDS.map(t => `<label class="tick"><input type="checkbox" name="cNeed" value="${t}"><span>${t}</span></label>`).join('')}</div></div>
+<div class="f"><span class="lbl">ห้องที่ต้องการในแต่ละชั้น</span><span class="h">เลือกจำนวนชั้นด้านบนก่อน แล้วกดแท็บชั้นเพื่อใส่ห้อง · กด + − ใส่จำนวน แล้วเลือกตำแหน่งได้ (มองจากถนนเข้าหาบ้าน)</span><div id="cProg" class="prog"></div></div>
+<div class="f"><span class="lbl">ติ๊กสิ่งที่อยากได้เพิ่ม (เลือกได้หลายข้อ)</span>${FEAT.map(([g, list]) => `<div class="fgrp"><b>${g}</b><div class="ticks">${list.map(t => `<label class="tick"><input type="checkbox" name="cNeed" value="${t}"><span>${t}</span></label>`).join('')}</div></div>`).join('')}</div>
 <div class="f"><span class="lbl">รูปตัวอย่างบ้านที่ชอบ (ไม่บังคับ · สูงสุด 3 รูป)</span><span class="h">รูปบ้าน แปลน หรือภาพภายในที่อยากได้ · ระบบจะออกแบบให้ใกล้เคียงรูปตามความต้องการของคุณ · รูปใช้ออกแบบครั้งนี้เท่านั้น ไม่เก็บไว้</span><div class="refs" id="cRefs"></div><label class="btn line refadd" for="cImg">+ เลือกรูปตัวอย่าง</label><input id="cImg" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden></div>
 <div class="f"><label for="cMore">เล่าเพิ่มเติม</label><textarea id="cMore" rows="3" placeholder="เช่น อยู่กัน 5 คน มีพ่อแม่สูงอายุ อยากได้บ้านไม่ร้อน"></textarea></div></fieldset><hr>
 <div class="two"><div class="f"><label for="cName">ชื่อเล่น</label><input id="cName" autocomplete="given-name"></div><div class="f"><label for="cTel">เบอร์โทร</label><input id="cTel" type="tel" autocomplete="tel"></div></div>${consent('cOk')}
@@ -259,13 +303,23 @@ P.custom = () => ({ nav: 'designs', t: 'ออกแบบตามความ�
       $('cPay').textContent = fmt(up100(monthly(lo * 0.9, 6, 30))) + '–' + fmt(up100(monthly(hi * 0.9, 6, 30))) + ' บาท';
       $('cMsg').innerHTML = `งบ <b>${t}</b> สร้างบ้านได้ประมาณ <b>${fmt(Math.floor(lo / 23000))}–${fmt(Math.floor(hi / 18000))} ตร.ม.</b> ขึ้นกับสเปคที่เลือก`;
       const st = $('cSty').value, fl = Number($('cFl').value);
-      const ex = DESIGNS.filter(d => d.land <= land).map(d => ({ d, s: (d.price < lo ? lo - d.price : d.price > hi ? d.price - hi : 0) / hi + (st && d.style !== st ? 0.3 : 0) + (fl && d.floors !== fl ? 0.2 : 0) + Math.abs(d.beds - num('cBed')) * 0.08 })).sort((a, b) => a.s - b.s).slice(0, 3);
+      const ex = DESIGNS.filter(d => d.land <= land).map(d => ({ d, s: (d.price < lo ? lo - d.price : d.price > hi ? d.price - hi : 0) / hi + (st && d.style !== st ? 0.3 : 0) + (fl && d.floors !== fl ? 0.2 : 0) + Math.abs(d.beds - progTotals().beds) * 0.08 })).sort((a, b) => a.s - b.s).slice(0, 3);
       $('cEx').innerHTML = ex.map(x => designCard(x.d)).join('') || '<p>ยังไม่มีตัวอย่างที่ลงที่ดินขนาดนี้ได้ สถาปนิกออกแบบให้พอดีที่ดินได้</p>';
     };
     $('cf').addEventListener('input', draw); $('cf').addEventListener('change', draw); draw();
+    const setN = (k, n) => { const key = progFloor + '|' + k; prog[key] = { n: Math.min(12, Math.max(0, n)), pos: (prog[key] || {}).pos || '' }; progTouched = true; const open = [...document.querySelectorAll('#cProg details')].map(x => x.open); drawProg(); document.querySelectorAll('#cProg details').forEach((x, i) => { x.open = open[i]; }); draw(); };
+    $('cProg').addEventListener('input', e => { const i = e.target.closest('input[data-pk]'); if (i) { e.stopPropagation(); const key = progFloor + '|' + i.dataset.pk; prog[key] = { n: Math.min(12, Math.max(0, Number(i.value) || 0)), pos: (prog[key] || {}).pos || '' }; progTouched = true; const sel = i.closest('.prow').querySelector('select'); sel.hidden = !prog[key].n; } });
+    $('cProg').addEventListener('change', e => { const sel = e.target.closest('select[data-pp]'); if (sel) { const key = progFloor + '|' + sel.dataset.pp; prog[key] = { ...(prog[key] || { n: 0 }), pos: sel.value }; } const i = e.target.closest('input[data-pk]'); if (i) setN(i.dataset.pk, Number(i.value) || 0); });
+    $('cFl').addEventListener('change', () => { const fls = progFloors(); if (!progTouched || !Object.entries(prog).some(([k, v]) => v.n > 0 && fls.includes(Number(k.split('|')[0])))) progSet(Number($('cFl').value) || 0); drawProg(); });
+    $('cDir').addEventListener('change', () => { $('cDeg').value = $('cDir').value; drawCompass(); });
+    $('cDeg').addEventListener('input', () => { const v = $('cDeg').value; $('cDir').value = v === '' ? '' : String(DIR8[Math.round((((Number(v) % 360) + 360) % 360) / 45) % 8][1]); drawCompass(); });
+    if (!progTouched) progSet(0);
+    drawProg(); drawCompass();
     $('cf').addEventListener('click', e => {
-      const b = e.target.closest('[data-step]');
-      if (b) { const inp = $(b.dataset.for); inp.value = Math.min(Number(inp.max), Math.max(0, (Number(inp.value) || 0) + Number(b.dataset.step))); inp.dispatchEvent(new Event('input', { bubbles: true })); }
+      const t = e.target.closest('[data-pfl]');
+      if (t) { progFloor = Number(t.dataset.pfl); drawProg(); }
+      const b = e.target.closest('[data-pd]');
+      if (b) setN(b.dataset.pk, ((prog[progFloor + '|' + b.dataset.pk] || {}).n || 0) + Number(b.dataset.pd));
       const x = e.target.closest('[data-unref]');
       if (x) { refImgs.splice(Number(x.dataset.unref), 1); drawRefs(); }
     });
@@ -290,10 +344,11 @@ async function houseGen() {
   $('cGo').onclick = async () => {
     const box = $('cGen'), { lo, hi, t: budT } = budRange();
     const needs = [...document.querySelectorAll('input[name=cNeed]:checked')].map(x => x.value);
-    const body = { floors: Number($('cFl').value) || 0, bedrooms: num('cBed'), bathrooms: num('cBath'), budget: hi, price_per_sqm: Number($('cPkg').value), land_w: num('cLw'), land_d: num('cLd'),
-      parking: num('cCar'), style: $('cSty').value, extras: [...ROOMS.slice(2, 7).filter(([id]) => num(id) > 0).map(([id, t]) => `${t} ${num(id)} ห้อง`), ...needs].join(', '), images: refImgs, notes: [`งบค่าก่อสร้าง ${budT} (${fmt(lo)}–${fmt(hi)} บาท) ออกแบบให้ราคาอยู่ในช่วงนี้`, $('cMore').value].filter(Boolean).join(' · '), name: $('cName').value, phone: $('cTel').value, idea_ids: liked().map(x => x.id) };
+    const tot = progTotals(), deg = $('cDeg').value;
+    const body = { floors: Number($('cFl').value) || 0, bedrooms: tot.beds, bathrooms: tot.baths, budget: hi, facing: deg === '' ? null : Number(deg), program: progItems().map(({ floor, name, count, pos }) => ({ floor, name, count, pos })), price_per_sqm: Number($('cPkg').value), land_w: num('cLw'), land_d: num('cLd'),
+      parking: tot.cars, style: $('cSty').value, extras: needs.join(', '), images: refImgs, notes: [`งบค่าก่อสร้าง ${budT} (${fmt(lo)}–${fmt(hi)} บาท) ออกแบบให้ราคาอยู่ในช่วงนี้`, $('cMore').value].filter(Boolean).join(' · '), name: $('cName').value, phone: $('cTel').value, idea_ids: liked().map(x => x.id) };
     box.hidden = false; $('cGo').disabled = true;
-    box.innerHTML = '<h2 style="font-size:22px">กำลังออกแบบบ้านของคุณ</h2><p>ระบบกำลังจัดผังห้องตามความต้องการ ใช้เวลาประมาณ 1–3 นาที ไม่ต้องปิดหน้านี้</p>';
+    box.innerHTML = '<h2 style="font-size:22px">กำลังออกแบบบ้านของคุณ</h2><p>ระบบกำลังจัดผังห้องตามความต้องการ ใช้เวลาประมาณ 2–6 นาที (ระบบตรวจแบบและแก้จุดที่ผิดให้อีกรอบ) ไม่ต้องปิดหน้านี้</p>';
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     const fail = t => { box.innerHTML = `<p class="msg">${t}</p><p class="fine">ส่งความต้องการให้สถาปนิกช่วยออกแบบได้ด้วยปุ่มด้านซ้าย</p>`; $('cGo').disabled = false; };
     try {
@@ -309,7 +364,7 @@ async function houseGen() {
           x = await fetch(API + '/public/house-concept/' + j.token).then(q => q.json()).catch(() => ({ status: 'working' }));
         }
         if (!document.body.contains(box)) return;
-        if (x.status === 'working') { if (Date.now() - t0 > 420000) return fail('ใช้เวลานานเกินไป ลองใหม่อีกครั้ง'); continue; }
+        if (x.status === 'working') { if (Date.now() - t0 > 720000) return fail('ใช้เวลานานเกินไป ลองใหม่อีกครั้ง'); continue; }
         if (x.status !== 'done') return fail(x.error || 'ออกแบบไม่สำเร็จ ลองใหม่อีกครั้ง');
         const s = x.stats, title = `บ้าน ${x.layout.floors.length} ชั้น ${s.bedrooms} ห้องนอน ${s.bathrooms} ห้องน้ำ`;
         box.innerHTML = `<h2 style="font-size:22px">แบบร่างบ้านของคุณ</h2>${x.layout.summary ? `<p>${x.layout.summary.replace(/[<>&]/g, '')}</p>` : ''}
