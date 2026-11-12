@@ -258,7 +258,7 @@ async function houseGen() {
   $('cGo').onclick = async () => {
     const box = $('cGen'), { lo, hi, t: budT } = budRange();
     const needs = [...document.querySelectorAll('input[name=cNeed]:checked')].map(x => x.value);
-    const body = { floors: Number($('cFl').value) || 1, bedrooms: num('cBed'), bathrooms: num('cBath'), budget: hi, price_per_sqm: Number($('cPkg').value), land_w: num('cLw'), land_d: num('cLd'),
+    const body = { floors: Number($('cFl').value) || 0, bedrooms: num('cBed'), bathrooms: num('cBath'), budget: hi, price_per_sqm: Number($('cPkg').value), land_w: num('cLw'), land_d: num('cLd'),
       parking: num('cCar'), style: $('cSty').value, extras: [...ROOMS.slice(2, 7).filter(([id]) => num(id) > 0).map(([id, t]) => `${t} ${num(id)} ห้อง`), ...needs].join(', '), images: refImgs, notes: [`งบค่าก่อสร้าง ${budT} (${fmt(lo)}–${fmt(hi)} บาท) ออกแบบให้ราคาอยู่ในช่วงนี้`, $('cMore').value].filter(Boolean).join(' · '), name: $('cName').value, phone: $('cTel').value, idea_ids: liked().map(x => x.id) };
     box.hidden = false; $('cGo').disabled = true;
     box.innerHTML = '<h2 style="font-size:22px">กำลังออกแบบบ้านของคุณ</h2><p>ระบบกำลังจัดผังห้องตามความต้องการ ใช้เวลาประมาณ 1–3 นาที ไม่ต้องปิดหน้านี้</p>';

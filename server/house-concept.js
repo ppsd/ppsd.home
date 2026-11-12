@@ -27,7 +27,7 @@ const txt = (s, n = 200) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0,
 /** ความต้องการที่ผู้ใช้กรอก → ค่าที่ใช้ได้ */
 export function normalizeReq(b = {}) {
   return {
-    floors: clamp(Math.round(num(b.floors, 1)), 1, MAX_FLOORS),
+    floors: String(b.floors) === '0' ? 0 : clamp(Math.round(num(b.floors, 1)), 1, MAX_FLOORS), // 0 = ลูกค้ายังไม่แน่ใจ ให้ AI เลือก
     bedrooms: clamp(Math.round(num(b.bedrooms, 3)), 0, 12),
     bathrooms: clamp(Math.round(num(b.bathrooms, 2)), 0, 12),
     budget: Math.max(0, Math.round(num(b.budget, 0))),
@@ -152,7 +152,7 @@ const SCHEMA_TEXT = `รูปแบบ JSON (ตอบเป็น JSON อย�
 function reqText(q) {
   const target = q.budget && q.price_per_sqm ? Math.round(q.budget / q.price_per_sqm) : 0
   return [
-    `- จำนวนชั้น: ${q.floors} ชั้น`,
+    q.floors ? `- จำนวนชั้น: ${q.floors} ชั้น` : `- จำนวนชั้น: ไม่ระบุ (เลือก 1–${MAX_FLOORS} ชั้นให้เหมาะกับงบ ที่ดิน และรูปตัวอย่างถ้ามี)`,
     `- ห้องนอน: ${q.bedrooms} ห้อง · ห้องน้ำ: ${q.bathrooms} ห้อง (นับรวมห้องน้ำในห้องนอน)`,
     q.budget ? `- งบประมาณ: ${fmt(q.budget)} บาท ที่ราคาประมาณ ${fmt(q.price_per_sqm)} บาท/ตร.ม. → พื้นที่รวมทั้งหมด (รวมระเบียง/ที่จอดรถ) ไม่ควรเกิน ${target} ตร.ม.` : '- งบประมาณ: ไม่ระบุ (ออกแบบขนาดพอดีกับความต้องการ)',
     q.land_w && q.land_d ? `- ที่ดินหน้ากว้าง ${q.land_w} ม. ลึก ${q.land_d} ม. → ตัวบ้านรวมที่จอดรถต้องเว้นจากแนวเขตที่ดินอย่างน้อย 2 ม. ทุกด้าน (กว้างไม่เกิน ${Math.max(0, q.land_w - 4)} ม. ลึกไม่เกิน ${Math.max(0, q.land_d - 4)} ม.)` : '- ที่ดิน: ไม่ระบุ',
@@ -250,7 +250,7 @@ export function createHouseConcept(d) {
       const ideaIds = Array.isArray(req.body?.idea_ids) ? req.body.idea_ids.slice(0, 6) : []
       const ideaNote = ideaIds.length && d.ideas ? d.ideas.ideaText(ideaIds) : ''
       if (ideaNote) { q.notes = txt([q.notes, ideaNote].filter(Boolean).join(' · '), 1500); q.idea_ids = ideaIds.map(Number) }
-      const title = txt(req.body?.title, 120) || `บ้าน ${q.floors} ชั้น ${q.bedrooms} ห้องนอน ${q.bathrooms} ห้องน้ำ`
+      const title = txt(req.body?.title, 120) || `บ้าน ${q.floors || '?'} ชั้น ${q.bedrooms} ห้องนอน ${q.bathrooms} ห้องน้ำ`
       const now = d.nowTS()
       const info = db.prepare('INSERT INTO house_concepts (at,by,by_id,title,customer,req,layout,versions,status,updated,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
         .run(now, req.user?.name || '', req.user?.id || null, title, txt(req.body?.customer, 120), JSON.stringify(q), null, '[]', 'กำลังออกแบบ', now, req.user?.name || '')

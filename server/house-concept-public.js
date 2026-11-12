@@ -69,7 +69,7 @@ export function createPublicHouseConcept(d) {
     if (!q.bedrooms && !q.bathrooms) return res.status(400).json({ error: 'ระบุจำนวนห้องนอนหรือห้องน้ำอย่างน้อย 1 อย่าง' })
     ipCount.set(key, (ipCount.get(key) || 0) + 1)
     const now = d.nowTS()
-    const title = `เว็บ: บ้าน ${q.floors} ชั้น ${q.bedrooms} ห้องนอน ${q.bathrooms} ห้องน้ำ`
+    const title = `เว็บ: บ้าน ${q.floors || '?'} ชั้น ${q.bedrooms} ห้องนอน ${q.bathrooms} ห้องน้ำ`
     const contact = [txt(b.name, 60), txt(b.phone, 30)].filter(Boolean).join(' · ')
     const id = db.prepare('INSERT INTO house_concepts (at,by,by_id,title,customer,req,layout,versions,status,updated,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
       .run(now, BY, null, title, contact, JSON.stringify(q), null, '[]', 'กำลังออกแบบ', now, BY).lastInsertRowid
