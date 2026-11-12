@@ -2,7 +2,7 @@
 // build แยกด้วย vite.house.config.ts → dist/web/house/viewer.js (หน้าเว็บโหลดเฉพาะตอนได้ผลแบบ)
 import { useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import HousePlan from '../components/sales/HousePlan'
+import HousePlan, { saveAllPlansPng } from '../components/sales/HousePlan'
 import House3D from '../components/sales/House3D'
 import type { Layout } from '../components/sales/houseGeom'
 import { renderStill } from './pretty'
@@ -15,6 +15,7 @@ function Viewer({ layout, title, land }: { layout: Layout; title: string; land?:
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <button type="button" style={b(view === '3d')} onClick={() => setView('3d')}>ภาพ 3D</button>
         {layout.floors.map((f) => <button type="button" key={f.level} style={b(view === f.level)} onClick={() => setView(f.level)}>แปลนชั้น {f.level}</button>)}
+        <button type="button" style={{ ...b(false), marginLeft: 'auto', background: '#fff', border: '1px solid #1F3550' }} onClick={() => saveAllPlansPng(layout, title, `${title}-แปลน${layout.floors.length > 1 ? 'ทุกชั้น' : ''}.png`).catch(() => alert('บันทึกรูปไม่สำเร็จ'))}>⬇ บันทึกแปลน{layout.floors.length > 1 ? 'ทุกชั้น' : ''}</button>
       </div>
       {view === '3d'
         ? <House3D layout={layout} title={title} land={land} />

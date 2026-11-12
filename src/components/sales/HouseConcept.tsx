@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api } from '../../api'
 import { useApp } from '../../store'
 import ModalShell from '../shared/ModalShell'
-import HousePlan, { saveSvgPng } from './HousePlan'
+import HousePlan, { saveSvgPng, saveAllPlansPng } from './HousePlan'
 import { fmtBaht, fmtM, type Layout } from './houseGeom'
 import HouseIdeas, { Credit, type Idea } from './HouseIdeas'
 import { RoomProgram, FacingPicker, FEAT, presetProg, progItems, dirOf, type Prog } from './RoomProgram'
@@ -350,7 +350,8 @@ function Detail({ id, canEdit, onBack, onChanged }: { id: number; canEdit: boole
                 <b style={{ fontSize: 14, color: '#1C2730', marginRight: 6 }}>แปลน</b>
                 {L.floors.map((f) => <button key={f.level} onClick={() => setLevel(f.level)} style={{ ...btn2, padding: '5px 11px', ...(lv === f.level ? { background: '#30506A', color: '#fff', borderColor: '#30506A' } : {}) }}>ชั้น {f.level}</button>)}
                 <span style={{ flex: 1 }} />
-                <button style={btn2} onClick={() => svgRef.current && saveSvgPng(svgRef.current, `${c.title}-แปลนชั้น${lv}.png`).catch(() => alert('บันทึกรูปไม่สำเร็จ'))}>⬇ บันทึกแปลน</button>
+                {L.floors.length > 1 && <button style={btn2} title="บันทึกเฉพาะชั้นที่เปิดอยู่" onClick={() => svgRef.current && saveSvgPng(svgRef.current, `${c.title}-แปลนชั้น${lv}.png`).catch(() => alert('บันทึกรูปไม่สำเร็จ'))}>⬇ เฉพาะชั้นนี้</button>}
+                <button style={{ ...btn2, fontWeight: 600 }} title="รวมแปลนทุกชั้นไว้ในรูปเดียว" onClick={() => saveAllPlansPng(L, c.title, `${c.title}-แปลนทุกชั้น.png`, c.customer ? `ลูกค้า ${c.customer}` : '').catch(() => alert('บันทึกรูปไม่สำเร็จ'))}>⬇ บันทึกแปลน{L.floors.length > 1 ? 'ทุกชั้น' : ''}</button>
               </div>
               <div style={{ overflow: 'auto', border: '1px solid #EEF1F4', borderRadius: 8 }}>
                 <HousePlan ref={svgRef} layout={L} level={lv} title={c.title} subtitle={c.customer ? `ลูกค้า ${c.customer}` : ''} />

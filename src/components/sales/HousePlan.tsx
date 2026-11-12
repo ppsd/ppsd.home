@@ -1,4 +1,6 @@
 import { forwardRef } from 'react'
+import { flushSync } from 'react-dom'
+import { createRoot } from 'react-dom/client'
 import { ROOM_COLOR, OUTDOOR, computeWalls, bbox, fmtM, type Layout } from './houseGeom'
 
 // แปลนบ้าน 1 ชั้น (SVG) — วาดจากผังห้อง: ผนังภายนอกหนา ผนังภายในบาง ประตูมีเส้นวงเปิด หน้าต่างเส้นคู่ บันไดมีขั้น
@@ -135,8 +137,8 @@ const HousePlan = forwardRef<SVGSVGElement, Props>(function HousePlan({ layout, 
 })
 export default HousePlan
 
-/** บันทึก SVG เป็นรูป PNG (ขยาย 2 เท่าให้คมพอส่ง LINE/พิมพ์) */
-export async function saveSvgPng(svg: SVGSVGElement, name: string) {
+/** SVG → canvas ขยาย 2 เท่า (คมพอส่ง LINE/พิมพ์) */
+async function svgCanvas(svg: SVGSVGElement) {
   const vb = svg.viewBox.baseVal
   const xml = new XMLSerializer().serializeToString(svg)
   const img = new Image()
@@ -147,7 +149,33 @@ export async function saveSvgPng(svg: SVGSVGElement, name: string) {
   const g = c.getContext('2d')!
   g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height)
   g.drawImage(img, 0, 0, c.width, c.height)
-  downloadDataUrl(c.toDataURL('image/png'), name)
+  return c
+}
+/** บันทึก SVG เป็นรูป PNG */
+export async function saveSvgPng(svg: SVGSVGElement, name: string) {
+  downloadDataUrl((await svgCanvas(svg)).toDataURL('image/png'), name)
+}
+/** บันทึกแปลนทุกชั้นในกดเดียว → รูปเดียว เรียงชั้น 1 ลงไปชั้นบนสุด (วาดแปลนทุกชั้นนอกจอแล้วต่อกัน) */
+export async function saveAllPlansPng(layout: Layout, title: string, name: string, subtitle?: string) {
+  const host = document.createElement('div')
+  host.style.cssText = 'position:fixed;left:-100000px;top:0;width:1600px;pointer-events:none'
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    flushSync(() => root.render(<>{layout.floors.map((f) => <HousePlan key={f.level} layout={layout} level={f.level} title={title} subtitle={subtitle} />)}</>))
+    const parts = await Promise.all([...host.querySelectorAll('svg')].map((x) => svgCanvas(x as SVGSVGElement)))
+    if (!parts.length) throw new Error('ไม่มีแปลน')
+    const gap = 40, W = Math.max(...parts.map((p) => p.width)), H = parts.reduce((a, p) => a + p.height, 0) + gap * (parts.length - 1)
+    const c = document.createElement('canvas'); c.width = W; c.height = H
+    const g = c.getContext('2d')!
+    g.fillStyle = '#fff'; g.fillRect(0, 0, W, H)
+    let y = 0
+    parts.forEach((p, i) => {
+      g.drawImage(p, Math.round((W - p.width) / 2), y); y += p.height
+      if (i < parts.length - 1) { g.fillStyle = '#C9D2D9'; g.fillRect(40, y + gap / 2 - 1, W - 80, 2); y += gap }
+    })
+    downloadDataUrl(c.toDataURL('image/png'), name)
+  } finally { root.unmount(); host.remove() }
 }
 export function downloadDataUrl(url: string, name: string) {
   const a = document.createElement('a')
