@@ -189,12 +189,30 @@ P.designs = () => ({ nav: 'designs', t: 'แบบบ้าน', html: `${head('
 /* ช่วงงบค่าก่อสร้าง [ต่ำสุด, สูงสุด, ข้อความ] — ลูกค้าเลือกเป็นช่วง ไม่ต้องพิมพ์ตัวเลข */
 const BUD_RANGES = [[800000, 1500000, 'ไม่เกิน 1.5 ล้านบาท'], [1500000, 2000000, '1.5–2 ล้านบาท'], [2000000, 3000000, '2–3 ล้านบาท'], [3000000, 4000000, '3–4 ล้านบาท'], [4000000, 5000000, '4–5 ล้านบาท'], [5000000, 7000000, '5–7 ล้านบาท'], [7000000, 10000000, '7–10 ล้านบาท'], [10000000, 15000000, 'มากกว่า 10 ล้านบาท']];
 const budRange = () => { const [lo, hi] = ($('cBud').value || '3000000-4000000').split('-').map(Number); return { lo, hi, t: (BUD_RANGES.find(r => r[0] === lo) || [, , ''])[2] }; };
+/* ห้องที่ลูกค้าใส่จำนวนได้ [id, ชื่อ, ค่าเริ่ม, สูงสุด] · สิ่งที่ติ๊กเลือก */
+const ROOMS = [['cBed', 'ห้องนอน', 3, 8], ['cBath', 'ห้องน้ำ', 2, 8], ['cWork', 'ห้องทำงาน', 0, 3], ['cPray', 'ห้องพระ', 0, 2], ['cStore', 'ห้องเก็บของ', 0, 3], ['cMaid', 'ห้องแม่บ้าน', 0, 2], ['cMulti', 'ห้องอเนกประสงค์/ห้องดูหนัง', 0, 2], ['cCar', 'ที่จอดรถ (คัน)', 1, 4]];
+const NEEDS = ['ห้องนอนชั้นล่างสำหรับผู้สูงอายุ', 'ครัวไทยแยกจากครัวฝรั่ง', 'ห้องนั่งเล่นเพดานสูง', 'ห้องซักล้าง', 'ระเบียงชั้นบน', 'สระว่ายน้ำ', 'สวนในบ้าน', 'ดูฮวงจุ้ยและทิศ'];
+/* รูปตัวอย่างที่ลูกค้าแนบ — ย่อในเครื่องให้ไม่เกิน 1280 จุดภาพ แล้วส่งให้ระบบออกแบบดู (ไม่อัปโหลดเก็บ) */
+let refImgs = [];
+const shrinkImg = file => new Promise(ok => {
+  const u = URL.createObjectURL(file), im = new Image();
+  im.onload = () => { const k = Math.min(1, 1280 / Math.max(im.width, im.height)), c = document.createElement('canvas'); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(u); ok(c.toDataURL('image/jpeg', 0.82)); };
+  im.onerror = () => { URL.revokeObjectURL(u); ok(null); };
+  im.src = u;
+});
+const drawRefs = () => {
+  if (!$('cRefs')) return;
+  $('cRefs').innerHTML = refImgs.map((src, i) => `<div class="ref"><img src="${src}" alt="รูปตัวอย่างที่ ${i + 1}"><button type="button" data-unref="${i}" aria-label="เอารูปที่ ${i + 1} ออก">×</button></div>`).join('');
+  document.querySelector('.refadd').hidden = refImgs.length >= 3;
+};
 P.custom = () => ({ nav: 'designs', t: 'ออกแบบตามความต้องการ', html: `${head('แบบบ้าน', 'เลือกแบบบ้านที่ใช่', 'เลือกจากแบบสำเร็จรูป หรือให้สถาปนิกออกแบบตามความต้องการและงบของคุณ')}${designTabs('custom')}
 <div class="w sec"><div class="opts">${opt('แบบสำเร็จรูป', 'เลือกจากแบบที่มี ปรับเล็กน้อยได้ เห็นราคาเร็ว')}${opt('ออกแบบตามความต้องการ', 'สถาปนิกออกแบบใหม่ตามความต้องการ งบ และที่ดินของคุณ')}${opt('ค่าจองแบบ (ออกแบบตามความต้องการ)', '30,000–40,000 บาท')}</div>
 <div id="cLiked">${likedBox()}</div>
 <div class="split" style="margin-top:24px"><form class="panel" id="cf" data-demo><fieldset><legend>งบและที่ดิน</legend><div class="two"><div class="f"><label for="cBud">งบค่าก่อสร้าง</label><select id="cBud">${BUD_RANGES.map(([lo, hi, t]) => `<option value="${lo}-${hi}"${lo === 3000000 ? ' selected' : ''}>${t}</option>`).join('')}</select></div><div class="f"><label for="cPkg">สเปค</label><select id="cPkg"><option value="18000">Premium</option><option value="23000">Elite</option></select></div></div><div class="two"><div class="f"><label for="cLw">ที่ดินหน้ากว้าง (ม.)</label><input id="cLw" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div><div class="f"><label for="cLd">ที่ดินลึก (ม.)</label><input id="cLd" type="number" min="0" step="0.5" placeholder="ไม่ระบุ"></div></div></fieldset><hr>
-<fieldset><legend>บ้านที่อยากได้</legend><div class="two"><div class="f"><label for="cSty">สไตล์</label><select id="cSty"><option value="">ยังไม่แน่ใจ</option><option>คลาสสิก</option><option>โมเดิร์น</option><option>มินิมอล</option></select></div><div class="f"><label for="cFl">จำนวนชั้น</label><select id="cFl"><option value="">ยังไม่แน่ใจ</option><option value="1">ชั้นเดียว</option><option value="2">2 ชั้น</option><option value="3">3 ชั้น</option></select></div><div class="f"><label for="cBed">ห้องนอน</label><input id="cBed" type="number" min="1" max="10" value="3"></div><div class="f"><label for="cBath">ห้องน้ำ</label><input id="cBath" type="number" min="1" max="10" value="2"></div></div>
-<div class="f"><span class="lbl">สิ่งที่อยากได้ (เลือกได้หลายข้อ)</span>${['ห้องนอนชั้นล่างสำหรับผู้สูงอายุ', 'ห้องพระ', 'ครัวไทยแยกจากครัวฝรั่ง', 'ห้องทำงาน', 'ที่จอดรถ 2 คันขึ้นไป', 'สระว่ายน้ำ', 'ดูฮวงจุ้ยและทิศ'].map((t, i) => `<div class="chk"><label><input type="checkbox" name="cNeed" value="${t}"> ${t}</label></div>`).join('')}</div>
+<fieldset><legend>บ้านที่อยากได้</legend><div class="two"><div class="f"><label for="cSty">สไตล์</label><select id="cSty"><option value="">ยังไม่แน่ใจ</option><option>คลาสสิก</option><option>โมเดิร์น</option><option>มินิมอล</option></select></div><div class="f"><label for="cFl">จำนวนชั้น</label><select id="cFl"><option value="">ยังไม่แน่ใจ</option><option value="1">ชั้นเดียว</option><option value="2">2 ชั้น</option><option value="3">3 ชั้น</option></select></div></div>
+<div class="f"><span class="lbl">จำนวนห้องที่ต้องการ</span><span class="h">กด + หรือ − (0 = ไม่ต้องการ)</span><div class="rooms">${ROOMS.map(([id, t, v, max]) => `<div class="room"><label for="${id}">${t}</label><div class="cnt"><button type="button" data-step="-1" data-for="${id}" aria-label="ลด${t}">−</button><input id="${id}" type="number" min="0" max="${max}" value="${v}" inputmode="numeric"><button type="button" data-step="1" data-for="${id}" aria-label="เพิ่ม${t}">+</button></div></div>`).join('')}</div></div>
+<div class="f"><span class="lbl">ติ๊กสิ่งที่อยากได้เพิ่ม (เลือกได้หลายข้อ)</span><div class="ticks">${NEEDS.map(t => `<label class="tick"><input type="checkbox" name="cNeed" value="${t}"><span>${t}</span></label>`).join('')}</div></div>
+<div class="f"><span class="lbl">รูปตัวอย่างบ้านที่ชอบ (ไม่บังคับ · สูงสุด 3 รูป)</span><span class="h">รูปบ้าน แปลน หรือภาพภายในที่อยากได้ · ระบบจะออกแบบให้ใกล้เคียงรูปตามความต้องการของคุณ · รูปใช้ออกแบบครั้งนี้เท่านั้น ไม่เก็บไว้</span><div class="refs" id="cRefs"></div><label class="btn line refadd" for="cImg">+ เลือกรูปตัวอย่าง</label><input id="cImg" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden></div>
 <div class="f"><label for="cMore">เล่าเพิ่มเติม</label><textarea id="cMore" rows="3" placeholder="เช่น อยู่กัน 5 คน มีพ่อแม่สูงอายุ อยากได้บ้านไม่ร้อน"></textarea></div></fieldset><hr>
 <div class="two"><div class="f"><label for="cName">ชื่อเล่น</label><input id="cName" autocomplete="given-name"></div><div class="f"><label for="cTel">เบอร์โทร</label><input id="cTel" type="tel" autocomplete="tel"></div></div>${consent('cOk')}
 <button class="btn" type="button" id="cGo" hidden>ออกแบบบ้านให้ดูเลย</button><button class="btn line" type="submit">ส่งความต้องการให้สถาปนิก</button>${sent()}</form>
@@ -209,10 +227,21 @@ P.custom = () => ({ nav: 'designs', t: 'ออกแบบตามความ�
       $('cPay').textContent = fmt(up100(monthly(lo * 0.9, 6, 30))) + '–' + fmt(up100(monthly(hi * 0.9, 6, 30))) + ' บาท';
       $('cMsg').innerHTML = `งบ <b>${t}</b> สร้างบ้านได้ประมาณ <b>${fmt(Math.floor(lo / 23000))}–${fmt(Math.floor(hi / 18000))} ตร.ม.</b> ขึ้นกับสเปคที่เลือก`;
       const st = $('cSty').value, fl = Number($('cFl').value);
-      const ex = DESIGNS.filter(d => d.land <= land).map(d => ({ d, s: (d.price < lo ? lo - d.price : d.price > hi ? d.price - hi : 0) / hi + (st && d.style !== st ? 0.3 : 0) + (fl && d.floors !== fl ? 0.2 : 0) })).sort((a, b) => a.s - b.s).slice(0, 3);
+      const ex = DESIGNS.filter(d => d.land <= land).map(d => ({ d, s: (d.price < lo ? lo - d.price : d.price > hi ? d.price - hi : 0) / hi + (st && d.style !== st ? 0.3 : 0) + (fl && d.floors !== fl ? 0.2 : 0) + Math.abs(d.beds - num('cBed')) * 0.08 })).sort((a, b) => a.s - b.s).slice(0, 3);
       $('cEx').innerHTML = ex.map(x => designCard(x.d)).join('') || '<p>ยังไม่มีตัวอย่างที่ลงที่ดินขนาดนี้ได้ สถาปนิกออกแบบให้พอดีที่ดินได้</p>';
     };
     $('cf').addEventListener('input', draw); $('cf').addEventListener('change', draw); draw();
+    $('cf').addEventListener('click', e => {
+      const b = e.target.closest('[data-step]');
+      if (b) { const inp = $(b.dataset.for); inp.value = Math.min(Number(inp.max), Math.max(0, (Number(inp.value) || 0) + Number(b.dataset.step))); inp.dispatchEvent(new Event('input', { bubbles: true })); }
+      const x = e.target.closest('[data-unref]');
+      if (x) { refImgs.splice(Number(x.dataset.unref), 1); drawRefs(); }
+    });
+    $('cImg').addEventListener('change', async e => {
+      for (const file of [...e.target.files].slice(0, 3 - refImgs.length)) { const d = await shrinkImg(file); if (d) refImgs.push(d); }
+      e.target.value = ''; drawRefs();
+    });
+    drawRefs();
     houseGen();
   }
 });
@@ -230,7 +259,7 @@ async function houseGen() {
     const box = $('cGen'), { lo, hi, t: budT } = budRange();
     const needs = [...document.querySelectorAll('input[name=cNeed]:checked')].map(x => x.value);
     const body = { floors: Number($('cFl').value) || 1, bedrooms: num('cBed'), bathrooms: num('cBath'), budget: hi, price_per_sqm: Number($('cPkg').value), land_w: num('cLw'), land_d: num('cLd'),
-      parking: needs.some(t => t.startsWith('ที่จอดรถ')) ? 2 : 1, style: $('cSty').value, extras: needs.filter(t => !t.startsWith('ที่จอดรถ')).join(', '), notes: [`งบค่าก่อสร้าง ${budT} (${fmt(lo)}–${fmt(hi)} บาท) ออกแบบให้ราคาอยู่ในช่วงนี้`, $('cMore').value].filter(Boolean).join(' · '), name: $('cName').value, phone: $('cTel').value, idea_ids: liked().map(x => x.id) };
+      parking: num('cCar'), style: $('cSty').value, extras: [...ROOMS.slice(2, 7).filter(([id]) => num(id) > 0).map(([id, t]) => `${t} ${num(id)} ห้อง`), ...needs].join(', '), images: refImgs, notes: [`งบค่าก่อสร้าง ${budT} (${fmt(lo)}–${fmt(hi)} บาท) ออกแบบให้ราคาอยู่ในช่วงนี้`, $('cMore').value].filter(Boolean).join(' · '), name: $('cName').value, phone: $('cTel').value, idea_ids: liked().map(x => x.id) };
     box.hidden = false; $('cGo').disabled = true;
     box.innerHTML = '<h2 style="font-size:22px">กำลังออกแบบบ้านของคุณ</h2><p>ระบบกำลังจัดผังห้องตามความต้องการ ใช้เวลาประมาณ 1–3 นาที ไม่ต้องปิดหน้านี้</p>';
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -253,14 +282,14 @@ async function houseGen() {
         const s = x.stats, title = `บ้าน ${x.layout.floors.length} ชั้น ${s.bedrooms} ห้องนอน ${s.bathrooms} ห้องน้ำ`;
         box.innerHTML = `<h2 style="font-size:22px">แบบร่างบ้านของคุณ</h2>${x.layout.summary ? `<p>${x.layout.summary.replace(/[<>&]/g, '')}</p>` : ''}
 <div class="opts">${opt('พื้นที่รวม', fmt(s.total) + ' ตร.ม.')}${opt('ราคาประมาณ', mil(s.estimate) + ' ล้านบาท')}${opt('ห้องนอน · ห้องน้ำ', s.bedrooms + ' · ' + s.bathrooms)}</div>
-<div id="cShot"></div><div id="cView"></div><p class="fine">แบบร่างเบื้องต้นจากระบบอัตโนมัติ ไม่ใช่แบบก่อสร้าง ขนาดและราคาเป็นค่าประมาณ สถาปนิกจะปรับให้เหมาะกับที่ดินและงบจริงอีกครั้ง</p>
+${body.images.length ? `<p class="fine" style="margin-bottom:4px">รูปตัวอย่างที่คุณแนบ</p><div class="refs">${body.images.map(u => `<div class="ref"><img src="${u}" alt="รูปตัวอย่าง"></div>`).join('')}</div>` : ''}<div id="cShot"></div><div id="cView"></div><p class="fine">แบบร่างเบื้องต้นจากระบบอัตโนมัติ ไม่ใช่แบบก่อสร้าง ขนาดและราคาเป็นค่าประมาณ สถาปนิกจะปรับให้เหมาะกับที่ดินและงบจริงอีกครั้ง</p>
 <div class="row"><a class="btn" href="#contact">นัดคุยกับสถาปนิกเรื่องแบบนี้</a><button class="btn line" type="button" id="cAgain">ออกแบบใหม่</button></div>`;
         $('cAgain').onclick = () => $('cGo').click();
         $('cGo').disabled = false;
         try {
           await loadViewer();
-          // ภาพนิ่งตกแต่ง (โทนเดียวกับแบบสำเร็จรูป) ไว้ด้านบน — เครื่องที่วาดไม่ได้ก็ข้ามไป เหลือ 3D + แปลน
-          try { const st = window.PPSDHouse.still && window.PPSDHouse.still(x.layout, 1200, 800, 1); if (st) { const im = new Image(); im.className = 'bigimg shot'; im.alt = 'ภาพจำลอง ' + title; im.src = st.toDataURL('image/jpeg', 0.88); $('cShot').replaceChildren(im); } } catch {}
+          // ภาพนิ่งตกแต่ง (โทนเดียวกับแบบสำเร็จรูป · ถ้าแนบรูปตัวอย่าง ใช้สีผนัง/หลังคาตามรูป) ไว้ด้านบน — เครื่องที่วาดไม่ได้ก็ข้ามไป เหลือ 3D + แปลน
+          try { const st = window.PPSDHouse.still && window.PPSDHouse.still(x.layout, 1200, 800, 1, undefined, body.images.length ? { wall: x.layout.wall_color, roof: x.layout.roof_color } : undefined); if (st) { const im = new Image(); im.className = 'bigimg shot'; im.alt = 'ภาพจำลอง ' + title; im.src = st.toDataURL('image/jpeg', 0.88); $('cShot').replaceChildren(im); } } catch {}
           window.PPSDHouse.mount($('cView'), x.layout, title, body.land_w && body.land_d ? { w: body.land_w, d: body.land_d } : undefined);
         }
         catch { $('cView').innerHTML = '<p class="fine">เปิดภาพแปลนและ 3D ไม่ได้ในเครื่องนี้</p>'; }

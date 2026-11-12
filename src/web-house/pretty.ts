@@ -11,6 +11,8 @@ export const TONE = {
   path: '#DCD6CB', trunk: '#6B4E37', leaves: ['#5C8A47', '#6E9C52', '#4C773C', '#7DA85E'], shrub: ['#4F7D3F', '#668F4C', '#80A85F'],
   skyTop: '#86B2D8', skyBottom: '#EDE7DA', fog: '#E3E3D6',
 }
+// โทนที่ใช้วาดอยู่ตอนนี้ — ปกติ = TONE · ภาพจากรูปตัวอย่างของลูกค้าเปลี่ยนสีผนัง/หลังคาตามรูปได้ (renderStill(..., colors))
+let T: typeof TONE = TONE
 const PLINTH = 0.45, DOOR_H = 2.15, SILL = 0.9, HEAD = 2.15
 const PITCH = Math.tan((27 * Math.PI) / 180)
 
@@ -20,7 +22,7 @@ function rng(seed: number) { let s = seed >>> 0 || 1; return () => ((s = (s * 16
 export function skyTexture() {
   const c = document.createElement('canvas'); c.width = 4; c.height = 512
   const g = c.getContext('2d')!, gr = g.createLinearGradient(0, 0, 0, 512)
-  gr.addColorStop(0, TONE.skyTop); gr.addColorStop(0.55, '#C4D9EA'); gr.addColorStop(1, TONE.skyBottom)
+  gr.addColorStop(0, T.skyTop); gr.addColorStop(0.55, '#C4D9EA'); gr.addColorStop(1, T.skyBottom)
   g.fillStyle = gr; g.fillRect(0, 0, 4, 512)
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace
   return t
@@ -28,7 +30,7 @@ export function skyTexture() {
 function grassTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 256
   const g = c.getContext('2d')!, r = rng(7)
-  g.fillStyle = TONE.lawn; g.fillRect(0, 0, 256, 256)
+  g.fillStyle = T.lawn; g.fillRect(0, 0, 256, 256)
   for (let i = 0; i < 4000; i++) { const v = r(); g.fillStyle = v < 0.5 ? 'rgba(60,90,40,.18)' : 'rgba(190,210,140,.16)'; g.fillRect(r() * 256, r() * 256, 2, 2) }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping
   return t
@@ -37,7 +39,7 @@ function grassTexture() {
 function slatTexture() {
   const c = document.createElement('canvas'); c.width = 64; c.height = 8
   const g = c.getContext('2d')!
-  g.fillStyle = TONE.wood; g.fillRect(0, 0, 64, 8)
+  g.fillStyle = T.wood; g.fillRect(0, 0, 64, 8)
   g.fillStyle = 'rgba(40,25,15,.45)'; g.fillRect(52, 0, 12, 8)
   g.fillStyle = 'rgba(255,230,200,.10)'; g.fillRect(0, 0, 10, 8)
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping
@@ -47,7 +49,7 @@ function slatTexture() {
 function tileTexture() {
   const c = document.createElement('canvas'); c.width = 64; c.height = 64
   const g = c.getContext('2d')!
-  g.fillStyle = TONE.roof; g.fillRect(0, 0, 64, 64)
+  g.fillStyle = T.roof; g.fillRect(0, 0, 64, 64)
   g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(0, 56, 64, 8)
   g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(0, 0, 64, 6)
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping
@@ -64,13 +66,13 @@ export function buildPrettyScene(layout: Layout, aspect: number, seed = 1) {
     return mats.get(k)!
   }
   const M = {
-    wall: mat(TONE.wall), plinth: mat(TONE.plinth, { roughness: 1 }), slab: mat(TONE.slab), fascia: mat(TONE.fascia),
-    frame: mat(TONE.frame, { roughness: 0.5, metalness: 0.3 }),
-    glass: new THREE.MeshPhysicalMaterial({ color: TONE.glass, roughness: 0.04, metalness: 0.1, transparent: true, opacity: 0.88, envMapIntensity: 1.6 }),
-    wood: mat(TONE.wood, { roughness: 0.7 }), deck: mat(TONE.deck, { roughness: 0.8 }), porch: mat(TONE.porch), concrete: mat(TONE.concrete),
-    path: mat(TONE.path), trunk: mat(TONE.trunk), rail: new THREE.MeshPhysicalMaterial({ color: '#B9D3E2', roughness: 0.05, transparent: true, opacity: 0.35 }),
+    wall: mat(T.wall), plinth: mat(T.plinth, { roughness: 1 }), slab: mat(T.slab), fascia: mat(T.fascia),
+    frame: mat(T.frame, { roughness: 0.5, metalness: 0.3 }),
+    glass: new THREE.MeshPhysicalMaterial({ color: T.glass, roughness: 0.04, metalness: 0.1, transparent: true, opacity: 0.88, envMapIntensity: 1.6 }),
+    wood: mat(T.wood, { roughness: 0.7 }), deck: mat(T.deck, { roughness: 0.8 }), porch: mat(T.porch), concrete: mat(T.concrete),
+    path: mat(T.path), trunk: mat(T.trunk), rail: new THREE.MeshPhysicalMaterial({ color: '#B9D3E2', roughness: 0.05, transparent: true, opacity: 0.35 }),
     roof: (() => { const t = tileTexture(); return new THREE.MeshStandardMaterial({ map: t, roughness: 0.75, side: THREE.DoubleSide }) })(),
-    roofFlat: mat(TONE.roof, { roughness: 0.8 }),
+    roofFlat: mat(T.roof, { roughness: 0.8 }),
   }
   const slat = slatTexture(), extraMats: THREE.Material[] = []
   const box = (g: THREE.Object3D, m: THREE.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number, shadow = true) => {
@@ -255,7 +257,7 @@ export function buildPrettyScene(layout: Layout, aspect: number, seed = 1) {
     const n = 3 + Math.floor(R() * 3)
     for (let i = 0; i < n; i++) {
       const rr = (0.7 + R() * 0.5) * s
-      const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 1), mat(TONE.leaves[Math.floor(R() * TONE.leaves.length)], { flatShading: true, roughness: 0.95 }))
+      const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 1), mat(T.leaves[Math.floor(R() * T.leaves.length)], { flatShading: true, roughness: 0.95 }))
       leaf.position.set((R() - 0.5) * 1.1 * s, th + rr * 0.6 + R() * 0.7 * s, (R() - 0.5) * 1.1 * s)
       leaf.castShadow = true; leaf.receiveShadow = true; g.add(leaf)
     }
@@ -263,7 +265,7 @@ export function buildPrettyScene(layout: Layout, aspect: number, seed = 1) {
   }
   const shrub = (x: number, z: number) => {
     const rr = 0.3 + R() * 0.25
-    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 1), mat(TONE.shrub[Math.floor(R() * TONE.shrub.length)], { flatShading: true, roughness: 0.95 }))
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 1), mat(T.shrub[Math.floor(R() * T.shrub.length)], { flatShading: true, roughness: 0.95 }))
     m.position.set(x, rr * 0.7, z); m.scale.y = 0.8; m.castShadow = true; m.receiveShadow = true; scene.add(m)
   }
   const hx = (ext.x1 - ext.x0) / 2, hz = (ext.y1 - ext.y0) / 2
@@ -285,13 +287,13 @@ export function buildPrettyScene(layout: Layout, aspect: number, seed = 1) {
   // ===== ท้องฟ้า แสง =====
   const sky = new THREE.Mesh(new THREE.SphereGeometry(span * 20, 32, 16), new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { top: { value: new THREE.Color(TONE.skyTop) }, mid: { value: new THREE.Color('#C3D8EA') }, bot: { value: new THREE.Color(TONE.fog) } },
+    uniforms: { top: { value: new THREE.Color(T.skyTop) }, mid: { value: new THREE.Color('#C3D8EA') }, bot: { value: new THREE.Color(T.fog) } },
     vertexShader: 'varying vec3 vp; void main(){ vp = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
     fragmentShader: 'uniform vec3 top; uniform vec3 mid; uniform vec3 bot; varying vec3 vp; void main(){ float h = max(vp.y, 0.0); vec3 c = mix(bot, mid, smoothstep(0.0, 0.12, h)); c = mix(c, top, smoothstep(0.12, 0.6, h)); gl_FragColor = vec4(c, 1.0); }',
   }))
   scene.add(sky)
-  scene.background = new THREE.Color(TONE.fog)
-  scene.fog = new THREE.Fog(TONE.fog, span * 2.5, span * 9)
+  scene.background = new THREE.Color(T.fog)
+  scene.fog = new THREE.Fog(T.fog, span * 2.5, span * 9)
   scene.add(new THREE.HemisphereLight('#E4EEFA', '#7C8C5E', 0.75))
   const sun = new THREE.DirectionalLight('#FFE1B5', 3.1)
   sun.position.set(span * 1.1, span * 1.05, span * 1.0)
@@ -350,9 +352,13 @@ function getRenderer() {
 }
 
 /** วาดภาพนิ่ง → คืน canvas ขนาด w×h (วาดที่ 2 เท่าแล้วย่อ ให้ขอบเนียน) พร้อมคำกำกับ "ภาพจำลอง" มุมล่าง */
-export function renderStill(layout: Layout, w = 1500, h = 1000, seed = 1, caption = 'ภาพจำลองเพื่อการนำเสนอ · PPSD') {
+export function renderStill(layout: Layout, w = 1500, h = 1000, seed = 1, caption = 'ภาพจำลองเพื่อการนำเสนอ · PPSD', colors?: { wall?: string; roof?: string }) {
   const { renderer, env } = getRenderer()
-  const { scene, camera, dispose } = buildPrettyScene(layout, w / h, seed)
+  const ok = (c?: string) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : undefined)
+  T = { ...TONE, wall: ok(colors?.wall) || TONE.wall, roof: ok(colors?.roof) || TONE.roof }
+  let built: ReturnType<typeof buildPrettyScene>
+  try { built = buildPrettyScene(layout, w / h, seed) } finally { T = TONE }
+  const { scene, camera, dispose } = built
   scene.environment = env
   scene.environmentIntensity = 0.45
   renderer.setPixelRatio(1)

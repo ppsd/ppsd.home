@@ -167,7 +167,7 @@ export function buildPrompt(q, hasImages) {
   return `คุณเป็นสถาปนิกของบริษัทรับสร้างบ้านในไทย ออกแบบ "ผังห้องเบื้องต้น" ตามความต้องการลูกค้าด้านล่าง ให้ใช้งานได้จริง สัดส่วนห้องเหมาะสม ทางเดินสั้น ห้องนอนเป็นส่วนตัว ครัวอยู่ด้านหลังหรือด้านข้าง ระบายอากาศดี
 ความต้องการ:
 ${reqText(q)}
-${hasImages ? '\nรูปที่แนบคือบ้านตัวอย่างที่ลูกค้าชอบ ให้ใช้เป็นแนวทางสไตล์ รูปทรงหลังคา และสีภายนอก (บอกใน style/roof/wall_color/roof_color และอธิบายใน summary)\n' : ''}
+${hasImages ? '\nรูปที่แนบคือรูปตัวอย่างที่ลูกค้าชอบ — ถ้าเป็นภาพบ้าน ให้ใช้เป็นแนวทางสไตล์ จำนวนชั้น รูปทรงหลังคา และสีภายนอก (บอกใน style/roof/wall_color/roof_color ให้สีใกล้เคียงรูป) · ถ้าเป็นแปลนหรือผังห้อง ให้ใช้แนวการจัดห้องนั้นเป็นฐานแล้วปรับให้ตรงความต้องการ · ถ้าเป็นภาพภายใน ให้ใช้บรรยากาศและการเปิดโล่งเป็นแนวทาง · อธิบายใน summary ว่าเอาอะไรจากรูปมาใช้ ไม่ต้องลอกแบบทั้งหมด\n' : ''}
 ${SCHEMA_TEXT}`
 }
 
@@ -179,6 +179,16 @@ ${reqText(q)}
 ${JSON.stringify(layout)}
 คำสั่งแก้: ${instruction}
 ${SCHEMA_TEXT}`
+}
+
+/** รูปตัวอย่างที่ลูกค้าแนบจากเว็บ (ไม่ต้องล็อกอิน) — รับแค่ jpg/png/webp ไม่เกิน 3 รูป รูปละไม่เกิน ~1.5MB · ส่งให้ AI ดูอย่างเดียว ไม่เก็บไฟล์ */
+export function parsePublicImages(list, max = 3) {
+  const out = []
+  for (const s of (Array.isArray(list) ? list : []).slice(0, max)) {
+    const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(s || ''))
+    if (m && m[2].length < 2_000_000) out.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } })
+  }
+  return out
 }
 
 function parseImages(list) {

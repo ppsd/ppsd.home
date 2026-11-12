@@ -30,7 +30,7 @@ function mount(el: HTMLElement, layout: Layout, title: string, land?: { w: numbe
   r.render(<Viewer layout={layout} title={title} land={land} />)
 }
 // ภาพนิ่งตกแต่ง (ใช้สร้างรูปปกแบบสำเร็จรูปในเครื่อง แล้วเก็บเป็นไฟล์ jpg ในเว็บ) — ดู pretty.ts
-function still(layout: Layout, w?: number, h?: number, seed?: number, caption?: string) {
-  return renderStill(layout, w, h, seed, caption)
+function still(layout: Layout, w?: number, h?: number, seed?: number, caption?: string, colors?: { wall?: string; roof?: string }) {
+  return renderStill(layout, w, h, seed, caption, colors)
 }
 ;(window as unknown as { PPSDHouse: unknown }).PPSDHouse = { mount, still }

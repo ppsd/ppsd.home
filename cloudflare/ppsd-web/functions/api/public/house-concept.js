@@ -1,4 +1,4 @@
-import { normalizeReq, normalizeLayout, analyze, buildPrompt } from '../../_lib/house-concept.js'
+import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages } from '../../_lib/house-concept.js'
 import { json, enabled, day, limits, count, bump } from '../../_house.js'
 
 // ลูกค้ากรอกความต้องการ → AI จัดผังห้อง → ส่งผังกลับในคำตอบเดียว (ใช้เวลา 1–3 นาที)
@@ -29,13 +29,13 @@ async function ideaImages(rows, max = 2) {
   return out
 }
 
-async function askLayout(env, q, ideas = []) {
+async function askLayout(env, q, ideas = [], own = []) {
   if (env.MOCK_LAYOUT) { // ทดสอบในเครื่องเท่านั้น (wrangler pages dev --binding MOCK_LAYOUT=...)
     await new Promise((ok) => setTimeout(ok, 12000))
     return normalizeLayout(JSON.parse(env.MOCK_LAYOUT))
   }
   const model = env.AI_MODEL || 'claude-sonnet-5-5'
-  const imgs = await ideaImages(ideas)
+  const imgs = [...own, ...(own.length < 3 ? await ideaImages(ideas, Math.min(2, 3 - own.length)) : [])]
   const body = { model, max_tokens: 32000, messages: [{ role: 'user', content: [...imgs, { type: 'text', text: buildPrompt(q, imgs.length > 0) }] }] }
   if (!/haiku/.test(model)) body.output_config = { effort: 'medium' }
   const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(300000) })
@@ -54,6 +54,8 @@ export async function onRequestPost({ request, env, waitUntil }) {
   const b = await request.json().catch(() => ({}))
   const q = normalizeReq({ ...b, images: undefined })
   const ideas = await loadIdeas(env, request, b.idea_ids)
+  const own = parsePublicImages(b.images) // รูปตัวอย่างที่ลูกค้าแนบเอง (ส่งให้ AI ดูอย่างเดียว ไม่เก็บ)
+  if (own.length) q.notes = [q.notes, `ลูกค้าแนบรูปตัวอย่าง ${own.length} รูป`].filter(Boolean).join(' · ').slice(0, 1500)
   if (ideas.length) q.notes = [q.notes, ideaText(ideas)].filter(Boolean).join(' · ').slice(0, 1500)
   if (!q.bedrooms && !q.bathrooms) return json({ error: 'ระบุจำนวนห้องนอนหรือห้องน้ำอย่างน้อย 1 อย่าง' }, 400)
   await bump(env, `ip:${d}:${ip}`); await bump(env, 'd:' + d)
@@ -64,7 +66,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
   waitUntil((async () => {
     let out
     try {
-      const layout = await askLayout(env, q, ideas)
+      const layout = await askLayout(env, q, ideas, own)
       if (!layout.floors.length) throw new Error('ผังห้องไม่ครบ')
       const a = analyze(layout, q)
       out = { status: 'done', layout, stats: { total: a.total, indoor: a.indoor, outdoor: a.outdoor, estimate: a.estimate, bedrooms: a.bedrooms, bathrooms: a.bathrooms, footprint: a.footprint } }

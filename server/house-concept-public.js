@@ -1,11 +1,11 @@
 // ออกแบบบ้านเบื้องต้นจากเว็บลูกค้า (ไม่ต้องล็อกอิน) — หน้า /web/#custom
 //  - ลูกค้ากรอกความต้องการ → AI จัดผังห้อง (ใช้กติกาเดียวกับ server/house-concept.js) → หน้าเว็บวาดแปลน + 3D
 //  - ผลเก็บในตาราง house_concepts (by = "เว็บลูกค้า") พนักงานขายเห็นในหน้าออกแบบบ้านของ ERP และมีประวัติใน change_history
-//  - กันใช้เกิน: ต่อ IP วันละ PER_IP ครั้ง · ทั้งเว็บวันละ PER_DAY ครั้ง · ทำพร้อมกันได้ไม่เกิน RUNNING งาน · ไม่รับรูป
+//  - กันใช้เกิน: ต่อ IP วันละ PER_IP ครั้ง · ทั้งเว็บวันละ PER_DAY ครั้ง · ทำพร้อมกันได้ไม่เกิน RUNNING งาน · รับรูปตัวอย่างที่ลูกค้าแนบได้ 3 รูป (ส่งให้ AI ดูอย่างเดียว ไม่เก็บไฟล์)
 //  - ลูกค้าดูผลด้วยรหัสสุ่ม (ไม่ใช่เลขลำดับ) และเห็นเฉพาะผังห้อง+สรุป ไม่เห็นชื่อ/เบอร์/ค่า AI
 import crypto from 'node:crypto'
 import express from 'express'
-import { normalizeReq, normalizeLayout, analyze, buildPrompt } from './house-concept.js'
+import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages } from './house-concept.js'
 
 const PER_IP = 3
 const PER_DAY = 40
@@ -26,13 +26,14 @@ export function createPublicHouseConcept(d) {
     for (const [k, j] of jobs) if (j.at < cut) jobs.delete(k)
   }
 
-  async function design(id, q, ideaIds = []) {
+  async function design(id, q, ideaIds = [], own = []) {
     running++
     try {
       let layout, model = null, cost = 0
       if (process.env.PPSD_AI_MOCK_HOUSECONCEPT) { layout = normalizeLayout(JSON.parse(process.env.PPSD_AI_MOCK_HOUSECONCEPT)); model = 'mock' }
       else {
-        const media = ideaIds.length && d.ideas ? await d.ideas.ideaMedia(ideaIds, { publicOnly: true, max: 2 }).catch(() => []) : []
+        const more = ideaIds.length && d.ideas && own.length < 3 ? await d.ideas.ideaMedia(ideaIds, { publicOnly: true, max: Math.min(2, 3 - own.length) }).catch(() => []) : []
+        const media = [...own, ...more]
         const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า)', by: BY, media, prompt: buildPrompt(q, media.length > 0), maxTokens: 32000, timeoutMs: 300000, effort: 'medium' })
         model = ai.model || null; cost = ai.cost_usd || 0
         if (!ai.ok) throw new Error(ai.error || 'AI ไม่ตอบ')
@@ -59,6 +60,8 @@ export function createPublicHouseConcept(d) {
     if (running >= RUNNING) return res.status(429).json({ error: 'ระบบกำลังออกแบบให้ลูกค้าท่านอื่นอยู่ ลองใหม่ในอีก 1–2 นาที' })
     const b = req.body || {}
     const q = normalizeReq({ ...b, images: undefined })
+    const own = parsePublicImages(b.images)
+    if (own.length) q.notes = txt([q.notes, `ลูกค้าแนบรูปตัวอย่าง ${own.length} รูป`].filter(Boolean).join(' · '), 1500)
     // แบบที่ลูกค้ากดชอบในห้องรวมไอเดีย (เฉพาะที่เปิดให้เว็บเห็น · ส่งรูปให้ AI ไม่เกิน 2 รูปเพื่อคุมค่าใช้จ่าย)
     const ideaIds = Array.isArray(b.idea_ids) ? b.idea_ids.slice(0, 3) : []
     const ideaNote = ideaIds.length && d.ideas ? d.ideas.ideaText(ideaIds, { publicOnly: true }) : ''
@@ -72,7 +75,7 @@ export function createPublicHouseConcept(d) {
       .run(now, BY, null, title, contact, JSON.stringify(q), null, '[]', 'กำลังออกแบบ', now, BY).lastInsertRowid
     const token = crypto.randomBytes(16).toString('hex')
     jobs.set(token, { id, at: Date.now() })
-    design(id, q, ideaNote ? ideaIds : [])
+    design(id, q, ideaNote ? ideaIds : [], own)
     res.json({ token })
   })
   r.get('/house-concept/:token', (req, res) => {

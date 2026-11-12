@@ -237,7 +237,7 @@ details .in{padding:0 14px 14px;display:grid;gap:10px;color:var(--ink)}
 .icard{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
 .icard.on{outline:3px solid var(--gold)}
 .ithumb img{width:100%;height:180px;object-fit:cover;display:block;background:var(--sand)}
-.ithumb.plan img{object-fit:contain;background:#fff}
+.ithumb.plan img{object-fit:contain;background:var(--card)}
 .icard .b{padding:10px 12px 12px;display:flex;flex-direction:column;gap:4px;flex:1}
 .icard .b b{font-weight:500;color:var(--navy);font-size:15px;line-height:1.35}
 .icard .meta{font-size:13.5px}
@@ -258,3 +258,22 @@ details .in{padding:0 14px 14px;display:grid;gap:10px;color:var(--ink)}
 .pcover svg{width:56%;max-width:220px}
 /* ภาพนิ่งตกแต่งของแบบบ้าน: แสดงเต็มภาพ ไม่ครอปหลังคา */
 .bigimg.shot{max-height:none;aspect-ratio:3/2;object-fit:cover;margin-bottom:6px}
+
+/* ออกแบบตามความต้องการ: ตัวนับห้อง · ติ๊กเลือก · รูปตัวอย่าง */
+.rooms{display:grid;grid-template-columns:1fr;gap:6px;max-width:420px}
+.room{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.room label{font-size:15px;min-width:0}
+.cnt{display:flex;align-items:center;flex:none}
+.cnt button{width:34px;height:34px;border:1px solid #B9AA82;background:#fff;font:inherit;font-size:18px;line-height:1;cursor:pointer;color:inherit}
+.cnt button:first-child{border-radius:8px 0 0 8px}.cnt button:last-child{border-radius:0 8px 8px 0}
+.cnt input{width:46px!important;height:34px;text-align:center;border-radius:0;border-left:0;border-right:0;padding:0;font-size:16px;-moz-appearance:textfield}
+.cnt input::-webkit-inner-spin-button,.cnt input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.ticks{display:flex;flex-wrap:wrap;gap:8px}
+.tick{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line,#ccc);border-radius:999px;padding:6px 12px;font-size:14px;cursor:pointer;background:var(--card)}
+.tick:has(input:checked){border-color:var(--navy);background:var(--sand);font-weight:400}
+.refs{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0}
+.ref{position:relative;width:104px;height:78px;border-radius:8px;overflow:hidden;background:#eee}
+.ref img{width:100%;height:100%;object-fit:cover;display:block}
+.ref button{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:16px;line-height:1;cursor:pointer}
+.refadd{justify-self:start}
+
