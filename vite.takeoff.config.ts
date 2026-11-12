@@ -6,7 +6,9 @@ import { resolve, normalize } from 'node:path'
 // ใช้หน้าจอ BOQ ตัวเดียวกับ ERP (src/components/cost/*) แต่สลับ src/api.ts / src/store.tsx เป็นของ Cloudflare (src/cloud-takeoff/)
 // scripts/deploy-office.mjs คัดลอก dist/takeoff + ไฟล์ WebAssembly ตัวแปลง DWG ขึ้นไปให้
 const here = (p: string) => normalize(resolve(__dirname, p)).toLowerCase()
-const SWAP: Record<string, string> = { [here('src/api.ts')]: resolve(__dirname, 'src/cloud-takeoff/api.ts'), [here('src/store.tsx')]: resolve(__dirname, 'src/cloud-takeoff/store.tsx') }
+// เป้าหมายต้องเป็นรูปเดียวกับที่ Vite ใช้ (ทับขวา /) — ไม่งั้นได้โมดูลซ้ำ 2 ชุด (รหัสเข้าระบบไม่ถึงหน้า BOQ)
+const slash = (p: string) => p.split('\\').join('/')
+const SWAP: Record<string, string> = { [here('src/api.ts')]: slash(resolve(__dirname, 'src/cloud-takeoff/api.ts')), [here('src/store.tsx')]: slash(resolve(__dirname, 'src/cloud-takeoff/store.tsx')) }
 const shimDir = here('src/cloud-takeoff')
 function swapErpModules(): Plugin {
   return {
