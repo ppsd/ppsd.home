@@ -292,17 +292,19 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 - **หลังย้ายแล้ว ห้ามเปิด `run-server.bat` / `start.bat` ที่ออฟฟิศอีก** ไม่งั้นข้อมูลแยกสองที่ และ LINE webhook จะถูกตั้งกลับมาที่ออฟฟิศ · ข้อมูลเดิมในเครื่องออฟฟิศยังอยู่ครบ (ใช้เป็นสำเนาได้)
 - บนเซิร์ฟเวอร์: ดูสถานะ `systemctl status ppsd-erp` · ดู log `journalctl -u ppsd-erp -n 100` · รีสตาร์ต `systemctl restart ppsd-erp`
 
-## หน้าลงเวลาบน Cloudflare (ppsd-checkin.pages.dev) — 12 พ.ย. 2569
-- เป็น "สาขาย่อย" ของ ERP: โค้ดหน้าเว็บ+API ที่ `cloudflare/ppsd-checkin/` (Pages + Functions + ฐานข้อมูล D1 ชื่อ ppsd-checkin) · ฝั่ง ERP ที่ `server/cloud-checkin.js`
+## หน้าลงเวลาบน Cloudflare (ppsd-office.pages.dev/checkin) — 12 พ.ย. 2569
+- เป็น "สาขาย่อย" ของ ERP: โค้ดหน้าเว็บ+API ที่ `cloudflare/ppsd-office/ (หน้า /checkin)` (Pages + Functions + ฐานข้อมูล D1 ชื่อ ppsd-checkin) · ฝั่ง ERP ที่ `server/cloud-checkin.js`
 - ERP ซิงก์ทุก 1 นาที (POST /api/sync ด้วยรหัส `cloud_checkin_token`): ส่งรายชื่อคนยังทำงาน + บ้าน + ค่าตั้งค่าลงเวลา + สถานะวันนี้ขึ้นไป · ดึงรายการเข้างาน/ออกงาน/เช็คอินหน้างาน/ตำแหน่งกลับมา (กันซ้ำด้วยเลขรายการในตาราง `cloud_checkin_applied`)
 - PIN: ไม่ส่งกุญแจหลัก (secret.key) ขึ้นไป — ใช้รหัสตรวจเฉพาะลงเวลา HMAC ด้วย `cloud_checkin_key` สร้างตอนพนักงานใส่ PIN ถูกในระบบออฟฟิศ (ตอกบัตร/ล็อกอิน/ตั้ง PIN) เก็บใน `cloud_pin_hashes` (ไม่เก็บประวัติ) · PIN ใน ERP เปลี่ยน = รหัสเดิมหยุดส่งเอง
-- อัปเดต/ติดตั้งใหม่: `node scripts/deploy-checkin.mjs` (wrangler 4.20.0 เท่านั้น · ตั้งความลับ CLOUD_KEY/SYNC_TOKEN จาก ERP ให้เอง ไม่พิมพ์ออกจอ) · ครั้งแรกแล้วรีสตาร์ต 3001
+- อัปเดต/ติดตั้งใหม่: `node scripts/deploy-office.mjs` (wrangler 4.20.0 เท่านั้น · ตั้งความลับ CLOUD_KEY/SYNC_TOKEN จาก ERP ให้เอง ไม่พิมพ์ออกจอ) · ครั้งแรกแล้วรีสตาร์ต 3001
 - ถ้าซิงก์ไม่สำเร็จ: ดูการ์ดในเมนู LINE → การเชื่อมต่อ (บอกสาเหตุ) · เน็ตออฟฟิศดับ = รายการรอบน Cloudflare ไม่หาย เข้า ERP เมื่อเน็ตกลับ
 
-## เงินเดือนบน Cloudflare (ppsd-payroll.pages.dev) — กำลังทำ (เริ่ม 12 พ.ย. 2569)
+## เงินเดือนบน Cloudflare (ppsd-office.pages.dev/payroll) — กำลังทำ (เริ่ม 12 พ.ย. 2569)
 เจ้าของเลือกให้ทำเงินเดือนบน Cloudflare เป็นหลัก (หน้าเงินเดือนใน ERP จะเหลือดูอย่างเดียวเมื่อเปิดใช้จริง) — เริ่มใช้ตั้งแต่งวด พ.ย. 2569 ทันทีที่เสร็จ
 - **สูตรคำนวณมีไฟล์เดียว** `server/payroll-core.js` — ERP และ Cloudflare ใช้ไฟล์นี้ร่วมกัน (สคริปต์ deploy คัดลอกไปเอง) · **ห้ามแก้สูตรที่อื่น** · แก้สูตรแล้วต้อง deploy Cloudflare ใหม่ด้วย
 - ✅ ขั้น 1: แยกสูตรกลาง (ตรวจแล้วตัวเลขเดิมทุกงวดไม่เปลี่ยน)
 - ✅ ขั้น 2: ฐานข้อมูล D1 `ppsd-payroll` + ERP ส่งข้อมูลที่สูตรใช้ขึ้นไปทุก 1 นาที (`server/cloud-payroll.js` · ส่งเฉพาะชุดที่เปลี่ยน · ไม่ส่ง PIN/ลายเซ็น) + ตรวจตัวเลขสองฝั่ง `GET /api/cloud-payroll/compare?period=YYYY-MM` (แอดมิน)
-- ขั้น 3–5: ล็อกอิน + คำสั่งเงินเดือนบน Cloudflare · หน้าจอ · เปิดใช้จริง (ERP ดูอย่างเดียว · ผลทำจ่ายกลับมาลงบัญชี/ส่งสลิป LINE)
-- อัปเดต: `node scripts/deploy-payroll.mjs` (wrangler 4.20.0 · ตั้งความลับ SYNC_TOKEN / SESSION_KEY / PIN_KEY จาก ERP ให้เอง ไม่พิมพ์ออกจอ)
+- **รวมกับหน้าลงเวลาเป็นเว็บเดียว** `ppsd-office` (https://ppsd-office.pages.dev · /checkin · /payroll) — โค้ด `cloudflare/ppsd-office/` · ฐานข้อมูล D1 2 ก้อน (ppsd-checkin, ppsd-payroll) · อัปเดตทั้งเว็บด้วย `node scripts/deploy-office.mjs` · ลิงก์เก่า ppsd-checkin/ppsd-payroll.pages.dev เป็นหน้าพาไปลิงก์ใหม่
+- 🔶 ขั้น 3 (กำลังทำ): ✅ ล็อกอิน (ชื่อผู้ใช้ + PIN · รหัสตรวจ PIN เฉพาะเงินเดือน `cloud_payroll_pin_key` สร้างตอนล็อกอิน ERP ในตาราง `cloud_user_pins` · โทเคน 12 ชม. · ผิด 5 ครั้งล็อก 5 นาที) ✅ ดูตารางเงินเดือนรายงวด · ⏳ คำสั่งแก้ไข (กรอกวัน/เบิก/รายได้-หักอื่นๆ/ทำจ่าย)
+- ขั้น 4–5: หน้าจอครบ · เปิดใช้จริง (ERP ดูอย่างเดียว · ผลทำจ่ายกลับมาลงบัญชี/ส่งสลิป LINE)
+- อัปเดต: `node scripts/deploy-office.mjs` (wrangler 4.20.0 · ตั้งความลับ SYNC_TOKEN / SESSION_KEY / PIN_KEY จาก ERP ให้เอง ไม่พิมพ์ออกจอ)

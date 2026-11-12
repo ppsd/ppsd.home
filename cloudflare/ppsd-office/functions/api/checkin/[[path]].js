@@ -1,4 +1,4 @@
-// หน้าลงเวลาบน Cloudflare (ppsd-checkin.pages.dev) — ทำงานได้แม้คอมออฟฟิศปิด
+// หน้าลงเวลาบน Cloudflare (ppsd-office.pages.dev/checkin) — ทำงานได้แม้คอมออฟฟิศปิด
 // ERP ในออฟฟิศเป็นระบบหลัก: ส่งรายชื่อ/บ้าน/ค่าตั้งค่า/สถานะวันนี้ขึ้นมา (POST /api/sync) แล้วดึงรายการลงเวลากลับไปบันทึกเอง
 // PIN: ตรวจด้วยกุญแจลับเฉพาะลงเวลา (CLOUD_KEY) — ไม่ใช่กุญแจหลักของ ERP · คนที่ยังไม่มี PIN บนนี้ ต้องตอกที่ระบบในออฟฟิศ 1 ครั้งก่อน
 const J = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } })
@@ -23,25 +23,25 @@ async function config(db) {
 // ตรวจ PIN + ล็อก 5 นาทีเมื่อผิด 5 ครั้ง
 async function checkPin(env, emp, pin) {
   const key = 'emp:' + emp.ref
-  const f = await env.DB.prepare('SELECT n, until FROM fails WHERE k=?').bind(key).first()
+  const f = await env.CHECKIN_DB.prepare('SELECT n, until FROM fails WHERE k=?').bind(key).first()
   if (f && f.until > Date.now()) return 'ใส่ PIN ผิดหลายครั้ง — ล็อกชั่วคราว ลองใหม่ใน 5 นาที'
   if (!emp.hash) return 'ยังเปิดลงเวลาออนไลน์ให้คุณไม่ได้ — ลงเวลาที่เครื่องในออฟฟิศ (หรือลิงก์ในออฟฟิศ) 1 ครั้งก่อน แล้วใช้หน้านี้ได้เลย'
   if (!/^\d{4,8}$/.test(String(pin || '')) || !eq(await hmac(env.CLOUD_KEY, emp.code + ':' + pin), emp.hash)) {
     const n = (f?.n || 0) + 1
-    await env.DB.prepare('INSERT INTO fails (k, n, until) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET n=excluded.n, until=excluded.until')
+    await env.CHECKIN_DB.prepare('INSERT INTO fails (k, n, until) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET n=excluded.n, until=excluded.until')
       .bind(key, n >= 5 ? 0 : n, n >= 5 ? Date.now() + 5 * 60e3 : 0).run()
     return 'PIN ไม่ถูกต้อง'
   }
-  if (f) await env.DB.prepare('DELETE FROM fails WHERE k=?').bind(key).run()
+  if (f) await env.CHECKIN_DB.prepare('DELETE FROM fails WHERE k=?').bind(key).run()
   return null
 }
 const numOrNull = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null)
 
 async function punch(env, b) {
-  const emp = await env.DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
+  const emp = await env.CHECKIN_DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
   if (!emp) return err('ไม่พบชื่อนี้ — รีเฟรชหน้าแล้วเลือกใหม่', 404)
   const bad = await checkPin(env, emp, b.pin); if (bad) return err(bad, bad.includes('ล็อก') ? 429 : 403)
-  const cfg = await config(env.DB)
+  const cfg = await config(env.CHECKIN_DB)
   const lat = numOrNull(b.lat), lng = numOrNull(b.lng), acc = numOrNull(b.accuracy)
   if (cfg.geofence === '1' && cfg.lat && cfg.lng) {
     if (lat == null || lng == null) return err('กรุณาเปิดตำแหน่ง (GPS) เพื่อลงเวลา')
@@ -49,48 +49,48 @@ async function punch(env, b) {
     if (d > radius) return err(`อยู่นอกพื้นที่ออฟฟิศ — ห่าง ${Math.round(d)} ม. (อนุญาตในรัศมี ${radius} ม.)`, 403)
   }
   const { date, time, ts } = bkk()
-  const row = await env.DB.prepare('SELECT * FROM att WHERE ref=? AND date=?').bind(emp.ref, date).first()
+  const row = await env.CHECKIN_DB.prepare('SELECT * FROM att WHERE ref=? AND date=?').bind(emp.ref, date).first()
   let status = row?.status || ''
   if (b.kind === 'in') {
     if (row?.check_in) return err(`${emp.name} เข้างานแล้วเมื่อ ${row.check_in}`)
     status = time > (cfg.late || '08:05') ? 'สาย' : 'ปกติ'
-    await env.DB.prepare("INSERT INTO att (ref, date, check_in, check_out, status) VALUES (?, ?, ?, '', ?) ON CONFLICT(ref, date) DO UPDATE SET check_in=excluded.check_in, status=excluded.status").bind(emp.ref, date, time, status).run()
+    await env.CHECKIN_DB.prepare("INSERT INTO att (ref, date, check_in, check_out, status) VALUES (?, ?, ?, '', ?) ON CONFLICT(ref, date) DO UPDATE SET check_in=excluded.check_in, status=excluded.status").bind(emp.ref, date, time, status).run()
   } else if (b.kind === 'out') {
     if (!row?.check_in) return err(`${emp.name} ยังไม่ได้เข้างานวันนี้`)
-    await env.DB.prepare('UPDATE att SET check_out=? WHERE ref=? AND date=?').bind(time, emp.ref, date).run()
+    await env.CHECKIN_DB.prepare('UPDATE att SET check_out=? WHERE ref=? AND date=?').bind(time, emp.ref, date).run()
   } else return err('เลือก เข้างาน หรือ ออกงาน')
-  await env.DB.prepare("INSERT INTO events (type, ref, code, name, date, time, kind, status, lat, lng, acc, created) VALUES ('punch', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+  await env.CHECKIN_DB.prepare("INSERT INTO events (type, ref, code, name, date, time, kind, status, lat, lng, acc, created) VALUES ('punch', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(emp.ref, emp.code, emp.name, date, time, b.kind, status, lat, lng, acc, ts).run()
   return J({ name: emp.name, kind: b.kind, time, status })
 }
 async function site(env, b) {
-  const emp = await env.DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
+  const emp = await env.CHECKIN_DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
   if (!emp) return err('ไม่พบชื่อนี้ — รีเฟรชหน้าแล้วเลือกใหม่', 404)
   const bad = await checkPin(env, emp, b.pin); if (bad) return err(bad, bad.includes('ล็อก') ? 429 : 403)
   const lat = numOrNull(b.lat), lng = numOrNull(b.lng), acc = numOrNull(b.accuracy)
   if (lat == null || lng == null) return err('ต้องเปิดตำแหน่ง (GPS) เพื่อเช็คอินหน้างาน')
-  const h = await env.DB.prepare('SELECT * FROM houses WHERE code=?').bind(String(b.house || '')).first()
+  const h = await env.CHECKIN_DB.prepare('SELECT * FROM houses WHERE code=?').bind(String(b.house || '')).first()
   if (!h) return err('เลือกบ้าน / หน้างาน')
   const { date, time, ts } = bkk()
-  await env.DB.prepare("INSERT INTO events (type, ref, code, name, date, time, kind, lat, lng, acc, house, note, created) VALUES ('site', ?, ?, ?, ?, ?, 'site', ?, ?, ?, ?, ?, ?)")
+  await env.CHECKIN_DB.prepare("INSERT INTO events (type, ref, code, name, date, time, kind, lat, lng, acc, house, note, created) VALUES ('site', ?, ?, ?, ?, ?, 'site', ?, ?, ?, ?, ?, ?)")
     .bind(emp.ref, emp.code, emp.name, date, time, lat, lng, acc, h.code, String(b.note || '').slice(0, 120), ts).run()
   return J({ name: emp.name, house: h.name, time })
 }
 // ส่งตำแหน่งงาน (โฟร์แมน) — ทุก 5 นาทีระหว่างเปิดหน้าค้าง
 async function track(env, b) {
-  const emp = await env.DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
+  const emp = await env.CHECKIN_DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
   if (!emp) return err('ไม่พบชื่อนี้ — รีเฟรชหน้าแล้วเลือกใหม่', 404)
   const bad = await checkPin(env, emp, b.pin); if (bad) return err(bad, bad.includes('ล็อก') ? 429 : 403)
   const lat = numOrNull(b.lat), lng = numOrNull(b.lng), acc = numOrNull(b.accuracy)
   if (lat == null || lng == null) return err('อ่านตำแหน่งไม่ได้')
   const { date, time, ts } = bkk()
-  await env.DB.prepare("INSERT INTO events (type, ref, code, name, date, time, kind, lat, lng, acc, note, created) VALUES ('track', ?, ?, ?, ?, ?, 'track', ?, ?, ?, ?, ?)")
+  await env.CHECKIN_DB.prepare("INSERT INTO events (type, ref, code, name, date, time, kind, lat, lng, acc, note, created) VALUES ('track', ?, ?, ?, ?, ?, 'track', ?, ?, ?, ?, ?)")
     .bind(emp.ref, emp.code, emp.name, date, time, lat, lng, acc, String(b.note || 'ติดตามงาน').slice(0, 60), ts).run()
   return J({ ok: true, time })
 }
 // ตรวจชื่อ + PIN ก่อนเปิดตัวเลือกหน้างาน
 async function verify(env, b) {
-  const emp = await env.DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
+  const emp = await env.CHECKIN_DB.prepare('SELECT * FROM emps WHERE ref=?').bind(String(b.ref || '')).first()
   if (!emp) return err('ไม่พบชื่อนี้ — รีเฟรชหน้าแล้วเลือกใหม่', 404)
   const bad = await checkPin(env, emp, b.pin); if (bad) return err(bad, bad.includes('ล็อก') ? 429 : 403)
   return J({ ok: true, name: emp.name })
@@ -98,8 +98,8 @@ async function verify(env, b) {
 // ERP ↔ Cloudflare: ส่งข้อมูลขึ้น + รับรายการใหม่กลับ (ต้องมี SYNC_TOKEN)
 async function sync(env, req, b) {
   const auth = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
-  if (!env.SYNC_TOKEN || !eq(auth, env.SYNC_TOKEN)) return err('unauthorized', 401)
-  const db = env.DB, st = []
+  if (!env.CHECKIN_SYNC_TOKEN || !eq(auth, env.CHECKIN_SYNC_TOKEN)) return err('unauthorized', 401)
+  const db = env.CHECKIN_DB, st = []
   if (Array.isArray(b.ack) && b.ack.length) for (const id of b.ack.slice(0, 500)) st.push(db.prepare('UPDATE events SET synced=1 WHERE id=?').bind(Number(id)))
   if (Array.isArray(b.employees)) {
     st.push(db.prepare('DELETE FROM emps'))
@@ -127,10 +127,10 @@ export async function onRequest({ request, env, params }) {
   const path = '/' + [].concat(params.path || []).join('/')
   const m = request.method
   try {
-    if (m === 'GET' && path === '/employees') return J(((await env.DB.prepare('SELECT ref, name FROM emps ORDER BY ord').all()).results) || [])
+    if (m === 'GET' && path === '/employees') return J(((await env.CHECKIN_DB.prepare('SELECT ref, name FROM emps ORDER BY ord').all()).results) || [])
     if (m === 'GET' && path === '/config') {
-      const c = await config(env.DB)
-      const houses = (await env.DB.prepare('SELECT code, name FROM houses ORDER BY ord').all()).results || []
+      const c = await config(env.CHECKIN_DB)
+      const houses = (await env.CHECKIN_DB.prepare('SELECT code, name FROM houses ORDER BY ord').all()).results || []
       return J({ geofence: c.geofence === '1', radius: Number(c.radius) || 200, late: c.late || '08:05', company: c.company || 'PPSD Construction', last_sync: c.last_sync || '', houses })
     }
     if (m === 'POST') {

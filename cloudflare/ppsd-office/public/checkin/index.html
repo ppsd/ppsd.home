@@ -83,7 +83,7 @@
   let pin = '', cfg = { geofence: false, radius: 200, houses: [] }, busy = false, tr = null
   const store = { get: (k) => { try { return localStorage.getItem(k) || '' } catch { return '' } }, set: (k, v) => { try { localStorage.setItem(k, v) } catch {} } }
   const api = async (path, body) => {
-    const r = await fetch('/api' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {})
+    const r = await fetch('/api/checkin' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {})
     let d = {}; try { d = await r.json() } catch {}
     if (!r.ok) throw new Error(d.error || 'เชื่อมต่อไม่สำเร็จ ลองใหม่')
     return d

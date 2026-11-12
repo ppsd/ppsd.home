@@ -1,4 +1,4 @@
-// หน้าลงเวลาบน Cloudflare (ppsd-checkin.pages.dev) ↔ ERP — ERP เป็นระบบหลัก, Cloudflare เป็น "สาขาย่อย" ที่เปิดได้แม้คอมออฟฟิศปิด
+// หน้าลงเวลาบน Cloudflare (ppsd-office.pages.dev/checkin) ↔ ERP — ERP เป็นระบบหลัก, Cloudflare เป็น "สาขาย่อย" ที่เปิดได้แม้คอมออฟฟิศปิด
 // ทุก 1 นาที: ส่งรายชื่อ (เฉพาะคนยังทำงาน) · บ้าน · ค่าตั้งค่าลงเวลา · สถานะเข้า/ออกวันนี้ ขึ้นไป → รับรายการลงเวลา/เช็คอินหน้างาน/ตำแหน่ง กลับมาบันทึก
 // PIN: ไม่ส่งกุญแจหลักของ ERP ขึ้นไป — ใช้ "รหัสตรวจ PIN เฉพาะลงเวลา" (HMAC ด้วยกุญแจ cloud_checkin_key) ซึ่งสร้างได้ตอนพนักงานใส่ PIN ถูกในระบบออฟฟิศ
 //   เปลี่ยน/รีเซ็ต PIN ใน ERP → รหัสเดิมบน Cloudflare ใช้ไม่ได้เอง (ต้องตรงกับ PIN ปัจจุบัน)
@@ -10,7 +10,8 @@ export function createCloudCheckin(d) {
   db.exec(`CREATE TABLE IF NOT EXISTS cloud_pin_hashes (emp_code TEXT PRIMARY KEY, secret TEXT, pin_ref TEXT, at TEXT);
     CREATE TABLE IF NOT EXISTS cloud_checkin_applied (id INTEGER PRIMARY KEY, at TEXT)`)
   const key = () => { let k = d.getSetting('cloud_checkin_key', ''); if (!k) { k = randomBytes(32).toString('hex'); d.setSetting('cloud_checkin_key', k) } return k }
-  const url = () => String(d.getSetting('cloud_checkin_url', '') || '').replace(/\/+$/, '')
+  const url = () => String(d.getSetting('cloud_checkin_url', '') || '').replace(/\/+$/, '') // ลิงก์ที่ให้พนักงาน เช่น https://ppsd-office.pages.dev/checkin
+  const apiBase = () => { try { return new URL(url()).origin + '/api/checkin' } catch { return '' } }
   const token = () => d.getSetting('cloud_checkin_token', '')
   const cloudHash = (code, pin) => createHmac('sha256', key()).update(String(code) + ':' + String(pin)).digest('hex')
   // พนักงานใส่ PIN ถูกในระบบออฟฟิศ (ตอกบัตร/ล็อกอิน/ตั้ง PIN) → เก็บรหัสตรวจสำหรับ Cloudflare
@@ -83,7 +84,7 @@ export function createCloudCheckin(d) {
     running = true
     try {
       const post = async (body) => {
-        const r = await fetch(u + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) })
+        const r = await fetch(apiBase() + '/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) })
         const j = await r.json().catch(() => ({}))
         if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status)
         return j

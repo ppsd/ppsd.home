@@ -546,7 +546,7 @@ function CloudCheckinCard() {
   return (
     <div style={{ background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontSize: 14.5, fontWeight: 700 }}>⏰ ลิงก์ลงเวลาถาวร (Cloudflare) — ใช้ได้แม้คอมออฟฟิศปิด</div>
-      {!ci.configured ? <div style={{ fontSize: 12.5, color: '#94A0A8' }}>ยังไม่ได้ตั้ง — ผู้ดูแลระบบรัน <code>node scripts/deploy-checkin.mjs</code> บนเครื่องเซิร์ฟเวอร์</div> : (
+      {!ci.configured ? <div style={{ fontSize: 12.5, color: '#94A0A8' }}>ยังไม่ได้ตั้ง — ผู้ดูแลระบบรัน <code>node scripts/deploy-office.mjs</code> บนเครื่องเซิร์ฟเวอร์</div> : (
         <>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <a href={ci.url} target="_blank" rel="noreferrer" style={{ fontSize: 14, fontWeight: 600, color: '#2E7D55' }}>{ci.url}</a>

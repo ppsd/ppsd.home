@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1E2E3B">
+<title>PPSD เงินเดือน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:#F3F5F7;font-family:'Kanit',sans-serif;color:#1C2730}
+  .top{background:#1E2E3B;color:#fff;padding:12px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .top b{font-size:16px}.top .sp{flex:1}.top button{font-family:inherit;font-size:12.5px;background:transparent;color:#AEBAC4;border:1px solid #3A4B58;border-radius:8px;padding:5px 12px;cursor:pointer}
+  .wrap{max-width:1280px;margin:0 auto;padding:16px}
+  .card{background:#fff;border:1px solid #E1E5EA;border-radius:14px;overflow:hidden}
+  .login{max-width:380px;margin:60px auto;padding:24px}
+  .login h2{margin:0 0 4px;font-size:19px}.hint{font-size:12.5px;color:#5C6770;line-height:1.6}
+  input,select{width:100%;font-family:inherit;font-size:15px;border:1px solid #D2DAE1;border-radius:9px;padding:10px 12px;margin-top:6px;background:#fff;color:#1C2730}
+  .btn{font-family:inherit;font-size:14px;font-weight:600;color:#fff;background:#30506A;border:none;border-radius:9px;padding:11px 16px;cursor:pointer;width:100%;margin-top:14px}
+  .err{color:#C24036;background:#FBEEEC;border-radius:8px;padding:8px 10px;font-size:13px;margin-top:10px}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #EEF1F4}
+  .bar select{width:auto;margin:0;padding:6px 10px;font-size:13.5px}
+  .note{font-size:12.5px;color:#8A6D1F;background:#FBF4E1;padding:9px 16px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:#F7F9FB;text-align:right;font-weight:600;color:#5C6770;font-size:12px;padding:9px 10px;white-space:nowrap;position:sticky;top:0}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:8px 10px;border-top:1px solid #EEF1F4;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .scroll{overflow:auto;max-height:calc(100vh - 220px)}
+  .tag{font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:20px;margin-left:6px}
+  .paid{color:#2E7D55;background:#E2F1EA}.unpaid{color:#B7791F;background:#FFF8EC}.out{color:#C24036;background:#FBEEEC}
+  .neg{color:#C24036}.sum td{font-weight:700;background:#F7F9FB}
+  .muted{color:#94A0A8;font-size:11.5px}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<div class="top"><b>💰 PPSD เงินเดือน</b><span class="sp"></span><span id="who" style="font-size:13px;color:#AEBAC4"></span><button id="out" class="hide">ออกจากระบบ</button></div>
+<div class="wrap">
+  <div id="loginBox" class="card login hide">
+    <h2>เข้าสู่ระบบเงินเดือน</h2>
+    <div class="hint">ใช้ชื่อผู้ใช้ + PIN เดียวกับ ERP · เฉพาะแอดมิน / บัญชี / ผู้จัดการ-CEO / บุคคล<br>ครั้งแรก: ล็อกอิน ERP ในออฟฟิศ 1 ครั้งก่อน ระบบจึงเปิดให้ล็อกอินที่นี่</div>
+    <input id="u" placeholder="ชื่อผู้ใช้" autocomplete="username" autocapitalize="none">
+    <input id="p" placeholder="PIN" type="password" inputmode="numeric" maxlength="8" autocomplete="current-password">
+    <button class="btn" id="go">เข้าสู่ระบบ</button>
+    <div id="lerr" class="err hide"></div>
+  </div>
+  <div id="app" class="card hide">
+    <div class="bar">
+      <span style="font-weight:600">งวด</span><select id="per"></select>
+      <span id="sum" class="hint"></span><span class="sp" style="flex:1"></span><span id="sync" class="muted"></span>
+    </div>
+    <div id="mode" class="note hide">🧪 ช่วงเตรียมระบบ — ตัวเลขในหน้านี้คำนวณจากข้อมูลที่ ERP ส่งขึ้นมาทุก 1 นาที ด้วยสูตรเดียวกับ ERP · ยังทำรายการ (กรอกวัน / เบิก / ทำจ่าย) ในหน้านี้ไม่ได้ ให้ทำใน ERP ไปก่อน</div>
+    <div class="scroll"><table><thead><tr>
+      <th>ชื่อ</th><th>ประเภท</th><th>วันทำงาน</th><th>เงินเดือน/ค่าแรง</th><th>OT</th><th>รายได้อื่นๆ</th><th>คืนเงินประกัน</th><th>ประกันสังคม</th><th>ภาษี</th><th>หักขาด/ลา</th><th>เงินประกันผลงาน</th><th>กยศ.</th><th>เบิกล่วงหน้า</th><th>หักอื่นๆ</th><th>สุทธิ</th>
+    </tr></thead><tbody id="rows"></tbody></table></div>
+    <div id="err" class="err hide" style="margin:12px"></div>
+  </div>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id)
+  const MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+  const store = { get: (k) => { try { return sessionStorage.getItem(k) || '' } catch { return '' } }, set: (k, v) => { try { v ? sessionStorage.setItem(k, v) : sessionStorage.removeItem(k) } catch {} } }
+  let tok = store.get('ppsd_pay_tok')
+  const money = (n) => (Number(n) || 0) === 0 ? '-' : (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  async function api(path, body) {
+    const r = await fetch('/api/payroll' + path, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) }, body: body ? JSON.stringify(body) : undefined })
+    let d = {}; try { d = await r.json() } catch {}
+    if (r.status === 401 && path !== '/login') { logout(); throw new Error(d.error || 'กรุณาล็อกอินใหม่') }
+    if (!r.ok) throw new Error(d.error || 'เชื่อมต่อไม่สำเร็จ')
+    return d
+  }
+  function logout() { tok = ''; store.set('ppsd_pay_tok', ''); $('app').classList.add('hide'); $('out').classList.add('hide'); $('who').textContent = ''; $('loginBox').classList.remove('hide') }
+  $('out').onclick = logout
+  $('go').onclick = async () => {
+    $('lerr').classList.add('hide')
+    try { const r = await api('/login', { username: $('u').value, pin: $('p').value }); tok = r.token; store.set('ppsd_pay_tok', tok); $('p').value = ''; start() }
+    catch (e) { $('lerr').textContent = e.message; $('lerr').classList.remove('hide') }
+  }
+  $('p').onkeydown = (e) => { if (e.key === 'Enter') $('go').onclick() }
+  // งวด: 12 เดือนย้อนหลัง + เดือนหน้า
+  const now = new Date(Date.now() + 7 * 3600e3)
+  for (let i = 1; i >= -12; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1)), p = d.toISOString().slice(0, 7)
+    const o = document.createElement('option'); o.value = p; o.textContent = `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear() + 543}`; if (i === 0) o.selected = true; $('per').appendChild(o)
+  }
+  $('per').onchange = () => load()
+  async function load() {
+    $('err').classList.add('hide')
+    try {
+      const d = await api('/payroll?period=' + $('per').value)
+      const rows = d.rows || []
+      const cols = ['base', 'ot', 'other_income', 'retention_refund', 'sso', 'tax', 'leave_deduct', 'retention', 'student_loan', 'advance', 'other_deduct']
+      const tot = Object.fromEntries([...cols, 'net'].map((k) => [k, rows.reduce((s, r) => s + (Number(r[k]) || 0), 0)]))
+      $('rows').innerHTML = rows.map((r) => `<tr><td>${esc(r.name)}${r.paid ? `<span class="tag paid">จ่ายแล้ว ${esc(r.batch_no || '')}</span>` : '<span class="tag unpaid">ยังไม่จ่าย</span>'}${r.status === 'ลาออก' ? '<span class="tag out">ลาออก</span>' : ''}</td>
+        <td>${esc(r.pay_type || '')}</td><td>${r.work_days ?? (r.pay_type === 'รายวัน' ? 0 : 'เต็มเดือน')}</td>
+        ${cols.map((k) => `<td>${money(r[k])}</td>`).join('')}<td class="${r.net < 0 ? 'neg' : ''}"><b>${money(r.net)}</b></td></tr>`).join('')
+        + (rows.length ? `<tr class="sum"><td>รวม ${rows.length} คน</td><td></td><td></td>${cols.map((k) => `<td>${money(tot[k])}</td>`).join('')}<td>${money(tot.net)}</td></tr>` : '<tr><td colspan="15" style="text-align:center;color:#94A0A8;padding:30px">ไม่มีข้อมูลงวดนี้</td></tr>')
+      $('sum').textContent = `จ่ายแล้ว ${d.paid_count}/${rows.length} คน · รอบจ่าย ${d.batches.filter((b) => b.status === 'closed').length} รอบ`
+    } catch (e) { $('err').textContent = e.message; $('err').classList.remove('hide') }
+  }
+  async function start() {
+    try {
+      const me = await api('/me')
+      $('who').textContent = me.user.name + (me.user.can_edit ? '' : ' (ดูอย่างเดียว)')
+      $('sync').textContent = me.last_sync ? 'ข้อมูลจาก ERP ล่าสุด ' + me.last_sync.slice(0, 16) : ''
+      $('mode').classList.toggle('hide', me.mode === 'live')
+      $('loginBox').classList.add('hide'); $('app').classList.remove('hide'); $('out').classList.remove('hide')
+      load()
+    } catch { logout() }
+  }
+  if (tok) start(); else logout()
+})()
+</script>
+</body>
+</html>

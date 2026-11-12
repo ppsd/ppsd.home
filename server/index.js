@@ -384,6 +384,7 @@ api.post('/login', (req, res) => {
   if (result.error) return res.status(403).json({ error: result.error })
   loginAttempts.delete(key) // success → reset counter
   cloudCheckin.captureByUser(result.user.id, pin) // PIN เข้าเว็บ = PIN ลงเวลา → เปิดใช้ลงเวลาออนไลน์
+  cloudPayroll.capturePin(result.user.id, pin) // เปิดใช้ล็อกอินเงินเดือนบน Cloudflare (เฉพาะคนมีสิทธิ์)
   res.json(result)
 })
 api.post('/logout', requireAuth, (req, res) => {
@@ -4114,7 +4115,7 @@ function payrollEmployees(period) { return payCore.payrollEmployees(payrollData(
 // คำนวณเงินเดือนสดทั้งงวด — สูตรอยู่ใน payroll-core.js (ตัวเดียวกับ Cloudflare)
 function computePayroll(period) { return payCore.computePayroll(payrollData(period), period) }
 // เงินเดือนบน Cloudflare (ขั้น 2: ส่งข้อมูลขึ้นทุก 1 นาที + เทียบตัวเลข) — server/cloud-payroll.js
-const cloudPayroll = createCloudPayroll({ db, getSetting, computePayroll: (p) => computePayroll(p), notifyChange: (k) => notifyChange(k) })
+const cloudPayroll = createCloudPayroll({ db, getSetting, setSetting, canSeeSalary, computePayroll: (p) => computePayroll(p), notifyChange: (k) => notifyChange(k) })
 if (!process.env.PPSD_NO_TUNNEL) { setTimeout(() => cloudPayroll.syncOnce(), 20000); setInterval(() => cloudPayroll.syncOnce(), 60 * 1000).unref?.() }
 api.get('/cloud-payroll', adminOnly, (_req, res) => res.json(cloudPayroll.info()))
 api.post('/cloud-payroll/sync', adminOnly, async (_req, res) => { const r = await cloudPayroll.syncOnce(); res.status(r.ok || r.skipped ? 200 : 502).json({ ...cloudPayroll.info(), result: r }) })
@@ -6512,7 +6513,7 @@ api.post('/me/change-pin', (req, res) => {
   const newHashed = hashPin(String(newPin))
   db.prepare('UPDATE users SET pin=?, must_change_pin=0 WHERE id=?').run(newHashed, u.id)
   syncEmployeePin(u, newHashed) // อัปเดต PIN ลงเวลาให้ตรงกัน
-  cloudCheckin.captureByUser(u.id, String(newPin)); cloudCheckin.markDirty()
+  cloudCheckin.captureByUser(u.id, String(newPin)); cloudCheckin.markDirty(); cloudPayroll.capturePin(u.id, String(newPin))
   audit(req, 'เปลี่ยน PIN ตนเอง', u.username)
   res.json({ ok: true })
 })

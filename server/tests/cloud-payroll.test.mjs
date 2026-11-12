@@ -17,7 +17,7 @@ let child, tmp, dbFile, token, cloud
 const ds = new Map() // ชื่อ → { sha, data } (เหมือนตาราง ds บน Cloudflare)
 const posts = []
 const api = async (m, p, b) => { const r = await fetch(BASE + p, { method: m, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: b === undefined ? undefined : JSON.stringify(b) }); let d = null; try { d = await r.json() } catch {} return { status: r.status, data: d } }
-// สำเนาของ payrollData() ใน cloudflare/ppsd-payroll/functions/api/[[path]].js
+// สำเนาของ payrollData() ใน cloudflare/ppsd-office/ (หน้า /payroll)functions/api/[[path]].js
 function cloudData(period) {
   const g = (n) => ds.get(n)?.data ?? null
   const { from, to } = core.periodBounds(period)
@@ -37,12 +37,12 @@ before(async () => {
       if (req.headers.authorization !== 'Bearer pay-test') { res.writeHead(401); return res.end('{"error":"unauthorized"}') }
       const b = JSON.parse(body || '{}')
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      if (req.url === '/api/sync') {
+      if (req.url === '/api/payroll/sync') {
         posts.push(b)
         for (const x of b.datasets || []) { if (x.data === null) ds.delete(x.name); else ds.set(x.name, { sha: x.sha, data: JSON.parse(JSON.stringify(x.data)) }) }
         return res.end(JSON.stringify({ ok: true, have: Object.fromEntries([...ds].map(([k, v]) => [k, v.sha])) }))
       }
-      if (req.url === '/api/compare') return res.end(JSON.stringify({ period: b.period, rows: core.computePayroll(cloudData(b.period), b.period) }))
+      if (req.url === '/api/payroll/compare') return res.end(JSON.stringify({ period: b.period, rows: core.computePayroll(cloudData(b.period), b.period) }))
       res.end('{}')
     })
   }).listen(CLOUD)
