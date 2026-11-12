@@ -4269,6 +4269,71 @@ api.get('/payroll', requireSalary, (req, res) => {
   const paidCount = rows.filter((r) => r.paid).length
   res.json({ period, periodLabel: periodLabelTH(period), locked: rows.length > 0 && paidCount === rows.length, paid_count: paidCount, days_in_month: periodBounds(period).dim, batches, rows })
 })
+// ===== ส่งออกข้อมูลเงินเดือนทั้งชุด (Excel หลายแผ่น) — ใช้ย้าย/ใช้คู่กับระบบใหม่ · ดูได้เฉพาะคนที่เห็นเงินเดือน =====
+api.get('/payroll/export', requireSalary, (req, res) => {
+  const year = /^\d{4}$/.test(req.query.year) ? Number(req.query.year) : new Date().getFullYear()
+  const be = year + 543
+  const ym = (p) => periodLabelTH(p)
+  const emps = db.prepare(`SELECT ${EMP_COLS} FROM employees ORDER BY id`).all()
+  const runs = db.prepare("SELECT period, data FROM payroll_runs WHERE period LIKE ? ORDER BY period").all(year + '-%')
+  const lastPeriod = db.prepare('SELECT MAX(period) p FROM payroll_runs').get().p
+  const retNow = (e) => retentionPaidBefore(e.code, e.retention_opening, '9999-99')
+  // 1) ทะเบียนพนักงาน
+  const empRows = [['รหัส', 'คำนำหน้า', 'ชื่อ-สกุล', 'ชื่อเล่น', 'ตำแหน่ง', 'ประเภทจ่าย', 'เงินเดือน / ค่าแรงต่อวัน', 'วันเริ่มงาน', 'สถานะ', 'วันที่ลาออก', 'ธนาคาร', 'เลขบัญชี', 'เลขผู้เสียภาษี', 'ไม่หักประกันสังคม', 'ประกันสังคม/เดือน', 'ภาษี/เดือน', 'กยศ./เดือน', 'เงินประกันผลงาน หัก/เดือน', 'เงินประกันผลงาน สะสมคงเหลือ', 'คู่สมรส', 'บุตร (คน)', 'วันทำงานตั้งต้น (รายวัน)', 'ลาป่วย ใช้/สิทธิ์', 'ลากิจ ใช้/สิทธิ์', 'พักร้อน ใช้/สิทธิ์']]
+  for (const e of emps) empRows.push([e.code, e.prefix || '', e.name, e.nickname || '', e.role || '', e.pay_type || '', Number(e.base) || 0, e.start || '', e.status || '', e.resign_date || '',
+    e.bank_name || '', e.bank_acct || '', e.tax_id || '', e.no_sso ? 'ใช่' : '', Number(e.sso) || 0, Number(e.tax) || 0, Number(e.student_loan) || 0, Number(e.retention) || 0, retNow(e),
+    e.spouse ? 'มี' : '', Number(e.children) || 0, Number(e.work_days) || 0, `${e.sick_used || 0}/${e.sick_quota || 0}`, `${e.personal_used || 0}/${e.personal_quota || 0}`, `${e.vacation_used || 0}/${e.vacation_quota || 0}`])
+  // 2) เงินประกันผลงานรายคน
+  const retRows = [['รหัส', 'ชื่อ-สกุล', 'สถานะ', 'ยอดยกมา (ก่อนใช้ ERP)', 'หักในระบบ (ทุกงวดที่จ่ายแล้ว)', 'คืนแล้ว', 'คงเหลือต้องคืนพนักงาน', 'หัก/เดือน', 'เพดาน']]
+  for (const e of emps) {
+    let ded = 0, ref = 0
+    for (const r of db.prepare('SELECT data FROM payroll_runs').all()) { try { const x = JSON.parse(r.data).find((y) => y.code === e.code); if (x) { ded += Number(x.retention) || 0; ref += Number(x.retention_refund) || 0 } } catch { /* ข้าม */ } }
+    const open = Number(e.retention_opening) || 0
+    if (!open && !ded && !ref && !(Number(e.retention) > 0)) continue
+    retRows.push([e.code, e.name, e.status || '', open, ded, ref, open + ded - ref, Number(e.retention) || 0, RETENTION_CAP])
+  }
+  // 3) เงินเดือนรายเดือน (ทุกคน ทุกงวดที่จ่ายแล้วในปี) + 4) ยอดสะสมทั้งปีรายคน (ใช้ทำ 50 ทวิ / ภ.ง.ด.1ก)
+  const monthRows = [['งวด', 'รหัส', 'ชื่อ-สกุล', 'รอบจ่าย', 'วันที่จ่าย', 'เงินเดือน/ค่าแรง', 'OT', 'รายได้อื่นๆ', 'รวมเงินได้', 'คืนเงินประกันผลงาน', 'ประกันสังคม', 'ภาษีหัก ณ ที่จ่าย', 'หักขาด/ลา', 'เงินประกันผลงาน', 'กยศ.', 'เบิกล่วงหน้า', 'หักอื่นๆ', 'สุทธิ', 'วันทำงาน', 'หมายเหตุ']]
+  const yearSum = new Map()
+  for (const r of runs) {
+    let rows = []
+    try { rows = JSON.parse(r.data) } catch { /* ข้าม */ }
+    for (const p of rows) {
+      const income = r2((p.base || 0) + (p.ot || 0) + (p.other_income || 0) - (p.leave_deduct || 0))
+      monthRows.push([ym(r.period), p.code, p.name, p.batch_no || '', p.pay_date || '', p.base || 0, p.ot || 0, p.other_income || 0, income, p.retention_refund || 0, p.sso || 0, p.tax || 0, p.leave_deduct || 0, p.retention || 0, p.student_loan || 0, p.advance || 0, p.other_deduct || 0, r2(netOf(p)), p.work_days ?? '', p.pay_note || ''])
+      const s = yearSum.get(p.code) || { name: p.name, months: 0, income: 0, sso: 0, tax: 0, loan: 0, ret: 0, refund: 0, net: 0 }
+      s.months++; s.income += income; s.sso += p.sso || 0; s.tax += p.tax || 0; s.loan += p.student_loan || 0; s.ret += p.retention || 0; s.refund += p.retention_refund || 0; s.net += netOf(p)
+      yearSum.set(p.code, s)
+    }
+  }
+  const sumRows = [['รหัส', 'ชื่อ-สกุล', 'เลขผู้เสียภาษี', 'จำนวนงวดที่จ่าย', 'เงินได้ทั้งปี (หลังหักขาด/ลา)', 'ภาษีหัก ณ ที่จ่ายทั้งปี', 'ประกันสังคมทั้งปี', 'กยศ. ทั้งปี', 'เงินประกันผลงานหักทั้งปี', 'คืนเงินประกันทั้งปี', 'สุทธิที่จ่ายทั้งปี']]
+  for (const [code, s] of yearSum) sumRows.push([code, s.name, emps.find((e) => e.code === code)?.tax_id || '', s.months, r2(s.income), r2(s.tax), r2(s.sso), r2(s.loan), r2(s.ret), r2(s.refund), r2(s.net)])
+  // 5) รายการที่ยังไม่ได้หัก/จ่าย (อยู่ในงวดที่คนนั้นยังไม่ทำจ่าย) — ต้องยกไปทำต่อ
+  const pendRows = [['ประเภท', 'งวด', 'รหัส', 'ชื่อ-สกุล', 'วันที่บันทึก', 'จำนวนเงิน', 'รายละเอียด']]
+  const pend = (label, sql, reasonCol) => {
+    for (const x of db.prepare(sql).all()) if (!empPaid(x.period, x.emp_code)) pendRows.push([label, ym(x.period), x.emp_code, x.emp_name || '', x.date || '', Number(x.amount) || 0, x[reasonCol] || ''])
+  }
+  pend('เบิกล่วงหน้า (รอหักคืน)', 'SELECT * FROM salary_advances ORDER BY period, id', 'note')
+  pend('หักอื่นๆ (รอหัก)', 'SELECT * FROM deductions ORDER BY period, id', 'reason')
+  pend('รายได้อื่นๆ (รอจ่าย)', 'SELECT * FROM other_income ORDER BY period, id', 'reason')
+  for (const o of db.prepare("SELECT * FROM ot WHERE status IN ('อนุมัติ','รออนุมัติ') ORDER BY id").all()) {
+    const iso = parseAnyDateISO(o.date); const per = iso ? iso.slice(0, 7) : ''
+    if (per && !empPaid(per, o.emp_code) && (!lastPeriod || per >= lastPeriod)) pendRows.push([`OT (${o.status})`, ym(per), o.emp_code, o.name || '', o.date || '', Number(o.amount) || 0, o.note || ''])
+  }
+  const info = [['ส่งออกข้อมูลเงินเดือน PPSD ERP'], ['ปีภาษี', `พ.ศ. ${be}`], ['ส่งออกเมื่อ', nowTS()], ['ส่งออกโดย', req.user.name], ['งวดล่าสุดที่จ่ายแล้วในระบบ', lastPeriod ? ym(lastPeriod) : '-'], [],
+    ['แผ่น', 'มีอะไร'], ['พนักงาน', 'ทะเบียนพนักงานทุกคน (รวมคนลาออก) · บัญชีธนาคาร · เลขผู้เสียภาษี · ยอดหักต่อเดือน · วันลาที่ใช้ไป'], ['เงินประกันผลงาน', 'ยอดสะสมรายคนที่ต้องยกไป / ต้องคืนพนักงาน'],
+    ['เงินเดือนรายเดือน', `ทุกงวดที่จ่ายแล้วในปี ${be} รายคน`], ['ยอดสะสมทั้งปี', 'รวมรายคนทั้งปี — ใช้ออก 50 ทวิ / ภ.ง.ด.1ก'], ['รายการค้าง', 'เบิกล่วงหน้า / หักอื่นๆ / รายได้อื่นๆ / OT ที่ยังไม่ได้ทำจ่าย — ต้องยกไปงวดถัดไป'], [],
+    ['⚠ ไฟล์นี้มีข้อมูลส่วนตัวและเงินเดือน — เก็บในที่ปลอดภัย อย่าส่งในกลุ่ม']]
+  audit(req, 'ส่งออกข้อมูลเงินเดือน (Excel)', `ปี ${be} · พนักงาน ${emps.length} คน`)
+  res.json({ filename: `ข้อมูลเงินเดือน-PPSD-${be}`, sheets: [
+    { name: 'อ่านก่อน', rows: info, cols: [28, 90] },
+    { name: 'พนักงาน', rows: empRows, cols: [10, 8, 24, 10, 14, 10, 12, 12, 10, 12, 14, 18, 16, 10, 10, 10, 10, 12, 14, 8, 8, 10, 10, 10, 10] },
+    { name: 'เงินประกันผลงาน', rows: retRows, cols: [10, 24, 10, 14, 16, 10, 16, 10, 8] },
+    { name: 'เงินเดือนรายเดือน', rows: monthRows, cols: [12, 10, 24, 12, 12, 12, 10, 10, 12, 12, 10, 10, 10, 10, 8, 10, 10, 12, 8, 24] },
+    { name: 'ยอดสะสมทั้งปี', rows: sumRows, cols: [10, 24, 16, 10, 16, 14, 14, 10, 14, 12, 14] },
+    { name: 'รายการค้าง', rows: pendRows, cols: [24, 12, 10, 24, 12, 12, 30] },
+  ] })
+})
 // list closed periods
 api.get('/payroll/runs', requireSalary, (_req, res) =>
   res.json(db.prepare('SELECT period,total,created,by FROM payroll_runs ORDER BY period DESC').all().map((r) => ({ ...r, periodLabel: periodLabelTH(r.period) })))

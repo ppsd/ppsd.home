@@ -724,6 +724,16 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
                 <button onClick={autofillDays} title="ดึงวันทำงานจากข้อมูลลงเวลาให้ทุกคนที่ยังไม่ได้ทำจ่าย (แก้ต่อได้)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>↺ ดึงวันจากลงเวลา</button>
               )}
               {payrollMeta && (
+                <button onClick={async () => {
+                  const y = Number((payrollMeta.period || '').slice(0, 4)) || new Date().getFullYear()
+                  try {
+                    const r = await apiClient.get<{ filename: string; sheets: { name: string; rows: (string | number)[][]; cols?: number[] }[] }>('/payroll/export?year=' + y)
+                    const { exportXlsxBook } = await import('../../exportCsv')
+                    await exportXlsxBook(r.filename, r.sheets)
+                  } catch (e) { alert((e as Error).message) }
+                }} title="ส่งออกข้อมูลเงินเดือนทั้งชุดเป็น Excel: ทะเบียนพนักงาน + บัญชีธนาคาร · เงินประกันสะสมรายคน · เงินเดือนทุกงวดของปี · ยอดสะสมทั้งปี (50 ทวิ) · รายการค้างที่ยังไม่ได้หัก/จ่าย" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>📤 ส่งออกข้อมูลเงินเดือน (Excel)</button>
+              )}
+              {payrollMeta && (
                 <button onClick={() => setLineSlipDlg(true)} title="แนบสลิปโอนเงินรายคน แล้วส่งสลิปเงินเดือน + สลิปโอน เข้า LINE ของพนักงาน (เฉพาะคนที่ทำจ่ายแล้ว)" className="hov-f3f5f7" style={{ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#2E7D55', background: '#fff', border: '1px solid #CDE3D6', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>📨 ส่งสลิปเข้า LINE</button>
               )}
               {payrollMeta && unpaidRows.length > 0 && (

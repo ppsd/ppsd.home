@@ -2875,6 +2875,26 @@ test('คนลาออก: หน้าเงินเดือนแสดง
   assert.equal(await inPeriod('2031-04'), true)
 })
 
+test('ส่งออกข้อมูลเงินเดือน: 6 แผ่น · พนักงาน/เงินประกัน/รายการค้าง ครบ · ไม่มี PIN/ลายเซ็น · เฉพาะคนเห็นเงินเดือน', async () => {
+  const e = await POST('/employees', { name: 'ทดสอบส่งออก', role: 'ช่าง', pay_type: 'รายเดือน', base: 12000, bank_name: 'กสิกร', bank_acct: '111-2-33333-4', tax_id: '1234567890123', retention_opening: 1500 })
+  await POST('/salary-advances', { emp_code: e.data.code, amount: 2000, period: '2033-02' })
+  const r = await GET('/payroll/export?year=2033')
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.data.sheets.map((s) => s.name), ['อ่านก่อน', 'พนักงาน', 'เงินประกันผลงาน', 'เงินเดือนรายเดือน', 'ยอดสะสมทั้งปี', 'รายการค้าง'])
+  const sheet = (n) => r.data.sheets.find((s) => s.name === n).rows
+  const emp = sheet('พนักงาน').find((x) => x[0] === e.data.code)
+  assert.ok(emp && emp.includes('111-2-33333-4') && emp.includes('1234567890123'))
+  assert.ok(sheet('เงินประกันผลงาน').some((x) => x[0] === e.data.code && x[3] === 1500), 'ยอดยกมาเงินประกัน')
+  assert.ok(sheet('รายการค้าง').some((x) => x[2] === e.data.code && x[5] === 2000 && /เบิกล่วงหน้า/.test(x[0])), 'เบิกที่ยังไม่หักต้องอยู่ในรายการค้าง')
+  const raw = JSON.stringify(r.data)
+  assert.ok(!/"pin"|signature|track_token/.test(raw), 'ห้ามมี PIN/ลายเซ็น/โทเคน')
+  const adminToken = token
+  await POST('/users', { name: 'หน้างานส่งออก', username: 'sitexp', pin: '8181', role: 'site' })
+  token = (await POST('/login', { username: 'sitexp', pin: '8181' })).data.token
+  assert.equal((await GET('/payroll/export?year=2033')).status, 403)
+  token = adminToken
+})
+
 test('คนลาออก: เบิกล่วงหน้า/รายได้อื่น/หักอื่น บันทึกได้ถึงเดือนที่ลาออก · เดือนหลังจากนั้นไม่ได้', async () => {
   const e = await POST('/employees', { name: 'ทดสอบลาออกรายการ', role: 'ช่าง', pay_type: 'รายเดือน', base: 15000 })
   await PUT(`/employees/${e.data.id}`, { status: 'ลาออก', resign_date: '2032-03-10' })
