@@ -20,6 +20,7 @@ import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
 import { renderElementPng, imageToJpeg, renderHtmlJpeg } from './render.js'
 import { createCloudCheckin } from './cloud-checkin.js'
+import * as payCore from './payroll-core.js' // สูตรเงินเดือนกลาง (ใช้ร่วมกับหน้าเงินเดือนบน Cloudflare)
 import { createRichMenu, MENU_ACTIONS, autoQuickReply, qrMsg, qrPost, menuArtHtml, RICH_MENUS } from './line-richmenu.js'
 import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
@@ -161,31 +162,7 @@ function* eachDay(fromISO, toISO) {
 // Only counts GAPS between the first and last day they actually punched in that
 // month — so punching once then stopping (or not having come yet) never
 // over-deducts. period = 'YYYY-MM'.
-function absentDaysInMonth(emp, period) {
-  const [yy, mm] = period.split('-').map(Number)
-  const monthStart = isoDate(new Date(yy, mm - 1, 1))
-  const monthEnd = isoDate(new Date(yy, mm, 0))
-  // attendance punches within the month
-  const punches = db.prepare("SELECT date FROM attendance WHERE emp_code=? AND check_in!='' AND date>=? AND date<=? ORDER BY date")
-    .all(emp.code, monthStart, monthEnd)
-  if (punches.length === 0) return 0 // not using the time-clock → don't auto-deduct
-  let from = punches[0].date
-  const to = punches[punches.length - 1].date // only within the active attendance window
-  const empStart = emp.start && /^\d{4}-\d{2}-\d{2}$/.test(emp.start) ? emp.start : null
-  if (empStart && empStart > from) from = empStart
-  const excused = new Set(punches.map((p) => p.date))
-  // ลาที่อนุมัติ = มีใบลา (ไม่นับขาด) · ลาที่ไม่อนุมัติ = ถูกหักแยกเป็น "วันลา" ใน computePayroll แล้ว ไม่นับขาดซ้ำอีกชั้น
-  for (const l of db.prepare("SELECT start_date,end_date FROM leaves WHERE emp_code=? AND status IN ('อนุมัติ','ไม่อนุมัติ')").all(emp.code))
-    for (const d of eachDay(l.start_date, l.end_date || l.start_date)) excused.add(d)
-  for (const t of db.prepare("SELECT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ'").all(emp.name)) excused.add(t.date)
-  for (const h of db.prepare('SELECT date FROM holidays WHERE date>=? AND date<=?').all(from, to)) excused.add(h.date) // วันหยุดบริษัท ไม่นับขาด
-  let absent = 0
-  for (const d of eachDay(from, to)) {
-    const wd = new Date(d + 'T00:00:00').getDay()
-    if (wd !== 0 && !excused.has(d)) absent++ // Mon–Sat, not excused
-  }
-  return absent
-}
+function absentDaysInMonth(emp, period) { return payCore.absentDaysInMonth(payrollData(period), emp, period) } // สูตรอยู่ใน payroll-core.js
 function currentPeriod() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -4089,31 +4066,12 @@ api.post('/employees/dedup', adminOnly, (req, res) => {
 const RETENTION_CAP = 5000 // เพดานเงินประกันผลงานต่อคน
 // ยอด retention ที่หักสะสมแล้ว "ก่อนงวด excludePeriod" = ยอดยกมา (พนักงานเก่า) + ผลรวมที่หักในทุกงวดที่ปิดแล้ว
 // (ไม่รวมงวดที่กำลังคำนวณ เพื่อไม่ให้ปิดงวดซ้ำแล้วนับซ้ำ)
-function retentionPaidBefore(empCode, opening, excludePeriod) {
-  // นับเฉพาะงวดที่ปิดแล้ว "ก่อน" งวดที่คำนวณ (period เรียงเทียบเป็นข้อความได้ เพราะรูปแบบ YYYY-MM)
-  const runs = db.prepare('SELECT period, data FROM payroll_runs WHERE period < ?').all(excludePeriod || '9999-99')
-  let sum = 0
-  for (const r of runs) {
-    try {
-      const row = JSON.parse(r.data).find((x) => x.code === empCode)
-      if (row) sum += (Number(row.retention) || 0) - (Number(row.retention_refund) || 0) // หักยอดที่คืนไปแล้ว
-    } catch { /* ข้ามงวดที่ข้อมูลเสีย */ }
-  }
-  return (Number(opening) || 0) + sum
+// สูตรอยู่ใน payroll-core.js (ใช้ร่วมกับ Cloudflare)
+function payrollRunsAll() {
+  return db.prepare('SELECT period, data FROM payroll_runs ORDER BY period').all().map((r) => { try { return { period: r.period, rows: JSON.parse(r.data) || [] } } catch { return { period: r.period, rows: [] } } })
 }
-// จำนวน "งวด" ที่หักเงินประกันสะสมมาก่อนงวด excludePeriod = งวดยกมา (ประมาณจากยอดยกมา ÷ ยอดหักต่อเดือน) + งวดที่ปิดแล้วที่มีการหักจริง
-function retentionPeriodsBefore(empCode, opening, monthly, excludePeriod) {
-  const runs = db.prepare('SELECT data FROM payroll_runs WHERE period < ?').all(excludePeriod || '9999-99')
-  let periods = 0
-  for (const r of runs) {
-    try {
-      const row = JSON.parse(r.data).find((x) => x.code === empCode)
-      if (row && (Number(row.retention) || 0) > 0) periods += 1
-    } catch { /* ข้ามงวดที่ข้อมูลเสีย */ }
-  }
-  const openingPeriods = (Number(monthly) || 0) > 0 ? Math.round((Number(opening) || 0) / Number(monthly)) : ((Number(opening) || 0) > 0 ? 1 : 0)
-  return openingPeriods + periods
-}
+function retentionPaidBefore(empCode, opening, excludePeriod) { return payCore.retentionPaidBefore(payrollRunsAll(), empCode, opening, excludePeriod) }
+function retentionPeriodsBefore(empCode, opening, monthly, excludePeriod) { return payCore.retentionPeriodsBefore(payrollRunsAll(), empCode, opening, monthly, excludePeriod) }
 // ตำแหน่งที่ไม่ต้องลงเวลา — ยังได้เงินเดือนเต็ม (ไม่หักขาดงานจากการไม่ตอกบัตร)
 const NO_ATTENDANCE_ROLES = ['CEO', 'ผู้จัดการ']
 // ===== เงินเดือน: คำนวณต่องวด (เดือน) + ทำจ่ายได้หลายรอบต่อเดือน =====
@@ -4124,27 +4082,25 @@ function periodBounds(period) {
   return { dim, from: `${period}-01`, to: `${period}-${String(dim).padStart(2, '0')}` }
 }
 // วันที่มาทำงานจริงในงวด = วันที่ลงเวลาเข้า + วันที่ขอปรับปรุงเวลา (ลืมตอก) ที่อนุมัติแล้ว — ไม่นับซ้ำ
-function attendanceDays(e, period) {
+// โหลดข้อมูลที่สูตรเงินเดือนต้องใช้ของงวดหนึ่ง → ส่งเข้า payroll-core.js (ฝั่ง Cloudflare โหลดชุดเดียวกันจาก D1)
+function payrollData(period) {
   const { from, to } = periodBounds(period)
-  const set = new Set(db.prepare("SELECT DISTINCT date FROM attendance WHERE emp_code=? AND COALESCE(check_in,'')!='' AND date>=? AND date<=?").all(e.code, from, to).map((r) => r.date))
-  for (const a of db.prepare("SELECT DISTINCT date FROM time_adjustments WHERE emp_name=? AND status='อนุมัติ' AND date>=? AND date<=?").all(e.name, from, to)) set.add(a.date)
-  return [...set].sort()
+  return {
+    employees: db.prepare('SELECT * FROM employees').all(),
+    attendance: db.prepare('SELECT emp_code, date, check_in FROM attendance WHERE date>=? AND date<=?').all(from, to),
+    time_adjustments: db.prepare("SELECT emp_name, date, status FROM time_adjustments WHERE status='อนุมัติ'").all(),
+    leaves: db.prepare("SELECT emp_code, start_date, end_date, days, unpaid_days, status FROM leaves WHERE status IN ('อนุมัติ','ไม่อนุมัติ')").all(),
+    holidays: db.prepare('SELECT date FROM holidays WHERE date>=? AND date<=?').all(from, to),
+    ot: db.prepare("SELECT emp_code, date, amount, status FROM ot WHERE status='อนุมัติ'").all(),
+    payroll_inputs: db.prepare('SELECT * FROM payroll_inputs WHERE period=?').all(period),
+    salary_advances: db.prepare('SELECT emp_code, period, amount FROM salary_advances WHERE period=?').all(period),
+    deductions: db.prepare('SELECT emp_code, period, amount FROM deductions WHERE period=?').all(period),
+    other_income: db.prepare('SELECT emp_code, period, amount FROM other_income WHERE period=?').all(period),
+    runs: payrollRunsAll(),
+  }
 }
-// วันทำงานที่ระบบแนะนำ (ปุ่ม "ดึงจากลงเวลา" · แก้ต่อได้)
-//  รายวัน = จำนวนวันที่ลงเวลา · รายเดือน = นับวันตามปฏิทินจากวันเริ่มงาน (ถ้าเริ่มกลางเดือน) ถึงวันลงเวลาวันสุดท้าย (ถ้าลาออก)
-//  รายเดือนที่อยู่ครบเดือน = null (เต็มเดือน)
-function suggestWorkDays(e, period) {
-  const days = attendanceDays(e, period)
-  if (e.pay_type === 'รายวัน') return days.length || null
-  const { from, to } = periodBounds(period)
-  let start = from, end = to
-  const empStart = parseAnyDateISO(e.start) // วันเริ่มงานเก็บได้ทั้ง ISO และแบบไทย ("2 ก.ย. 69")
-  if (empStart && empStart > from) start = empStart
-  if (e.status === 'ลาออก' && days.length) end = days[days.length - 1]
-  if (start === from && end === to) return null
-  if (end < start) return 0
-  return Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1
-}
+function attendanceDays(e, period) { return payCore.attendanceDays(payrollData(period), e, period) }
+function suggestWorkDays(e, period) { return payCore.suggestWorkDays(payrollData(period), e, period) }
 const payrollInputsOf = (period) => new Map(db.prepare('SELECT * FROM payroll_inputs WHERE period=?').all(period).map((r) => [r.emp_code, r]))
 // พนักงานที่อยู่ในงวด: ยังไม่ลาออก + คนที่ลาออกแล้วแต่ยังมีข้อมูลในงวดนี้ (ลงเวลา/กรอกวัน/เบิก/หัก/รายได้) → ทำจ่ายรอบสุดท้ายได้
 // คนลาออกไปแล้วก่อนงวดนี้ → ห้ามบันทึกเบิก/หัก/รายได้เข้างวดนี้ (ตรงกับหน้าเงินเดือนที่แสดงถึงเดือนที่ลาออก)
@@ -4153,85 +4109,9 @@ function resignedBefore(emp, period) {
   const { from } = periodBounds(period)
   return String(emp.resign_date || '') >= from ? null : `${emp.name} ลาออกแล้ว${emp.resign_date ? ' (' + emp.resign_date + ')' : ''} — บันทึกเข้างวด ${periodLabelTH(period)} ไม่ได้ เลือกงวดที่ยังทำงานอยู่`
 }
-function payrollEmployees(period) {
-  const { from, to } = periodBounds(period)
-  // คนลาออก: ขึ้นทุกงวดจนถึงเดือนที่ลาออก (resign_date) แล้วหยุด · ไม่มีวันที่ = ขึ้นเฉพาะงวดที่มีข้อมูล (แบบเดิม)
-  return db.prepare(`SELECT * FROM employees WHERE status != 'ลาออก'
-    OR (status = 'ลาออก' AND COALESCE(resign_date,'') >= ?)
-    OR code IN (SELECT emp_code FROM payroll_inputs WHERE period=?)
-    OR code IN (SELECT emp_code FROM attendance WHERE date>=? AND date<=?)
-    OR code IN (SELECT emp_code FROM salary_advances WHERE period=?)
-    OR code IN (SELECT emp_code FROM deductions WHERE period=?)
-    OR code IN (SELECT emp_code FROM other_income WHERE period=?)
-    ORDER BY id`).all(from, period, from, to, period, period, period)
-}
-// compute payroll rows live for a period
-function computePayroll(period) {
-  const { dim } = periodBounds(period)
-  const inputs = payrollInputsOf(period)
-  return payrollEmployees(period).map((e) => {
-    const inp = inputs.get(e.code)
-    // OT/วันลา นับ "เฉพาะของงวดนี้" (ตามวันที่ในรายการ) — ไม่งั้น OT เก่าจะถูกจ่ายซ้ำทุกเดือน
-    const ot = db.prepare("SELECT date, amount FROM ot WHERE emp_code=? AND status='อนุมัติ'").all(e.code)
-      .filter((r) => dateInPeriod(r.date, period)).reduce((s, r) => s + (Number(r.amount) || 0), 0)
-    // ลาคร่อมเดือน → แบ่งวันตามสัดส่วนของแต่ละเดือน (เดิมนับทั้งหมดไว้เดือนแรก)
-    const lvs = db.prepare("SELECT start_date, end_date, days, unpaid_days, status FROM leaves WHERE emp_code=? AND status IN ('อนุมัติ','ไม่อนุมัติ')").all(e.code)
-      .map((l) => ({ ...l, share: leaveShare(l, period) })).filter((l) => l.share > 0)
-    const rejected = r2(lvs.filter((l) => l.status === 'ไม่อนุมัติ').reduce((s, l) => s + (Number(l.days) || 0) * l.share, 0))
-    const unpaid = r2(lvs.filter((l) => l.status === 'อนุมัติ').reduce((s, l) => s + (Number(l.unpaid_days) || 0) * l.share, 0))
-    const isDaily = e.pay_type === 'รายวัน'
-    const exempt = NO_ATTENDANCE_ROLES.includes(e.role) // CEO / ผู้จัดการ ไม่ต้องลงเวลา
-    const dailyRate = e.base || 0
-    // วันทำงานของงวดนี้ (กรอกต่อเดือน · ว่าง = ค่าเริ่มต้น)
-    //  รายวัน: ว่าง = จำนวนวันที่ลงเวลา (ไม่มีลงเวลาเลย → ค่าตั้งต้นที่กรอกไว้ที่ตัวพนักงาน เช่น แม่บ้าน)
-    //  รายเดือน: ว่าง = เต็มเดือน · กรอกน้อยกว่าวันในเดือน = ได้ตามวัน (เงินเดือน ÷ 30 × วัน) แล้วหักสาย/ลา/ขาดตามปกติ
-    const inWd = inp && inp.work_days != null ? Number(inp.work_days) : null
-    let workDays, basePay, prorated = false
-    if (isDaily) {
-      workDays = inWd ?? (attendanceDays(e, period).length || Number(e.work_days) || 0)
-      basePay = r2(dailyRate * workDays)
-    } else {
-      workDays = inWd
-      prorated = inWd != null && inWd < dim
-      basePay = prorated ? r2(Math.min(e.base || 0, (e.base || 0) / 30 * inWd)) : (e.base || 0)
-    }
-    // รายเดือนที่กรอกวันทำงานเอง = ตัวเลขที่กรอกเป็นยอดสุดท้าย (เจ้าของเลือก 4 พ.ย. 69) → ไม่หักขาด/ลาจากลงเวลาซ้ำอีก
-    const manualFinal = !isDaily && inWd != null
-    const absent = (isDaily || exempt || manualFinal) ? 0 : absentDaysInMonth(e, period)
-    const daily = isDaily ? dailyRate : Math.round((e.base || 0) / 30) // เงินเดือน ÷ 30 วัน = ค่าจ้าง/วัน (หักขาด/ลา)
-    const deductDays = (isDaily || manualFinal) ? 0 : (rejected + unpaid + absent)
-    // ประกันสังคมคิดจาก "เงินที่ได้จริงในงวด" เมื่อเป็นรายวัน/ทำไม่เต็มเดือน · รายวัน "ไม่หักภาษี"
-    const sso = e.no_sso ? 0 : ((isDaily || prorated) ? ssoOf(basePay) : e.sso)
-    const tax = e.tax || 0 // ภาษีกรอกเอง (แก้ได้ในตารางเงินเดือน)
-    // เบิกล่วงหน้าที่เบิกในงวดนี้ → หักคืนตอนทำจ่าย
-    const advance = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM salary_advances WHERE emp_code=? AND period=?').get(e.code, period).a
-    // หักอื่นๆ (พร้อมเหตุผล) ที่บันทึกในงวดนี้
-    const otherDeduct = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM deductions WHERE emp_code=? AND period=?').get(e.code, period).a
-    // รายได้อื่นๆ (โบนัส/เบี้ยขยัน/ค่าคอม ฯลฯ) ที่บันทึกในงวดนี้ → บวกเข้ารายได้
-    const otherIncome = db.prepare('SELECT COALESCE(SUM(amount),0) a FROM other_income WHERE emp_code=? AND period=?').get(e.code, period).a
-    // retention: หักเดือนละ (e.retention) แต่ไม่เกินเพดานที่เหลือ — ครบ 5,000 แล้วหักเป็น 0 เอง
-    const opening = e.retention_opening || 0
-    const paidBefore = retentionPaidBefore(e.code, opening, period)
-    const monthly = e.retention ?? 0
-    // เดือนที่ไม่มีรายได้เลย (เช่น รายวันยังไม่มีวันทำงาน) ไม่หักเงินประกัน — กันเงินสุทธิติดลบ
-    const hasIncome = basePay + ot + otherIncome > 0
-    const retention = hasIncome ? Math.max(0, Math.min(monthly, RETENTION_CAP - paidBefore)) : 0
-    const refund = Math.max(0, Number(inp?.retention_refund) || 0) // คืนเงินประกันผลงาน (เช่น รอบสุดท้ายของคนลาออก)
-    // อย่าให้ข้อมูลลับ (PIN/ลายเซ็น/โทเคน) หลุดไปติดใน snapshot เงินเดือน
-    const { pin, signature, track_token, ...pub } = e
-    return {
-      ...pub, ot, sso, tax, base: basePay, leave_days: manualFinal ? 0 : rejected + unpaid, absent_days: absent, leave_deduct: deductDays * daily, manual_final: manualFinal,
-      daily_rate: dailyRate, work_days: workDays, work_days_set: inWd != null, days_in_month: dim, prorated, monthly_base: isDaily ? null : (e.base || 0),
-      exempt_attendance: exempt, // ข้อมูลสำหรับแสดงผล (รายวัน/ยกเว้นลงเวลา)
-      retention, retention_refund: refund, student_loan: e.student_loan || 0, advance, other_deduct: otherDeduct, other_income: otherIncome,
-      retention_cap: RETENTION_CAP, retention_opening: opening,
-      retention_monthly: monthly, // ยอดที่ตั้งให้หักต่อเดือน (แก้ได้) — ต่างจาก retention ที่ถูกจำกัดด้วยเพดาน
-      retention_paid: paidBefore + retention - refund, // ยอดสะสมถึงงวดนี้ (รวมงวดนี้ · หักยอดที่คืนแล้ว)
-      retention_periods: retentionPeriodsBefore(e.code, opening, monthly, period) + (retention > 0 ? 1 : 0), // จำนวนงวดที่หักสะสมมาแล้ว (รวมงวดนี้)
-      pay_note: inp?.note || '', // หมายเหตุรายคน (ขึ้นในสลิป)
-    }
-  })
-}
+function payrollEmployees(period) { return payCore.payrollEmployees(payrollData(period), period) }
+// คำนวณเงินเดือนสดทั้งงวด — สูตรอยู่ใน payroll-core.js (ตัวเดียวกับ Cloudflare)
+function computePayroll(period) { return payCore.computePayroll(payrollData(period), period) }
 const netOf = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) + (p.retention_refund || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 function r2(x) { return Math.round((Number(x) || 0) * 100) / 100 }
 
