@@ -1,6 +1,7 @@
-// อัปเดตเว็บพนักงานบน Cloudflare (https://ppsd-office.pages.dev — /checkin ลงเวลา · /payroll เงินเดือน)
+// อัปเดตเว็บพนักงานบน Cloudflare (https://ppsd-office.pages.dev — /checkin ลงเวลา · /payroll เงินเดือน · /takeoff ถอดแบบ + BOQ)
 // รันบนเครื่องเซิร์ฟเวอร์ออฟฟิศ: node scripts/deploy-office.mjs
 // 1) คัดลอกสูตรเงินเดือนกลาง server/payroll-core.js → functions/_lib (สูตรเดียวกับ ERP เสมอ)
+//    + สร้างหน้าถอดแบบ (หน้าจอ BOQ ตัวเดียวกับ ERP · vite.takeoff.config.ts) → public/takeoff
 // 2) อ่าน/สร้างกุญแจจาก ERP → ตั้งเป็นความลับบน Cloudflare (ไม่พิมพ์ออกจอ)
 // 3) อัปขึ้นด้วย wrangler 4.20.0 (ห้ามใช้รุ่นใหม่ — จะพยายามย้ายไป Workers) + ลิงก์เก่า ppsd-checkin / ppsd-payroll .pages.dev พาไปลิงก์ใหม่
 // 4) ตั้งลิงก์ใน ERP → ERP ซิงก์ทุก 1 นาทีเอง (รีสตาร์ตเซิร์ฟเวอร์ 3001 หลังรันครั้งแรก)
@@ -25,8 +26,14 @@ const SECRETS = {
   CHECKIN_SYNC_TOKEN: secret('cloud_checkin_token'),
   PAY_SYNC_TOKEN: secret('cloud_payroll_token'),
   SESSION_KEY: secret('cloud_payroll_session_key'), // ลงชื่อเข้าใช้หน้าเงินเดือน
-  PIN_KEY: secret('cloud_payroll_pin_key'), // รหัสตรวจ PIN ล็อกอินเงินเดือน
+  PIN_KEY: secret('cloud_payroll_pin_key'), // รหัสตรวจ PIN ล็อกอินเงินเดือน/ถอดแบบ
+  TAKEOFF_SYNC_TOKEN: secret('cloud_takeoff_token'),
+  TAKEOFF_SESSION_KEY: secret('cloud_takeoff_session_key'), // ลงชื่อเข้าใช้หน้าถอดแบบ
 }
+// กุญแจ AI ของ ERP (หน้า ผู้ใช้งาน → ตั้งค่า AI) → ถอดแบบบน Cloudflare เรียก AI เอง · ไม่มีกุญแจ = ข้าม (ถอดแบบด้วย AI ไม่ได้ แต่ DXF/DWG ยังนับเองได้)
+const aiKey = get('ai_api_key') || process.env.ANTHROPIC_API_KEY || ''
+if (aiKey) SECRETS.AI_KEY = aiKey
+else console.log('⚠ ยังไม่ได้ตั้งกุญแจ AI ใน ERP — หน้าถอดแบบบน Cloudflare จะเรียก AI ไม่ได้ (ตั้งแล้วรันสคริปต์นี้ใหม่)')
 
 const tmp = mkdtempSync(join(tmpdir(), 'ppsd-office-'))
 try {
@@ -34,11 +41,14 @@ try {
   cpSync(join(root, 'cloudflare', PROJECT), out, { recursive: true })
   mkdirSync(join(out, 'functions', '_lib'), { recursive: true })
   cpSync(join(root, 'server', 'payroll-core.js'), join(out, 'functions', '_lib', 'payroll-core.js'))
+  execSync('npx vite build -c vite.takeoff.config.ts', { cwd: root, stdio: 'inherit' }) // → dist/takeoff (รวมตัวแปลง DWG แบบ WebAssembly)
+  cpSync(join(root, 'dist', 'takeoff'), join(out, 'public', 'takeoff'), { recursive: true })
   const run = (cmd, cwd, input) => execSync(cmd, { cwd, stdio: input ? ['pipe', 'inherit', 'inherit'] : 'inherit', input })
   const projects = execSync(`${W} pages project list`, { cwd: out, encoding: 'utf8' })
   if (!projects.includes(PROJECT + '.pages.dev')) run(`${W} pages project create ${PROJECT} --production-branch main`, out)
   run(`${W} d1 execute ppsd-checkin --remote --file schema/checkin.sql -y`, out)
   run(`${W} d1 execute ppsd-payroll --remote --file schema/payroll.sql -y`, out)
+  run(`${W} d1 execute ppsd-takeoff --remote --file schema/takeoff.sql -y`, out)
   for (const [k, v] of Object.entries(SECRETS)) run(`${W} pages secret put ${k} --project-name ${PROJECT}`, out, v)
   run(`${W} pages deploy public --project-name ${PROJECT} --branch main --commit-dirty=true`, out)
   // ลิงก์เก่า → ลิงก์ใหม่
@@ -47,6 +57,6 @@ try {
     const r = join(tmp, dir); cpSync(join(root, 'cloudflare', dir), r, { recursive: true })
     run(`${W} pages deploy . --project-name ${proj} --branch main --commit-dirty=true`, r)
   }
-  set('cloud_checkin_url', BASE + '/checkin'); set('cloud_payroll_url', BASE + '/payroll')
-  console.log('\nเสร็จ — ' + BASE + ' (/checkin · /payroll) · ERP ซิงก์ทุก 1 นาที (ถ้าเพิ่งรันครั้งแรก ให้รีสตาร์ตเซิร์ฟเวอร์ 3001)')
+  set('cloud_checkin_url', BASE + '/checkin'); set('cloud_payroll_url', BASE + '/payroll'); set('cloud_takeoff_url', BASE + '/takeoff')
+  console.log('\nเสร็จ — ' + BASE + ' (/checkin · /payroll · /takeoff) · ERP ซิงก์ทุก 1 นาที (ถ้าเพิ่งรันครั้งแรก ให้รีสตาร์ตเซิร์ฟเวอร์ 3001)')
 } finally { rmSync(tmp, { recursive: true, force: true }); db.close() }

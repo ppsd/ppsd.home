@@ -21,6 +21,7 @@ import { createTunnelManager } from './tunnel.js'
 import { renderElementPng, imageToJpeg, renderHtmlJpeg } from './render.js'
 import { createCloudCheckin } from './cloud-checkin.js'
 import { createCloudPayroll } from './cloud-payroll.js'
+import { createCloudTakeoff } from './cloud-takeoff.js'
 import * as payCore from './payroll-core.js' // สูตรเงินเดือนกลาง (ใช้ร่วมกับหน้าเงินเดือนบน Cloudflare)
 import { createRichMenu, MENU_ACTIONS, autoQuickReply, qrMsg, qrPost, menuArtHtml, RICH_MENUS } from './line-richmenu.js'
 import * as takeoff from './takeoff.js'
@@ -235,6 +236,12 @@ const api = express.Router()
 api.use((req, res, next) => {
   if (req.method !== 'GET' && /^\/(payroll\/(inputs|batches|close)|salary-advances(\/\d+)?$|deductions|other-income)/.test(req.path) && getSetting('cloud_payroll_mode', 'mirror') === 'live')
     return res.status(409).json({ error: 'ตอนนี้ทำเงินเดือนที่ ' + (getSetting('cloud_payroll_url', '') || 'ppsd-office.pages.dev/payroll') + ' — หน้าเงินเดือนใน ERP ดูอย่างเดียว' })
+  next()
+})
+// เปิดใช้ถอดแบบ/BOQ บน Cloudflare แล้ว → หน้า BOQ ใน ERP ดูอย่างเดียว
+api.use((req, res, next) => {
+  if (req.method !== 'GET' && /^\/(boqs|boq-takeoff)(\/|$)/.test(req.path) && getSetting('cloud_takeoff_mode', 'mirror') === 'live')
+    return res.status(409).json({ error: 'ตอนนี้ถอดแบบและทำ BOQ ที่ ' + (getSetting('cloud_takeoff_url', '') || 'ppsd-office.pages.dev/takeoff') + ' — หน้า BOQ ใน ERP ดูอย่างเดียว' })
   next()
 })
 api.use((req, res, next) => { if (req.method !== 'GET' && /^\/(users|employees|line-link|line-settings|contractor|crm)/.test(req.path)) res.on('finish', () => { if (res.statusCode < 400) { try { richMenu.scheduleSync() } catch { /* ยังไม่พร้อม */ } } }); next() })
@@ -4121,7 +4128,7 @@ function payrollEmployees(period) { return payCore.payrollEmployees(payrollData(
 // คำนวณเงินเดือนสดทั้งงวด — สูตรอยู่ใน payroll-core.js (ตัวเดียวกับ Cloudflare)
 function computePayroll(period) { return payCore.computePayroll(payrollData(period), period) }
 // เงินเดือนบน Cloudflare (ขั้น 2: ส่งข้อมูลขึ้นทุก 1 นาที + เทียบตัวเลข) — server/cloud-payroll.js
-const cloudPayroll = createCloudPayroll({ db, getSetting, setSetting, canSeeSalary, computePayroll: (p) => computePayroll(p), notifyChange: (k) => notifyChange(k),
+const cloudPayroll = createCloudPayroll({ db, getSetting, setSetting, canSeeSalary, pinEligible: (u) => canSeeSalary(u) || isTakeoffUser(u), computePayroll: (p) => computePayroll(p), notifyChange: (k) => notifyChange(k),
   // ผลทำจ่ายจาก Cloudflare → ลงบัญชี / ถอนบัญชี / สรุปงวดใหม่ เหมือนกดใน ERP
   onBatchClosed: (b) => { try { postBatchJournal(b, JSON.parse(b.data || '[]'), b.closed_by || 'เงินเดือนออนไลน์') } catch (e) { logJournalIssue('payroll', b.journal_sid, `ทำจ่ายเงินเดือน ${b.no}`, e) } },
   onBatchUnclosed: (b) => { try { acct.removeAutoJournal('payroll', b.journal_sid) } catch (e) { logJournalIssue('payroll', b.journal_sid, `ถอนบัญชีรอบ ${b.no}`, e) } },
@@ -7465,14 +7472,9 @@ function boqGrand(d) {
   return Math.round(afterMarkup + afterMarkup * (Number(d.vat_pct) || 0) / 100)
 }
 // ดัน BOQ → ราคาขายบ้าน (ตั้งราคา "ตัวบ้าน" ฝั่งลูกค้า = ยอดรวม BOQ) และ/หรือ สร้างงวดงานลูกค้า
-api.post('/boqs/:id/push-to-house', auditView, (req, res) => {
-  const d = db.prepare('SELECT * FROM boqs WHERE id=?').get(req.params.id)
-  if (!d) return res.status(404).json({ error: 'ไม่พบ BOQ' })
-  if (!d.house_code) return res.status(400).json({ error: 'BOQ นี้ยังไม่ได้เลือกบ้าน — กรุณาเลือกบ้านก่อน' })
-  const h = db.prepare('SELECT * FROM houses WHERE code=?').get(d.house_code)
-  if (!h) return res.status(404).json({ error: 'ไม่พบบ้านที่ผูกกับ BOQ นี้' })
+// ดัน BOQ → ราคาขายบ้าน (mode 'price' = ราคาตัวบ้านฝั่งลูกค้า · 'installment' = งวดลูกค้า 1 งวด) — คืนยอดรวม
+function pushBoqToHouse(d, mode = 'price') {
   const grand = boqGrand(d)
-  const mode = (req.body && req.body.mode) || 'price' // 'price' | 'installment'
   if (mode === 'installment') {
     // สร้างงวดงานลูกค้า 1 งวด = ยอดรวม BOQ (ตั้งราคาขายไปในตัว)
     const nextNo = (db.prepare("SELECT COALESCE(MAX(no),0) m FROM installments WHERE house_code=? AND side='customer'").get(d.house_code).m) + 1
@@ -7483,8 +7485,50 @@ api.post('/boqs/:id/push-to-house', auditView, (req, res) => {
     db.prepare('UPDATE houses SET house_customer=? WHERE code=?').run(grand, d.house_code)
   }
   recomputeHouse(d.house_code)
+  return grand
+}
+api.post('/boqs/:id/push-to-house', auditView, (req, res) => {
+  const d = db.prepare('SELECT * FROM boqs WHERE id=?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'ไม่พบ BOQ' })
+  if (!d.house_code) return res.status(400).json({ error: 'BOQ นี้ยังไม่ได้เลือกบ้าน — กรุณาเลือกบ้านก่อน' })
+  const h = db.prepare('SELECT * FROM houses WHERE code=?').get(d.house_code)
+  if (!h) return res.status(404).json({ error: 'ไม่พบบ้านที่ผูกกับ BOQ นี้' })
+  const grand = pushBoqToHouse(d, (req.body && req.body.mode) || 'price')
   audit(req, 'ดัน BOQ เข้าราคาขาย', `${d.no} R${d.rev || 1} → ${h.name} (${grand.toLocaleString()})`)
   res.json({ ok: true, grand, house: withProfit(db.prepare('SELECT * FROM houses WHERE code=?').get(d.house_code)) })
+})
+// ใช้ถอดแบบ/BOQ ได้ = สิทธิ์เดียวกับหน้า BOQ (auditView): แอดมิน · บัญชี · ผู้จัดการ/CEO
+function isTakeoffUser(u) { return !!u && (u.role === 'admin' || u.role === 'accounting' || isManager(u)) }
+// ถอดแบบ + BOQ บน Cloudflare (ppsd-office.pages.dev/takeoff) — server/cloud-takeoff.js
+const cloudTakeoff = createCloudTakeoff({
+  db, getSetting, setSetting, isTakeoffUser, canAddPrice: (u) => u.role === 'admin' || u.role === 'accounting',
+  aiConfig: () => ({ model: aiModel(), search_model: process.env.PPSD_AI_SEARCH_MODEL || 'claude-sonnet-5', prices: AI_PRICES, shops: ONLINE_SHOPS }),
+  materials: () => db.prepare('SELECT * FROM material_prices WHERE active=1 OR merged_into IS NOT NULL ORDER BY po_count DESC, central DESC').all().map((m) => ({ ...m, ...priceAge(m) })),
+  aliases: () => activeAliases(),
+  laborRates: () => db.prepare('SELECT * FROM labor_rates WHERE active=1 ORDER BY CASE grp WHEN ? THEN 0 ELSE 1 END, seq, id').all('เหมายกหลัง'),
+  addMaterialPrice: (b, by) => {
+    const name = String(b.name || '').trim() || 'วัสดุใหม่', central = Number(b.central) || 0
+    const info = db.prepare(`INSERT INTO material_prices (name,nkey,unit,central,min,max,latest,po_count,qty_total,last_date,confidence,source,note,active,updated)
+      VALUES (?,?,?,?,?,?,?,0,0,?,'กำหนดเอง','กำหนดเอง',?,1,?)`).run(name, nkeyOf(name), String(b.unit || ''), central, central, central, central, todayTH(), String(b.note || 'เพิ่มจากหน้าถอดแบบออนไลน์'), isoToday())
+    db.prepare('UPDATE material_prices SET price_date=? WHERE id=?').run(isoToday(), info.lastInsertRowid)
+    logPrice(db.prepare('SELECT * FROM material_prices WHERE id=?').get(info.lastInsertRowid), null, central, 'เพิ่มใหม่ (ถอดแบบออนไลน์)', by)
+    return Number(info.lastInsertRowid)
+  },
+  upsertAlias: (a, u, id, src) => upsertAlias(a, u, id, src), mergedTarget: (id) => mergedTarget(id),
+  pushBoqToHouse: (b, mode) => pushBoqToHouse(b, mode),
+  audit: (who, action, detail) => audit({ user: { name: who || '-' } }, action, detail),
+  logAiUsage: (f, m, by, ok, u) => logAiUsage(f, m, by, ok, u),
+  notifyChange: (k) => notifyChange(k),
+})
+if (!process.env.PPSD_NO_TUNNEL) { setTimeout(() => cloudTakeoff.syncOnce(), 25000); setInterval(() => cloudTakeoff.syncOnce(), 60 * 1000).unref?.() }
+api.get('/cloud-takeoff', adminOnly, (_req, res) => res.json(cloudTakeoff.info()))
+// หน้า BOQ ใน ERP ถามว่าย้ายไป Cloudflare แล้วหรือยัง (แสดงแถบแจ้ง + ลิงก์)
+api.get('/cloud-takeoff/status', auditView, (_req, res) => res.json({ live: cloudTakeoff.mode() === 'live', url: getSetting('cloud_takeoff_url', '') }))
+api.post('/cloud-takeoff/sync', adminOnly, async (_req, res) => { const r = await cloudTakeoff.syncOnce(); res.status(r.ok || r.skipped ? 200 : 502).json({ ...cloudTakeoff.info(), result: r }) })
+api.post('/cloud-takeoff/mode', adminOnly, async (req, res) => {
+  const next = req.body?.mode === 'live' ? 'live' : 'mirror'
+  try { const m = await cloudTakeoff.setMode(next); audit(req, next === 'live' ? 'เปิดใช้ถอดแบบ/BOQ บน Cloudflare (ERP ดูอย่างเดียว)' : 'กลับมาทำ BOQ ใน ERP', ''); notifyChange(['boqs']); res.json({ ...cloudTakeoff.info(), mode: m }) }
+  catch (e) { res.status(502).json({ error: 'เปลี่ยนไม่สำเร็จ: ' + e.message }) }
 })
 // ถอดแบบ → BOQ ร่าง: รับไฟล์แบบ (DWG / DXF / PDF / รูป) + ข้อมูลบ้านคร่าวๆ (query) → รายการวัสดุ + ราคากลางที่จับคู่ได้ และค่าแรงตามปริมาณงาน ให้คนตรวจก่อนสร้าง BOQ
 //  ไฟล์มาได้ 2 ทาง: อัปโหลดใหม่ (body = ไฟล์ · ชื่อ/ชนิดใน query) หรือเลือกจากเอกสารของบ้านที่เก็บไว้แล้ว (JSON {file_ids})

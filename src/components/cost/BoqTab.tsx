@@ -57,6 +57,9 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
 
   const load = () => api.get<Boq[]>('/boqs').then(setRows).catch(() => setRows([]))
   useEffect(() => { load() }, [])
+  // ย้ายถอดแบบ/BOQ ไป Cloudflare แล้ว → หน้านี้ดูอย่างเดียว (บนเว็บ Cloudflare เอง คำขอนี้ไม่มี — ไม่แสดงแถบ)
+  const [cloud, setCloud] = useState<{ live: boolean; url: string } | null>(null)
+  useEffect(() => { api.get<{ live: boolean; url: string }>('/cloud-takeoff/status').then(setCloud).catch(() => setCloud(null)) }, [])
 
   const newBoq = () => setEdit({ id: 0, no: '', house_code: houseCode || '', title: 'ประมาณราคาก่อสร้าง', markup_pct: 20, vat_pct: 7, items: [{ ...emptyItem }], date: '' })
   const save = async () => {
@@ -170,6 +173,8 @@ export default function BoqTab({ houseCode }: { houseCode?: string }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {cloud?.live && <div style={{ background: '#FBF1DC', color: '#7A5410', border: '1px solid #F0DDB0', borderRadius: 10, padding: '10px 14px', fontSize: 13 }}>
+        📐 ตอนนี้ถอดแบบและทำ BOQ ที่ <a href={cloud.url} target="_blank" rel="noreferrer" style={{ color: '#7A5410', fontWeight: 600 }}>{cloud.url.replace(/^https:\/\//, '')}</a> — หน้านี้ดูได้อย่างเดียว (ข้อมูลอัปเดตจากเว็บนั้นทุก 1 นาที)</div>}
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div style={{ fontSize: 13, color: '#5C6770' }}>BOQ / ประมาณราคา <b className="num" style={{ color: '#1C2730' }}>{families.length}</b> ชุด{rows.length > families.length ? ` · ${rows.length} ฉบับ` : ''}</div>
         <button onClick={() => setTakeoff(true)} className="hov-f3f5f7" style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 9, padding: '9px 14px', cursor: 'pointer' }}>📐 ถอดจากแบบ</button>

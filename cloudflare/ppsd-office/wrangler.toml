@@ -1,5 +1,5 @@
 # เว็บพนักงาน PPSD บน Cloudflare Pages (https://ppsd-office.pages.dev) — อัปเดตด้วย `node scripts/deploy-office.mjs`
-#   /checkin = ลงเวลา (ไม่ต้องล็อกอิน) · /payroll = เงินเดือน (ล็อกอิน ชื่อผู้ใช้ + PIN)
+#   /checkin = ลงเวลา (ไม่ต้องล็อกอิน) · /payroll = เงินเดือน · /takeoff = ถอดแบบ + BOQ (ล็อกอิน ชื่อผู้ใช้ + PIN)
 # ต้องใช้ wrangler 4.20.0 เท่านั้น (รุ่นใหม่จะพยายามย้ายไป Workers) · ความลับตั้งด้วยสคริปต์ (อ่านจาก ERP) ไม่อยู่ในไฟล์นี้
 name = "ppsd-office"
 pages_build_output_dir = "./public"
@@ -14,3 +14,8 @@ database_id = "c1906ad2-3dc6-4293-a77e-acbfcba4ce9a"
 binding = "PAY_DB"
 database_name = "ppsd-payroll"
 database_id = "48512628-b001-45b1-8162-a915596b5879"
+
+[[d1_databases]]
+binding = "TAKEOFF_DB"
+database_name = "ppsd-takeoff"
+database_id = "473946a4-bf56-4307-9e53-6ea642570422"

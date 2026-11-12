@@ -106,6 +106,7 @@ export default function LineCenter() {
         <>
           {isAdmin && <CloudCheckinCard />}
           {isAdmin && <CloudPayrollCard />}
+          {isAdmin && <CloudTakeoffCard />}
           {/* แจ้งเตือน LINE — สรุปเรื่องค้างส่งเข้ากลุ่มบริหารทุกเช้า */}
           <div style={{ background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, overflow: 'hidden' }}>
             <div style={{ padding: '12px 18px', borderBottom: '1px solid #DFEEE5', fontSize: 14, fontWeight: 600, color: '#2E7D55', background: '#F2F8F4' }}>💬 แจ้งเตือน LINE (สรุปเช้าอัตโนมัติ)</div>
@@ -603,6 +604,35 @@ function CloudPayrollCard() {
           : <button disabled={!!busy || !CLOUD_PAYROLL_EDIT_READY} title={CLOUD_PAYROLL_EDIT_READY ? '' : 'เปิดได้เมื่อหน้าจอแก้ไขบน Cloudflare เสร็จ (ขั้นที่ 4)'} onClick={() => switchMode('live')} style={{ ...btn('#2E7D55'), opacity: CLOUD_PAYROLL_EDIT_READY ? 1 : 0.5 }}>{busy === 'mode' ? 'กำลังย้าย…' : 'ย้ายการทำเงินเดือนไป Cloudflare'}</button>}
       </div>
       {cmp && <div style={{ fontSize: 12.5, color: cmp.diffs.length ? '#C24036' : '#2E7D55' }}>{cmp.diffs.length ? `⚠ งวด ${cmp.period} ต่างกัน ${cmp.diffs.length} จุด: ` + cmp.diffs.slice(0, 5).map((x) => `${x.name} ${x.field} (ERP ${String(x.erp)} / Cloudflare ${String(x.cloud)})`).join(' · ') : `✓ งวด ${cmp.period}: ${cmp.people} คน ตัวเลขตรงกันทุกช่อง`}</div>}
+    </div>
+  )
+}
+
+// ถอดแบบ + BOQ บน Cloudflare — สถานะซิงก์ · เปลี่ยนที่ทำ BOQ (ERP ↔ Cloudflare)
+interface CloudTk { url: string; configured: boolean; mode: 'live' | 'mirror'; ok?: boolean; at?: string; error?: string }
+function CloudTakeoffCard() {
+  const [cp, setCp] = useState<CloudTk | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = () => api.get<CloudTk>('/cloud-takeoff').then(setCp).catch(() => {})
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) }, [])
+  if (!cp || !cp.configured) return null
+  const live = cp.mode === 'live'
+  const switchMode = async (mode: 'live' | 'mirror') => {
+    const msg = mode === 'live'
+      ? 'ย้ายถอดแบบ + BOQ ไปที่ Cloudflare?\n\n• ระบบส่ง BOQ ทั้งหมดใน ERP ขึ้นไปก่อน\n• จากนั้นถอดแบบ / สร้าง-แก้ BOQ / ดันเข้าราคาขายบ้าน ทำที่ ' + cp.url + ' เท่านั้น\n• หน้า BOQ ใน ERP จะดูได้อย่างเดียว (รับข้อมูลกลับทุก 1 นาที)\n• ราคากลางยังแก้ที่ ERP ตามเดิม\n• ย้อนกลับได้ทุกเมื่อ'
+      : 'กลับมาทำ BOQ ใน ERP?\n\nระบบดึง BOQ ล่าสุดบน Cloudflare กลับมาก่อน แล้วเว็บ Cloudflare จะดูได้อย่างเดียว'
+    if (!window.confirm(msg)) return
+    setBusy(true); try { setCp(await api.post<CloudTk>('/cloud-takeoff/mode', { mode })) } catch (e) { window.alert((e as Error).message) } setBusy(false)
+  }
+  const btn = (bg: string): React.CSSProperties => ({ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: bg, border: 'none', borderRadius: 8, padding: '6px 14px', cursor: 'pointer' })
+  return (
+    <div style={{ background: '#fff', border: '1px solid ' + (live ? '#CDE3D6' : '#E1E5EA'), borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 14.5, fontWeight: 700 }}>📐 ถอดแบบ + BOQ บน Cloudflare — <a href={cp.url} target="_blank" rel="noreferrer" style={{ color: '#2E7D55' }}>{cp.url.replace(/^https:\/\//, '')}</a></div>
+      <div style={{ fontSize: 13 }}>ที่ทำ BOQ ตอนนี้: {live ? <b style={{ color: '#2E7D55' }}>Cloudflare (หน้า BOQ ใน ERP ดูอย่างเดียว)</b> : <b style={{ color: '#30506A' }}>ERP (Cloudflare ดูอย่างเดียว · รับราคากลางทุก 1 นาที)</b>}</div>
+      <div style={{ fontSize: 12.5, color: cp.ok === false ? '#C24036' : '#5C6770' }}>{cp.ok === false ? '⚠ ซิงก์ไม่สำเร็จ: ' + cp.error : cp.at ? '✓ ซิงก์ล่าสุด ' + new Date(cp.at).toLocaleTimeString('th-TH') : 'รอซิงก์ครั้งแรก…'}</div>
+      <div>{live
+        ? <button disabled={busy} onClick={() => switchMode('mirror')} style={btn('#B7791F')}>{busy ? 'กำลังย้าย…' : 'กลับมาทำ BOQ ใน ERP'}</button>
+        : <button disabled={busy} onClick={() => switchMode('live')} style={btn('#2E7D55')}>{busy ? 'กำลังย้าย…' : 'ย้ายถอดแบบ + BOQ ไป Cloudflare'}</button>}</div>
     </div>
   )
 }

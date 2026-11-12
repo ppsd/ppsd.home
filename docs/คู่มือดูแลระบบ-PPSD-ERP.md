@@ -310,3 +310,15 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 - ปุ่ม "ย้ายการทำเงินเดือนไป Cloudflare" ล็อกไว้ (`CLOUD_PAYROLL_EDIT_READY` ใน LineCenter.tsx) จนหน้าจอแก้ไขบน Cloudflare เสร็จ (ขั้น 4)
 - ขั้น 4–5: หน้าจอครบ · เปิดใช้จริง (ERP ดูอย่างเดียว · ผลทำจ่ายกลับมาลงบัญชี/ส่งสลิป LINE)
 - อัปเดต: `node scripts/deploy-office.mjs` (wrangler 4.20.0 · ตั้งความลับ SYNC_TOKEN / SESSION_KEY / PIN_KEY จาก ERP ให้เอง ไม่พิมพ์ออกจอ)
+
+## ถอดแบบ + BOQ บน Cloudflare (ppsd-office.pages.dev/takeoff) — 12 พ.ย. 2569
+เจ้าของสั่งย้ายฟังก์ชันถอดแบบ (AI) ไปไว้บนเว็บพนักงาน ให้ใช้ได้เหมือนเดิมแม้คอมออฟฟิศปิด
+- **หน้าจอ = ตัวเดียวกับ ERP** (`src/components/cost/BoqTab` + BoqTakeoff ฯลฯ) รวมด้วย `vite.takeoff.config.ts` ซึ่งสลับ `src/api.ts` / `src/store.tsx` เป็นของ Cloudflare (`src/cloud-takeoff/`) → แก้หน้า BOQ ใน ERP แล้วรัน deploy-office = เว็บได้ของใหม่ด้วย
+- **สูตรถอดแบบไฟล์เดียว** `server/takeoff-core.js` (อ่าน DXF · จับคู่ราคากลาง · คำสั่ง AI) — ERP (`server/takeoff.js`) และหน้าเว็บใช้ร่วมกัน · ห้าม import node:* ในไฟล์นี้
+- **งานหนักทำในเบราว์เซอร์** (`src/cloud-takeoff/engine.ts`): DWG → DXF ด้วย LibreDWG WebAssembly (`@mlightcad/libredwg-web` 0.8.2 · สัญญาอนุญาต GPL-3.0 · ไฟล์ .wasm ~11 MB) ใน Web Worker แทนโปรแกรม ODA · ทดสอบกับแบบจริง 6.5 MB ได้ความยาว/พื้นที่/ตัวหนังสือตรงกับ ODA · จำนวนบล็อกต่าง ~0.5%
+- **ฝั่ง Cloudflare** `functions/api/takeoff/[[path]].js` + D1 `ppsd-takeoff` (`schema/takeoff.sql`): เก็บ BOQ · ล็อกอิน · ส่งต่อคำขอ AI แบบสตรีม (กุญแจ AI เป็นความลับ AI_KEY บน Cloudflare ไม่ส่งถึงหน้าเว็บ · ไม่แตะเนื้อไฟล์เพื่อไม่เกินเวลาประมวลผล)
+- **ฝั่ง ERP** `server/cloud-takeoff.js`: ส่งขึ้นทุก 1 นาที (ผู้ใช้สิทธิ์ BOQ + รหัสตรวจ PIN จาก `cloud_user_pins` · บ้าน · ราคากลางวัสดุ · ชื่อเรียกอื่น · ค่าแรง · รุ่น/ราคา AI)
+- **สองโหมด** (`cloud_takeoff_mode` · การ์ด "📐 ถอดแบบ + BOQ บน Cloudflare" ในเมนู LINE → การเชื่อมต่อ): **mirror** = BOQ ทำใน ERP · เว็บดูอย่างเดียว · **live** = ทำบนเว็บ · คำสั่งแก้ /boqs และ /boq-takeoff ใน ERP ตอบ 409 · ERP ดึงกลับทุก 1 นาที (POST /api/takeoff/pull): ราคากลางใหม่ (รหัสชั่วคราวติดลบ → สร้างจริงใน ERP แล้วตอบรหัสจริง · ตาราง `cloud_takeoff_map`) · ชื่อเรียก · BOQ ทั้งหมด · คำสั่ง "→ ราคาขาย" · ประวัติ · ค่าใช้ AI (ลง ai_usage) · กันทำซ้ำด้วย `cloud_takeoff_seen`
+- ข้อจำกัด: เลือกไฟล์จาก "เอกสารของบ้าน" ไม่ได้ (ไฟล์อยู่เครื่องออฟฟิศ) ต้องอัปโหลดจากเครื่อง ทีละ 1 ไฟล์ · ระหว่างถอดแบบต้องเปิดหน้าเว็บค้างไว้ · DXF แบบ binary ต้อง Save As เป็น ASCII
+- อัปเดต/ตั้งค่า: `node scripts/deploy-office.mjs` (สร้างหน้า takeoff · ตั้งความลับ TAKEOFF_SYNC_TOKEN / TAKEOFF_SESSION_KEY / AI_KEY จาก ERP · สร้างตาราง D1) — **เปลี่ยนกุญแจ AI ใน ERP แล้วต้องรันสคริปต์นี้ใหม่**
+- ทดสอบ: `server/tests/cloud-takeoff.test.mjs` (ERP จริง ↔ โค้ด Cloudflare จริง · D1 จำลอง · AI ปลอม)

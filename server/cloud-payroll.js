@@ -12,11 +12,11 @@ export function createCloudPayroll(d) {
   const url = () => String(d.getSetting('cloud_payroll_url', '') || '').replace(/\/+$/, '') // เช่น https://ppsd-office.pages.dev/payroll
   const apiBase = () => { try { return new URL(url()).origin + '/api/payroll' } catch { return '' } }
   const pinKey = () => { let k = d.getSetting('cloud_payroll_pin_key', ''); if (!k) { k = randomBytes(32).toString('hex'); d.setSetting('cloud_payroll_pin_key', k) } return k }
-  // ล็อกอิน ERP สำเร็จ → เก็บรหัสตรวจ PIN สำหรับล็อกอินเงินเดือนบน Cloudflare (เฉพาะคนที่มีสิทธิ์ดูเงินเดือน)
+  // ล็อกอิน ERP สำเร็จ → เก็บรหัสตรวจ PIN สำหรับล็อกอินบน Cloudflare (เงินเดือน/ถอดแบบ — เฉพาะคนที่มีสิทธิ์ pinEligible)
   function capturePin(userId, pin) {
     try {
       const u = db.prepare('SELECT * FROM users WHERE id=?').get(userId)
-      if (!u?.pin || !d.canSeeSalary(u) || !/^\d{4,8}$/.test(String(pin || ''))) return
+      if (!u?.pin || !(d.pinEligible || d.canSeeSalary)(u) || !/^\d{4,8}$/.test(String(pin || ''))) return
       const h = createHmac('sha256', pinKey()).update(String(u.username || '').toLowerCase() + ':' + pin).digest('hex')
       db.prepare('INSERT INTO cloud_user_pins (user_id, secret, pin_ref, at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, pin_ref=excluded.pin_ref, at=excluded.at').run(u.id, h, u.pin, new Date().toISOString())
     } catch (e) { console.error('cloud payroll pin capture:', e.message) }
