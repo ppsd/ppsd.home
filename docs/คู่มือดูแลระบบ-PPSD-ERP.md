@@ -278,3 +278,16 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 - เว็บลูกค้าอ่านรูปที่ติ๊ก "แสดงบนเว็บลูกค้า" ได้ที่ `GET /api/public/house-ideas` (ไม่ต้องล็อกอิน · เฉพาะรายการที่มีรูป) → หน้า `/web/#ideas`
 - เว็บบน Cloudflare (ppsd-web.pages.dev) เรียก ERP ไม่ได้ → `node scripts/deploy-web.mjs` ส่งออกรายการจาก ERP ที่รันอยู่ (พอร์ต 3001) เป็นไฟล์ `ideas.json` ไปกับเว็บ (ถ้าเปิด ERP ไม่ได้ ใช้ชุดตั้งต้น) · พนักงานเพิ่ม/ลบไอเดียแล้ว ต้องอัปเดตเว็บใหม่ Cloudflare จึงเห็น
 - ลูกค้ากดชอบได้ 3 แบบ · ส่งรูปให้ AI ไม่เกิน 2 รูปต่อครั้ง (คุมค่าใช้จ่าย) · ฝั่งออฟฟิศ: `server/house-concept-public.js` · ฝั่ง Cloudflare: `cloudflare/ppsd-web/functions/api/public/house-concept.js` อ่าน `/ideas.json`
+
+## ย้าย ERP ขึ้นเซิร์ฟเวอร์ออนไลน์ (12 พ.ย. 2569 — กำลังดำเนินการ)
+เป้าหมาย: ปิดคอมออฟฟิศแล้วยังใช้ ERP ได้ · เข้าจากนอกออฟฟิศด้วยลิงก์ https ถาวร · ใช้โค้ดเดิมทั้งหมด (ไม่ได้เขียนใหม่)
+- เครื่อง: เซิร์ฟเวอร์เช่า Ubuntu 24.04 (แนะนำ RAM 2 GB ขึ้นไป เพราะใช้ Chrome สร้างรูปเอกสารส่ง LINE) โซนสิงคโปร์
+- เข้าเครื่องด้วยกุญแจ `~/.ssh/ppsd_vps` บนเครื่องออฟฟิศ (ไม่ใช้รหัสผ่าน) · **อย่าลบกุญแจนี้ / อย่าส่งไฟล์ที่ไม่มี .pub ให้ใคร**
+- สคริปต์: `scripts/vps/setup.sh` (ติดตั้งบนเซิร์ฟเวอร์) · `scripts/vps/migrate.mjs` (สั่งจากเครื่องออฟฟิศ)
+  1. `node scripts/vps/migrate.mjs setup <IP> [โดเมน]` — ติดตั้ง Node, Chrome, ฟอนต์ไทย, Caddy (https อัตโนมัติ), บริการ `ppsd-erp` (เปิดเองหลังรีบูต), ไฟร์วอลล์, สำรองฐานข้อมูลทุกคืน 02:30 เก็บ 14 วัน
+  2. `node scripts/vps/migrate.mjs code <IP>` — ส่งโค้ดที่ commit แล้ว + `dist` (ใช้ตอนอัปเดตโปรแกรมด้วย)
+  3. `node scripts/vps/migrate.mjs files <IP>` — ส่งไฟล์แนบ (~1.2 GB) ล่วงหน้า ระบบออฟฟิศยังใช้ได้
+  4. `node scripts/vps/migrate.mjs cutover <IP> [โดเมน]` — ย้ายจริง: หยุดเซิร์ฟเวอร์ออฟฟิศ → ส่งฐานข้อมูล + ไฟล์ที่เพิ่มใหม่ + secret.key → เปิดบนเซิร์ฟเวอร์ → ตั้ง LINE webhook ไปที่ใหม่
+- ไม่มีโดเมน → ใช้ลิงก์ `https://<IP แบบขีด>.sslip.io` ได้ทันที · มีโดเมนใน Cloudflare → ทำ DNS ชี้มาที่ IP แล้วใส่โดเมนตอน setup/cutover
+- **หลังย้ายแล้ว ห้ามเปิด `run-server.bat` / `start.bat` ที่ออฟฟิศอีก** ไม่งั้นข้อมูลแยกสองที่ และ LINE webhook จะถูกตั้งกลับมาที่ออฟฟิศ · ข้อมูลเดิมในเครื่องออฟฟิศยังอยู่ครบ (ใช้เป็นสำเนาได้)
+- บนเซิร์ฟเวอร์: ดูสถานะ `systemctl status ppsd-erp` · ดู log `journalctl -u ppsd-erp -n 100` · รีสตาร์ต `systemctl restart ppsd-erp`
