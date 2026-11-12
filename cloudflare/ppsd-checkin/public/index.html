@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1E2E3B">
+<title>PPSD ลงเวลา</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:#F3F5F7;font-family:'Kanit',sans-serif;color:#1C2730;display:flex;flex-direction:column;align-items:center;padding:16px;gap:12px}
+  .card{width:420px;max-width:100%;background:#fff;border:1px solid #E1E5EA;border-radius:18px;overflow:hidden;box-shadow:0 12px 40px rgba(28,39,48,.08)}
+  .head{background:#1E2E3B;color:#fff;padding:24px;text-align:center}
+  .head .t{font-size:12.5px;color:#7C8B97;letter-spacing:.1em;margin-bottom:10px}
+  .clock{font-size:48px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+  .date{font-size:13.5px;color:#AEBAC4;margin-top:10px}
+  .body{padding:20px 22px 22px}
+  .lbl{font-size:12.5px;font-weight:500;color:#3C4750;margin:0 0 6px}
+  select,input{width:100%;font-family:inherit;font-size:15px;color:#1C2730;background:#fff;border:1px solid #D2DAE1;border-radius:9px;padding:11px 13px;outline:none}
+  .dots{display:flex;gap:8px;margin:0 0 12px}
+  .dots div{flex:1;height:44px;border-radius:9px;border:1px solid #D2DAE1;background:#F7F9FB;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700}
+  .keys{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .keys button{font-family:inherit;height:50px;border-radius:9px;border:1px solid #E1E5EA;background:#fff;font-size:20px;font-weight:600;color:#1C2730;cursor:pointer;touch-action:manipulation}
+  .keys button.a{background:#F3F5F7;font-size:13px;color:#5C6770}
+  .row{display:flex;gap:10px;margin-top:14px}
+  .btn{flex:1;font-family:inherit;font-size:16px;font-weight:600;color:#fff;border:none;border-radius:11px;padding:15px 0;cursor:pointer;touch-action:manipulation}
+  .btn:disabled{opacity:.6}
+  .in{background:#2E7D55}.out{background:#C24036}.blue{background:#30506A}
+  .toast{margin-top:12px;font-size:13.5px;font-weight:500;text-align:center;padding:10px 12px;border-radius:9px}
+  .ok{color:#2E7D55;background:#E2F1EA}.bad{color:#C24036;background:#FBEEEC}
+  .box{width:420px;max-width:100%;background:#fff;border:1px solid #E1E5EA;border-radius:14px;padding:14px 18px}
+  .box h3{font-size:13.5px;font-weight:600;margin:0 0 4px}
+  .hint{font-size:11.5px;color:#94A0A8;margin:2px 0 10px;line-height:1.5}
+  .geo{font-size:12.5px;text-align:center}
+  .foot{font-size:11.5px;color:#94A0A8;text-align:center;line-height:1.6}
+  .hide{display:none}
+</style>
+</head>
+<body>
+  <div class="geo" id="geo">กำลังโหลด…</div>
+  <div class="card">
+    <div class="head"><div class="t">PPSD — ลงเวลาเข้า-ออกงาน</div><div class="clock" id="clock">--:--:--</div><div class="date" id="date"></div></div>
+    <div class="body">
+      <div class="lbl">เลือกชื่อพนักงาน</div>
+      <select id="emp"><option value="">— เลือกชื่อ —</option></select>
+      <div class="lbl" style="margin-top:14px">ใส่ PIN 4 หลัก</div>
+      <div class="dots" id="dots"><div></div><div></div><div></div><div></div></div>
+      <div class="keys" id="keys"></div>
+      <div class="row"><button class="btn in" id="bin">เข้างาน</button><button class="btn out" id="bout">ออกงาน</button></div>
+      <div id="toast" class="toast hide"></div>
+    </div>
+  </div>
+
+  <div class="box">
+    <h3>🏠 เช็คอินหน้างาน</h3>
+    <div id="siteA"><div class="hint">ถึงหน้างานแล้ว: เลือกชื่อ + ใส่ PIN ด้านบน → กดปุ่มนี้ → เลือกบ้าน → ระบบบันทึกตำแหน่งและเวลาที่ถึง</div>
+      <button class="btn in" style="width:100%;font-size:14px;padding:11px 0" id="siteOpen">เลือกหน้างาน</button></div>
+    <div id="siteB" class="hide">
+      <div class="hint" id="siteWho" style="color:#3C4750;font-size:12.5px"></div>
+      <select id="house" style="margin-bottom:8px"><option value="">— เลือกบ้าน / หน้างาน —</option></select>
+      <input id="siteNote" maxlength="120" placeholder="หมายเหตุ (ถ้ามี) เช่น ตรวจงานโครงหลังคา" style="margin-bottom:10px;font-size:13.5px">
+      <div style="display:flex;gap:8px"><button class="btn" style="background:#fff;color:#5C6770;border:1px solid #D2DAE1;font-size:14px;padding:11px 0" id="siteCancel">ยกเลิก</button>
+        <button class="btn in" style="flex:2;font-size:14px;padding:11px 0" id="siteGo">📍 เช็คอินถึงหน้างาน</button></div>
+    </div>
+  </div>
+
+  <div class="box">
+    <h3>📍 ส่งตำแหน่งงาน (โฟร์แมน/งานหน้างาน)</h3>
+    <div id="trA"><div class="hint">เลือกชื่อ + ใส่ PIN ด้านบนก่อน แล้วกดเริ่ม — ส่งตำแหน่งทุก 5 นาทีระหว่างเปิดหน้านี้ค้างไว้</div>
+      <button class="btn blue" style="width:100%;font-size:14px;padding:11px 0" id="trGo">เริ่มส่งตำแหน่งงานวันนี้</button></div>
+    <div id="trB" class="hide"><div class="hint" id="trInfo" style="color:#2E7D55;font-size:12.5px"></div>
+      <div class="hint" style="color:#C0852C">⚠️ ต้องเปิดหน้านี้ค้างไว้ (อย่าปิดแอป/ล็อกจอนาน) ระบบถึงส่งตำแหน่งต่อเนื่อง</div>
+      <button class="btn out" style="width:100%;font-size:14px;padding:11px 0" id="trStop">หยุดส่งตำแหน่ง</button></div>
+  </div>
+
+  <div class="foot">หน้าลงเวลาสำหรับพนักงาน — ไม่ต้องเข้าสู่ระบบ · ใช้ได้ทุกที่ แม้คอมออฟฟิศปิด<br><span id="sync"></span></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id)
+  const DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'], MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+  let pin = '', cfg = { geofence: false, radius: 200, houses: [] }, busy = false, tr = null
+  const store = { get: (k) => { try { return localStorage.getItem(k) || '' } catch { return '' } }, set: (k, v) => { try { localStorage.setItem(k, v) } catch {} } }
+  const api = async (path, body) => {
+    const r = await fetch('/api' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {})
+    let d = {}; try { d = await r.json() } catch {}
+    if (!r.ok) throw new Error(d.error || 'เชื่อมต่อไม่สำเร็จ ลองใหม่')
+    return d
+  }
+  const toast = (msg, ok) => { const t = $('toast'); t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'bad'); if (!msg) t.className = 'toast hide' }
+  const tick = () => { const n = new Date(), p = (x) => String(x).padStart(2, '0'); $('clock').textContent = `${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`; $('date').textContent = `วัน${DAYS[n.getDay()]}ที่ ${n.getDate()} ${MONTHS[n.getMonth()]} ${n.getFullYear() + 543}` }
+  tick(); setInterval(tick, 1000)
+  const drawPin = () => [...$('dots').children].forEach((d, i) => { d.textContent = pin[i] ? '•' : '' })
+  const press = (k) => { toast(''); if (k === 'del') pin = pin.slice(0, -1); else if (k === 'clr') pin = ''; else if (pin.length < 4) pin += k; drawPin() }
+  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clr', '0', 'del']) {
+    const b = document.createElement('button'); b.textContent = k === 'del' ? '⌫' : k === 'clr' ? 'ล้าง' : k; if (k === 'del' || k === 'clr') b.className = 'a'
+    b.onclick = () => press(k); $('keys').appendChild(b)
+  }
+  document.addEventListener('keydown', (e) => { if (/^(INPUT|SELECT)$/.test(e.target.tagName)) return; if (e.key >= '0' && e.key <= '9') press(e.key); else if (e.key === 'Backspace') { e.preventDefault(); press('del') } })
+  const gps = () => new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error('อุปกรณ์นี้ไม่รองรับ GPS'))
+    navigator.geolocation.getCurrentPosition((p) => res({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
+      (e) => rej(new Error(e.code === 1 ? 'กรุณาอนุญาตการเข้าถึงตำแหน่ง (GPS) ในเบราว์เซอร์' : 'อ่านตำแหน่งไม่สำเร็จ ลองใหม่')), { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 })
+  })
+  const need = () => { const ref = $('emp').value; if (!ref) { toast('กรุณาเลือกชื่อพนักงานก่อน'); return null } if (pin.length !== 4) { toast('กรุณาใส่ PIN 4 หลัก'); return null } return { ref, name: $('emp').selectedOptions[0].textContent } }
+  async function punch(kind) {
+    const w = need(); if (!w || busy) return
+    busy = true; $('bin').disabled = $('bout').disabled = true
+    try {
+      let c = {}
+      if (cfg.geofence) c = await gps(); else c = await gps().catch(() => ({}))
+      const r = await api('/punch', { ref: w.ref, pin, kind, ...c })
+      toast(`${r.name} ${kind === 'in' ? 'เข้างาน' : 'ออกงาน'} ${r.time} น.${r.status === 'สาย' ? ' (สาย)' : ''} เรียบร้อย`, true)
+    } catch (e) { toast(e.message) }
+    pin = ''; drawPin(); busy = false; $('bin').disabled = $('bout').disabled = false
+  }
+  $('bin').onclick = () => punch('in'); $('bout').onclick = () => punch('out')
+  $('emp').onchange = () => { store.set('ppsd_ci_emp', $('emp').value); pin = ''; drawPin(); toast('') }
+  // เช็คอินหน้างาน
+  let site = null
+  $('siteOpen').onclick = async () => {
+    const w = need(); if (!w) return
+    try { await api('/verify', { ref: w.ref, pin }); site = { ...w, pin }; $('siteWho').textContent = w.name + ' — ถึงหน้างานไหน?'; $('siteA').classList.add('hide'); $('siteB').classList.remove('hide'); toast('') }
+    catch (e) { toast(e.message); pin = ''; drawPin() }
+  }
+  $('siteCancel').onclick = () => { site = null; $('siteB').classList.add('hide'); $('siteA').classList.remove('hide'); pin = ''; drawPin() }
+  $('siteGo').onclick = async () => {
+    if (!site) return
+    if (!$('house').value) return toast('เลือกหน้างานก่อน')
+    $('siteGo').disabled = true; $('siteGo').textContent = 'กำลังอ่านตำแหน่ง…'
+    try {
+      const c = await gps()
+      const r = await api('/site', { ref: site.ref, pin: site.pin, house: $('house').value, note: $('siteNote').value, ...c })
+      toast(`✅ ${r.name} เช็คอินถึง ${r.house} เวลา ${r.time} น.`, true); $('siteNote').value = ''; $('siteCancel').onclick()
+    } catch (e) { toast(e.message) }
+    $('siteGo').disabled = false; $('siteGo').textContent = '📍 เช็คอินถึงหน้างาน'
+  }
+  // ส่งตำแหน่งงาน
+  const sendTrack = async () => { const c = await gps(); await api('/track', { ref: tr.ref, pin: tr.pin, ...c }); tr.count++; tr.last = new Date().toLocaleTimeString('th-TH'); $('trInfo').innerHTML = `กำลังส่งตำแหน่งของ <b></b> ทุก 5 นาที · ส่งแล้ว ${tr.count} จุด · ล่าสุด ${tr.last}`; $('trInfo').querySelector('b').textContent = tr.name }
+  $('trGo').onclick = async () => {
+    const w = need(); if (!w) return
+    tr = { ...w, pin, count: 0, last: '' }
+    try { await sendTrack(); tr.timer = setInterval(() => sendTrack().catch(() => {}), 5 * 60 * 1000); $('trA').classList.add('hide'); $('trB').classList.remove('hide'); toast(`เริ่มส่งตำแหน่งงานของ ${w.name} แล้ว (ทุก 5 นาที)`, true); pin = ''; drawPin() }
+    catch (e) { tr = null; toast(e.message) }
+  }
+  $('trStop').onclick = () => { if (tr?.timer) clearInterval(tr.timer); tr = null; $('trB').classList.add('hide'); $('trA').classList.remove('hide') }
+  // โหลดรายชื่อ + ค่าตั้งค่า
+  Promise.all([api('/employees'), api('/config')]).then(([emps, c]) => {
+    cfg = c
+    const sel = $('emp'), last = store.get('ppsd_ci_emp')
+    for (const e of emps) { const o = document.createElement('option'); o.value = e.ref; o.textContent = e.name; sel.appendChild(o) }
+    if (last && emps.some((e) => e.ref === last)) sel.value = last
+    for (const h of c.houses || []) { const o = document.createElement('option'); o.value = h.code; o.textContent = h.name; $('house').appendChild(o) }
+    $('geo').textContent = c.geofence ? `📍 ลงเวลาได้เฉพาะในรัศมี ${c.radius} ม. จากออฟฟิศ (ต้องเปิด GPS)` : '📍 ลงเวลาได้ทุกที่'
+    $('geo').style.color = c.geofence ? '#2E7D55' : '#94A0A8'
+    if (c.last_sync) $('sync').textContent = 'ข้อมูลรายชื่อจากระบบหลักล่าสุด ' + c.last_sync.slice(0, 16)
+    if (!emps.length) toast('ยังไม่มีรายชื่อพนักงาน — รอระบบหลักส่งข้อมูลขึ้นมา')
+  }).catch((e) => toast(e.message))
+})()
+</script>
+</body>
+</html>

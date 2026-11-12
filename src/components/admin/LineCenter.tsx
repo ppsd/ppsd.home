@@ -104,6 +104,7 @@ export default function LineCenter() {
       {isAdmin && <PendingCards testOn={!!lineCfg?.test_only} />}
       {tab === 'connect' && (
         <>
+          {isAdmin && <CloudCheckinCard />}
           {/* แจ้งเตือน LINE — สรุปเรื่องค้างส่งเข้ากลุ่มบริหารทุกเช้า */}
           <div style={{ background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, overflow: 'hidden' }}>
             <div style={{ padding: '12px 18px', borderBottom: '1px solid #DFEEE5', fontSize: 14, fontWeight: 600, color: '#2E7D55', background: '#F2F8F4' }}>💬 แจ้งเตือน LINE (สรุปเช้าอัตโนมัติ)</div>
@@ -527,6 +528,41 @@ function RichMenuPanel() {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// หน้าลงเวลาบน Cloudflare — ลิงก์ถาวร ใช้ได้แม้คอมออฟฟิศปิด · ERP ซิงก์ทุก 1 นาที
+interface CloudCi { url: string; configured: boolean; last: string; ok: boolean; error: string; applied_total: number; total: number; ready: number; not_ready: string[] }
+function CloudCheckinCard() {
+  const [ci, setCi] = useState<CloudCi | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = () => api.get<CloudCi>('/cloud-checkin').then(setCi).catch(() => {})
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) }, [])
+  if (!ci) return null
+  const sync = async () => { setBusy(true); try { setCi(await api.post<CloudCi>('/cloud-checkin/sync', {})) } catch (e) { window.alert((e as Error).message) } setBusy(false) }
+  const copy = () => { navigator.clipboard?.writeText(ci.url).then(() => window.alert('คัดลอกลิงก์แล้ว — ส่งให้พนักงานได้เลย'), () => window.prompt('คัดลอกลิงก์นี้', ci.url)) }
+  const ago = ci.last ? Math.round((Date.now() - Date.parse(ci.last)) / 60000) : null
+  return (
+    <div style={{ background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 14.5, fontWeight: 700 }}>⏰ ลิงก์ลงเวลาถาวร (Cloudflare) — ใช้ได้แม้คอมออฟฟิศปิด</div>
+      {!ci.configured ? <div style={{ fontSize: 12.5, color: '#94A0A8' }}>ยังไม่ได้ตั้ง — ผู้ดูแลระบบรัน <code>node scripts/deploy-checkin.mjs</code> บนเครื่องเซิร์ฟเวอร์</div> : (
+        <>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <a href={ci.url} target="_blank" rel="noreferrer" style={{ fontSize: 14, fontWeight: 600, color: '#2E7D55' }}>{ci.url}</a>
+            <button onClick={copy} style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: '#fff', background: '#2E7D55', border: 'none', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>คัดลอก</button>
+            <button onClick={sync} disabled={busy} style={{ fontFamily: 'inherit', fontSize: 12, color: '#30506A', background: '#fff', border: '1px solid #D2DAE1', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>{busy ? 'กำลังซิงก์…' : 'ซิงก์ตอนนี้'}</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: ci.ok ? '#5C6770' : '#C24036' }}>
+            {ci.ok ? `✓ ซิงก์ล่าสุด ${ago === 0 ? 'เมื่อสักครู่' : ago + ' นาทีที่แล้ว'} · ดึงรายการลงเวลาเข้า ERP แล้ว ${ci.applied_total} รายการ (ตั้งแต่เปิดเซิร์ฟเวอร์)` : ci.last ? `⚠ ซิงก์ไม่สำเร็จ: ${ci.error}` : 'รอซิงก์ครั้งแรก…'}
+          </div>
+          <div style={{ fontSize: 12.5, color: '#5C6770' }}>
+            พร้อมใช้ <b style={{ color: ci.ready === ci.total ? '#2E7D55' : '#B7791F' }}>{ci.ready}/{ci.total}</b> คน
+            {ci.not_ready.length > 0 && <span style={{ color: '#94A0A8' }}> · ยังไม่พร้อม: {ci.not_ready.join(', ')} — ให้คนนั้นลงเวลาที่เครื่องในออฟฟิศ / ล็อกอิน ERP 1 ครั้ง หรือ HR ตั้ง PIN ใหม่ แล้วใช้ลิงก์นี้ได้เลย</span>}
+          </div>
+          <div style={{ fontSize: 11.5, color: '#94A0A8' }}>ลงเวลาเข้า/ออก · เช็คอินหน้างาน · ส่งตำแหน่งงาน ทำบนลิงก์นี้ได้ทุกที่ (GPS ใช้ได้) · คอมออฟฟิศปิดอยู่ = รายการพักไว้บน Cloudflare แล้วเข้า ERP เองเมื่อเปิดเครื่อง · คนลาออกถูกตัดออกอัตโนมัติ · ปุ่ม ⏰ ลงเวลา ในเมนู LINE ส่งลิงก์นี้ให้</div>
+        </>
+      )}
     </div>
   )
 }

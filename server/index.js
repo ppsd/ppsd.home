@@ -19,6 +19,7 @@ import { EFILINGS, efilingList } from './efiling.js'
 import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
 import { renderElementPng, imageToJpeg, renderHtmlJpeg } from './render.js'
+import { createCloudCheckin } from './cloud-checkin.js'
 import { createRichMenu, MENU_ACTIONS, autoQuickReply, qrMsg, qrPost, menuArtHtml, RICH_MENUS } from './line-richmenu.js'
 import * as takeoff from './takeoff.js'
 import { registerBackupViewer } from './backup-viewer.js'
@@ -404,6 +405,7 @@ api.post('/login', (req, res) => {
   }
   if (result.error) return res.status(403).json({ error: result.error })
   loginAttempts.delete(key) // success → reset counter
+  cloudCheckin.captureByUser(result.user.id, pin) // PIN เข้าเว็บ = PIN ลงเวลา → เปิดใช้ลงเวลาออนไลน์
   res.json(result)
 })
 api.post('/logout', requireAuth, (req, res) => {
@@ -497,6 +499,7 @@ function kioskPinCheck(empCode, pin, emp, req) {
     return { error: 'PIN ไม่ถูกต้อง', code: 401 }
   }
   kioskAttempts.delete(key)
+  cloudCheckin.capture(emp.code, pin) // ใส่ PIN ถูก → เปิดใช้ลงเวลาออนไลน์ (Cloudflare) ให้คนนี้
   return null
 }
 api.post('/kiosk/location', (req, res) => {
@@ -589,6 +592,10 @@ api.post('/kiosk/my-slip', (req, res) => {
   res.json({ periods: periods.map((x) => ({ period: x, label: periodLabelTH(x) })), period: p, periodLabel: periodLabelTH(p), slip })
 })
 // เวลาที่เกินกว่านี้ = "สาย" (เวลาเข้างาน + นาทีผ่อนผัน) · ค่าเริ่มต้น 08:00 + ผ่อนผัน 5 นาที
+// หน้าลงเวลาบน Cloudflare (ลิงก์ถาวร ใช้ได้แม้คอมออฟฟิศปิด) — server/cloud-checkin.js · ซิงก์ทุก 1 นาที
+const cloudCheckin = createCloudCheckin({ db, getSetting, setSetting, hashPin, kioskRef: (c) => kioskRef(c), lateCutoff: () => lateCutoff(), isoDate: (x) => isoDate(x), notifyChange: (k) => notifyChange(k),
+  houseFilterSql: "COALESCE(kind,'') <> 'marketing' AND COALESCE(status,'') NOT IN ('ส่งมอบแล้ว','ยกเลิก')" })
+if (!process.env.PPSD_NO_TUNNEL) { setTimeout(() => cloudCheckin.syncOnce({ force: true }), 15000); setInterval(() => cloudCheckin.syncOnce(), 60 * 1000).unref?.() }
 function lateCutoff() {
   const m = /^(\d{1,2}):(\d{2})$/.exec(getSetting('att_start', '08:00'))
   const grace = parseInt(getSetting('att_grace', '5'), 10) || 0
@@ -1175,7 +1182,7 @@ async function handleMenuTap(uid, data, replyToken) {
   }
   if (a.choose) return lineReply(replyToken, { type: 'text', text: a.choose[0], quickReply: { items: a.choose[1].map(([label, k]) => qrPost(label, 'menu:' + k)) } })
   if (a.checkin) {
-    const url = getSetting('tunnel_checkin', '0') === '1' && tunnel.state.url ? tunnel.state.url.replace(/\/$/, '') + '/checkin' : ''
+    const url = cloudCheckin.info().configured ? cloudCheckin.info().url : getSetting('tunnel_checkin', '0') === '1' && tunnel.state.url ? tunnel.state.url.replace(/\/$/, '') + '/checkin' : ''
     return lineReply(replyToken, url ? `⏰ ลงเวลาเข้า/ออกงาน — เปิดลิงก์นี้ในมือถือ (ใช้ GPS ได้):
 ${url}
 
@@ -3955,6 +3962,8 @@ api.put('/employees/:id/pin', requireSalary, (req, res) => {
   db.prepare('UPDATE employees SET pin=? WHERE id=?').run(h, req.params.id)
   const uid = db.prepare('SELECT user_id FROM employees WHERE id=?').get(req.params.id)?.user_id
   if (uid) db.prepare('UPDATE users SET pin=?, must_change_pin=0 WHERE id=?').run(h, uid) // PIN เข้าเว็บ = PIN ตอกบัตร
+  const ec = db.prepare('SELECT code FROM employees WHERE id=?').get(req.params.id)?.code
+  if (ec) { cloudCheckin.capture(ec, pin); cloudCheckin.markDirty() }
   res.json({ ok: true })
 })
 // remove an employee (e.g. resigned) — they drop out of payroll automatically
@@ -6613,6 +6622,7 @@ api.post('/me/change-pin', (req, res) => {
   const newHashed = hashPin(String(newPin))
   db.prepare('UPDATE users SET pin=?, must_change_pin=0 WHERE id=?').run(newHashed, u.id)
   syncEmployeePin(u, newHashed) // อัปเดต PIN ลงเวลาให้ตรงกัน
+  cloudCheckin.captureByUser(u.id, String(newPin)); cloudCheckin.markDirty()
   audit(req, 'เปลี่ยน PIN ตนเอง', u.username)
   res.json({ ok: true })
 })
@@ -9454,6 +9464,9 @@ api.post('/line/richmenu/brand', adminOnly, async (req, res) => {
     res.json(richMenu.brandStatus(uid))
   } catch (e) { res.status(502).json({ error: 'ทำรายการไม่สำเร็จ — ' + e.message }) }
 })
+// ---- หน้าลงเวลาบน Cloudflare ----
+api.get('/cloud-checkin', adminOnly, (_req, res) => res.json(cloudCheckin.info()))
+api.post('/cloud-checkin/sync', adminOnly, async (_req, res) => { const r = await cloudCheckin.syncOnce({ force: true }); res.status(r.ok || r.skipped ? 200 : 502).json({ ...cloudCheckin.info(), result: r }) })
 api.get('/tunnel', adminOnly, async (_req, res) => { await refreshLineWebhookActive(); res.json(tunnelInfo()) })
 api.put('/tunnel', adminOnly, async (req, res) => {
   const b = req.body || {}

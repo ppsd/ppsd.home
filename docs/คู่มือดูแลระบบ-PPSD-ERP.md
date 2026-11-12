@@ -291,3 +291,10 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 - ไม่มีโดเมน → ใช้ลิงก์ `https://<IP แบบขีด>.sslip.io` ได้ทันที · มีโดเมนใน Cloudflare → ทำ DNS ชี้มาที่ IP แล้วใส่โดเมนตอน setup/cutover
 - **หลังย้ายแล้ว ห้ามเปิด `run-server.bat` / `start.bat` ที่ออฟฟิศอีก** ไม่งั้นข้อมูลแยกสองที่ และ LINE webhook จะถูกตั้งกลับมาที่ออฟฟิศ · ข้อมูลเดิมในเครื่องออฟฟิศยังอยู่ครบ (ใช้เป็นสำเนาได้)
 - บนเซิร์ฟเวอร์: ดูสถานะ `systemctl status ppsd-erp` · ดู log `journalctl -u ppsd-erp -n 100` · รีสตาร์ต `systemctl restart ppsd-erp`
+
+## หน้าลงเวลาบน Cloudflare (ppsd-checkin.pages.dev) — 12 พ.ย. 2569
+- เป็น "สาขาย่อย" ของ ERP: โค้ดหน้าเว็บ+API ที่ `cloudflare/ppsd-checkin/` (Pages + Functions + ฐานข้อมูล D1 ชื่อ ppsd-checkin) · ฝั่ง ERP ที่ `server/cloud-checkin.js`
+- ERP ซิงก์ทุก 1 นาที (POST /api/sync ด้วยรหัส `cloud_checkin_token`): ส่งรายชื่อคนยังทำงาน + บ้าน + ค่าตั้งค่าลงเวลา + สถานะวันนี้ขึ้นไป · ดึงรายการเข้างาน/ออกงาน/เช็คอินหน้างาน/ตำแหน่งกลับมา (กันซ้ำด้วยเลขรายการในตาราง `cloud_checkin_applied`)
+- PIN: ไม่ส่งกุญแจหลัก (secret.key) ขึ้นไป — ใช้รหัสตรวจเฉพาะลงเวลา HMAC ด้วย `cloud_checkin_key` สร้างตอนพนักงานใส่ PIN ถูกในระบบออฟฟิศ (ตอกบัตร/ล็อกอิน/ตั้ง PIN) เก็บใน `cloud_pin_hashes` (ไม่เก็บประวัติ) · PIN ใน ERP เปลี่ยน = รหัสเดิมหยุดส่งเอง
+- อัปเดต/ติดตั้งใหม่: `node scripts/deploy-checkin.mjs` (wrangler 4.20.0 เท่านั้น · ตั้งความลับ CLOUD_KEY/SYNC_TOKEN จาก ERP ให้เอง ไม่พิมพ์ออกจอ) · ครั้งแรกแล้วรีสตาร์ต 3001
+- ถ้าซิงก์ไม่สำเร็จ: ดูการ์ดในเมนู LINE → การเชื่อมต่อ (บอกสาเหตุ) · เน็ตออฟฟิศดับ = รายการรอบน Cloudflare ไม่หาย เข้า ERP เมื่อเน็ตกลับ
