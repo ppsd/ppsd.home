@@ -20,6 +20,7 @@ import * as acct from './accounting.js'
 import { createTunnelManager } from './tunnel.js'
 import { renderElementPng, imageToJpeg, renderHtmlJpeg } from './render.js'
 import { createCloudCheckin } from './cloud-checkin.js'
+import { createCloudPayroll } from './cloud-payroll.js'
 import * as payCore from './payroll-core.js' // สูตรเงินเดือนกลาง (ใช้ร่วมกับหน้าเงินเดือนบน Cloudflare)
 import { createRichMenu, MENU_ACTIONS, autoQuickReply, qrMsg, qrPost, menuArtHtml, RICH_MENUS } from './line-richmenu.js'
 import * as takeoff from './takeoff.js'
@@ -4112,6 +4113,15 @@ function resignedBefore(emp, period) {
 function payrollEmployees(period) { return payCore.payrollEmployees(payrollData(period), period) }
 // คำนวณเงินเดือนสดทั้งงวด — สูตรอยู่ใน payroll-core.js (ตัวเดียวกับ Cloudflare)
 function computePayroll(period) { return payCore.computePayroll(payrollData(period), period) }
+// เงินเดือนบน Cloudflare (ขั้น 2: ส่งข้อมูลขึ้นทุก 1 นาที + เทียบตัวเลข) — server/cloud-payroll.js
+const cloudPayroll = createCloudPayroll({ db, getSetting, computePayroll: (p) => computePayroll(p), notifyChange: (k) => notifyChange(k) })
+if (!process.env.PPSD_NO_TUNNEL) { setTimeout(() => cloudPayroll.syncOnce(), 20000); setInterval(() => cloudPayroll.syncOnce(), 60 * 1000).unref?.() }
+api.get('/cloud-payroll', adminOnly, (_req, res) => res.json(cloudPayroll.info()))
+api.post('/cloud-payroll/sync', adminOnly, async (_req, res) => { const r = await cloudPayroll.syncOnce(); res.status(r.ok || r.skipped ? 200 : 502).json({ ...cloudPayroll.info(), result: r }) })
+api.get('/cloud-payroll/compare', adminOnly, async (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
+  try { res.json(await cloudPayroll.compare(period)) } catch (e) { res.status(502).json({ error: 'เทียบไม่สำเร็จ: ' + e.message }) }
+})
 const netOf = (p) => (p.base || 0) + (p.ot || 0) + (p.other_income || 0) + (p.retention_refund || 0) - (p.sso || 0) - (p.tax || 0) - (p.leave_deduct || 0) - (p.retention || 0) - (p.student_loan || 0) - (p.advance || 0) - (p.other_deduct || 0)
 function r2(x) { return Math.round((Number(x) || 0) * 100) / 100 }
 
