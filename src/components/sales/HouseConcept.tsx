@@ -5,13 +5,14 @@ import ModalShell from '../shared/ModalShell'
 import HousePlan, { saveSvgPng } from './HousePlan'
 import { fmtBaht, fmtM, type Layout } from './houseGeom'
 import HouseIdeas, { Credit, type Idea } from './HouseIdeas'
+import { RoomProgram, FacingPicker, FEAT, presetProg, progItems, dirOf, type Prog } from './RoomProgram'
 
 // ออกแบบบ้านเบื้องต้น (AI) — กรอกความต้องการลูกค้า (ชั้น/ห้องนอน/ห้องน้ำ/งบ/ที่ดิน/สไตล์ + รูปตัวอย่าง)
 // → AI จัดผังห้อง → ระบบวาดแปลนแต่ละชั้น + ภาพ 3D หมุนดูได้ · สั่งแก้เป็นข้อความ · ย้อนฉบับก่อนได้ · บันทึกภาพส่งลูกค้า
 // ทั้งหมดเป็น "แบบร่างเบื้องต้น" ไว้คุยกับลูกค้า ต้องให้สถาปนิก/วิศวกรเขียนแบบจริงต่อ
 const House3D = lazy(() => import('./House3D'))
 
-interface Req { floors: number; bedrooms: number; bathrooms: number; budget: number; price_per_sqm: number; land_w: number; land_d: number; parking: number; style: string; extras: string; notes: string }
+interface Req { floors: number; bedrooms: number; bathrooms: number; budget: number; price_per_sqm: number; land_w: number; land_d: number; parking: number; style: string; extras: string; notes: string; facing?: number | null; program?: { floor: number; name: string; count: number; pos: string }[] }
 interface Stats { total: number; estimate: number; bedrooms: number; bathrooms: number; floors: number; warnings: number }
 interface Analysis { floors: { level: number; indoor: number; outdoor: number; w: number; d: number }[]; bedrooms: number; bathrooms: number; indoor: number; outdoor: number; total: number; estimate: number; footprint: { w: number; d: number }; warnings: string[] }
 interface Concept {
@@ -128,8 +129,19 @@ function NewConcept({ ideas, onRemoveIdea, onClose, onCreated }: { ideas: Idea[]
   const [imgs, setImgs] = useState<string[]>([])
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  const [prog, setProg] = useState<Prog>(() => presetProg(2)) // ห้องแยกรายชั้น
+  const [touched, setTouched] = useState(false)
+  const [deg, setDeg] = useState('') // ทิศหน้าบ้าน (องศา) · ว่าง = ไม่ทราบ
+  const [ticks, setTicks] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const set = (k: keyof typeof f, v: string | number) => setF((o) => ({ ...o, [k]: v }))
+  const setFloors = (n: number) => {
+    set('floors', n)
+    // ยังไม่ได้แก้รายการห้อง หรือชั้นใหม่ยังว่าง → ใส่ค่าเริ่มต้นของจำนวนชั้นนั้น
+    const fls = n ? Array.from({ length: n }, (_, i) => i + 1) : [0]
+    if (!touched || !Object.entries(prog).some(([k, v]) => v.n > 0 && fls.includes(Number(k.split('|')[0])))) setProg(presetProg(n))
+  }
+  const tot = progItems(prog, f.floors)
   const area = numIn(f.budget) && numIn(f.price) ? Math.round(numIn(f.budget) / numIn(f.price)) : 0
   const addImgs = async (files: FileList | null) => {
     if (!files) return
@@ -139,19 +151,19 @@ function NewConcept({ ideas, onRemoveIdea, onClose, onCreated }: { ideas: Idea[]
   }
   const submit = async () => {
     setErr('')
-    if (!numIn(f.bedrooms) && !numIn(f.bathrooms)) return setErr('ระบุจำนวนห้องนอนหรือห้องน้ำ')
+    if (!tot.beds && !tot.baths) return setErr('ใส่ห้องนอนหรือห้องน้ำอย่างน้อย 1 ห้อง')
     setSaving(true)
     try {
       const r = await api.post<Concept>('/house-concepts', {
-        title: f.title, customer: f.customer, floors: f.floors, bedrooms: numIn(f.bedrooms), bathrooms: numIn(f.bathrooms), parking: numIn(f.parking),
-        budget: numIn(f.budget), price_per_sqm: numIn(f.price), land_w: numIn(f.land_w), land_d: numIn(f.land_d), style: f.style, extras: f.extras, notes: f.notes, images: imgs.slice(0, maxUpload), idea_ids: ideas.map((x) => x.id),
+        title: f.title, customer: f.customer, floors: f.floors, bedrooms: tot.beds, bathrooms: tot.baths, parking: tot.cars, program: tot.items, facing: deg === '' ? null : Number(deg),
+        budget: numIn(f.budget), price_per_sqm: numIn(f.price), land_w: numIn(f.land_w), land_d: numIn(f.land_d), style: f.style, extras: [...ticks, f.extras.trim()].filter(Boolean).join(', '), notes: f.notes, images: imgs.slice(0, maxUpload), idea_ids: ideas.map((x) => x.id),
       })
       onCreated(r.id)
     } catch (e) { setErr((e as Error).message); setSaving(false) }
   }
   const row: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }
   return (
-    <ModalShell title="ออกแบบบ้านใหม่" sub="กรอกความต้องการของลูกค้า แล้ว AI จะจัดผังห้องให้ (ใช้เวลาประมาณ 1–3 นาที)" onClose={onClose} width={640} closeOnBackdrop={false}
+    <ModalShell title="ออกแบบบ้านใหม่" sub="กรอกความต้องการของลูกค้า แล้ว AI จะจัดผังห้องให้ (ใช้เวลาประมาณ 3–7 นาที · AI ตรวจและแก้ผังเองอีกรอบ)" onClose={onClose} width={640} closeOnBackdrop={false}
       footer={<><button style={btn2} onClick={onClose}>ยกเลิก</button><button style={{ ...btn1, opacity: saving ? 0.6 : 1 }} disabled={saving} onClick={submit}>{saving ? 'กำลังส่ง…' : '✨ ให้ AI ออกแบบ'}</button></>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {ideas.length > 0 && (
@@ -176,13 +188,17 @@ function NewConcept({ ideas, onRemoveIdea, onClose, onCreated }: { ideas: Idea[]
         <div>
           <div style={lbl}>จำนวนชั้น</div>
           <div style={{ display: 'flex', gap: 6 }}>
-            {[1, 2, 3].map((n) => <button key={n} onClick={() => set('floors', n)} style={{ ...btn2, ...(f.floors === n ? { background: '#30506A', color: '#fff', borderColor: '#30506A' } : {}) }}>{n} ชั้น</button>)}
+            {[1, 2, 3].map((n) => <button key={n} onClick={() => setFloors(n)} style={{ ...btn2, ...(f.floors === n ? { background: '#30506A', color: '#fff', borderColor: '#30506A' } : {}) }}>{n} ชั้น</button>)}
+            <button onClick={() => setFloors(0)} style={{ ...btn2, ...(f.floors === 0 ? { background: '#30506A', color: '#fff', borderColor: '#30506A' } : {}) }}>ยังไม่แน่ใจ (ให้ AI เลือก)</button>
           </div>
         </div>
-        <div style={row}>
-          <div><div style={lbl}>ห้องนอน</div><input style={field} inputMode="numeric" value={f.bedrooms} onChange={(e) => set('bedrooms', e.target.value)} /></div>
-          <div><div style={lbl}>ห้องน้ำ</div><input style={field} inputMode="numeric" value={f.bathrooms} onChange={(e) => set('bathrooms', e.target.value)} /></div>
-          <div><div style={lbl}>ที่จอดรถ (คัน)</div><input style={field} inputMode="numeric" value={f.parking} onChange={(e) => set('parking', e.target.value)} /></div>
+        <div>
+          <div style={lbl}>ห้องที่ต้องการในแต่ละชั้น — กดแท็บชั้น ใส่จำนวน แล้วเลือกตำแหน่งได้</div>
+          <RoomProgram floors={f.floors} prog={prog} setProg={(p) => { setProg(p); setTouched(true) }} />
+        </div>
+        <div>
+          <div style={lbl}>หน้าบ้าน (ด้านติดถนน) หันไปทางทิศไหน — AI ใช้วางห้องให้หลบแดดบ่ายและรับลม · ไม่ทราบเว้นไว้ได้</div>
+          <FacingPicker deg={deg} setDeg={setDeg} />
         </div>
         <div style={row}>
           <div><div style={lbl}>งบประมาณ (บาท)</div><input style={field} inputMode="numeric" value={f.budget} onChange={(e) => set('budget', money(e.target.value))} placeholder="เช่น 4,000,000" /></div>
@@ -200,7 +216,18 @@ function NewConcept({ ideas, onRemoveIdea, onClose, onCreated }: { ideas: Idea[]
           </div>
           <input style={field} value={f.style} onChange={(e) => set('style', e.target.value)} placeholder="หรือพิมพ์เอง เช่น โมเดิร์นหลังคาจั่ว โทนขาวไม้" />
         </div>
-        <div><div style={lbl}>ห้อง / พื้นที่พิเศษ</div><input style={field} value={f.extras} onChange={(e) => set('extras', e.target.value)} placeholder="เช่น ห้องพระ, ห้องทำงาน, ครัวไทยแยก, ห้องนอนชั้นล่างสำหรับผู้สูงอายุ" /></div>
+        <div>
+          <div style={lbl}>ติ๊กสิ่งที่ลูกค้าอยากได้เพิ่ม</div>
+          {FEAT.map(([g, list]) => (
+            <div key={g} style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 11.5, color: '#8A949C', marginBottom: 3 }}>{g}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {list.map((t) => { const on = ticks.includes(t); return <button key={t} onClick={() => setTicks((o) => on ? o.filter((x) => x !== t) : [...o, t])} style={{ ...btn2, padding: '4px 10px', borderRadius: 999, ...(on ? { background: '#EEF3F7', borderColor: '#30506A', fontWeight: 600 } : {}) }}>{on ? '✓ ' : ''}{t}</button> })}
+              </div>
+            </div>
+          ))}
+          <input style={field} value={f.extras} onChange={(e) => set('extras', e.target.value)} placeholder="อื่น ๆ พิมพ์เพิ่มได้ เช่น ห้องเก็บไวน์, ที่จอดมอเตอร์ไซค์" />
+        </div>
         <div><div style={lbl}>ความต้องการอื่นๆ</div><textarea style={{ ...field, minHeight: 60, resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="เช่น อยากได้ห้องนั่งเล่นโปร่ง เพดานสูง หน้าบ้านหันทิศเหนือ" /></div>
         <div>
           <div style={lbl}>รูปบ้านตัวอย่างที่ลูกค้าชอบ (รวมรูปจากห้องรวมไอเดียไม่เกิน 3 รูป · ใช้ให้ AI ดูสไตล์ ระบบไม่เก็บรูป){maxUpload === 0 ? ' — ครบ 3 รูปแล้ว' : ''}</div>
@@ -285,9 +312,10 @@ function Detail({ id, canEdit, onBack, onChanged }: { id: number; canEdit: boole
       </div>
 
       <div style={{ ...card, padding: '10px 14px', fontSize: 12.5, color: '#5C6770', lineHeight: 1.7 }}>
-        <b style={{ color: '#1C2730' }}>ความต้องการ:</b> {c.req.floors} ชั้น · {c.req.bedrooms} ห้องนอน · {c.req.bathrooms} ห้องน้ำ
+        <b style={{ color: '#1C2730' }}>ความต้องการ:</b> {c.req.floors ? `${c.req.floors} ชั้น` : 'ให้ AI เลือกจำนวนชั้น'} · {c.req.bedrooms} ห้องนอน · {c.req.bathrooms} ห้องน้ำ
         {c.req.parking ? ` · จอดรถ ${c.req.parking} คัน` : ''}{c.req.budget ? ` · งบ ${fmtBaht(c.req.budget)} บาท` : ''} · {fmtBaht(c.req.price_per_sqm)} บาท/ตร.ม.
-        {land ? ` · ที่ดิน ${fmtM(land.w)}×${fmtM(land.d)} ม.` : ''}{c.req.style ? ` · สไตล์ ${c.req.style}` : ''}{c.req.extras ? ` · ${c.req.extras}` : ''}{c.req.notes ? ` · ${c.req.notes}` : ''}
+        {land ? ` · ที่ดิน ${fmtM(land.w)}×${fmtM(land.d)} ม.` : ''}{c.req.facing != null ? ` · หน้าบ้านหันทิศ${dirOf(c.req.facing)} (${c.req.facing}°)` : ''}{c.req.style ? ` · สไตล์ ${c.req.style}` : ''}{c.req.extras ? ` · ${c.req.extras}` : ''}{c.req.notes ? ` · ${c.req.notes}` : ''}
+        {c.req.program?.length ? <div style={{ marginTop: 4 }}>{[...new Set(c.req.program.map((x) => x.floor))].sort((a, b) => (a || 9) - (b || 9)).map((lv) => <div key={lv}><b style={{ color: '#1C2730', fontWeight: 600 }}>{lv ? `ชั้น ${lv}` : 'ชั้นไหนก็ได้'}:</b> {c.req.program!.filter((x) => x.floor === lv).map((x) => `${x.name} ${x.count}${x.pos ? ` (${x.pos})` : ''}`).join(' · ')}</div>)}</div> : null}
       </div>
 
       {busy(c) && <div style={{ ...card, padding: 16, background: '#FFF8EC', borderColor: '#F1DDB5', color: '#8A5A12', fontSize: 13.5 }}>⏳ {c.status === 'กำลังแก้' ? 'AI กำลังแก้แบบตามคำสั่ง' : 'AI กำลังจัดผังห้อง'} — ใช้เวลาประมาณ 1–3 นาที ออกจากหน้านี้ได้ ระบบทำต่อเอง</div>}
