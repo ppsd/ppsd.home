@@ -3,6 +3,7 @@
 // ผู้ใช้: POST /login (ชื่อผู้ใช้ + PIN เดิม) → โทเคน 12 ชม. · สิทธิ์เหมือน ERP (ดู = แอดมิน/บัญชี/ผู้จัดการ-CEO/บุคคล · แก้ = แอดมิน/บัญชี)
 // PIN: ตรวจด้วย PIN_KEY (รหัสตรวจเฉพาะเงินเดือน สร้างตอนล็อกอิน ERP สำเร็จ) — ไม่ใช่กุญแจหลักของ ERP
 import * as core from '../../_lib/payroll-core.js'
+import * as ops from '../../_lib/payroll-ops.js'
 
 const J = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } })
 const err = (msg, status = 400) => J({ error: msg }, status)
@@ -18,21 +19,8 @@ async function hmac(key, msg) {
 }
 const isSync = (env, req) => !!env.PAY_SYNC_TOKEN && eq((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, ''), env.PAY_SYNC_TOKEN)
 
-async function getDs(db, name) { const r = await db.prepare('SELECT data FROM ds WHERE name=?').bind(name).first(); return r ? JSON.parse(r.data) : null }
-// ข้อมูลที่สูตรเงินเดือนต้องใช้ของงวดหนึ่ง (รูปแบบเดียวกับ payrollData() ใน ERP)
-async function payrollData(db, period) {
-  const names = ['employees', 'att:' + period, 'time_adjustments', 'leaves', 'holidays', 'ot', 'payroll_inputs', 'salary_advances', 'deductions', 'other_income', 'payroll_runs']
-  const d = Object.fromEntries(await Promise.all(names.map(async (n) => [n, await getDs(db, n)])))
-  const { from, to } = core.periodBounds(period)
-  const inP = (x) => x.period === period
-  return {
-    employees: d.employees || [], attendance: d['att:' + period] || [], time_adjustments: d.time_adjustments || [], leaves: d.leaves || [],
-    holidays: (d.holidays || []).filter((h) => h.date >= from && h.date <= to), ot: d.ot || [],
-    payroll_inputs: (d.payroll_inputs || []).filter(inP), salary_advances: (d.salary_advances || []).filter(inP),
-    deductions: (d.deductions || []).filter(inP), other_income: (d.other_income || []).filter(inP),
-    runs: (d.payroll_runs || []).map((r) => ({ period: r.period, rows: r.rows || [] })),
-  }
-}
+const getDs = ops.getDs
+const payrollData = ops.payrollData
 // แถวเงินเดือนทั้งงวด: คนที่ทำจ่ายแล้ว = snapshot ของรอบนั้น · คนที่ยังไม่จ่าย = คำนวณสด (เหมือน periodRows() ใน ERP)
 async function periodRows(db, period) {
   const batches = ((await getDs(db, 'payroll_batches')) || []).filter((b) => b.period === period)
@@ -79,8 +67,10 @@ const pub = (u) => ({ id: u.id, name: u.name, username: u.username, can_edit: !!
 
 async function sync(env, b) {
   const st = [], now = bkkTs()
+  const live = (await ops.getMeta(env.PAY_DB, 'mode', 'mirror')) === 'live'
   for (const x of Array.isArray(b.datasets) ? b.datasets : []) {
     if (!x || typeof x.name !== 'string' || typeof x.sha !== 'string') continue
+    if (live && ops.OWNED.includes(x.name)) continue // เปิดใช้จริงแล้ว: ข้อมูลเงินเดือนบนนี้เป็นตัวหลัก ERP ส่งทับไม่ได้
     if (x.data === null) { st.push(env.PAY_DB.prepare('DELETE FROM ds WHERE name=?').bind(x.name)); continue }
     st.push(env.PAY_DB.prepare('INSERT INTO ds (name, sha, data, at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET sha=excluded.sha, data=excluded.data, at=excluded.at').bind(x.name, x.sha, JSON.stringify(x.data), now))
   }
@@ -95,8 +85,22 @@ export async function onRequest({ request, env, params }) {
   const m = request.method
   try {
     let b = {}
-    if (m === 'POST') { try { b = await request.json() } catch { return err('ข้อมูลไม่ถูกต้อง') } }
+    if (m === 'POST' || m === 'PUT') { try { b = await request.json() } catch { return err('ข้อมูลไม่ถูกต้อง') } }
     // ---- ERP ↔ Cloudflare ----
+    if (m === 'POST' && ['/pull', '/ack', '/mode'].includes(path)) {
+      if (!isSync(env, request)) return err('unauthorized', 401)
+      const db = env.PAY_DB
+      if (path === '/mode') { if (!['live', 'mirror'].includes(b.mode)) return err('mode'); await ops.setMeta(db, 'mode', b.mode); return J({ ok: true, mode: b.mode }) }
+      if (path === '/ack') {
+        for (const id of (b.patches || []).slice(0, 500)) await db.prepare('UPDATE emp_patches SET synced=1 WHERE id=?').bind(Number(id)).run()
+        for (const id of (b.audit || []).slice(0, 500)) await db.prepare('UPDATE audit SET synced=1 WHERE id=?').bind(Number(id)).run()
+        return J({ ok: true })
+      }
+      const rows = ((await db.prepare(`SELECT name, sha, data FROM ds WHERE name IN (${ops.OWNED.map(() => '?').join(',')})`).bind(...ops.OWNED).all()).results || [])
+      return J({ mode: await ops.getMeta(db, 'mode', 'mirror'), datasets: rows.map((r) => ({ name: r.name, sha: r.sha, data: JSON.parse(r.data) })),
+        patches: (await db.prepare('SELECT * FROM emp_patches WHERE synced=0 ORDER BY id LIMIT 500').all()).results || [],
+        audit: (await db.prepare('SELECT * FROM audit WHERE synced=0 ORDER BY id LIMIT 500').all()).results || [] })
+    }
     if (m === 'POST' && (path === '/sync' || path === '/compare')) {
       if (!isSync(env, request)) return err('unauthorized', 401)
       if (path === '/sync') return sync(env, b)
@@ -116,6 +120,31 @@ export async function onRequest({ request, env, params }) {
       const paidCount = rows.filter((r) => r.paid).length
       return J({ period, periodLabel: core.periodLabelTH(period), days_in_month: core.periodBounds(period).dim, locked: rows.length > 0 && paidCount === rows.length, paid_count: paidCount, batches, rows,
         total: core.r2(rows.reduce((s, r) => s + r.net, 0)) })
+    }
+    if (m === 'GET' && path === '/items') {
+      const period = new URL(request.url).searchParams.get('period') || bkkPeriod()
+      return J(await ops.items(env.PAY_DB, period))
+    }
+    // ---- คำสั่งแก้ไข: เปิดใช้จริงแล้ว + แอดมิน/บัญชีเท่านั้น ----
+    if (m !== 'GET') {
+      if ((await ops.getMeta(env.PAY_DB, 'mode', 'mirror')) !== 'live') return err('ยังไม่เปิดใช้ทำเงินเดือนบนนี้ — ช่วงนี้ทำใน ERP ไปก่อน', 409)
+      if (!u.can_edit) return err('บัญชีนี้ดูได้อย่างเดียว (แก้ไขได้เฉพาะแอดมิน/บัญชี)', 403)
+      const db = env.PAY_DB, seg = path.split('/').filter(Boolean)
+      try {
+        if (m === 'PUT' && path === '/inputs') return J(await ops.setInput(db, u, b))
+        if (m === 'POST' && path === '/inputs/autofill') return J(await ops.autofill(db, u, b))
+        const kind = { advances: 'advance', deductions: 'deduction', income: 'income' }[seg[0]]
+        if (kind && m === 'POST' && seg.length === 1) return J(await ops.addItem(db, u, kind, b), 201)
+        if (kind && m === 'DELETE' && seg.length === 2) return J(await ops.delItem(db, u, kind, seg[1]))
+        if (m === 'POST' && path === '/employee') return J(await ops.patchEmp(db, u, b))
+        if (seg[0] === 'batches') {
+          if (m === 'POST' && seg.length === 1) return J(await ops.createBatch(db, u, b), 201)
+          if (m === 'PUT' && seg.length === 2) return J(await ops.editBatch(db, u, seg[1], b))
+          if (m === 'POST' && seg[2] === 'reopen') return J(await ops.reopenBatch(db, u, seg[1]))
+          if (m === 'POST' && seg[2] === 'close') return J(await ops.closeBatchAgain(db, u, seg[1], b))
+          if (m === 'DELETE' && seg.length === 2) return J(await ops.deleteBatch(db, u, seg[1]))
+        }
+      } catch (e) { if (e instanceof ops.OpError) return err(e.message, e.status); throw e }
     }
     return err('ไม่พบ', 404)
   } catch (e) { return err('ระบบขัดข้อง: ' + (e?.message || e), 500) }

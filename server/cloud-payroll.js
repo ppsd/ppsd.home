@@ -6,7 +6,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto'
 
 const EMP_HIDE = new Set(['pin', 'signature', 'track_token'])
 export function createCloudPayroll(d) {
-  // d: { db, getSetting, setSetting, computePayroll(period), notifyChange, canSeeSalary(user) }
+  // d: { db, getSetting, setSetting, computePayroll(period), notifyChange, canSeeSalary(user), onBatchClosed(b), onBatchUnclosed(b), rebuildRun(period) }
   const { db } = d
   db.exec('CREATE TABLE IF NOT EXISTS cloud_user_pins (user_id INTEGER PRIMARY KEY, secret TEXT, pin_ref TEXT, at TEXT)')
   const url = () => String(d.getSetting('cloud_payroll_url', '') || '').replace(/\/+$/, '') // เช่น https://ppsd-office.pages.dev/payroll
@@ -57,28 +57,101 @@ export function createCloudPayroll(d) {
     if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status)
     return j
   }
+  // ---- เปิดใช้จริง (live): ข้อมูลเงินเดือนบน Cloudflare เป็นตัวหลัก → ERP ดึงกลับมาลงตาราง/ลงบัญชี ----
+  const OWNED = ['payroll_inputs', 'salary_advances', 'deductions', 'other_income', 'payroll_batches', 'payroll_runs']
+  const mode = () => (d.getSetting('cloud_payroll_mode', 'mirror') === 'live' ? 'live' : 'mirror')
+  const TABLES = {
+    payroll_inputs: { key: (r) => r.period + '|' + r.emp_code, where: 'period=? AND emp_code=?', keyArgs: (r) => [r.period, r.emp_code] },
+    salary_advances: { key: (r) => String(r.id), where: 'id=?', keyArgs: (r) => [r.id] },
+    deductions: { key: (r) => String(r.id), where: 'id=?', keyArgs: (r) => [r.id] },
+    other_income: { key: (r) => String(r.id), where: 'id=?', keyArgs: (r) => [r.id] },
+    payroll_batches: { key: (r) => String(r.id), where: 'id=?', keyArgs: (r) => [r.id] },
+  }
+  const colsOf = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name)
+  // ลงตารางเฉพาะแถวที่เปลี่ยน (ไม่ลบทั้งตาราง — ประวัติการแก้ไขจะได้ไม่บวม)
+  function applyTable(t, rows) {
+    const cfg = TABLES[t], cols = colsOf(t)
+    const norm = (r) => Object.fromEntries(cols.map((c) => [c, t === 'payroll_batches' && (c === 'data' || c === 'emp_codes') ? JSON.stringify(r[c] ?? []) : (r[c] ?? null)]))
+    const cur = new Map(db.prepare(`SELECT * FROM ${t}`).all().map((r) => [cfg.key(r), r]))
+    let n = 0
+    for (const raw of rows) {
+      const r = norm(raw), k = cfg.key(r), old = cur.get(k)
+      cur.delete(k)
+      if (old && cols.every((c) => String(old[c] ?? '') === String(r[c] ?? ''))) continue
+      db.prepare(`INSERT INTO ${t} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')}) ON CONFLICT DO UPDATE SET ${cols.map((c) => `${c}=excluded.${c}`).join(',')}`).run(...cols.map((c) => r[c]))
+      n++
+    }
+    for (const old of cur.values()) { db.prepare(`DELETE FROM ${t} WHERE ${cfg.where}`).run(...cfg.keyArgs(old)); n++ }
+    return n
+  }
+  async function pullApply() {
+    const p = await post('/pull', {})
+    const ds = Object.fromEntries((p.datasets || []).map((x) => [x.name, x.data]))
+    const before = new Map(db.prepare('SELECT id, period, status, pay_date, data, journal_sid FROM payroll_batches').all().map((b) => [b.id, b]))
+    let changed = 0
+    db.transaction(() => {
+      for (const t of Object.keys(TABLES)) if (Array.isArray(ds[t])) changed += applyTable(t, ds[t])
+      for (const x of p.patches || []) {
+        if (!['tax', 'student_loan', 'retention'].includes(x.field)) continue
+        db.prepare(`UPDATE employees SET ${x.field}=? WHERE code=?`).run(Number(x.value) || 0, x.emp_code); changed++
+      }
+      for (const a of p.audit || []) db.prepare('INSERT INTO audit (ts,user,action,detail,user_id) VALUES (?,?,?,?,NULL)').run(new Date().toISOString(), a.who || '-', a.action + ' (เงินเดือนออนไลน์)', a.detail || '')
+    })()
+    // รอบจ่ายที่เปลี่ยน → สร้างสรุปงวดใหม่ + ลงบัญชี / ถอนบัญชี (ทำใน ERP เหมือนกดใน ERP)
+    const after = new Map(db.prepare('SELECT * FROM payroll_batches').all().map((b) => [b.id, b]))
+    const periods = new Set()
+    for (const [id, b] of after) {
+      const o = before.get(id)
+      if (o && o.status === b.status && o.pay_date === b.pay_date && o.data === b.data) continue
+      periods.add(b.period)
+      if (b.status === 'closed') d.onBatchClosed(b); else if (o?.status === 'closed') d.onBatchUnclosed(b)
+    }
+    for (const [id, o] of before) if (!after.has(id)) { periods.add(o.period); if (o.status === 'closed') d.onBatchUnclosed(o) }
+    for (const per of periods) d.rebuildRun(per)
+    await post('/ack', { patches: (p.patches || []).map((x) => x.id), audit: (p.audit || []).map((x) => x.id) })
+    if (changed || periods.size) d.notifyChange(['payroll', 'employees'])
+    return { changed, batches: periods.size, cloudMode: p.mode }
+  }
   let running = false
-  async function syncOnce() {
+  async function syncOnce({ forceOwned = false } = {}) {
     if (!url() || !token() || running) return { skipped: true }
     running = true
     try {
+      let pulled = null
+      if (mode() === 'live') pulled = await pullApply()
       if (!have) have = (await post('/sync', {})).have || {}
       const ds = datasets()
+      if (mode() === 'live' && !forceOwned) for (const n of OWNED) delete ds[n] // ข้อมูลเงินเดือน: บน Cloudflare เป็นตัวหลัก ไม่ส่งทับ
       const changed = Object.entries(ds).map(([name, data]) => ({ name, sha: sha(data), data })).filter((x) => have[x.name] !== x.sha)
-      const gone = Object.keys(have).filter((n) => !(n in ds)).map((name) => ({ name, sha: '', data: null }))
+      const gone = Object.keys(have).filter((n) => !(n in ds) && !OWNED.includes(n)).map((name) => ({ name, sha: '', data: null }))
       let sent = 0
       // ส่งทีละไม่เกิน ~1.5 MB
       let batch = [], size = 0
       const flush = async () => { if (!batch.length) return; have = (await post('/sync', { datasets: batch })).have || have; sent += batch.length; batch = []; size = 0 }
       for (const x of [...changed, ...gone]) { const n = JSON.stringify(x.data).length; if (size + n > 1.5e6) await flush(); batch.push(x); size += n }
       await flush()
-      st = { ok: true, at: new Date().toISOString(), error: '', sent_last: sent, datasets: Object.keys(ds).length }
-      return { ok: true, sent }
+      st = { ok: true, at: new Date().toISOString(), error: '', sent_last: sent, datasets: Object.keys(ds).length, pulled }
+      return { ok: true, sent, pulled }
     } catch (e) {
       have = null // รอบหน้าถามใหม่ว่า Cloudflare มีอะไร
       st = { ...st, ok: false, at: new Date().toISOString(), error: e.message }
       return { ok: false, error: e.message }
     } finally { running = false }
+  }
+  // เปลี่ยนที่ทำเงินเดือน: live = ทำบน Cloudflare (ERP ดูอย่างเดียว) · mirror = กลับมาทำใน ERP
+  async function setMode(next) {
+    if (!['live', 'mirror'].includes(next)) throw new Error('mode')
+    if (next === 'live') {
+      if (mode() !== 'live') { have = null; const r = await syncOnce({ forceOwned: true }); if (!r.ok) throw new Error(r.error || 'ส่งข้อมูลไม่สำเร็จ') } // ส่งข้อมูลเงินเดือนล่าสุดขึ้นไปก่อน
+      await post('/mode', { mode: 'live' })
+      d.setSetting('cloud_payroll_mode', 'live')
+    } else {
+      if (mode() === 'live') await pullApply() // ดึงงานล่าสุดบน Cloudflare กลับมาก่อน
+      await post('/mode', { mode: 'mirror' })
+      d.setSetting('cloud_payroll_mode', 'mirror')
+      have = null
+    }
+    return mode()
   }
   // ให้ Cloudflare คำนวณงวดนี้ด้วยสูตรเดียวกัน แล้วเทียบกับ ERP ทีละคน ทีละช่อง
   const KEYS = ['base', 'ot', 'other_income', 'retention_refund', 'sso', 'tax', 'leave_deduct', 'retention', 'student_loan', 'advance', 'other_deduct', 'work_days', 'absent_days', 'leave_days', 'retention_paid']
@@ -97,5 +170,5 @@ export function createCloudPayroll(d) {
     for (const c of cm.values()) diffs.push({ code: c.code, name: c.name, field: '(มีแต่บน Cloudflare)' })
     return { period, people: erp.length, diffs }
   }
-  return { syncOnce, compare, capturePin, info: () => ({ url: url(), configured: !!(url() && token()), ...st }) }
+  return { syncOnce, compare, capturePin, setMode, mode, info: () => ({ url: url(), configured: !!(url() && token()), mode: mode(), ...st }) }
 }

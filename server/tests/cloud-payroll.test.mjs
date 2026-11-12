@@ -16,6 +16,9 @@ const PORT = 3291, CLOUD = 3292, BASE = `http://localhost:${PORT}/api`
 let child, tmp, dbFile, token, cloud
 const ds = new Map() // ชื่อ → { sha, data } (เหมือนตาราง ds บน Cloudflare)
 const posts = []
+const OWNED = ['payroll_inputs', 'salary_advances', 'deductions', 'other_income', 'payroll_batches', 'payroll_runs']
+let cloudMode = 'mirror'
+const patches = []
 const api = async (m, p, b) => { const r = await fetch(BASE + p, { method: m, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: b === undefined ? undefined : JSON.stringify(b) }); let d = null; try { d = await r.json() } catch {} return { status: r.status, data: d } }
 // สำเนาของ payrollData() ใน cloudflare/ppsd-office/ (หน้า /payroll)functions/api/[[path]].js
 function cloudData(period) {
@@ -39,9 +42,12 @@ before(async () => {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       if (req.url === '/api/payroll/sync') {
         posts.push(b)
-        for (const x of b.datasets || []) { if (x.data === null) ds.delete(x.name); else ds.set(x.name, { sha: x.sha, data: JSON.parse(JSON.stringify(x.data)) }) }
+        for (const x of b.datasets || []) { if (cloudMode === 'live' && OWNED.includes(x.name)) continue; if (x.data === null) ds.delete(x.name); else ds.set(x.name, { sha: x.sha, data: JSON.parse(JSON.stringify(x.data)) }) }
         return res.end(JSON.stringify({ ok: true, have: Object.fromEntries([...ds].map(([k, v]) => [k, v.sha])) }))
       }
+      if (req.url === '/api/payroll/mode') { cloudMode = b.mode; return res.end(JSON.stringify({ ok: true, mode: cloudMode })) }
+      if (req.url === '/api/payroll/pull') return res.end(JSON.stringify({ mode: cloudMode, datasets: OWNED.filter((n) => ds.has(n)).map((n) => ({ name: n, sha: ds.get(n).sha, data: ds.get(n).data })), patches: patches.filter((x) => !x.synced), audit: [] }))
+      if (req.url === '/api/payroll/ack') { for (const x of patches) if ((b.patches || []).includes(x.id)) x.synced = 1; return res.end('{"ok":true}') }
       if (req.url === '/api/payroll/compare') return res.end(JSON.stringify({ period: b.period, rows: core.computePayroll(cloudData(b.period), b.period) }))
       res.end('{}')
     })
@@ -93,4 +99,44 @@ test('เงินเดือนบน Cloudflare (ขั้น 2): ส่ง�
   token = (await api('POST', '/login', { username: 'acccp', pin: '7272' })).data.token
   assert.equal((await api('GET', '/cloud-payroll/compare?period=' + period)).status, 403)
   token = t0
+})
+
+test('เงินเดือนบน Cloudflare (เปิดใช้จริง): ERP ดูอย่างเดียว · ผลทำจ่ายบน Cloudflare เข้ามาลงตาราง+ลงบัญชี · แก้ภาษีบน Cloudflare เข้าทะเบียน · เปิดแก้ไข = ถอน · ย้อนกลับมาทำใน ERP ได้', async () => {
+  const period = '2034-06'
+  const e = (await api('POST', '/employees', { name: 'ทำจ่ายออนไลน์', role: 'ช่าง', pay_type: 'รายเดือน', base: 12000 })).data
+  assert.equal((await api('POST', '/cloud-payroll/sync')).status, 200)
+  const sw = await api('POST', '/cloud-payroll/mode', { mode: 'live' })
+  assert.equal(sw.status, 200); assert.equal(sw.data.mode, 'live'); assert.equal(cloudMode, 'live')
+  // ERP ดูอย่างเดียว
+  assert.equal((await api('POST', '/salary-advances', { emp_code: e.code, amount: 100, period })).status, 409)
+  assert.equal((await api('PUT', '/payroll/inputs', { period, emp_code: e.code, work_days: 10 })).status, 409)
+  assert.equal((await api('POST', '/payroll/batches', { period, emp_codes: [e.code] })).status, 409)
+  assert.equal((await api('GET', '/payroll?period=' + period)).data.cloud_live, true)
+  // Cloudflare ทำจ่าย (คำนวณด้วยสูตรกลางจากข้อมูลที่ ERP ส่งขึ้นไป) + แก้ภาษี
+  const rows = core.computePayroll(cloudData(period), period).filter((r) => r.code === e.code)
+  assert.equal(rows.length, 1)
+  const batch = { id: 900, period, seq: 1, no: 'PAY-203406-1', pay_date: '2034-06-30', note: 'จ่ายออนไลน์', status: 'closed', emp_codes: [e.code], data: rows, total: core.netOf(rows[0]), journal_sid: 20340601, created: '30 มิ.ย. 77', by: 'บัญชี', closed_at: '30 มิ.ย. 77', closed_by: 'บัญชี' }
+  ds.set('payroll_batches', { sha: 'b1', data: [...(ds.get('payroll_batches')?.data || []), batch] })
+  patches.push({ id: 1, emp_code: e.code, field: 'tax', value: 150, synced: 0 })
+  const s1 = await api('POST', '/cloud-payroll/sync')
+  assert.equal(s1.status, 200); assert.ok(s1.data.result.pulled.changed >= 2)
+  let p = (await api('GET', '/payroll?period=' + period)).data
+  const r = p.rows.find((x) => x.code === e.code)
+  assert.equal(r.paid, true); assert.equal(r.batch_no, 'PAY-203406-1')
+  assert.equal((await api('GET', '/employees')).data.find((x) => x.code === e.code).tax, 150, 'แก้ภาษีบน Cloudflare ต้องเข้าทะเบียน ERP')
+  assert.equal(patches[0].synced, 1, 'ยืนยันรับแล้ว')
+  const db = new Database(dbFile)
+  assert.ok(db.prepare('SELECT 1 FROM payroll_runs WHERE period=?').get(period), 'สรุปงวดต้องสร้างใหม่')
+  assert.ok(db.prepare("SELECT 1 FROM journal_entries WHERE source='payroll' AND source_id='20340601'").get(), 'ต้องลงบัญชีให้เอง')
+  // Cloudflare เปิดแก้ไขรอบ → ERP ถอนบัญชี + กลับเป็นยังไม่จ่าย
+  ds.set('payroll_batches', { sha: 'b2', data: ds.get('payroll_batches').data.map((b) => (b.id === 900 ? { ...b, status: 'reopened' } : b)) })
+  await api('POST', '/cloud-payroll/sync')
+  p = (await api('GET', '/payroll?period=' + period)).data
+  assert.equal(p.rows.find((x) => x.code === e.code).paid, false)
+  assert.ok(!db.prepare("SELECT 1 FROM journal_entries WHERE source='payroll' AND source_id='20340601'").get(), 'ต้องถอนบัญชี')
+  db.close()
+  // กลับมาทำใน ERP
+  const back = await api('POST', '/cloud-payroll/mode', { mode: 'mirror' })
+  assert.equal(back.data.mode, 'mirror'); assert.equal(cloudMode, 'mirror')
+  assert.equal((await api('POST', '/salary-advances', { emp_code: e.code, amount: 100, period })).status, 201, 'ทำใน ERP ได้อีกครั้ง')
 })

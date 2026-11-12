@@ -164,9 +164,9 @@ export interface ApiPayrollBatch {
   id: number; period: string; seq: number; no: string; pay_date: string; note: string; status: 'closed' | 'reopened'
   emp_codes: string[]; count: number; total: number; created: string; by: string; closed_at?: string; closed_by?: string
 }
-export interface PayrollMeta { period: string; periodLabel: string; locked: boolean; paidCount: number; daysInMonth: number; batches: ApiPayrollBatch[] }
-type PayrollResp = { period: string; periodLabel: string; locked: boolean; paid_count?: number; days_in_month?: number; batches?: ApiPayrollBatch[]; rows: ApiPayroll[] }
-const payrollMetaOf = (r: PayrollResp): PayrollMeta => ({ period: r.period, periodLabel: r.periodLabel, locked: r.locked, paidCount: r.paid_count || 0, daysInMonth: r.days_in_month || 30, batches: r.batches || [] })
+export interface PayrollMeta { period: string; periodLabel: string; locked: boolean; paidCount: number; daysInMonth: number; batches: ApiPayrollBatch[]; cloudLive?: boolean; cloudUrl?: string }
+type PayrollResp = { period: string; periodLabel: string; locked: boolean; paid_count?: number; days_in_month?: number; batches?: ApiPayrollBatch[]; rows: ApiPayroll[]; cloud_live?: boolean; cloud_url?: string }
+const payrollMetaOf = (r: PayrollResp): PayrollMeta => ({ period: r.period, periodLabel: r.periodLabel, locked: r.locked, paidCount: r.paid_count || 0, daysInMonth: r.days_in_month || 30, batches: r.batches || [], cloudLive: !!r.cloud_live, cloudUrl: r.cloud_url || '' })
 export interface ApiLeave {
   id: number
   emp_code: string

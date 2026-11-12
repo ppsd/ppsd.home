@@ -105,6 +105,7 @@ export default function LineCenter() {
       {tab === 'connect' && (
         <>
           {isAdmin && <CloudCheckinCard />}
+          {isAdmin && <CloudPayrollCard />}
           {/* แจ้งเตือน LINE — สรุปเรื่องค้างส่งเข้ากลุ่มบริหารทุกเช้า */}
           <div style={{ background: '#fff', border: '1px solid #CDE3D6', borderRadius: 12, overflow: 'hidden' }}>
             <div style={{ padding: '12px 18px', borderBottom: '1px solid #DFEEE5', fontSize: 14, fontWeight: 600, color: '#2E7D55', background: '#F2F8F4' }}>💬 แจ้งเตือน LINE (สรุปเช้าอัตโนมัติ)</div>
@@ -563,6 +564,45 @@ function CloudCheckinCard() {
           <div style={{ fontSize: 11.5, color: '#94A0A8' }}>ลงเวลาเข้า/ออก · เช็คอินหน้างาน · ส่งตำแหน่งงาน ทำบนลิงก์นี้ได้ทุกที่ (GPS ใช้ได้) · คอมออฟฟิศปิดอยู่ = รายการพักไว้บน Cloudflare แล้วเข้า ERP เองเมื่อเปิดเครื่อง · คนลาออกถูกตัดออกอัตโนมัติ · ปุ่ม ⏰ ลงเวลา ในเมนู LINE ส่งลิงก์นี้ให้</div>
         </>
       )}
+    </div>
+  )
+}
+
+// หน้าจอแก้ไขเงินเดือนบน Cloudflare เสร็จแล้วหรือยัง (ขั้นที่ 4) — ยังไม่เสร็จ = ล็อกปุ่มย้าย กันย้ายไปแล้วไม่มีที่กรอก
+const CLOUD_PAYROLL_EDIT_READY = false
+// เงินเดือนบน Cloudflare — สถานะซิงก์ · เทียบตัวเลขกับ ERP · เปลี่ยนที่ทำเงินเดือน (ERP ↔ Cloudflare)
+interface CloudPay { url: string; configured: boolean; mode: 'live' | 'mirror'; ok?: boolean; at?: string; error?: string }
+function CloudPayrollCard() {
+  const [cp, setCp] = useState<CloudPay | null>(null)
+  const [busy, setBusy] = useState('')
+  const [cmp, setCmp] = useState<{ period: string; people: number; diffs: { name: string; field: string; erp?: unknown; cloud?: unknown }[] } | null>(null)
+  const load = () => api.get<CloudPay>('/cloud-payroll').then(setCp).catch(() => {})
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) }, [])
+  if (!cp || !cp.configured) return null
+  const period = new Date().toISOString().slice(0, 7)
+  const compare = async () => { setBusy('cmp'); try { setCmp(await api.get('/cloud-payroll/compare?period=' + period)) } catch (e) { window.alert((e as Error).message) } setBusy('') }
+  const switchMode = async (mode: 'live' | 'mirror') => {
+    const msg = mode === 'live'
+      ? 'ย้ายการทำเงินเดือนไปที่ Cloudflare?\n\n• ระบบส่งข้อมูลเงินเดือนล่าสุดขึ้นไปก่อน\n• จากนั้นกรอกวัน / เบิก / รายได้-หักอื่นๆ / ทำจ่าย ทำที่ ' + cp.url + ' เท่านั้น\n• หน้าเงินเดือนใน ERP จะดูได้อย่างเดียว (ผลทำจ่ายกลับมาลงบัญชีให้เองทุก 1 นาที)\n• ย้อนกลับได้ทุกเมื่อ'
+      : 'กลับมาทำเงินเดือนใน ERP?\n\nระบบดึงงานล่าสุดบน Cloudflare กลับมาก่อน แล้วหน้าเงินเดือนบน Cloudflare จะดูได้อย่างเดียว'
+    if (!window.confirm(msg)) return
+    setBusy('mode'); try { setCp(await api.post<CloudPay>('/cloud-payroll/mode', { mode })) } catch (e) { window.alert((e as Error).message) } setBusy('')
+  }
+  const btn = (bg: string): React.CSSProperties => ({ fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', background: bg, border: 'none', borderRadius: 8, padding: '6px 14px', cursor: 'pointer' })
+  const live = cp.mode === 'live'
+  return (
+    <div style={{ background: '#fff', border: '1px solid ' + (live ? '#CDE3D6' : '#E1E5EA'), borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 14.5, fontWeight: 700 }}>💰 เงินเดือนบน Cloudflare — <a href={cp.url} target="_blank" rel="noreferrer" style={{ color: '#2E7D55' }}>{cp.url.replace(/^https:\/\//, '')}</a></div>
+      <div style={{ fontSize: 13 }}>
+        ที่ทำเงินเดือนตอนนี้: {live ? <b style={{ color: '#2E7D55' }}>Cloudflare (หน้าเงินเดือน ERP ดูอย่างเดียว)</b> : <b style={{ color: '#30506A' }}>ERP (Cloudflare ดูอย่างเดียว · รับข้อมูลทุก 1 นาที)</b>}
+      </div>
+      <div style={{ fontSize: 12.5, color: cp.ok === false ? '#C24036' : '#5C6770' }}>{cp.ok === false ? '⚠ ซิงก์ไม่สำเร็จ: ' + cp.error : cp.at ? '✓ ซิงก์ล่าสุด ' + new Date(cp.at).toLocaleTimeString('th-TH') : 'รอซิงก์ครั้งแรก…'}</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button disabled={!!busy} onClick={compare} style={btn('#30506A')}>{busy === 'cmp' ? 'กำลังเทียบ…' : 'เทียบตัวเลขงวดนี้ ERP ↔ Cloudflare'}</button>
+        {live ? <button disabled={!!busy} onClick={() => switchMode('mirror')} style={btn('#B7791F')}>{busy === 'mode' ? 'กำลังย้าย…' : 'กลับมาทำเงินเดือนใน ERP'}</button>
+          : <button disabled={!!busy || !CLOUD_PAYROLL_EDIT_READY} title={CLOUD_PAYROLL_EDIT_READY ? '' : 'เปิดได้เมื่อหน้าจอแก้ไขบน Cloudflare เสร็จ (ขั้นที่ 4)'} onClick={() => switchMode('live')} style={{ ...btn('#2E7D55'), opacity: CLOUD_PAYROLL_EDIT_READY ? 1 : 0.5 }}>{busy === 'mode' ? 'กำลังย้าย…' : 'ย้ายการทำเงินเดือนไป Cloudflare'}</button>}
+      </div>
+      {cmp && <div style={{ fontSize: 12.5, color: cmp.diffs.length ? '#C24036' : '#2E7D55' }}>{cmp.diffs.length ? `⚠ งวด ${cmp.period} ต่างกัน ${cmp.diffs.length} จุด: ` + cmp.diffs.slice(0, 5).map((x) => `${x.name} ${x.field} (ERP ${String(x.erp)} / Cloudflare ${String(x.cloud)})`).join(' · ') : `✓ งวด ${cmp.period}: ${cmp.people} คน ตัวเลขตรงกันทุกช่อง`}</div>}
     </div>
   )
 }

@@ -231,6 +231,12 @@ function syncEmployeePin(user, hashedPin) {
 
 const api = express.Router()
 // แก้ผู้ใช้/พนักงาน/ผูก LINE สำเร็จ → ซิงก์เมนูกด LINE (ตำแหน่งเปลี่ยน = เมนูเปลี่ยน · ปิดบัญชี/ลาออก = เอาเมนูออก)
+// เปิดใช้เงินเดือนบน Cloudflare แล้ว → หน้าเงินเดือนใน ERP ดูอย่างเดียว (กันตัวเลขชนกันสองที่)
+api.use((req, res, next) => {
+  if (req.method !== 'GET' && /^\/(payroll\/(inputs|batches|close)|salary-advances(\/\d+)?$|deductions|other-income)/.test(req.path) && getSetting('cloud_payroll_mode', 'mirror') === 'live')
+    return res.status(409).json({ error: 'ตอนนี้ทำเงินเดือนที่ ' + (getSetting('cloud_payroll_url', '') || 'ppsd-office.pages.dev/payroll') + ' — หน้าเงินเดือนใน ERP ดูอย่างเดียว' })
+  next()
+})
 api.use((req, res, next) => { if (req.method !== 'GET' && /^\/(users|employees|line-link|line-settings|contractor|crm)/.test(req.path)) res.on('finish', () => { if (res.statusCode < 400) { try { richMenu.scheduleSync() } catch { /* ยังไม่พร้อม */ } } }); next() })
 api.use(historyContext) // ประวัติการแก้ไขข้อมูล: ผูกคำขอ → รู้ว่าใครเป็นคนเพิ่ม/แก้/ลบ (ต้องอยู่ก่อน middleware อื่น)
 
@@ -4115,9 +4121,19 @@ function payrollEmployees(period) { return payCore.payrollEmployees(payrollData(
 // คำนวณเงินเดือนสดทั้งงวด — สูตรอยู่ใน payroll-core.js (ตัวเดียวกับ Cloudflare)
 function computePayroll(period) { return payCore.computePayroll(payrollData(period), period) }
 // เงินเดือนบน Cloudflare (ขั้น 2: ส่งข้อมูลขึ้นทุก 1 นาที + เทียบตัวเลข) — server/cloud-payroll.js
-const cloudPayroll = createCloudPayroll({ db, getSetting, setSetting, canSeeSalary, computePayroll: (p) => computePayroll(p), notifyChange: (k) => notifyChange(k) })
+const cloudPayroll = createCloudPayroll({ db, getSetting, setSetting, canSeeSalary, computePayroll: (p) => computePayroll(p), notifyChange: (k) => notifyChange(k),
+  // ผลทำจ่ายจาก Cloudflare → ลงบัญชี / ถอนบัญชี / สรุปงวดใหม่ เหมือนกดใน ERP
+  onBatchClosed: (b) => { try { postBatchJournal(b, JSON.parse(b.data || '[]'), b.closed_by || 'เงินเดือนออนไลน์') } catch (e) { logJournalIssue('payroll', b.journal_sid, `ทำจ่ายเงินเดือน ${b.no}`, e) } },
+  onBatchUnclosed: (b) => { try { acct.removeAutoJournal('payroll', b.journal_sid) } catch (e) { logJournalIssue('payroll', b.journal_sid, `ถอนบัญชีรอบ ${b.no}`, e) } },
+  rebuildRun: (p) => rebuildPayrollRun(p) })
 if (!process.env.PPSD_NO_TUNNEL) { setTimeout(() => cloudPayroll.syncOnce(), 20000); setInterval(() => cloudPayroll.syncOnce(), 60 * 1000).unref?.() }
 api.get('/cloud-payroll', adminOnly, (_req, res) => res.json(cloudPayroll.info()))
+// เปลี่ยนที่ทำเงินเดือน: live = ทำบน Cloudflare (หน้าเงินเดือน ERP ดูอย่างเดียว) · mirror = กลับมาทำใน ERP
+api.post('/cloud-payroll/mode', adminOnly, async (req, res) => {
+  const next = req.body?.mode === 'live' ? 'live' : 'mirror'
+  try { const m = await cloudPayroll.setMode(next); audit(req, next === 'live' ? 'เปิดใช้เงินเดือนบน Cloudflare (ERP ดูอย่างเดียว)' : 'กลับมาทำเงินเดือนใน ERP', ''); notifyChange(['payroll']); res.json({ ...cloudPayroll.info(), mode: m }) }
+  catch (e) { res.status(502).json({ error: 'เปลี่ยนไม่สำเร็จ: ' + e.message }) }
+})
 api.post('/cloud-payroll/sync', adminOnly, async (_req, res) => { const r = await cloudPayroll.syncOnce(); res.status(r.ok || r.skipped ? 200 : 502).json({ ...cloudPayroll.info(), result: r }) })
 api.get('/cloud-payroll/compare', adminOnly, async (req, res) => {
   const period = /^\d{4}-\d{2}$/.test(req.query.period) ? req.query.period : currentPeriod()
@@ -4167,7 +4183,7 @@ api.get('/payroll', requireSalary, (req, res) => {
   const rows = periodRows(period)
   const batches = db.prepare('SELECT * FROM payroll_batches WHERE period=? ORDER BY seq').all(period).map(batchInfo)
   const paidCount = rows.filter((r) => r.paid).length
-  res.json({ period, periodLabel: periodLabelTH(period), locked: rows.length > 0 && paidCount === rows.length, paid_count: paidCount, days_in_month: periodBounds(period).dim, batches, rows })
+  res.json({ period, periodLabel: periodLabelTH(period), locked: rows.length > 0 && paidCount === rows.length, paid_count: paidCount, days_in_month: periodBounds(period).dim, batches, rows, cloud_live: cloudPayroll.mode() === 'live', cloud_url: getSetting('cloud_payroll_url', '') })
 })
 // ===== ส่งออกข้อมูลเงินเดือนทั้งชุด (Excel หลายแผ่น) — ใช้ย้าย/ใช้คู่กับระบบใหม่ · ดูได้เฉพาะคนที่เห็นเงินเดือน =====
 api.get('/payroll/export', requireSalary, (req, res) => {

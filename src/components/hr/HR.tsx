@@ -687,6 +687,11 @@ export default function HR({ onPrint }: { onPrint: (kind: DocKind, data?: unknow
           <>
           {showSummary && payroll && payrollMeta && <PayrollSummaryDoc rows={printRows} periodLabel={printLabel} onClose={() => { setShowSummary(false); setPrintBatch(null) }} />}
           {showAllSlips && payroll && payrollMeta && <AllSlipsDoc rows={printRows} periodLabel={printLabel} onClose={() => { setShowAllSlips(false); setPrintBatch(null) }} />}
+          {payrollMeta?.cloudLive && (
+            <div style={{ fontSize: 13, color: '#1C5B3A', background: '#E2F1EA', borderBottom: '1px solid #CDE3D6', padding: '10px 18px' }}>
+              💰 ตอนนี้ทำเงินเดือนที่ <a href={payrollMeta.cloudUrl || 'https://ppsd-office.pages.dev/payroll'} target="_blank" rel="noreferrer" style={{ fontWeight: 700, color: '#2E7D55' }}>{(payrollMeta.cloudUrl || 'https://ppsd-office.pages.dev/payroll').replace(/^https:\/\//, '')}</a> — หน้านี้ดูอย่างเดียว (ข้อมูลจากที่นั่นเข้ามาทุก 1 นาที · ลงบัญชีให้เอง) · พิมพ์สลิป / ใบสรุป / ส่งสลิปเข้า LINE / ส่งออก Excel ยังใช้ที่นี่ได้
+            </div>
+          )}
           {annual && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, padding: '14px 18px', borderBottom: '1px solid #EEF1F4', background: '#FAFBFC' }}>
               <div><div style={{ fontSize: 12, color: '#5C6770' }}>รวมจ่ายเงินเดือนทั้งปี {new Date().getFullYear() + 543}</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#1C2730', marginTop: 3 }}>{baht(annual.net)}</div><div style={{ fontSize: 11, color: '#94A0A8' }}>จากงวดที่ทำจ่ายแล้ว {annual.months} เดือน</div></div>
