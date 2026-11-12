@@ -73,7 +73,7 @@ const ALL_DESIGNS = [
 ];
 /* ชุดแบบสำเร็จรูป — 'photo' = แบบจากรูปบ้านของฝ่ายกราฟิก (#41 ขึ้นไป · แสดงก่อน) · 'ai' = 28 แบบที่ระบบร่าง (#13–40)
    เอาออกจากเว็บ: ใส่ชื่อชุดใน HIDE_SETS (เช่น ['ai']) หรือเลขแบบใน HIDE_IDS (เช่น [13, 20]) แล้วอัปเดตเว็บ — ข้อมูลยังอยู่ ลบออกจากรายการก็กลับมาแสดง */
-const HIDE_SETS = [], HIDE_IDS = [];
+const HIDE_SETS = ['ai'], HIDE_IDS = []; // 12 พ.ย. 69 ซ่อน 28 แบบเดิมตามสั่งเจ้าของ
 const DESIGNS = ALL_DESIGNS.map(d => ({ ...d, set: d.id >= 41 ? 'photo' : 'ai' })).filter(d => !HIDE_SETS.includes(d.set) && !HIDE_IDS.includes(d.id)).sort((a, b) => (a.set === 'photo' ? 0 : 1) - (b.set === 'photo' ? 0 : 1));
 const floorText = d => d.floors ? (d.floors === 1 ? 'ชั้นเดียว' : d.floors + ' ชั้น') : 'รอข้อมูลจำนวนชั้น';
 const bedText = d => d.beds ? ' · ' + d.beds + ' ห้องนอน' : '';
