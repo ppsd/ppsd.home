@@ -52,19 +52,41 @@
   window.addEventListener('hashchange', () => setTimeout(drawCmpBar, 0));
   setTimeout(drawCmpBar, 0);
 
-  /* ฟอร์มที่ส่งเข้า CRM ตัวอย่าง: บันทึกแล้วแสดงหน้ายืนยัน */
+  /* ส่งคำขอเข้าระบบบริษัท (RQ "บ้านดี ดวงดี" → เมนู 🌐 คำขอจากเว็บไซต์ + แจ้งกลุ่ม LINE ทันที)
+     เปิดใช้เมื่อตั้ง window.PPSD_LEAD_API ใน index.html · ถ้าไม่ตั้ง = แบบเดิม (เก็บในเบราว์เซอร์อย่างเดียว ต้นแบบ) */
+  P.LEAD_API = window.PPSD_LEAD_API || '';
+  let leadPending = null;
+  function leadOut(type, name, phone, detail) {
+    if (!P.LEAD_API) return;
+    const body = { type, name, phone: String(phone || '').replace(/\D/g, ''), detail: String(detail || '').slice(0, 1500), design: (String(detail || '').match(/PPSD-\d+/) || [''])[0], page: String(location.hash || '#home').slice(0, 120), consent: true };
+    const send = () => fetch(P.LEAD_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(r => r.json().catch(() => ({})).then(j => { if (!r.ok || !j.ok) throw new Error(j.error || 'ระบบไม่ตอบรับ (' + r.status + ')'); return j; }));
+    leadPending = { send, p: send() };
+  }
+  /* หน้ายืนยัน: ระหว่างส่งขึ้น "กำลังส่ง…" → ได้เลขที่จากระบบ หรือแจ้งว่าส่งไม่สำเร็จ พร้อมปุ่มลองใหม่ / ทัก LINE */
+  function leadWatch(L) {
+    const box = [...$$('.done-box')].pop(); if (!box) return;
+    const st = $('[data-lead-st]', box), fine = $('.fine', box), h = $('h3', box), title = h ? h.textContent : '', msg = $('p.muted', box);
+    const ok = j => { st.style.color = 'var(--ok)'; st.textContent = 'ส่งเรียบร้อย · เลขที่ ' + j.ref; if (h) h.textContent = title; if (msg) msg.hidden = false; if (fine) fine.textContent = 'ทีมงาน PPSD ได้รับเรื่องแล้ว และจะติดต่อกลับตามเบอร์ที่คุณให้ไว้'; };
+    const bad = e => { st.style.color = '#B3261E'; st.textContent = 'ส่งไม่สำเร็จ · ' + (e instanceof TypeError ? 'เชื่อมต่อระบบไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง' : (e && e.message) || 'เชื่อมต่อไม่ได้'); if (h) h.textContent = 'ยังส่งคำขอไม่สำเร็จ'; if (msg) msg.hidden = true; if (fine) fine.innerHTML = `ข้อมูลยังไม่ถึงทีมงาน <button type="button" class="btn" data-lead-retry style="margin:8px 8px 0 0">ลองส่งอีกครั้ง</button><a class="btn line" href="${esc(P.CO.line)}" target="_blank" rel="noopener" style="margin-top:8px">ทักทาง LINE</a>`; const b = $('[data-lead-retry]', box); if (b) b.onclick = () => { b.disabled = true; st.style.color = ''; st.textContent = 'กำลังส่ง…'; L.send().then(ok, bad); }; };
+    L.p.then(ok, bad);
+  }
+  /* ฟอร์มที่ส่งเข้า CRM: บันทึกแล้วแสดงหน้ายืนยัน */
   function submitLead(form, type, source, detail, extra) {
     if (!validate(form)) return null;
     const v = formData(form);
-    const name = v[form.dataset.name] || '', phone = v[form.dataset.phone] || '';
+    const name = v[form.dataset.name] || '', phone = v[form.dataset.phone] || '', det = typeof detail === 'function' ? detail(v) : detail;
     const r = ref({ quote: 'Q', appointment: 'AP', fengshui: 'FS', custom: 'CD', modify: 'MD', estimate: 'ES', land: 'LD', service: 'SV', aftercare: 'AS' }[type] || 'L');
-    db.add('leads', Object.assign({ id: r, type, source: 'เว็บไซต์ · ' + source, name, phone, detail: typeof detail === 'function' ? detail(v) : detail, status: 'ใหม่', seg: 'A' }, extra || {}));
+    db.add('leads', Object.assign({ id: r, type, source: 'เว็บไซต์ · ' + source, name, phone, detail: det, status: 'ใหม่', seg: 'A' }, extra || {}));
+    leadOut(type, name, phone, det);
     return { ref: r, v };
   }
-  P.submitLead = submitLead;
-  const doneBox = (r, title, body, cta) => `<div class="done-box" role="status" tabindex="-1"><span class="eyebrow" style="color:var(--ok)">ส่งเรียบร้อย · ${r}</span><h3 class="h-m">${title}</h3><p class="muted" style="margin-top:8px">${body}</p><p class="fine">ทีมงาน PPSD จะติดต่อกลับตามช่องทางที่คุณให้ไว้</p>${cta || `<div class="row" style="margin-top:14px"><a class="btn" href="#appointment">นัดปรึกษาสถาปนิก</a><a class="btn line" href="#designs">ดูแบบบ้าน</a></div>`}</div>`;
+  P.submitLead = submitLead; P.leadOut = leadOut;
+  const showDone0 = (form, html) => { form.outerHTML = html; const b = $('.done-box'); if (b) { b.focus(); b.scrollIntoView({ behavior: 'smooth', block: 'center' }); } };
+  const doneBox = (r, title, body, cta) => `<div class="done-box" role="status" tabindex="-1"><span class="eyebrow" style="color:var(--ok)" data-lead-st>${leadPending ? 'กำลังส่ง…' : 'ส่งเรียบร้อย · ' + r}</span><h3 class="h-m">${title}</h3><p class="muted" style="margin-top:8px">${body}</p><p class="fine">ทีมงาน PPSD จะติดต่อกลับตามช่องทางที่คุณให้ไว้</p>${cta || `<div class="row" style="margin-top:14px"><a class="btn" href="#appointment">นัดปรึกษาสถาปนิก</a><a class="btn line" href="#designs">ดูแบบบ้าน</a></div>`}</div>`;
   P.doneBox = doneBox;
-  const showDone = (form, html) => { form.outerHTML = html; const b = $('.done-box'); if (b) { b.focus(); b.scrollIntoView({ behavior: 'smooth', block: 'center' }); } };
+  const leadDone = () => { if (leadPending) { const L = leadPending; leadPending = null; leadWatch(L); } };
+  const showDone = (form, html) => { showDone0(form, html); leadDone(); };
   P.showDone = showDone;
   const nameTel = (n, tl) => `<div class="two">${field(n, 'ชื่อ–นามสกุล หรือชื่อเล่น', `<input id="${n}" type="text" required autocomplete="name">`)}${field(tl, 'เบอร์โทร', `<input id="${tl}" type="tel" required autocomplete="tel" inputmode="tel" placeholder="08x xxx xxxx">`)}</div>`;
   P.nameTel = nameTel;
@@ -376,7 +398,7 @@ ${field('wMore', 'เล่าเพิ่มเติม', `<textarea id="wMore
           const ex = designs().filter(d => d.land <= (v.wLw * v.wLd / 4 || Infinity)).map(d => ({ d, s: (d.price < lo ? lo - d.price : d.price > hi ? d.price - hi : 0) / hi + (v.wStyle && d.style !== v.wStyle ? 0.3 : 0) + (v.wFl && d.floors !== Number(v.wFl) ? 0.2 : 0) + Math.abs(d.beds - v.cBed) * 0.08 })).sort((a, b) => a.s - b.s).slice(0, 3);
           $('.wiz').hidden = true;
           $('#wDone').innerHTML = `${doneBox(res.ref, 'ได้รับความต้องการของคุณแล้ว', `สถาปนิก PPSD จะติดต่อกลับทาง${esc(v.wCh)}ภายใน 1–2 วันทำการ เพื่อนัดคุยและสำรวจที่ดินฟรี`, `<div class="row" style="margin-top:14px"><a class="btn" href="#appointment">นัดปรึกษาสถาปนิกเลย</a><button type="button" class="btn line" id="cGo" hidden>ออกแบบบ้านให้ดูเลย (AI)</button></div><div id="cGen" class="panel" hidden style="margin-top:18px"></div>`)}<h2 class="h-m" style="margin:48px 0 8px">ตัวอย่างแบบในงบใกล้เคียง</h2><p class="fine">ใช้เป็นภาพตั้งต้นคุยกับสถาปนิก แบบจริงจะออกแบบใหม่ให้เข้ากับความต้องการและที่ดินของคุณ</p><div class="g3" style="margin-top:20px">${ex.map(x => card(x.d)).join('')}</div>`;
-          $('.done-box').focus(); window.scrollTo({ top: $('#wDone').offsetTop - 120, behavior: 'smooth' }); P.reveal($('#wDone'));
+          $('.done-box').focus(); leadDone(); window.scrollTo({ top: $('#wDone').offsetTop - 120, behavior: 'smooth' }); P.reveal($('#wDone'));
           if (P.houseGen) P.houseGen(v, files);
         };
         $('#wBack').onclick = () => show(Math.max(0, step - 1));
@@ -599,5 +621,5 @@ ${field('qW', 'อยากเข้าอยู่เมื่อไหร่',
 <section class="sec-s"><div class="w"><div class="calc"><div><h2 class="h-m">ในสมุดบ้านมีอะไร</h2><div class="g2" style="margin-top:20px">${[['รูปงานที่ปิดไปแล้ว', 'ท่อน้ำและสายไฟในผนัง พื้น และฝ้า'], ['สเปคบ้านของฉัน', 'ยี่ห้อ รุ่น สี และขนาดวัสดุทุกจุด'], ['แบบ สัญญา ใบอนุญาต', 'ใช้ต่อเติม ขอเลขที่บ้าน หรือขายบ้าน'], ['งวดเงินและใบเสร็จ', 'ใช้กับธนาคารและภาษี'], ['ผลตรวจงานทุกครั้ง', 'รวมจุดที่พบแล้วแก้ไข'], ['ประวัติแจ้งซ่อม', 'ดูว่าเคยซ่อมอะไร เมื่อไหร่']].map(([a, b]) => `<div style="border-top:1px solid var(--line-2);padding-top:14px"><b style="font-weight:500;color:var(--navy)">${a}</b><p class="muted" style="font-size:14.5px;margin:4px 0 0">${b}</p></div>`).join('')}</div>
 <h2 class="h-m" style="margin-top:44px">การรับประกัน</h2><table class="tbl" style="margin-top:10px"><tbody>${P.WARRANTY.map(([a, b]) => `<tr><td>${a}</td><td class="n">${b}</td></tr>`).join('')}</tbody></table><p class="fine">นับจากวันส่งมอบ · นัดตรวจบ้าน 6 และ 12 เดือน · <a href="#myhome" style="border-bottom:1px solid var(--gold)">เจ้าของบ้าน PPSD เข้าสู่บ้านของฉัน</a></p></div>
 <form class="panel form" id="afF" novalidate data-noop data-name="afN" data-phone="afT"><h2 class="h-m">แจ้งซ่อม</h2>${field('afI', 'อาการที่พบ', '<textarea id="afI" rows="4" required placeholder="เช่น น้ำซึมบริเวณฝ้าห้องน้ำชั้น 2"></textarea>')}${field('afC', 'รหัสโครงการ/บ้าน (ถ้ามี)', '<input id="afC" type="text" placeholder="เช่น PPSD-6410">')}${uploadBox('afUp', 'แนบรูป', 'ช่วยให้ทีมประเมินได้เร็วขึ้น', 'image/*')}${nameTel('afN', 'afT')}${consent('afOk')}<button class="btn" type="submit">ส่งเรื่องแจ้งซ่อม</button></form></div></div></section>`,
-    init() { const f = uploader($('#afUp'), { max: 4 }); $('#afF').onsubmit = e => { e.preventDefault(); if (!validate(e.target)) return; const v = formData(e.target), r = ref('AS'); db.add('after', { id: r, project: '', code: v.afC, issue: v.afI, status: 'รับเรื่องแล้ว', name: v.afN, phone: v.afT, photos: f.length }); showDone(e.target, doneBox(r, 'รับเรื่องแจ้งซ่อมแล้ว', 'ทีมบริการหลังการขายจะติดต่อกลับเพื่อนัดตรวจ ติดตามสถานะได้ในบ้านของฉัน')); }; } });
+    init() { const f = uploader($('#afUp'), { max: 4 }); $('#afF').onsubmit = e => { e.preventDefault(); if (!validate(e.target)) return; const v = formData(e.target), r = ref('AS'); db.add('after', { id: r, project: '', code: v.afC, issue: v.afI, status: 'รับเรื่องแล้ว', name: v.afN, phone: v.afT, photos: f.length }); leadOut('aftercare', v.afN, v.afT, `แจ้งซ่อมหลังส่งมอบ · รหัสบ้าน/โครงการ: ${v.afC || '-'} · ${v.afI || ''}${f.length ? ` · แนบรูป ${f.length} รูป (รูปยังไม่ถูกส่งเข้าระบบ ขอลูกค้าทาง LINE)` : ''}`); showDone(e.target, doneBox(r, 'รับเรื่องแจ้งซ่อมแล้ว', 'ทีมบริการหลังการขายจะติดต่อกลับเพื่อนัดตรวจ ติดตามสถานะได้ในบ้านของฉัน')); }; } });
 })(window.PPSD);

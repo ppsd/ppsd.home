@@ -25,6 +25,12 @@
 <div class="modal" id="modal" aria-hidden="true"><div class="modal-c" role="dialog" aria-modal="true" aria-labelledby="modalT"><div class="modal-h"><h2 class="h-s" id="modalT"></h2><button type="button" class="x-btn" data-close aria-label="ปิด"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg></button></div><div class="modal-b" id="modalB"></div></div></div>
 <div class="toast-w" id="toasts" aria-live="polite"></div>
 <noscript><p style="padding:120px 24px;text-align:center">กรุณาเปิด JavaScript เพื่อใช้งานเว็บไซต์ PPSD</p></noscript>
+<script>
+/* ส่งฟอร์มบนเว็บเข้าระบบบริษัท (RQ บ้านดี ดวงดี → เมนู "คำขอจากเว็บไซต์" + แจ้งกลุ่ม LINE)
+   ว่างไว้ = ยังไม่ส่ง (ฟอร์มเก็บในเบราว์เซอร์อย่างเดียวแบบต้นแบบ) · เปิดใช้: ใส่ 'https://ppsd-system.ppsd-cloud.workers.dev/api/web/lead'
+   เปิดได้หลังรวม branch dev/web-leads ของ RQ เข้า main แล้วเท่านั้น (ก่อนหน้านั้นระบบจริงยังไม่มีช่องรับ) */
+window.PPSD_LEAD_API = '';
+</script>
 <script src="js/data.js"></script>
 <script src="js/designs.js"></script>
 <script src="js/core.js"></script>

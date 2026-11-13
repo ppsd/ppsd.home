@@ -269,6 +269,7 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 - หน้าเว็บอยู่ที่ `cloudflare/ppsd-web-v3/site/` (HTML/JS ล้วน ไม่ต้อง build) · เอกสารส่งงานของทีมเว็บอยู่ที่ `cloudflare/ppsd-web-v3/handover/` (ไม่ถูกอัปขึ้นเว็บ)
 - อัปเดตลิงก์ทดลอง: `node scripts/deploy-web-v3.mjs` → https://v3.ppsd-web.pages.dev (เว็บจริงไม่เปลี่ยน)
 - ขึ้นแทนเว็บจริง: `node scripts/deploy-web-v3.mjs --live` — **ทำเมื่อผู้บริหารอนุมัติแล้วเท่านั้น** และก่อนขึ้นต้อง: ตั้ง `MH_DEMO_ACCESS = false` ใน `site/js/portal.js` · ตัดสินเรื่องฟอร์ม (ตอนนี้เก็บในเบราว์เซอร์ ไม่ส่งไปไหน) · เอา `noindex` ออกจาก `site/index.html` ถ้าต้องการให้ Google เจอ · ย้อนกลับเว็บเดิมได้ด้วย `npm run build` + `node scripts/deploy-web.mjs`
+- **ฟอร์มส่งเข้า RQ:** ตั้ง `window.PPSD_LEAD_API` ใน `site/index.html` (ว่าง = ยังไม่ส่ง เก็บในเบราว์เซอร์แบบต้นแบบ) · ใส่ `https://ppsd-system.ppsd-cloud.workers.dev/api/web/lead` ได้ **หลังรวม branch `dev/web-leads` ของ RQ เข้า main แล้วเท่านั้น** · ตัวส่งอยู่ใน `site/js/pages.js` (`leadOut` / `leadWatch`) · ขั้นตอนเปิดใช้ทั้งหมด: `docs/คำขอจากเว็บไซต์.md` ใน repo RQ
 - ใช้ตัวเรียก AI และห้องรวมไอเดียชุดเดียวกับเว็บเดิม (`cloudflare/ppsd-web/functions`) · ปุ่ม "ออกแบบบ้านให้ดูเลย" ในลิงก์ทดลองต้องตั้ง Secret `ANTHROPIC_API_KEY` ในแท็บ **Preview** ของโปรเจกต์ `ppsd-web` เพิ่ม (ตอนนี้ตั้งไว้เฉพาะ Production)
 
 
