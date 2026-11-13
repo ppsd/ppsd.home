@@ -8,3 +8,8 @@ compatibility_date = "2025-06-01"
 [[kv_namespaces]]
 binding = "LIMITS"
 id = "1048758dc3e64a0790fb4cef835eabf4"
+
+# ช่วงทดสอบระบบ (13 พ.ย. 69): ไม่จำกัดจำนวนครั้งต่อเครื่อง (ปกติ 3) — ยังคุมรวมทั้งเว็บวันละ PER_DAY (ค่าเริ่ม 40) กันค่า AI บาน
+# เปิดให้ลูกค้าใช้จริงแล้ว ลบบรรทัด PER_IP ทิ้ง (กลับเป็น 3) แล้ว node scripts/deploy-web.mjs
+[vars]
+PER_IP = "1000"

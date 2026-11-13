@@ -1,4 +1,4 @@
-import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages, seriousIssues, buildRepairPrompt, readAiStream } from '../../_lib/house-concept.js'
+import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages, seriousIssues, buildRepairPrompt, readAiStream, DESIGN_MAX_TOKENS, retryableDesignError } from '../../_lib/house-concept.js'
 import { json, enabled, day, limits, count, bump } from '../../_house.js'
 
 // ลูกค้ากรอกความต้องการ → AI จัดผังห้อง → ส่งผังกลับในคำตอบเดียว (ใช้เวลา 1–3 นาที)
@@ -29,29 +29,44 @@ async function ideaImages(rows, max = 2) {
   return out
 }
 
-async function askLayout(env, q, ideas = [], own = []) {
+async function askLayout(env, q, ideas = [], own = [], trace = {}) {
   if (env.MOCK_LAYOUT) { // ทดสอบในเครื่องเท่านั้น (wrangler pages dev --binding MOCK_LAYOUT=...)
     await new Promise((ok) => setTimeout(ok, 12000))
     return normalizeLayout(JSON.parse(env.MOCK_LAYOUT), q)
   }
   const model = env.AI_MODEL || 'claude-sonnet-5-5'
   const imgs = [...own, ...(own.length < 3 ? await ideaImages(ideas, Math.min(2, 3 - own.length)) : [])]
-  const ask = async (content) => {
-    const body = { model, max_tokens: 32000, messages: [{ role: 'user', content }], stream: true }
+  const t0 = Date.now()
+  trace.imgs = imgs.length; trace.tries = []
+  const ask = async (content, ms) => {
+    const t = { at: Math.round((Date.now() - t0) / 1000) }; trace.tries.push(t)
+    const body = { model, max_tokens: DESIGN_MAX_TOKENS, messages: [{ role: 'user', content }], stream: true }
     if (!/haiku/.test(model)) body.output_config = { effort: 'medium' }
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(540000) })
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e?.error?.message || 'HTTP ' + r.status) }
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) })
+    if (!r.ok) { const e = await r.json().catch(() => ({})); t.why = 'HTTP ' + r.status + ' ' + (e?.error?.message || ''); throw new Error(t.why) }
     const x = await readAiStream(r) // อ่านแบบทยอย — งานคิดนานไม่หลุด
-    if (x.error || x.stop_reason === 'refusal') throw new Error(x.error || 'refusal')
-    const text = x.text
-    const m = text.match(/\{[\s\S]*\}/)
-    return normalizeLayout(m ? JSON.parse(m[0]) : null, q)
+    Object.assign(t, { sec: Math.round((Date.now() - t0) / 1000) - t.at, stop: x.stop_reason, out: x.usage?.output_tokens, think: x.usage?.output_tokens_details?.thinking_tokens })
+    if (x.error || x.stop_reason === 'refusal') { t.why = x.error || 'refusal'; throw new Error(t.why) }
+    const cut = x.stop_reason === 'max_tokens' ? ' · ชนเพดาน max_tokens' : ''
+    const m = x.text.match(/\{[\s\S]*\}/)
+    let raw = null
+    try { raw = m ? JSON.parse(m[0]) : null } catch { t.why = 'อ่านคำตอบ AI ไม่ออก (JSON)' + cut; throw new Error(t.why) }
+    const L = normalizeLayout(raw, q)
+    if (!L.floors.length) { t.why = 'AI ตอบผังห้องไม่ครบ' + cut; throw new Error(t.why) }
+    return L
   }
-  let layout = await ask([...imgs, { type: 'text', text: buildPrompt(q, imgs.length > 0) }])
-  // ผังมีปัญหาร้ายแรง → ให้ AI แก้อีก 1 รอบ (ใช้ผลใหม่ถ้าปัญหาน้อยลง)
+  const first = [...imgs, { type: 'text', text: buildPrompt(q, imgs.length > 0) }]
+  let layout
+  try { layout = await ask(first, 540000) } catch (e) {
+    // ล้มแบบชั่วคราว (คำตอบถูกตัด/อ่านไม่ออก · AI คนใช้เยอะ) → ลองใหม่เองอีก 1 รอบ ถ้ายังมีเวลาพอ (หน้าเว็บรอได้ 15 นาที)
+    const used = Date.now() - t0
+    if (!retryableDesignError(e.message) || used > 360000) throw e
+    layout = await ask(first, Math.max(120000, 840000 - used))
+  }
+  // ผังมีปัญหาร้ายแรง → ให้ AI แก้อีก 1 รอบ (ใช้ผลใหม่ถ้าปัญหาน้อยลง) · ถ้าเวลาเหลือน้อย ส่งผลที่มีไปก่อน
   const issues = layout.floors.length ? seriousIssues(analyze(layout, q)) : []
-  if (issues.length) {
-    const l2 = await ask([{ type: 'text', text: buildRepairPrompt(q, layout, issues) }]).catch(() => null)
+  if (issues.length && Date.now() - t0 < 480000) {
+    const l2 = await ask([{ type: 'text', text: buildRepairPrompt(q, layout, issues) }], Math.max(60000, 840000 - (Date.now() - t0))).catch(() => null)
     if (l2?.floors.length && seriousIssues(analyze(l2, q)).length < issues.length) layout = l2
   }
   return layout
@@ -76,13 +91,16 @@ export async function onRequestPost({ request, env, waitUntil }) {
   const beat = setInterval(() => { w.write(enc.encode(' ')).catch(() => {}) }, 10000)
   waitUntil((async () => {
     let out
+    const trace = {}, t0 = Date.now()
     try {
-      const layout = await askLayout(env, q, ideas, own)
+      const layout = await askLayout(env, q, ideas, own, trace)
       if (!layout.floors.length) throw new Error('ผังห้องไม่ครบ')
       const a = analyze(layout, q)
       out = { status: 'done', layout, stats: { total: a.total, indoor: a.indoor, outdoor: a.outdoor, estimate: a.estimate, bedrooms: a.bedrooms, bathrooms: a.bathrooms, footprint: a.footprint } }
     } catch (e) {
       console.log('house-concept error: ' + e.message)
+      // เก็บเหตุผลที่ล้มไว้ดูย้อนหลัง 30 วัน (ไม่มีชื่อ/เบอร์ลูกค้า) · ดูด้วย node scripts/web-design-errors.mjs
+      if (env.LIMITS) await env.LIMITS.put('err:' + d + ':' + Date.now(), JSON.stringify({ at: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 19).replace('T', ' '), why: String(e.message || e).slice(0, 300), sec: Math.round((Date.now() - t0) / 1000), floors: q.floors, beds: q.bedrooms, baths: q.bathrooms, rooms: (q.program || []).length, facing: q.facing, ...trace }), { expirationTtl: 30 * 86400 }).catch(() => {})
       out = { status: 'error', error: 'ออกแบบไม่สำเร็จ ลองใหม่อีกครั้ง หรือส่งความต้องการให้สถาปนิก' }
     }
     clearInterval(beat)

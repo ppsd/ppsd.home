@@ -259,6 +259,16 @@ export async function readAiStream(res) {
   return { text, usage, stop_reason, error }
 }
 
+// เพดานคำตอบ AI ต่อแบบ — รุ่น Sonnet/Opus 5 ใช้ token ช่วง "คิด" จากเพดานนี้ด้วย (บ้าน 3 ชั้นคิดราว 16,000 + ตอบ 4,000)
+// เดิม 32,000 แบบห้องเยอะ/แนบรูปชนเพดาน คำตอบถูกตัด อ่านผังไม่ออก → 64,000 (จ่ายตามที่ใช้จริง ไม่ได้แพงขึ้นถ้าไม่ใช้)
+export const DESIGN_MAX_TOKENS = 64000
+/** ล้มแบบที่ลองใหม่แล้วมักผ่าน: คำตอบถูกตัด/อ่านไม่ออก · AI คนใช้เยอะ (429/5xx/overloaded) · เน็ตหลุด — ไม่ลองใหม่ถ้า AI ปฏิเสธ หรือไม่มีกุญแจ */
+export function retryableDesignError(msg) {
+  const m = String(msg || '')
+  if (/ปฏิเสธ|refusal|กุญแจ|api key|x-api-key|authentication|credit|billing|permission/i.test(m)) return false
+  return /ไม่ครบ|อ่านไม่ออก|JSON|Unexpected|max_tokens|overloaded|rate|HTTP 5\d\d|HTTP 429|fetch failed|ECONNRESET|socket|network|terminated|Internal server error|AI error/i.test(m)
+}
+
 /** ปัญหาร้ายแรงในผังที่ควรให้ AI แก้อีกรอบ (ห้องทับ ห้องลอย ไม่มีประตู บันได จำนวนห้อง/ชั้นไม่ตรง) */
 export function seriousIssues(a) {
   return (a?.warnings || []).filter((w) => /ทับกับ|ยื่นเกินชั้นล่าง|ยังไม่มีประตู|ไม่มีบันได|ห้องนอน \d+ ห้อง \(|ห้องน้ำ \d+ ห้อง \(|ชั้น \(ลูกค้า/.test(w)).slice(0, 15)
@@ -299,17 +309,24 @@ export function createHouseConcept(d) {
       return { ok: true, layout, model: 'mock', cost_usd: 0 }
     }
     if (!d.aiKey()) return { ok: false, error: d.AI_NO_KEY }
-    const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น', by, media, prompt, maxTokens: 32000, timeoutMs: 540000, effort: 'medium', stream: true })
+    const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น', by, media, prompt, maxTokens: DESIGN_MAX_TOKENS, timeoutMs: 540000, effort: 'medium', stream: true })
     if (!ai.ok) return { ok: false, error: ai.error }
     const raw = d.extractJsonBlock(ai.text)
     const layout = normalizeLayout(raw, q)
     if (!layout.floors.length) return { ok: false, error: 'AI ตอบผังห้องไม่ครบ — ลองกดออกแบบใหม่อีกครั้ง', model: ai.model, cost_usd: ai.cost_usd }
     return { ok: true, layout, model: ai.model, cost_usd: ai.cost_usd }
   }
+  // ล้มแบบชั่วคราว (คำตอบถูกตัด/อ่านไม่ออก · AI คนใช้เยอะ) → ลองใหม่เองอีก 1 รอบก่อนแจ้งผู้ใช้
+  async function askLayoutRetry(o) {
+    const r = await askLayout(o)
+    if (r.ok || !retryableDesignError(r.error)) return r
+    const r2 = await askLayout(o)
+    return { ...r2, cost_usd: addCost(r.cost_usd, r2.cost_usd) }
+  }
   const addCost = (a, b) => Math.round(((a || 0) + (b || 0)) * 10000) / 10000
   // ออกแบบ → ถ้าผังมีปัญหาร้ายแรง ให้ AI แก้อีก 1 รอบ (ใช้ผลรอบใหม่ถ้าปัญหาน้อยลง)
   async function designWithRepair({ prompt, media, by, q }) {
-    const r = await askLayout({ prompt, media, by, q })
+    const r = await askLayoutRetry({ prompt, media, by, q })
     if (!r.ok || process.env.PPSD_AI_MOCK_HOUSECONCEPT) return r
     const issues = seriousIssues(analyze(r.layout, q))
     if (!issues.length) return r

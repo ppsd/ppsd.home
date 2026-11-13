@@ -5,7 +5,7 @@
 //  - ลูกค้าดูผลด้วยรหัสสุ่ม (ไม่ใช่เลขลำดับ) และเห็นเฉพาะผังห้อง+สรุป ไม่เห็นชื่อ/เบอร์/ค่า AI
 import crypto from 'node:crypto'
 import express from 'express'
-import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages, seriousIssues, buildRepairPrompt } from './house-concept.js'
+import { normalizeReq, normalizeLayout, analyze, buildPrompt, parsePublicImages, seriousIssues, buildRepairPrompt, DESIGN_MAX_TOKENS, retryableDesignError } from './house-concept.js'
 
 const PER_IP = 3
 const PER_DAY = 40
@@ -34,14 +34,20 @@ export function createPublicHouseConcept(d) {
       else {
         const more = ideaIds.length && d.ideas && own.length < 3 ? await d.ideas.ideaMedia(ideaIds, { publicOnly: true, max: Math.min(2, 3 - own.length) }).catch(() => []) : []
         const media = [...own, ...more]
-        const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า)', by: BY, media, prompt: buildPrompt(q, media.length > 0), maxTokens: 32000, timeoutMs: 540000, effort: 'medium', stream: true })
-        model = ai.model || null; cost = ai.cost_usd || 0
-        if (!ai.ok) throw new Error(ai.error || 'AI ไม่ตอบ')
-        layout = normalizeLayout(d.extractJsonBlock(ai.text), q)
+        // ล้มแบบชั่วคราว (คำตอบถูกตัด/อ่านไม่ออก · AI คนใช้เยอะ) → ลองใหม่เองอีก 1 รอบ ถ้ายังมีเวลาพอ (หน้าเว็บรอได้ 15 นาที)
+        const t0 = Date.now()
+        for (let n = 1; ; n++) {
+          const ai = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า)', by: BY, media, prompt: buildPrompt(q, media.length > 0), maxTokens: DESIGN_MAX_TOKENS, timeoutMs: n === 1 ? 540000 : Math.max(120000, 840000 - (Date.now() - t0)), effort: 'medium', stream: true })
+          model = ai.model || model; cost += ai.cost_usd || 0
+          let err = ai.ok ? null : ai.error || 'AI ไม่ตอบ'
+          if (!err) { layout = normalizeLayout(d.extractJsonBlock(ai.text), q); if (!layout.floors.length) err = 'AI ตอบผังห้องไม่ครบ' }
+          if (!err) break
+          if (n >= 2 || !retryableDesignError(err) || Date.now() - t0 > 360000) throw new Error(err + (n > 1 ? ' (ลองแล้ว 2 รอบ)' : ''))
+        }
         // ผังมีปัญหาร้ายแรง (ห้องทับ ห้องลอย ไม่มีประตู จำนวนห้องไม่ตรง) → ให้ AI แก้อีก 1 รอบ
         const issues = layout.floors.length ? seriousIssues(analyze(layout, q)) : []
-        if (issues.length) {
-          const fix = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า · แก้ผัง)', by: BY, prompt: buildRepairPrompt(q, layout, issues), maxTokens: 32000, timeoutMs: 420000, effort: 'medium', stream: true }).catch(() => null)
+        if (issues.length && Date.now() - t0 < 480000) { // เวลาเหลือพอค่อยแก้ผัง (ไม่งั้นส่งผลที่มีไปก่อน)
+          const fix = await d.aiAsk({ feature: 'ออกแบบบ้านเบื้องต้น (เว็บลูกค้า · แก้ผัง)', by: BY, prompt: buildRepairPrompt(q, layout, issues), maxTokens: DESIGN_MAX_TOKENS, timeoutMs: 420000, effort: 'medium', stream: true }).catch(() => null)
           cost += fix?.cost_usd || 0
           const l2 = fix?.ok ? normalizeLayout(d.extractJsonBlock(fix.text), q) : null
           if (l2?.floors.length && seriousIssues(analyze(l2, q)).length < issues.length) layout = l2
