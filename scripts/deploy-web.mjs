@@ -1,3 +1,5 @@
+// ⚠ ตั้งแต่ 13 พ.ย. 2569 เว็บจริง ppsd-web.pages.dev คือเว็บ v3 (node scripts/deploy-web-v3.mjs --live) — สคริปต์นี้ขึ้นเว็บเวอร์ชันเก่า (public/web) ทับเว็บจริง
+//   ใช้เฉพาะเมื่อเจ้าของสั่งให้ย้อนกลับไปเว็บเก่า · ต้องพิมพ์ --old-site ยืนยันทุกครั้ง
 // อัปเดตเว็บลูกค้าบน Cloudflare Pages (ppsd-web.pages.dev) — รันหลัง `npm run build`: node scripts/deploy-web.mjs
 // รวม dist/web (หน้าเว็บ + ตัวแสดงแปลน/3D) + cloudflare/ppsd-web/functions (ตัวเรียก AI) + server/house-concept.js (กติกาจัดผังห้อง)
 // ลงโฟลเดอร์ชั่วคราว แล้วอัปขึ้นด้วย wrangler 4.20.0 (ห้ามใช้รุ่นใหม่ — จะพยายามย้ายไป Workers)
@@ -6,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
+if (!process.argv.includes('--old-site')) { console.error('เว็บจริงตอนนี้คือ v3 — อัปเดตด้วย node scripts/deploy-web-v3.mjs --live · ถ้าตั้งใจย้อนกลับไปเว็บเก่าจริงๆ ให้ใส่ --old-site'); process.exit(1) }
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 if (!existsSync(join(root, 'dist/web/house/viewer.js'))) { console.error('ยังไม่มี dist/web/house/viewer.js — รัน npm run build ก่อน'); process.exit(1) }

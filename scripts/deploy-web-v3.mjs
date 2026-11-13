@@ -1,6 +1,6 @@
 // ขึ้นเว็บลูกค้าเวอร์ชันใหม่ (v3 จากทีมเว็บ) บน Cloudflare Pages: node scripts/deploy-web-v3.mjs
 //   ค่าเริ่ม = ลิงก์ทดลอง https://v3.ppsd-web.pages.dev (เว็บจริง ppsd-web.pages.dev ไม่เปลี่ยน)
-//   node scripts/deploy-web-v3.mjs --live  = ขึ้นแทนเว็บจริง (ทำเมื่อผู้บริหารอนุมัติแล้วเท่านั้น)
+//   node scripts/deploy-web-v3.mjs --live  = ขึ้นเว็บจริง ppsd-web.pages.dev — เจ้าของอนุมัติใช้ v3 เป็นเว็บจริงแล้ว 13 พ.ย. 2569 (ย้อนกลับได้ที่ Cloudflare → ppsd-web → Deployments → 8a65c56f = เว็บเก่า → Rollback)
 // หน้าเว็บอยู่ที่ cloudflare/ppsd-web-v3/site (HTML/JS ล้วน ไม่ต้อง build) · ใช้ตัวเรียก AI ชุดเดียวกับเว็บเดิม
 // (cloudflare/ppsd-web/functions) จึงใช้ปุ่ม "ออกแบบบ้านให้ดูเลย" และห้องรวมไอเดียได้เหมือนเดิม
 // ต้องใช้ wrangler 4.20.0 เท่านั้น (รุ่นใหม่จะพยายามย้ายไป Workers)
