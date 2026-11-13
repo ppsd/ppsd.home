@@ -14,7 +14,7 @@
   P.designsAll = designsAll;
   const byId = id => designs(true).find(d => d.id === Number(id));
   P.designs = designs; P.byId = byId;
-  const featuredIds = () => { const c = db.get().content || {}; return (c.featured && c.featured.length ? c.featured : [37, 21, 16]); };
+  const featuredIds = () => { const c = db.get().content || {}; const ok = (c.featured || []).filter(id => byId(id)); return ok.length ? ok : [41, 49, 59]; };
   const floorTx = d => d.floors === 1 ? 'ชั้นเดียว' : d.floors + ' ชั้น';
   const roofTx = { hip: 'ปั้นหยา', gable: 'จั่ว', flat: 'แบน/เพิงแหงน' };
   const cover = (d, small = true) => d.coverImg ? { src: d.coverImg, label: d.coverLabel || 'ภาพจำลองแนวคิด' } : d.cover ? { src: `img/r/${d.cover}${small ? '-s' : ''}.jpg`, label: 'ภาพจำลองแนวคิด' } : { src: `img/plans/ppsd-${d.id}${small ? '-s' : ''}.jpg`, label: 'ภาพ 3D จากแปลนจริง' };
@@ -105,7 +105,7 @@
     const feat = featuredIds().map(byId).filter(Boolean).slice(0, 3);
     const why = [['shield', 'w1', 'w1d'], ['coin', 'w2', 'w2d'], ['inspect', 'w3', 'w3d'], ['team', 'w4', 'w4d'], ['key', 'w5', 'w5d']];
     const heroSrc = c.heroImg || 'img/hero.jpg';
-    const slides = [{ src: heroSrc }, ...[32, 28, 35, 20, 13].map(byId).filter(d => d && d.cover && !d.hidden).map(d => ({ src: `img/r/${d.cover}.jpg`, d }))];
+    const slides = [{ src: heroSrc }, ...[41, 49, 56, 59, 63].map(byId).filter(d => d && !d.hidden).map(d => ({ src: cover(d, false).src, d }))];
     const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     let intro = false; try { intro = !reduce && !sessionStorage.getItem('ppsdIntro'); sessionStorage.setItem('ppsdIntro', '1'); } catch (e) { intro = false; }
     const big = P.WORKS.find(h => h.status !== 'live') || P.WORKS[0], side = P.WORKS.filter(h => h !== big).slice(0, 3);
@@ -175,7 +175,7 @@ ${big ? `<section class="sec dk" style="padding-top:0"><div class="w"><div class
   }
 
   /* ---------- แคตตาล็อกแบบบ้าน ---------- */
-  const designTabs = cur => subnav([['designs', 'แบบบ้านทั้งหมด'], ['ideas', 'ห้องรวมไอเดีย'], ['saved', 'ที่บันทึกไว้'], ['custom-design', 'ออกแบบตามใจ']], cur);
+  const designTabs = cur => subnav([['designs', 'แบบบ้านทั้งหมด'], ['saved', 'ที่บันทึกไว้'], ['custom-design', 'ออกแบบตามใจ']], cur);
   const AREA_R = [['', 'ทุกขนาด'], ['0-100', 'ไม่เกิน 100 ตร.ม.'], ['100-150', '100–150 ตร.ม.'], ['150-200', '150–200 ตร.ม.'], ['200-300', '200–300 ตร.ม.'], ['300-9999', 'มากกว่า 300 ตร.ม.']];
   const BUD_R = [['', 'ทุกงบ'], ['0-2000000', 'ไม่เกิน 2 ล้านบาท'], ['2000000-3000000', '2–3 ล้านบาท'], ['3000000-4000000', '3–4 ล้านบาท'], ['4000000-6000000', '4–6 ล้านบาท'], ['6000000-99000000', 'มากกว่า 6 ล้านบาท']];
   R.designs = () => ({ t: 'แบบบ้านทั้งหมด', nav: 0, html: `${ph({ img: 'r/luxury-green', crumb: '<a href="#home">หน้าแรก</a> / บ้านของเรา', eyebrow: 'HOME COLLECTION', title: 'แบบบ้าน<em>ทั้งหมด</em>', cta: [['#appointment', 'ปรึกษาเลือกแบบบ้าน']], lead: `แบบบ้าน ${designs().length} แบบ ออกแบบโดยทีม PPSD ทุกแบบมีโมเดล 3D หมุนดูได้ ซ่อนหลังคาดูภายใน และแปลนทุกชั้น`, cap: 'ภาพจำลองแนวคิด' })}${designTabs('designs')}
@@ -211,7 +211,7 @@ ${big ? `<section class="sec dk" style="padding-top:0"><div class="w"><div class
 
   /* ---------- รายละเอียดแบบบ้าน + 3D ---------- */
   R.design = id => {
-    const d = byId(id) || byId(37); const c = cover(d, false), f = fav().includes(d.id);
+    const d = byId(id) || designs()[0]; const c = cover(d, false), f = fav().includes(d.id);
     const gal = [c, ...(!d.custom && (d.cover || d.coverImg) ? [{ src: `img/plans/ppsd-${d.id}.jpg`, label: 'ภาพ 3D จากแปลนจริง' }] : []), ...(d.gallery || []).map(x => ({ src: x, label: 'ภาพเพิ่มเติม' })), ...(d.planImg ? [{ src: d.planImg, label: 'แปลนพื้น' }] : [])];
     const link3d = /^https?:\/\//.test(d.link3d || '') ? d.link3d : '';
     const pay = up100(monthly(d.price * 0.9, 6, 30));
@@ -259,52 +259,14 @@ ${h.quote ? `<div class="w-n center" style="padding:56px 0 24px"><p class="quote
 <section class="sec"><div class="w" style="display:grid;gap:clamp(48px,7vw,96px)">${P.WORKS.filter(h => h.quote && !h.reviewHidden).map((h, i) => `<article class="split rv"${i % 2 ? ' style="direction:rtl"' : ''}><div class="ratio r-43" style="direction:ltr">${img(h.img, h.name)}</div><div style="direction:ltr"><span class="eyebrow">${esc(h.type)} · ราชบุรี</span><p class="quote">“${esc(h.quote)}”</p><p class="who">${esc(h.who)} · ${esc(h.name)}</p><a class="link-u" href="#work-${h.id}" style="margin-top:14px">ดูผลงานหลังนี้</a></div></article>`).join('')}
 <div class="note"><span>ก่อนเปิดใช้จริงต้องยืนยันข้อความและขออนุญาตเจ้าของบ้านทุกท่าน · <a href="${P.CO.reels}" target="_blank" rel="noopener" style="color:var(--navy);border-bottom:1px solid var(--gold)">ดูคลิปรีวิวบน Facebook</a></span></div></div></section>` });
 
-  /* ---------- ห้องรวมไอเดีย (ต้นแบบเดิม) ---------- */
   const API = window.PPSD_API || (location.pathname.startsWith('/web/') ? '../api' : '/api');
   P.API = API;
-  const safeUrl = u => /^https?:\/\//i.test(String(u || '')) ? esc(u) : '';
-  const IDEA_KIND = { photo: 'รูปบ้าน', render: 'ภาพ 3D', plan: 'แปลนบ้าน', link: 'บ้านดังระดับโลก' };
-  const MAX_LIKE = 3; let ideasLoad;
-  const loadIdeas = () => ideasLoad || (ideasLoad = fetch(API + '/public/house-ideas').then(r => { if (!r.ok) throw 0; return r.json(); }).catch(() => fetch('ideas.json').then(r => (r.ok ? r.json() : []))).catch(() => []).then(l => (Array.isArray(l) ? l.filter(x => x && x.id && x.thumb_url) : [])));
-  const liked = () => { const v = store.get('ppsdIdeas', []); return Array.isArray(v) ? v : []; };
-  const setLiked = v => store.set('ppsdIdeas', v.slice(0, MAX_LIKE));
-  P.liked = liked;
-  const credit = x => `<div class="fine">ภาพ: ${esc(x.author) || 'ไม่ระบุชื่อ'} · ${safeUrl(x.license_url) ? `<a href="${safeUrl(x.license_url)}" target="_blank" rel="noopener">${esc(x.license)}</a>` : esc(x.license)}${safeUrl(x.page_url) ? ` · <a href="${safeUrl(x.page_url)}" target="_blank" rel="noopener">ที่มา</a>` : ''}</div>`;
-  const ideaImg = x => `<img loading="lazy" referrerpolicy="no-referrer" src="${safeUrl(x.thumb_url)}" alt="${esc(x.title)}">`;
-  P.likedBox = () => { const l = liked(); return l.length ? `<div class="panel" style="margin-top:12px"><b style="font-weight:500;color:var(--navy)">แบบที่คุณชอบจากห้องรวมไอเดีย (${l.length}/${MAX_LIKE})</b><p class="fine" style="margin:4px 0 12px">ใช้เป็นแนวทางประกอบความต้องการ (ไม่ลอกแบบ) สถาปนิกจะเกลาให้อีกครั้ง</p><div class="thumbs">${l.map(x => `<div class="thumb">${ideaImg(x)}<button type="button" data-unlike="${x.id}" aria-label="เอาออก">×</button></div>`).join('')}</div><a class="link-u" href="#ideas" style="margin-top:10px">เลือกแบบเพิ่ม</a></div>` : `<p class="fine" style="margin-top:8px">ยังนึกไม่ออกว่าชอบแบบไหน? <a href="#ideas" style="border-bottom:1px solid var(--gold)">ดูห้องรวมไอเดียแบบบ้าน</a> แล้วกด ♡ แบบที่ชอบ</p>`; };
-  document.addEventListener('click', e => { const b = e.target.closest('[data-unlike]'); if (!b) return; setLiked(liked().filter(x => x.id !== Number(b.dataset.unlike))); const box = $('#likedBox'); if (box) box.innerHTML = P.likedBox(); });
-  R.ideas = () => ({ t: 'ห้องรวมไอเดียแบบบ้าน', nav: 0, html: `${ph({ crumb: '<a href="#home">หน้าแรก</a> / <a href="#designs">แบบบ้าน</a>', eyebrow: 'IDEA ROOM', title: 'ห้องรวม<em>ไอเดีย</em>แบบบ้าน', lead: `ดูรูปบ้าน ภาพ 3D แปลน และบ้านดังทั้งไทยและต่างประเทศ กด ♡ แบบที่ชอบได้ ${MAX_LIKE} แบบ แล้วส่งให้สถาปนิกเป็นแนวทาง` })}${designTabs('ideas')}
-<section class="sec-s"><div class="w"><div class="chips" id="iKind"></div><div class="chips" id="iStyle" style="margin-top:10px"></div><p class="muted" id="iCount" aria-live="polite" style="margin:18px 0">กำลังโหลดไอเดีย…</p><div class="g4" id="iList"></div><div class="center" style="margin-top:24px"><button class="btn line" type="button" id="iMore" hidden>ดูเพิ่ม</button></div>
-<div class="panel" id="iTray" hidden style="position:sticky;bottom:16px;margin-top:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap"></div>
-<p class="fine" style="margin-top:24px">รูปเป็นของเจ้าของภาพตามเครดิตใต้รูป (Creative Commons / Pexels) ใช้เป็นแรงบันดาลใจเท่านั้น ไม่ใช่ผลงานของ PPSD · รายการภาพมาจากระบบ ERP ของ PPSD (ในเว็บต้นแบบนี้อาจไม่มีรายการให้แสดง)</p></div></section>`,
-    async init() {
-      const all = await loadIdeas(); if (!$('#iList')) return;
-      let kind = 'all', style = '', shown = 24;
-      const kinds = ['all', 'photo', 'render', 'plan', 'link'].filter(k => k === 'all' || all.some(x => x.kind === k));
-      const styles = [...new Set(all.map(x => x.style).filter(Boolean))];
-      const draw = () => {
-        const ids = new Set(liked().map(x => x.id)), r = all.filter(x => (kind === 'all' || x.kind === kind) && (!style || x.style === style));
-        $('#iKind').innerHTML = kinds.map(k => `<button type="button" class="chip ${kind === k ? 'on' : ''}" data-k="${k}">${k === 'all' ? 'ทั้งหมด' : IDEA_KIND[k]} (${k === 'all' ? all.length : all.filter(x => x.kind === k).length})</button>`).join('');
-        $('#iStyle').innerHTML = styles.length ? ['', ...styles].map(s => `<button type="button" class="chip ${style === s ? 'on' : ''}" data-s="${esc(s)}">${s ? esc(s) : 'ทุกสไตล์'}</button>`).join('') : '';
-        $('#iCount').textContent = r.length ? `${r.length} ไอเดีย` : 'ยังไม่มีไอเดียให้แสดงในเว็บต้นแบบนี้ (รายการจะมาจาก ERP เมื่อติดตั้งบนเซิร์ฟเวอร์จริง)';
-        $('#iList').innerHTML = r.slice(0, shown).map(x => `<article class="hc"><a class="ratio r-43" style="display:block" href="${safeUrl(x.page_url) || safeUrl(x.image_url)}" target="_blank" rel="noopener">${ideaImg(x)}</a><div class="hc-b"><b style="font-weight:500;color:var(--navy)">${esc(x.title)}</b><div class="fine">${[IDEA_KIND[x.kind], x.style, x.country].filter(Boolean).map(esc).join(' · ')}</div>${credit(x)}<button type="button" class="btn ${ids.has(x.id) ? '' : 'line '}sm" style="margin-top:10px" data-like="${x.id}" aria-pressed="${ids.has(x.id)}">${ids.has(x.id) ? '♥ ชอบแล้ว' : '♡ ชอบแบบนี้'}</button></div></article>`).join('');
-        $$('#iList img').forEach(im => { im.onerror = () => { const c = im.closest('.hc'); if (c) c.remove(); }; });
-        $('#iMore').hidden = r.length <= shown;
-        const l = liked(), tr = $('#iTray'); tr.hidden = !l.length; tr.innerHTML = l.length ? `<b style="font-weight:500">♥ แบบที่ชอบ ${l.length}/${MAX_LIKE}</b>${l.map(x => `<span class="thumb" style="width:56px;height:44px">${ideaImg(x)}</span>`).join('')}<span style="flex:1"></span><button type="button" class="btn line sm" data-clear>ล้าง</button><a class="btn gold sm" href="#custom">ส่งความต้องการออกแบบ</a>` : '';
-      };
-      $('#iKind').onclick = e => { const b = e.target.closest('[data-k]'); if (b) { kind = b.dataset.k; shown = 24; draw(); } };
-      $('#iStyle').onclick = e => { const b = e.target.closest('[data-s]'); if (b) { style = b.dataset.s; shown = 24; draw(); } };
-      $('#iMore').onclick = () => { shown += 24; draw(); };
-      $('#iList').onclick = e => { const b = e.target.closest('[data-like]'); if (!b) return; const id = Number(b.dataset.like), l = liked(); if (l.some(x => x.id === id)) setLiked(l.filter(x => x.id !== id)); else if (l.length >= MAX_LIKE) { toast('เลือกได้ไม่เกิน ' + MAX_LIKE + ' แบบ', 'เอาแบบเดิมออกก่อน'); return; } else { const x = all.find(y => y.id === id); if (x) setLiked([...l, { id: x.id, kind: x.kind, title: x.title, thumb_url: x.thumb_url, author: x.author, license: x.license, license_url: x.license_url, page_url: x.page_url }]); } draw(); };
-      $('#iTray').onclick = e => { if (e.target.closest('[data-clear]')) { setLiked([]); draw(); } };
-      draw();
-    } });
 
   /* ---------- ออกแบบบ้านตามใจ (หน้าบริการ) ---------- */
   R['custom-design'] = () => ({ t: 'ออกแบบบ้านตามใจ', nav: 1, html: `${ph({ img: 'r/villa-arches', crumb: '<a href="#home">หน้าแรก</a> / รับออกแบบบ้าน', eyebrow: 'BESPOKE DESIGN', title: 'ออกแบบบ้าน<em>ตามใจ</em>', lead: 'สถาปนิก PPSD ออกแบบใหม่ทั้งหลังจากความต้องการ งบ ที่ดิน และหลักฮวงจุ้ยของครอบครัวคุณ', cap: 'ภาพจำลองแนวคิด' })}${designTabs('custom-design')}
 <section class="sec"><div class="w"><div class="split at"><div class="rv"><span class="eyebrow">HOW IT WORKS</span><h2 class="h-l">บ้านที่ออกแบบจากชีวิตของคุณ</h2><p class="lead" style="margin-top:18px">เริ่มจากบอกความต้องการ 7 ขั้นตอนสั้น ๆ หรือนัดคุยกับสถาปนิกโดยตรง ทีมจะสำรวจที่ดินฟรี แล้วออกแบบผัง ภาพ 3D และสรุปราคาให้ก่อนตัดสินใจ</p><div class="row" style="margin-top:26px"><a class="btn" href="#custom">ส่งความต้องการออกแบบ</a><a class="btn line" href="#appointment">นัดปรึกษาสถาปนิก</a></div>
 <div class="g2" style="margin-top:44px">${[['แบบสำเร็จรูป', 'เลือกจากแบบที่มี ปรับเล็กน้อยได้ เห็นราคาเร็ว', 'designs', 'ดูแบบบ้าน'], ['ปรับแบบที่มีอยู่', 'เลือกแบบที่ชอบ แล้วขอเพิ่มห้อง ขยาย หรือปรับให้เข้ากับที่ดิน', 'modify', 'ขอปรับแบบ']].map(([a, b, h, l]) => `<div style="border-top:1px solid var(--line-2);padding-top:18px"><b style="font-weight:500;color:var(--navy)">${a}</b><p class="muted" style="font-size:14.5px;margin:6px 0 10px">${b}</p><a class="link-u" href="#${h}">${l}</a></div>`).join('')}</div></div>
-<div class="panel rv"><h3 class="h-s" style="margin-bottom:6px">ขั้นตอนออกแบบตามใจ</h3><ol class="tl">${[['บอกความต้องการและงบ', 'ผ่านแบบฟอร์ม 7 ขั้นตอน หรือนัดคุย', 'ฟรี'], ['สำรวจที่ดิน', 'ทีมดูขนาด ทิศ แสง ลม และฮวงจุ้ย', 'ฟรี'], ['จองแบบ', 'ชำระค่าจองแบบ หักเป็นค่าก่อสร้าง หนังสือจองมีอายุ 1 ปี', '30,000–40,000 บาท'], ['ออกแบบและแก้แบบ', 'ตรวจผังและภาพ 3D ปรับจนพอใจ', 'ตามสิทธิ์แพ็กเกจ'], ['สรุปราคาและเซ็นสัญญา', 'ยืนยันแบบ สเปค และงวดเงิน', 'ตามงวดในสัญญา']].map(([a, b, c], i) => `<li><div class="d">ขั้น ${i + 1}</div><div class="dot"></div><div><div class="t">${a}</div><div class="n">${b}</div></div><div class="a">${c}</div></li>`).join('')}</ol><div id="likedBox">${P.likedBox()}</div></div></div></div></section>` });
+<div class="panel rv"><h3 class="h-s" style="margin-bottom:6px">ขั้นตอนออกแบบตามใจ</h3><ol class="tl">${[['บอกความต้องการและงบ', 'ผ่านแบบฟอร์ม 7 ขั้นตอน หรือนัดคุย', 'ฟรี'], ['สำรวจที่ดิน', 'ทีมดูขนาด ทิศ แสง ลม และฮวงจุ้ย', 'ฟรี'], ['จองแบบ', 'ชำระค่าจองแบบ หักเป็นค่าก่อสร้าง หนังสือจองมีอายุ 1 ปี', '30,000–40,000 บาท'], ['ออกแบบและแก้แบบ', 'ตรวจผังและภาพ 3D ปรับจนพอใจ', 'ตามสิทธิ์แพ็กเกจ'], ['สรุปราคาและเซ็นสัญญา', 'ยืนยันแบบ สเปค และงวดเงิน', 'ตามงวดในสัญญา']].map(([a, b, c], i) => `<li><div class="d">ขั้น ${i + 1}</div><div class="dot"></div><div><div class="t">${a}</div><div class="n">${b}</div></div><div class="a">${c}</div></li>`).join('')}</ol></div></div></div></section>` });
 
   /* ---------- ออกแบบตามใจ: ส่งความต้องการ 7 ขั้นตอน ---------- */
   const roofSvg = k => ({
@@ -340,7 +302,7 @@ ${field('wMore', 'เล่าเพิ่มเติม', `<textarea id="wMore
 <div class="sum" aria-live="polite"><p class="msg" id="wBudMsg"></p><div class="nums"><div><div class="k">พื้นที่ที่งบนี้สร้างได้ (Premium)</div><div class="v" id="wAP"></div></div><div><div class="k">ถ้าเลือก Elite</div><div class="v" id="wAE"></div></div><div><div class="k">ผ่อนต่อเดือนโดยประมาณ</div><div class="v" id="wPay"></div></div></div></div>
 <p class="fine">อัตราต่อ ตร.ม. เป็นตัวอย่างจากเว็บเดิม (Premium 18,000 · Elite 23,000 บาท) รอยืนยัน · คิดผ่อนจากวงเงิน 90% ดอกเบี้ย 6% 30 ปี · ไม่รวมค่าที่ดินและงานนอกตัวบ้าน <a href="#budget-calc" style="border-bottom:1px solid var(--gold)">คำนวณงบละเอียด</a></p></div></div>
 <div class="wiz-p" data-p="4"><span class="eyebrow">STEP 5 / 7</span><h2 class="h-m">รูปบ้านที่ชอบ หรือแปลนเดิม</h2><p class="muted">ไม่บังคับ · สูงสุด 5 ไฟล์ รูปถูกย่อในเครื่องของคุณก่อนส่ง</p>
-<div style="margin-top:18px">${uploadBox('wUp', 'แนบรูปตัวอย่างหรือแปลน', 'รูปบ้าน ภาพภายใน หรือแปลนที่ดิน/แปลนบ้านเดิม')}</div><div id="likedBox">${P.likedBox()}</div></div>
+<div style="margin-top:18px">${uploadBox('wUp', 'แนบรูปตัวอย่างหรือแปลน', 'รูปบ้าน ภาพภายใน หรือแปลนที่ดิน/แปลนบ้านเดิม')}</div></div>
 <div class="wiz-p" data-p="5"><span class="eyebrow">STEP 6 / 7</span><h2 class="h-m">ความต้องการด้านฮวงจุ้ย</h2><p class="muted">PPSD ออกแบบอิงหลักฮวงจุ้ยควบคู่กับแสง ลม และการใช้งานจริง</p>
 <div class="chips" role="radiogroup" aria-label="ระดับความต้องการ" style="margin:18px 0">${['ต้องการให้ออกแบบตามหลักฮวงจุ้ย', 'ไม่ต้องการ', 'ยังไม่แน่ใจ ขอคำแนะนำ'].map((s, i) => `<label><input class="peer" type="radio" name="wFs" value="${s}" ${(W.wFs || 'ต้องการให้ออกแบบตามหลักฮวงจุ้ย') === s ? 'checked' : ''}><span class="chip">${s}</span></label>`).join('')}</div>
 <div class="f"><span class="lbl">เรื่องที่อยากให้ดูเป็นพิเศษ</span><div class="chips">${FS_ITEMS.map((s, i) => `<label><input class="peer" type="checkbox" name="wFsI" value="${s}" ${(W.wFsI || []).includes(s) ? 'checked' : ''}><span class="chip">${s}</span></label>`).join('')}</div></div>
@@ -392,7 +354,7 @@ ${field('wMore', 'เล่าเพิ่มเติม', `<textarea id="wMore
           if (step < 6) return show(step + 1);
           if (!validate(panes[6])) return;
           const v = save(), [lo, hi] = v.wBud.split('-').map(Number);
-          const res = submitLead(form, 'custom', 'ส่งความต้องการออกแบบ', `${v.wStyle} ${v.wFl ? v.wFl + ' ชั้น' : ''} · ${v.cBed} นอน ${v.cBath} น้ำ · ${fmt(v.wArea)} ตร.ม. · งบ ${(P.BUD_RANGES.find(r => r[0] === lo) || [, , ''])[2]} · ที่ดิน ${v.wLw}×${v.wLd} ม. · ฮวงจุ้ย: ${v.wFs} · ไฟล์ ${files.length}`, { files: files.length, liked: liked().map(x => x.id) });
+          const res = submitLead(form, 'custom', 'ส่งความต้องการออกแบบ', `${v.wStyle} ${v.wFl ? v.wFl + ' ชั้น' : ''} · ${v.cBed} นอน ${v.cBath} น้ำ · ${fmt(v.wArea)} ตร.ม. · งบ ${(P.BUD_RANGES.find(r => r[0] === lo) || [, , ''])[2]} · ที่ดิน ${v.wLw}×${v.wLd} ม. · ฮวงจุ้ย: ${v.wFs} · ไฟล์ ${files.length}`, { files: files.length });
           if (!res) return;
           store.del('ppsdWizard');
           const ex = designs().filter(d => d.land <= (v.wLw * v.wLd / 4 || Infinity)).map(d => ({ d, s: (d.price < lo ? lo - d.price : d.price > hi ? d.price - hi : 0) / hi + (v.wStyle && d.style !== v.wStyle ? 0.3 : 0) + (v.wFl && d.floors !== Number(v.wFl) ? 0.2 : 0) + Math.abs(d.beds - v.cBed) * 0.08 })).sort((a, b) => a.s - b.s).slice(0, 3);
@@ -454,7 +416,7 @@ ${uploadBox('fsUp', 'แนบแปลนบ้าน แผนที่ หร
     init() {
       const files = uploader($('#fsUp'), { max: 5 });
       $$('[data-jump]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); if (a.dataset.svc) $('#fsS').value = a.dataset.svc; $('#fs-form').scrollIntoView({ behavior: 'smooth' }); }));
-      fetch('plans/ppsd-16.json').then(r => r.json()).then(x => {
+      fetch('plans/ppsd-44.json').then(r => r.json()).then(x => {
         const f = x.layout.floors[0], rs = f.rooms; let W = 0, D = 0; rs.forEach(r => { W = Math.max(W, r.x + r.w); D = Math.max(D, r.y + r.d); });
         const S = 300 / Math.max(W, D), ox = (360 - W * S) / 2, oy = (360 - D * S) / 2;
         let s = `<svg viewBox="0 0 360 360" aria-hidden="true"><g font-family="Noto Sans Thai" font-size="9" fill="#0C2340">`;

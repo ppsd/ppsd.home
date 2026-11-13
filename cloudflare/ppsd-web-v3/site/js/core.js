@@ -221,7 +221,7 @@
   /* ---------- ส่วนท้าย ---------- */
   function renderFooter() {
     const C = P.CO;
-    const sm = [['designs', 'แบบบ้าน'], ['works', 'ผลงาน'], ['reviews', 'รีวิว'], ['ideas', 'ห้องรวมไอเดีย'], ['custom', 'ออกแบบตามใจ'], ['fengshui', 'ฮวงจุ้ย'], ['process', 'ขั้นตอน'], ['materials', 'วัสดุ'], ['budget-calc', 'คำนวณงบ'], ['loan', 'สินเชื่อ'], ['plan', 'วางแผนการเงิน'], ['land', 'เช็กที่ดิน'], ['documents', 'เอกสาร'], ['services', 'ต่อเติม รีโนเวท'], ['about', 'เกี่ยวกับเรา'], ['why', 'ทำไมต้อง PPSD'], ['areas', 'พื้นที่บริการ'], ['knowledge', 'ความรู้'], ['faq', 'คำถามที่พบบ่อย'], ['help', 'Help Center'], ['contact', 'ติดต่อเรา'], ['myhome', 'บ้านของฉัน']];
+    const sm = [['designs', 'แบบบ้าน'], ['works', 'ผลงาน'], ['reviews', 'รีวิว'], ['custom', 'ออกแบบตามใจ'], ['fengshui', 'ฮวงจุ้ย'], ['process', 'ขั้นตอน'], ['materials', 'วัสดุ'], ['budget-calc', 'คำนวณงบ'], ['loan', 'สินเชื่อ'], ['plan', 'วางแผนการเงิน'], ['land', 'เช็กที่ดิน'], ['documents', 'เอกสาร'], ['services', 'ต่อเติม รีโนเวท'], ['about', 'เกี่ยวกับเรา'], ['why', 'ทำไมต้อง PPSD'], ['areas', 'พื้นที่บริการ'], ['knowledge', 'ความรู้'], ['faq', 'คำถามที่พบบ่อย'], ['help', 'Help Center'], ['contact', 'ติดต่อเรา'], ['myhome', 'บ้านของฉัน']];
     $('#foot').innerHTML = `<img src="img/footer-mono.jpg" alt="" loading="lazy"><div class="foot-in">
 <h2>${t('footH').replace('ความไว้วางใจ', '<span class="nw">ความไว้วางใจ</span>')}</h2><p class="en">${t('footEn')}</p><a class="fcta" href="#appointment">${t('footCta')}</a><hr>
 <div class="fcontact"><a href="tel:${C.tel}">โทร ${C.phone}</a><a href="mailto:${C.email}">${C.email}</a><a href="${C.line}" target="_blank" rel="noopener">LINE ศูนย์สร้างบ้าน PPSD</a></div>
@@ -260,7 +260,7 @@
   /* ---------- เส้นทาง ---------- */
   P.R = P.R || {};
   /* เมนูย่อยที่ชี้ไปส่วนหนึ่งของหน้า [หน้า, id ส่วน] */
-  const ALIAS = { 'fengshui-design': ['fengshui', 'svc-b'], team: ['about', 'team'], map: ['contact', 'maps'], channels: ['contact', 'channels'], faq: ['knowledge', 'faq'], homebook: ['myhome', ''], estimate: ['budget-calc', 'estimate'] };
+  const ALIAS = { 'fengshui-design': ['fengshui', 'svc-b'], team: ['about', 'team'], map: ['contact', 'maps'], channels: ['contact', 'channels'], faq: ['knowledge', 'faq'], homebook: ['myhome', ''], estimate: ['budget-calc', 'estimate'], ideas: ['designs', ''] };
   let cur = { name: '', arg: '' };
   function parse() {
     let h = decodeURIComponent(location.hash.slice(1) || 'home');

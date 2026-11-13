@@ -147,7 +147,7 @@
 
   /* โครงเมนู 5 หมวด [route, ไทย, อังกฤษ] */
   P.NAV = [
-    { k: 'm1', items: [['designs', 'แบบบ้านทั้งหมด', 'All home designs'], ['design-37', 'รายละเอียดแบบบ้าน', 'Home design details'], ['works', 'ผลงานก่อสร้างจริง', 'Built projects'], ['reviews', 'รีวิวจากลูกค้า', 'Client reviews'], ['saved', 'แบบบ้านที่บันทึกไว้', 'Saved homes']] },
+    { k: 'm1', items: [['designs', 'แบบบ้านทั้งหมด', 'All home designs'], ['design-41', 'รายละเอียดแบบบ้าน', 'Home design details'], ['works', 'ผลงานก่อสร้างจริง', 'Built projects'], ['reviews', 'รีวิวจากลูกค้า', 'Client reviews'], ['saved', 'แบบบ้านที่บันทึกไว้', 'Saved homes']] },
     { k: 'm2', items: [['custom-design', 'ออกแบบบ้านตามใจ', 'Bespoke home design'], ['modify', 'ปรับแบบบ้าน', 'Modify a design'], ['custom', 'ส่งความต้องการออกแบบ', 'Submit a design brief'], ['appointment', 'นัดปรึกษาสถาปนิก', 'Meet an architect']] },
     { k: 'm3', items: [['fengshui', 'รับดูฮวงจุ้ย', 'Feng Shui consultation'], ['fengshui-design', 'ออกแบบบ้านตามหลักฮวงจุ้ย', 'Feng Shui-led design'], ['process', 'ขั้นตอนสร้างบ้าน', 'Building process'], ['materials', 'วัสดุและมาตรฐาน', 'Materials & standards'], ['budget-calc', 'คำนวณงบประมาณ', 'Budget calculator'], ['loan', 'คำนวณสินเชื่อ', 'Loan calculator'], ['aftercare', 'บริการหลังส่งมอบ', 'After-handover care']] },
     { k: 'm4', items: [['about', 'เกี่ยวกับบริษัท', 'Company'], ['team', 'ผู้บริหารและทีมงาน', 'Leadership & team'], ['video', 'วิดีโอแนะนำบริษัท', 'Company film'], ['warranty', 'มาตรฐานและการรับประกัน', 'Standards & warranty'], ['knowledge', 'บทความและความรู้', 'Articles & knowledge']] },
