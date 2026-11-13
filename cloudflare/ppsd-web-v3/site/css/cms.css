@@ -1,0 +1,82 @@
+/* PPSD HOME BUILDER — ส่วนเพิ่มของหลังบ้าน (คิวอนุมัติ ใบเสนอราคา แคตตาล็อก เนื้อหา) และ Help Center
+   ใช้สีและตัวแปรเดิมของ site.css / grand.css */
+
+/* ปุ่มเพิ่มเติม */
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn.danger:hover{background:#7f2f28;border-color:#7f2f28}
+.btn.ghost-d{background:transparent;border:1px solid rgba(155,59,50,.45);color:var(--bad);box-shadow:none}
+.btn.ghost-d:hover{background:rgba(155,59,50,.08)}
+.nowrap{white-space:nowrap}
+.cms-th{display:block;width:72px;height:52px;object-fit:cover;border-radius:6px;background:var(--paper-2);border:1px solid var(--line)}
+.tbl td .inp{min-height:38px;padding:6px 10px;font-size:14px}
+
+/* คิวรออนุมัติ */
+.q-sec{font-size:15px;letter-spacing:.06em;color:var(--muted);font-weight:500;margin:6px 0 -6px}
+.q-item{display:grid;gap:8px}
+.q-item .f{margin:4px 0 0}
+.q-h{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;justify-content:space-between}
+.q-h b{font-weight:500;color:var(--navy)}
+.q-phs{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.q-ph{display:grid;gap:6px;border:1px solid var(--line);border-radius:10px;padding:8px;background:#fff}
+.q-ph img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px}
+.q-ph .chk{font-size:13.5px}
+.q-ph .inp{min-height:36px;padding:6px 10px;font-size:13.5px}
+.q-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px}
+.q-warn{border-left:3px solid var(--warn)}
+.q-alert{margin:4px 0 0;padding:8px 12px;background:#FBF3E4;color:#7a5410;border-radius:8px;font-size:14px}
+
+/* ใบเสนอราคา */
+.qt-sum{margin:2px 0;font-size:16px;color:var(--muted)}
+.qt-sum b{font-size:24px;color:var(--navy);font-weight:500}
+.qdoc{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px}
+.qdoc-h{display:flex;gap:16px;align-items:center;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.qdoc-h img{width:120px;background:var(--night);padding:8px 10px;border-radius:8px}
+.qdoc-h div{display:grid;gap:2px;font-size:14px}
+.qdoc-h b{font-weight:500;color:var(--navy)}
+.qdoc-h span{color:var(--muted);font-size:13px}
+.qdoc-t td{font-weight:500;color:var(--navy);border-top:2px solid var(--gold)}
+
+/* เนื้อหาเว็บไซต์ */
+.cms-tabs .chip{min-height:38px}
+.f-grp{display:grid;gap:4px;margin-bottom:10px}
+.faq-row{display:grid;gap:8px;padding:14px 0;border-bottom:1px solid var(--line)}
+.faq-g{display:grid;grid-template-columns:160px 1fr;gap:8px}
+.faq-row .inp{min-height:40px;padding:8px 12px;font-size:14.5px}
+.faq-row textarea.inp{min-height:64px}
+
+/* Help Center */
+.help-acts .help-act{display:grid;gap:6px;align-content:start;padding:24px;transition:transform .25s var(--ease),box-shadow .25s}
+.help-acts .help-act:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(8,22,40,.12)}
+.help-act .wi{display:inline-flex;width:44px;height:44px;align-items:center;justify-content:center;border-radius:50%;background:var(--night);margin-bottom:6px}
+.help-act .wi svg{width:22px;height:22px;fill:none;stroke:var(--gold-2);stroke-width:1.5}
+.help-act:first-child .wi svg{fill:var(--gold-2);stroke:none}
+.help-act b{font-weight:500;color:var(--navy);font-size:17px}
+.fab-btn{text-decoration:none}
+
+@media (max-width:720px){
+  .faq-g{grid-template-columns:1fr}
+  .q-grid{grid-template-columns:1fr}
+  .qdoc{padding:16px}
+}
+
+/* ตารางรายละเอียดวัสดุ Premium / Elite */
+.sp-acc{display:grid;gap:10px;margin-top:8px}
+.sp-cat{background:#fff;border:1px solid var(--line);border-radius:var(--r,12px);overflow:hidden}
+.sp-cat summary{display:flex;align-items:center;gap:16px;padding:16px 20px;cursor:pointer;list-style:none}
+.sp-cat summary::-webkit-details-marker{display:none}
+.sp-cat summary::after{content:"+";margin-left:auto;font-size:22px;color:var(--gold);transition:transform .25s}
+.sp-cat[open] summary::after{transform:rotate(45deg)}
+.sp-cat summary span:last-of-type{display:grid;gap:2px}
+.sp-cat summary b{font-weight:500;color:var(--navy);font-size:17px}
+.sp-cat summary small{font-size:11.5px;letter-spacing:.14em;color:var(--muted)}
+.sp-in{padding:0 20px 18px}
+.sp-t{min-width:720px;background:#fff}
+.sp-t th[scope=row]{font-weight:500;color:var(--navy);white-space:nowrap;vertical-align:top}
+.sp-t thead th:nth-child(3),.sp-t thead th:nth-child(4){width:20%}
+.sp-t .sp-e{background:rgba(201,162,71,.07)}
+.sp-t thead .sp-e{color:#7A5F1E}
+.sp-t .sp-both{text-align:center;background:rgba(12,35,64,.03)}
+.sp-ok{color:var(--ok);font-weight:600}
+.sp-no{color:var(--muted)}
+#fs-pkg .sp-t{min-width:560px}
+#fs-pkg .split>div{min-width:0}

@@ -265,6 +265,12 @@ Claude ถูกตั้งไว้ (ในไฟล์ `CLAUDE.md`) ให้
 - เพดานคำตอบ AI ต่อแบบ 64,000 token (`DESIGN_MAX_TOKENS` ใน `server/house-concept.js` ใช้ทั้ง ERP และเว็บ) · ถ้ารอบแรกล้มแบบชั่วคราว (คำตอบถูกตัด/อ่านไม่ออก, AI คนใช้เยอะ, เน็ตหลุด) ระบบลองใหม่เองอีก 1 รอบ ถ้าใช้ไปไม่เกิน 6 นาที — ครั้งที่ลองซ้ำเสียค่า AI เพิ่มราว 25–40 บาท
 - แบบที่ลูกค้าสร้างบน Cloudflare ยังไม่เข้า ERP · ค่า AI ดูได้ที่ console.anthropic.com (ไม่อยู่ในหน้าสรุปค่า AI ของ ERP)
 
+### เว็บลูกค้าเวอร์ชันใหม่ v3 (ลิงก์ทดลอง v3.ppsd-web.pages.dev)
+- หน้าเว็บอยู่ที่ `cloudflare/ppsd-web-v3/site/` (HTML/JS ล้วน ไม่ต้อง build) · เอกสารส่งงานของทีมเว็บอยู่ที่ `cloudflare/ppsd-web-v3/handover/` (ไม่ถูกอัปขึ้นเว็บ)
+- อัปเดตลิงก์ทดลอง: `node scripts/deploy-web-v3.mjs` → https://v3.ppsd-web.pages.dev (เว็บจริงไม่เปลี่ยน)
+- ขึ้นแทนเว็บจริง: `node scripts/deploy-web-v3.mjs --live` — **ทำเมื่อผู้บริหารอนุมัติแล้วเท่านั้น** และก่อนขึ้นต้อง: ตั้ง `MH_DEMO_ACCESS = false` ใน `site/js/portal.js` · ตัดสินเรื่องฟอร์ม (ตอนนี้เก็บในเบราว์เซอร์ ไม่ส่งไปไหน) · เอา `noindex` ออกจาก `site/index.html` ถ้าต้องการให้ Google เจอ · ย้อนกลับเว็บเดิมได้ด้วย `npm run build` + `node scripts/deploy-web.mjs`
+- ใช้ตัวเรียก AI และห้องรวมไอเดียชุดเดียวกับเว็บเดิม (`cloudflare/ppsd-web/functions`) · ปุ่ม "ออกแบบบ้านให้ดูเลย" ในลิงก์ทดลองต้องตั้ง Secret `ANTHROPIC_API_KEY` ในแท็บ **Preview** ของโปรเจกต์ `ppsd-web` เพิ่ม (ตอนนี้ตั้งไว้เฉพาะ Production)
+
 
 ## เพิ่มแบบสำเร็จรูปที่ออกแบบเอง ลงเว็บลูกค้า (11 พ.ย. 2569)
 - แบบที่ไม่มีรูปถ่ายเก็บเป็นไฟล์ผังห้อง `public/web/plans/<ชื่อ>.json` (`{layout, stats}` รูปแบบเดียวกับหน้าออกแบบบ้าน) แล้วเพิ่มรายการใน `DESIGNS` ของ `public/web/app.js` พร้อม `plan: 'plans/<ชื่อ>.json'` และ `imgs: []` → การ์ดใช้ปกลายเส้น หน้ารายละเอียดเปิดภาพ 3D + แปลนเอง
