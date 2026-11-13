@@ -263,7 +263,7 @@
   const ALIAS = { 'fengshui-design': ['fengshui', 'svc-b'], team: ['about', 'team'], map: ['contact', 'maps'], channels: ['contact', 'channels'], faq: ['knowledge', 'faq'], homebook: ['myhome', ''], estimate: ['budget-calc', 'estimate'], ideas: ['designs', ''] };
   let cur = { name: '', arg: '' };
   function parse() {
-    let h = decodeURIComponent(location.hash.slice(1) || 'home');
+    let h = decodeURIComponent(location.hash.slice(1) || 'home').split('?')[0] || 'home';   /* #admin?h=… = ลิงก์เข้าหลังบ้านจาก RQ */
     let [name, arg] = h.split('/');
     if (!P.R[name] && !ALIAS[name]) { const m = name.match(/^(.+?)-(\d+)$/); if (m && (P.R[m[1]] || ALIAS[m[1]])) { name = m[1]; arg = m[2]; } }
     return { name, arg };
